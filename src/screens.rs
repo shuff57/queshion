@@ -12,7 +12,10 @@
 //! body `(&mut App, &mut Ui)`.
 
 use eframe::egui;
-use egui::{Align2, Color32, Context, CornerRadius, Frame, LayerId, Margin, RichText, Stroke, UiBuilder, Vec2};
+use egui::{
+    Align2, Color32, Context, CornerRadius, Frame, LayerId, Margin, Pos2, Rect, RichText, Stroke,
+    StrokeKind, UiBuilder, Vec2,
+};
 
 use crate::model;
 use crate::model::{Answer, Difficulty, Exam, ExamItem, Id, Import, Kind, Question, QuestionBank};
@@ -117,17 +120,96 @@ pub fn shell_frame<R>(
         app.draw_sidebar_into(&mut root);
     }
     egui::CentralPanel::default()
-        .frame(Frame::new().fill(theme::CREAM).inner_margin(Margin::same(20)))
+        .frame(Frame::new().fill(theme::cream()).inner_margin(Margin::same(20)))
         .show(&mut root, |ui| f(app, ui));
 }
 
 // ---------- small ui helpers ----------
 
-/// Filled accent (brown) call-to-action button.
+/// One screen's top bar: a lighter strip with breadcrumb text on the left and
+/// an optional status on the right (Test Parrot parity: every screen has one).
+pub struct Crumb(pub String, pub Option<crate::Screen>);
+
+pub fn topbar(
+    ui: &mut egui::Ui,
+    app: &mut crate::App,
+    crumbs: Vec<Crumb>,
+    right: Option<(String, bool)>,
+) {
+    Frame::new()
+        .fill(theme::card())
+        .inner_margin(Margin::symmetric(16, 4))
+        .corner_radius(CornerRadius::same(8))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                // Left: breadcrumbs, plain text with slash separators (TP parity).
+                let n = crumbs.len();
+                for (i, crumb) in crumbs.iter().enumerate() {
+                    if i > 0 {
+                        ui.add_space(2.0);
+                        ui.label(theme::muted("/").size(12.5));
+                        ui.add_space(2.0);
+                    }
+                    let last = i + 1 == n;
+                    let tint = if last { theme::ink() } else { theme::muted_col() };
+                    let label = RichText::new(crumb.0.clone())
+                        .family(theme::bold_family())
+                        .size(13.0)
+                        .color(tint);
+                    match (&crumb.1, last) {
+                        (Some(target), false) => {
+                            if ui.add(egui::Button::new(label).frame(false)).clicked() {
+                                app.screen = target.clone();
+                                app.bank = None;
+                                app.exam = None;
+                            }
+                        }
+                        _ => {
+                            ui.label(label);
+                        }
+                    }
+                }
+                // Right: optional status text, optional storage-info button,
+                // pencil glyph at the very end (RTL order: first = rightmost).
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if let Some((status, info)) = right {
+                        // pencil glyph, rightmost; painted after the space is reserved
+                        let pr = ui.allocate_exact_size(Vec2::new(18.0, 20.0), egui::Sense::hover());
+                        draw_nav_icon(
+                            ui.painter(),
+                            NavIcon::Pencil,
+                            pr.0.center(),
+                            theme::muted_col(),
+                        );
+                        if info {
+                            let (irect, iresp) =
+                                ui.allocate_exact_size(Vec2::new(20.0, 20.0), egui::Sense::click());
+                            if iresp.hovered() {
+                                ui.painter()
+                                    .circle_filled(irect.center(), 9.0, theme::hover_bg());
+                            }
+                            draw_nav_icon(
+                                ui.painter(),
+                                NavIcon::Info,
+                                irect.center(),
+                                theme::muted_col(),
+                            );
+                            if iresp.clicked() {
+                                app.storage_info = true;
+                            }
+                        }
+                        ui.label(theme::muted(status).size(11.5));
+                    }
+                });
+            });
+        });
+}
+
+/// Filled accent (brown) call-to-action button. Uniform 34 px height via style.
 pub fn accent_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     ui.add(
         egui::Button::new(theme::on_accent(label))
-            .fill(theme::ACCENT)
+            .fill(theme::accent_col())
             .corner_radius(CornerRadius::same(8)),
     )
 }
@@ -135,15 +217,15 @@ pub fn accent_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
 /// A card: near-white fill, brown hairline, rounded corners.
 pub fn card_frame() -> Frame {
     Frame::new()
-        .fill(theme::CARD)
-        .stroke(Stroke::new(1.0, theme::BORDER))
+        .fill(theme::card())
+        .stroke(Stroke::new(1.0, theme::border()))
         .corner_radius(CornerRadius::same(10))
 }
 
 /// Small solid chip with a bold colored label (step numbers, B/E badges).
 pub fn chip(ui: &mut egui::Ui, label: &str, color: Color32) {
     Frame::new()
-        .fill(theme::ACCENT_FADED)
+        .fill(theme::accent_faded())
         .corner_radius(CornerRadius::same(8))
         .inner_margin(Margin::symmetric(8, 3))
         .show(ui, |ui| {
@@ -161,8 +243,118 @@ fn doc_chip(ui: &mut egui::Ui, is_bank: bool) {
     chip(
         ui,
         if is_bank { "B" } else { "E" },
-        if is_bank { theme::ACCENT } else { theme::GREEN },
+        if is_bank { theme::accent_col() } else { theme::green() },
     );
+}
+
+// ---------- drawn icons (no glyph-font dependency: every shape is painted) ----------
+
+/// Sidebar icons and small chrome glyphs, drawn as vector strokes.
+#[derive(Clone, Copy)]
+pub enum NavIcon {
+    Home,
+    Banks,
+    Exams,
+    Import,
+    Figures,
+    Help,
+    Gear,
+    Pencil,
+    Plus,
+    Info,
+}
+
+/// Paint one 16px icon centered at `c`, in color `c_col` — `c` shadows egui's
+/// Color32 name, so the paint calls use `c_col` throughout.
+pub fn draw_nav_icon(
+    painter: &egui::Painter,
+    icon: NavIcon,
+    c: egui::Pos2,
+    c_col: Color32,
+) {
+    let w = Stroke::new(1.6, c_col);
+    let p = |dx: f32, dy: f32| c + Vec2::new(dx, dy);
+    match icon {
+        NavIcon::Home => {
+            // roof + walls + door
+            painter.line_segment([p(-6.5, 0.0), p(0.0, -5.5)], w);
+            painter.line_segment([p(0.0, -5.5), p(6.5, 0.0)], w);
+            painter.line_segment([p(-5.0, -1.0), p(-5.0, 6.0)], w);
+            painter.line_segment([p(5.0, -1.0), p(5.0, 6.0)], w);
+            painter.line_segment([p(-5.0, 6.0), p(5.0, 6.0)], w);
+            painter.line_segment([p(-1.8, 6.0), p(-1.8, 1.5)], w);
+            painter.line_segment([p(1.8, 6.0), p(1.8, 1.5)], w);
+        }
+        NavIcon::Banks => {
+            // document with lines
+            painter.add(egui::Shape::rect_filled(
+                Rect::from_min_max(p(-4.5, -6.5), p(4.5, 6.5)),
+                CornerRadius::same(2),
+                c_col.gamma_multiply(0.25),
+            ));
+            painter.rect_stroke(Rect::from_min_max(p(-4.5, -6.5), p(4.5, 6.5)), CornerRadius::same(2), w, StrokeKind::Middle);
+            for dy in [-3.0, -0.5, 2.0, 4.5] {
+                painter.line_segment([p(-2.5, dy), p(2.5, dy)], w);
+            }
+        }
+        NavIcon::Exams => {
+            // stacked sheets
+            painter.rect_stroke(Rect::from_min_max(p(-5.5, -5.5), p(3.0, 4.5)), CornerRadius::same(2), w, StrokeKind::Middle);
+            painter.rect_stroke(Rect::from_min_max(p(-2.5, -3.5), p(5.5, 6.5)), CornerRadius::same(2), Stroke::new(1.6, c_col), StrokeKind::Middle);
+        }
+        NavIcon::Import => {
+            // arrow down into a tray
+            painter.line_segment([p(0.0, -6.0), p(0.0, 2.0)], w);
+            painter.line_segment([p(0.0, 2.0), p(-3.0, -1.0)], w);
+            painter.line_segment([p(0.0, 2.0), p(3.0, -1.0)], w);
+            painter.line_segment([p(-5.5, 3.0), p(-5.5, 5.5)], w);
+            painter.line_segment([p(-5.5, 5.5), p(5.5, 5.5)], w);
+            painter.line_segment([p(5.5, 5.5), p(5.5, 3.0)], w);
+        }
+        NavIcon::Figures => {
+            // 2x2 grid of tiles
+            for (dx, dy) in [(-3.2, -3.2), (3.2, -3.2), (-3.2, 3.2), (3.2, 3.2)] {
+                painter.add(egui::Shape::rect_filled(
+                    Rect::from_min_size(p(dx - 2.2, dy - 2.2), Vec2::new(4.4, 4.4)),
+                    CornerRadius::same(1),
+                    c_col.gamma_multiply(0.35),
+                ));
+            }
+        }
+        NavIcon::Help => {
+            painter.circle_stroke(c, 5.5, Stroke::new(1.4, c_col));
+            painter.text(c, egui::Align2::CENTER_CENTER, "?", egui::FontId::proportional(8.5), c_col);
+        }
+        NavIcon::Gear => {
+            // circle + spokes (reads as a gear at this size)
+            painter.circle_stroke(c, 3.2, w);
+            for k in 0..4usize {
+                let a = (k as f32) * std::f32::consts::FRAC_PI_4 + std::f32::consts::FRAC_PI_8;
+                let d = Vec2::new(a.cos(), a.sin());
+                painter.line_segment([c + d * 4.6, c + d * 6.4], w);
+            }
+        }
+        NavIcon::Pencil => {
+            // diagonal pencil: shaft + tip
+            painter.line_segment([p(-4.5, 4.5), p(3.5, -3.5)], w);
+            painter.line_segment([p(3.5, -3.5), p(5.5, -5.5)], w);
+            painter.line_segment([p(-4.5, 4.5), p(-5.5, 5.5)], Stroke::new(2.2, c_col));
+        }
+        NavIcon::Plus => {
+            painter.line_segment([c + Vec2::new(-4.5, 0.0), c + Vec2::new(4.5, 0.0)], Stroke::new(1.8, c_col));
+            painter.line_segment([c + Vec2::new(0.0, -4.5), c + Vec2::new(0.0, 4.5)], Stroke::new(1.8, c_col));
+        }
+        NavIcon::Info => {
+            painter.circle_stroke(c, 5.5, Stroke::new(1.4, c_col));
+            painter.text(
+                c,
+                egui::Align2::CENTER_CENTER,
+                "i",
+                egui::FontId::proportional(8.5),
+                c_col,
+            );
+        }
+    }
 }
 
 /// The four how-it-works steps, shared by the welcome page and the help overlay.
@@ -198,7 +390,7 @@ pub fn step_card(ui: &mut egui::Ui, i: usize) {
         .inner_margin(Margin::same(14))
         .show(ui, |ui| {
             ui.set_min_width(150.0);
-            chip(ui, &format!("{}", i + 1), theme::ACCENT);
+            chip(ui, &format!("{}", i + 1), theme::accent_col());
             ui.add_space(6.0);
             ui.label(theme::strong(*title).size(13.5));
             ui.add_space(4.0);
@@ -442,85 +634,176 @@ impl crate::App {
         egui::Panel::left(egui::Id::new("sidebar"))
             .exact_size(SIDEBAR_WIDTH)
             .show_separator_line(false)
-            .frame(Frame::new().fill(theme::CREAM).inner_margin(Margin::same(14)))
+            .frame(Frame::new().fill(theme::card()).inner_margin(Margin::same(14)))
             .show(root, |ui| {
-                // Clickable logo row.
+                // Monogram row (the logo mark): serif Q on an accent chip.
                 ui.horizontal(|ui| {
+                    ui.painter().rect_filled(
+                        Rect::from_min_size(
+                            ui.cursor().min + Vec2::new(0.0, 8.0),
+                            Vec2::new(30.0, 30.0),
+                        ),
+                        CornerRadius::same(9),
+                        theme::accent_col(),
+                    );
+                    let _ = ui.allocate_ui(Vec2::new(30.0, 30.0), |ui| {
+                        ui.set_min_size(Vec2::new(30.0, 30.0));
+                        ui.centered_and_justified(|ui| {
+                            ui.label(
+                                theme::serif_strong("Q")
+                                    .size(16.0)
+                                    .color(theme::on_accent_col()),
+                            );
+                        });
+                    });
                     if ui
                         .add(
-                            egui::Button::new(RichText::new("🦜").size(15.0))
-                                .fill(theme::ACCENT_FADED)
-                                .corner_radius(CornerRadius::same(8))
-                                .min_size(Vec2::new(30.0, 30.0)),
+                            egui::Button::new(
+                                theme::serif_strong("queShion")
+                                    .color(theme::ink())
+                                    .size(16.0),
+                            )
+                            .frame(false),
                         )
                         .clicked()
                     {
                         self.screen = crate::Screen::Home;
                     }
-                    ui.label(theme::serif_strong("queShion").size(16.0));
                 });
-                ui.add_space(16.0);
+                ui.add_space(14.0);
 
-                self.nav_item(ui, "Home", matches!(self.screen, crate::Screen::Home), |a| {
-                    a.screen = crate::Screen::Home
-                });
                 self.nav_item(
                     ui,
+                    NavIcon::Home,
+                    "Home",
+                    matches!(self.screen, crate::Screen::Home),
+                    |a| a.screen = crate::Screen::Home,
+                );
+                self.nav_item(
+                    ui,
+                    NavIcon::Banks,
                     "Question Banks",
                     matches!(self.screen, crate::Screen::Banks | crate::Screen::BankEdit(_)),
                     |a| a.screen = crate::Screen::Banks,
                 );
                 self.nav_item(
                     ui,
+                    NavIcon::Exams,
                     "Exams",
                     matches!(self.screen, crate::Screen::Exams | crate::Screen::ExamEdit(_)),
                     |a| a.screen = crate::Screen::Exams,
                 );
                 self.nav_item(
                     ui,
+                    NavIcon::Import,
                     "Imports",
                     matches!(self.screen, crate::Screen::Imports),
                     |a| a.screen = crate::Screen::Imports,
                 );
                 self.nav_item(
                     ui,
+                    NavIcon::Figures,
                     "Figures",
                     matches!(self.screen, crate::Screen::Figures),
                     |a| a.screen = crate::Screen::Figures,
                 );
 
-                // Pin Help + Settings to the floor of the panel.
-                let remaining = ui.available_height() - 78.0;
+                // Pin help, settings and the light/dark switch to the floor of the panel.
+                let remaining = ui.available_height() - 128.0;
                 ui.allocate_at_least(Vec2::new(0.0, remaining.max(0.0)), egui::Sense::hover());
 
-                self.nav_item(ui, "How it works", false, |a| a.help_open = true);
                 self.nav_item(
                     ui,
+                    NavIcon::Help,
+                    "How it works",
+                    false,
+                    |a| a.help_open = true,
+                );
+                self.nav_item(
+                    ui,
+                    NavIcon::Gear,
                     "Settings",
                     matches!(self.screen, crate::Screen::Settings),
                     |a| a.screen = crate::Screen::Settings,
                 );
+                self.theme_switch(ui);
             });
+    }
+
+    /// Light/dark toggle row: a small drawn sun or moon beside the current mode's
+    /// name. Persists via settings (the App writes it when clicked).
+    fn theme_switch(&mut self, ui: &mut egui::Ui) {
+        let dark = theme::is_dark();
+        let w = ui.available_width();
+        let (rect, resp) =
+            ui.allocate_exact_size(Vec2::new(w, 34.0), egui::Sense::click());
+        if resp.hovered() {
+            ui.painter().rect_filled(rect, CornerRadius::same(8), theme::hover_bg());
+        }
+        let icon_c = theme::muted_col();
+        let icon_center = Pos2::new(rect.left() + 15.0, rect.center().y);
+        if dark {
+            // moon: filled disc with an offset cutout disc
+            ui.painter().circle_filled(icon_center, 6.5, icon_c);
+            ui.painter()
+                .circle_filled(icon_center + Vec2::new(3.5, -1.5), 5.5, theme::card());
+        } else {
+            // sun: core disc + 8 rays
+            ui.painter().circle_filled(icon_center, 4.0, icon_c);
+            for k in 0..8usize {
+                let a = k as f32 * std::f32::consts::TAU / 8.0;
+                let d = Vec2::new(a.cos(), a.sin()) * 8.5;
+                ui.painter().line_segment(
+                    [icon_center + d * 0.55, icon_center + d],
+                    Stroke::new(1.4, icon_c),
+                );
+            }
+        }
+        let label = if dark { "Dark" } else { "Light" };
+        ui.painter().text(
+            Pos2::new(rect.left() + 30.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            label,
+            egui::FontId::proportional(13.5),
+            theme::text_col(),
+        );
+        if resp.clicked() {
+            let ctx = ui.ctx().clone();
+            self.set_dark_mode(!dark, &ctx);
+        }
     }
 
     fn nav_item(
         &mut self,
         ui: &mut egui::Ui,
+        icon: NavIcon,
         label: &str,
         active: bool,
         goto: impl FnOnce(&mut Self) + 'static,
     ) {
-        let text = if active {
-            theme::accent(theme::strong(label))
+        let w = ui.available_width();
+        let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 36.0), egui::Sense::click());
+        if active {
+            ui.painter().rect_filled(rect, CornerRadius::same(8), theme::accent_faded());
+        } else if resp.hovered() {
+            ui.painter().rect_filled(rect, CornerRadius::same(8), theme::hover_bg());
+        }
+        let c = if active { theme::accent_col() } else { theme::muted_col() };
+        let center = Pos2::new(rect.left() + 17.0, rect.center().y);
+        draw_nav_icon(ui.painter(), icon, center, c);
+        let text_c = if active {
+            theme::ink()
         } else {
-            theme::text(label)
+            theme::text_col()
         };
-        let btn = egui::Button::new(text)
-            .fill(if active { theme::ACCENT_FADED } else { Color32::TRANSPARENT })
-            .corner_radius(CornerRadius::same(8))
-            .stroke(Stroke::NONE);
-        let r = ui.add_sized(Vec2::new(ui.available_width(), 28.0), btn);
-        if r.clicked() {
+        ui.painter().text(
+            Pos2::new(rect.left() + 42.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            label,
+            egui::FontId::proportional(13.5),
+            text_c,
+        );
+        if resp.clicked() {
             goto(self);
         }
     }
@@ -586,6 +869,7 @@ impl crate::App {
     pub fn draw_home(&mut self, ctx: &egui::Context) {
         let fresh = self.store.banks.is_empty() && self.store.exams.is_empty();
         shell_frame(self, ctx, true, |app, ui| {
+            topbar(ui, app, vec![Crumb("Home".into(), None)], None);
             if fresh {
                 app.draw_home_fresh(ui);
             } else {
@@ -764,6 +1048,16 @@ impl crate::App {
 
     pub fn draw_imports(&mut self, ctx: &egui::Context) {
         shell_frame(self, ctx, true, |app, ui| {
+            topbar(
+                ui,
+                app,
+                vec![
+                    Crumb("Home".into(), Some(crate::Screen::Home)),
+                    Crumb("Imports".into(), None),
+                ],
+                None,
+            );
+            ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.label(theme::serif_strong("Imports").size(22.0));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -825,7 +1119,7 @@ impl crate::App {
                                                 if ui
                                                     .add(
                                                         egui::Button::new(theme::accent(name.clone()))
-                                                            .fill(theme::ACCENT_FADED)
+                                                            .fill(theme::accent_faded())
                                                             .corner_radius(CornerRadius::same(6)),
                                                     )
                                                     .clicked()
@@ -882,6 +1176,16 @@ impl crate::App {
 
     pub fn draw_settings(&mut self, ctx: &egui::Context) {
         shell_frame(self, ctx, true, |app, ui| {
+            topbar(
+                ui,
+                app,
+                vec![
+                    Crumb("Home".into(), Some(crate::Screen::Home)),
+                    Crumb("Settings".into(), None),
+                ],
+                None,
+            );
+            ui.add_space(8.0);
             ui.label(theme::serif_strong("Settings").size(22.0));
             ui.add_space(6.0);
             ui.label(theme::text(
@@ -924,14 +1228,14 @@ impl crate::App {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(
                         RichText::new(store::store_dir().to_string_lossy().to_string())
-                            .color(theme::TEXT)
+                            .color(theme::text_col())
                             .size(12.0)
                             .family(egui::FontFamily::Monospace),
                     );
                     if ui
                         .add(
                             egui::Button::new(theme::strong("Open folder"))
-                                .fill(theme::ACCENT_FADED)
+                                .fill(theme::accent_faded())
                                 .corner_radius(CornerRadius::same(6)),
                         )
                         .clicked()
@@ -1038,11 +1342,11 @@ impl crate::App {
                 ui.spacing_mut().item_spacing.y = 6.0;
                 for (i, (text, is_error)) in items.iter().enumerate() {
                     let tint = if *is_error {
-                        Color32::from_rgb(0xfa, 0xe6, 0xe1)
+                        theme::error_wash()
                     } else {
-                        theme::CARD
+                        theme::card()
                     };
-                    let stroke = if *is_error { theme::RED } else { theme::BORDER };
+                    let stroke = if *is_error { theme::red() } else { theme::border() };
                     Frame::new()
                         .fill(tint)
                         .stroke(Stroke::new(1.0, stroke))
@@ -1051,7 +1355,7 @@ impl crate::App {
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.label(if *is_error {
-                                    RichText::new(text.clone()).color(theme::RED)
+                                    RichText::new(text.clone()).color(theme::red())
                                 } else {
                                     theme::text(text.clone())
                                 });
@@ -1103,7 +1407,7 @@ impl crate::App {
                     if ui
                         .add(
                             egui::Button::new(theme::strong("Choose a file…"))
-                                .fill(theme::ACCENT_FADED)
+                                .fill(theme::accent_faded())
                                 .corner_radius(CornerRadius::same(8)),
                         )
                         .clicked()
@@ -1164,7 +1468,7 @@ impl crate::App {
                         .add_enabled(
                             ready,
                             egui::Button::new(theme::on_accent("Read my questions"))
-                                .fill(if ready { theme::ACCENT } else { theme::MUTED })
+                                .fill(if ready { theme::accent_col() } else { theme::muted_col() })
                                 .corner_radius(CornerRadius::same(8)),
                         )
                         .clicked()
@@ -1271,7 +1575,7 @@ impl crate::App {
                 ui.add_space(10.0);
                 for (i, (title, body)) in STEPS.iter().enumerate() {
                     ui.horizontal_top(|ui| {
-                        chip(ui, &format!("{}", i + 1), theme::ACCENT);
+                        chip(ui, &format!("{}", i + 1), theme::accent_col());
                         ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
                             ui.set_max_width(470.0);
                             ui.label(theme::strong(*title).size(13.0));
@@ -1338,7 +1642,7 @@ impl crate::App {
                     if ui
                         .add(
                             egui::Button::new(theme::on_accent("Replace"))
-                                .fill(theme::RED)
+                                .fill(theme::red())
                                 .corner_radius(CornerRadius::same(8)),
                         )
                         .clicked()

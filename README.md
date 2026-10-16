@@ -20,4 +20,10 @@ question banks, printable exams, and one-shot AI conversion, all local-first.
   file at request time and never stored.
 
 Data lives in `${XDG_DATA_HOME:-~/.local/share}/queshion/`. Headless helpers:
-`QUESHION_SELFTEST=1`, `QUESHION_SEED=1`, `QUESHION_CONVERT=<file>` (prints import text).
+`QUESHION_SELFTEST=1`, `QUESHION_SEED=1`, `QUESHION_CONVERT=<file>` (prints import text),
+`QUESHION_SCREEN=<welcome|home|banks|bank|exams|exam|imports|figures|settings>` opens that
+screen directly (for screenshot/test harnesses).
+
+- **Light & dark**: warm dark palette in the same hue family; the sun/moon switch at the
+  bottom of the sidebar persists in `settings.json` (`"dark": true`). The exam page preview
+  and figure sheets stay paper-white in dark mode (they preview the printed sheet).

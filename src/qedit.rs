@@ -53,15 +53,15 @@ fn split_alts(s: &str) -> Vec<String> {
 
 /// Small red label.
 fn red(ui: &mut Ui, msg: &str) {
-    ui.label(RichText::new(msg).color(theme::RED).size(12.0));
+    ui.label(RichText::new(msg).color(theme::red()).size(12.0));
 }
 
 /// Card-ish secondary button (card fill, border, brown text).
 fn ghost_button(ui: &mut Ui, label: &str) -> egui::Response {
     ui.add(
         Button::new(theme::text(label))
-            .fill(theme::CARD)
-            .stroke(egui::Stroke::new(1.0, theme::BORDER))
+            .fill(theme::card())
+            .stroke(egui::Stroke::new(1.0, theme::border()))
             .corner_radius(CornerRadius::same(6)),
     )
 }
@@ -493,7 +493,7 @@ fn editor_body(
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if ui
-                .add(Button::new(RichText::new("✕").size(14.0)).frame(false))
+                .add(Button::new(RichText::new("×").size(14.0)).frame(false))
                 .clicked()
             {
                 action = QAction::Cancel;
@@ -528,7 +528,7 @@ fn editor_body(
         if ui
             .add(
                 Button::new(theme::on_accent("Save question"))
-                    .fill(theme::ACCENT)
+                    .fill(theme::accent_col())
                     .corner_radius(CornerRadius::same(8)),
             )
             .clicked()
@@ -644,7 +644,7 @@ fn draw_meta_row(ui: &mut Ui, ctx: &egui::Context, draft: &mut Draft, key: UiId)
                     if ui
                         .add(
                             Button::new(if marked {
-                                RichText::new(format!("✓ {label}")).color(theme::ACCENT)
+                                RichText::new(format!("✓ {label}")).color(theme::accent_col())
                             } else {
                                 RichText::new(label)
                             })
@@ -666,7 +666,7 @@ fn draw_meta_row(ui: &mut Ui, ctx: &egui::Context, draft: &mut Draft, key: UiId)
         for t in draft.topics.clone() {
             if ui.add(
                 Button::new(RichText::new(format!("{t} ×")).size(11.0))
-                    .fill(theme::ACCENT_FADED)
+                    .fill(theme::accent_faded())
                     .corner_radius(CornerRadius::same(6)),
             ) .clicked()
             {
@@ -699,7 +699,7 @@ fn draw_topics_dialog(ctx: &egui::Context, draft: &mut Draft, key: UiId) {
                 ui.label(theme::serif_strong("Topics").size(17.0));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if ui
-                        .add(Button::new(RichText::new("✕").size(13.0)).frame(false))
+                        .add(Button::new(RichText::new("×").size(13.0)).frame(false))
                         .clicked()
                     {
                         close = true;
@@ -717,7 +717,7 @@ fn draw_topics_dialog(ctx: &egui::Context, draft: &mut Draft, key: UiId) {
                     ui.label(theme::strong(t).size(12.0));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if ui
-                            .add(Button::new(RichText::new("✕").size(11.0)).frame(false))
+                            .add(Button::new(RichText::new("×").size(11.0)).frame(false))
                             .clicked()
                         {
                             remove = Some(i);
@@ -753,7 +753,7 @@ fn draw_topics_dialog(ctx: &egui::Context, draft: &mut Draft, key: UiId) {
                 if ui
                     .add(
                         Button::new(theme::on_accent("Done"))
-                            .fill(theme::ACCENT)
+                            .fill(theme::accent_col())
                             .corner_radius(CornerRadius::same(8)),
                     )
                     .clicked()
@@ -789,13 +789,13 @@ fn mc_editor(ui: &mut Ui, answers: &mut Vec<Answer>, max: usize) {
             if icon_button(ui, "↓", None).clicked() && i + 1 < n {
                 move_up = Some(i + 1);
             }
-            let fill = locked.then_some(theme::ACCENT_FADED);
-            if icon_button(ui, "🔒", fill).clicked() {
+            let fill = locked.then_some(theme::accent_faded());
+            if icon_button(ui, "lock", fill).clicked() {
                 answers[i].locked = !locked;
             }
             if n > 2
                 && ui
-                    .add(Button::new(RichText::new("✕").size(12.0)).frame(false))
+                    .add(Button::new(RichText::new("×").size(12.0)).frame(false))
                     .clicked()
             {
                 to_remove = Some(i);
@@ -810,7 +810,7 @@ fn mc_editor(ui: &mut Ui, answers: &mut Vec<Answer>, max: usize) {
     }
     ui.add_space(2.0);
     // Parts are capped at six answer choices; top-level questions are not.
-    if answers.len() < max && ghost_button(ui, "＋ Add answer").clicked() {
+    if answers.len() < max && ghost_button(ui, "+ Add answer").clicked() {
         answers.push(empty_answer());
     }
 }
@@ -826,7 +826,7 @@ fn matching_editor(ui: &mut Ui, pairs: &mut Vec<Pair>, distractors: &mut Vec<Str
             ui.label(theme::muted("→").size(13.0));
             ui.add_sized([width, 24.0], TextEdit::singleline(&mut pairs[i].right));
             if ui
-                .add(Button::new(RichText::new("✕").size(12.0)).frame(false))
+                .add(Button::new(RichText::new("×").size(12.0)).frame(false))
                 .clicked()
             {
                 remove_pair = Some(i);
@@ -836,7 +836,7 @@ fn matching_editor(ui: &mut Ui, pairs: &mut Vec<Pair>, distractors: &mut Vec<Str
     if let Some(i) = remove_pair {
         pairs.remove(i);
     }
-    if ghost_button(ui, "＋ Add pair").clicked() {
+    if ghost_button(ui, "+ Add pair").clicked() {
         pairs.push(Pair {
             left: String::new(),
             right: String::new(),
@@ -853,7 +853,7 @@ fn matching_editor(ui: &mut Ui, pairs: &mut Vec<Pair>, distractors: &mut Vec<Str
                     .desired_width((ui.available_width() - 40.0).max(160.0)),
             );
             if ui
-                .add(Button::new(RichText::new("✕").size(12.0)).frame(false))
+                .add(Button::new(RichText::new("×").size(12.0)).frame(false))
                 .clicked()
             {
                 remove_dis = Some(i);
@@ -863,7 +863,7 @@ fn matching_editor(ui: &mut Ui, pairs: &mut Vec<Pair>, distractors: &mut Vec<Str
     if let Some(i) = remove_dis {
         distractors.remove(i);
     }
-    if ghost_button(ui, "＋ Add distractor").clicked() {
+    if ghost_button(ui, "+ Add distractor").clicked() {
         distractors.push(String::new());
     }
 }
@@ -943,7 +943,7 @@ fn multipart_editor(ui: &mut Ui, parts: &mut Vec<Part>) {
             }
             if parts.len() > 1
                 && ui
-                    .add(Button::new(RichText::new("✕").size(12.0)).frame(false))
+                    .add(Button::new(RichText::new("×").size(12.0)).frame(false))
                     .clicked()
             {
                 remove = Some(i);
@@ -979,7 +979,7 @@ fn multipart_editor(ui: &mut Ui, parts: &mut Vec<Part>) {
         parts.remove(i);
     }
     ui.add_space(2.0);
-    if ghost_button(ui, "＋ Add part").clicked() {
+    if ghost_button(ui, "+ Add part").clicked() {
         parts.push(Part {
             stem: String::new(),
             kind: PartKind::Tf { correct: true },
@@ -1072,7 +1072,7 @@ fn draw_image_row(
         && let Some(tex) = media_texture(textures, ui.ctx(), &img.file)
     {
         egui::Frame::new()
-            .fill(theme::CREAM)
+            .fill(theme::cream())
             .corner_radius(CornerRadius::same(6))
             .inner_margin(Margin::same(6))
             .show(ui, |ui| {

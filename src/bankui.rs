@@ -5,14 +5,15 @@
 //! `CentralPanel` content pane; the shell router draws the sidebar around it.
 
 use egui::{
-    Align, Button, Color32, ComboBox, CornerRadius, Frame, Layout, Margin, RichText,
+    Align, Align2, Button, Color32, ComboBox, CornerRadius, Frame, Layout, Margin, Pos2,
+    RichText,
     Sense, Stroke, TextEdit, Ui, Vec2,
 };
 // egui's widget id type vs the store's bank/question id (a String).
 use egui::Id as UiId;
 
 use crate::model::{Difficulty, Id, QKind, Question};
-use crate::screens::{accent_button, card_frame, now_secs};
+use crate::screens::{accent_button, card_frame, now_secs, topbar, Crumb};
 use crate::{qedit, screens, theme, App, Screen};
 
 const OUTLINE_W: f32 = 200.0;
@@ -71,9 +72,9 @@ pub fn texture_for(
 /// Chip color for a difficulty level.
 fn diff_color(difficulty: Difficulty) -> Color32 {
     match difficulty {
-        Difficulty::Low => theme::GREEN, // #3e6b48
+        Difficulty::Low => theme::green(), // #3e6b48
         Difficulty::Medium => Color32::from_rgb(0xb5, 0x8a, 0x3d),
-        Difficulty::High => theme::RED, // #a33b2e
+        Difficulty::High => theme::red(), // #a33b2e
     }
 }
 
@@ -109,8 +110,8 @@ where
 fn ghost_button(ui: &mut Ui, label: &str) -> egui::Response {
     ui.add(
         Button::new(theme::text(label))
-            .fill(theme::CARD)
-            .stroke(Stroke::new(1.0, theme::BORDER))
+            .fill(theme::card())
+            .stroke(Stroke::new(1.0, theme::border()))
             .corner_radius(CornerRadius::same(6)),
     )
 }
@@ -188,17 +189,27 @@ impl App {
         egui::CentralPanel::default()
             .frame(
                 Frame::new()
-                    .fill(theme::CREAM)
+                    .fill(theme::cream())
                     .inner_margin(Margin::same(24)),
             )
             .show(ui, |ui| {
                 ui.add_space(4.0);
+                topbar(
+                    ui,
+                    self,
+                    vec![
+                        Crumb("Home".into(), Some(crate::Screen::Home)),
+                        Crumb("Question Banks".into(), None),
+                    ],
+                    None,
+                );
+                ui.add_space(8.0);
 
                 // Heading + right-aligned actions.
                 ui.horizontal(|ui| {
                     ui.label(theme::serif_strong("Question Banks").size(24.0));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if accent_button(ui, "＋ New bank").clicked() {
+                        if accent_button(ui, "+ New bank").clicked() {
                             let id = self.new_bank("Untitled Question Bank");
                             self.open_bank(&id);
                         }
@@ -206,7 +217,7 @@ impl App {
                         if ui
                             .add(
                                 Button::new(theme::text("Import a test"))
-                                    .fill(theme::CARD)
+                                    .fill(theme::card())
                                     .corner_radius(CornerRadius::same(8)),
                             )
                             .clicked()
@@ -223,7 +234,7 @@ impl App {
                 let resp = ui.add(
                     TextEdit::singleline(&mut search)
                         .hint_text("Search Question Banks")
-                        .desired_width(ui.available_width()),
+                        .desired_width(ui.available_width().min(320.0)),
                 );
                 if resp.changed() {
                     with_state(&ctx, key, |s: &mut BanksState| s.search = search.clone());
@@ -272,20 +283,11 @@ impl App {
                             "No banks match \"{search}\"."
                         )));
                     }
-                    egui::Grid::new("banks_grid")
-                        .num_columns(3)
-                        .spacing([16.0, 16.0])
-                        .show(ui, |ui| {
-                            for chunk in cards.chunks(3) {
-                                for card in chunk {
-                                    bank_card(ui, self, &ctx, key, card);
-                                }
-                                for _ in 0..(3 - chunk.len()) {
-                                    ui.label("");
-                                }
-                                ui.end_row();
-                            }
-                        });
+                    // Full-width list rows (TP parity; same anatomy as home/exams).
+                    for card in &cards {
+                        bank_card(ui, self, &ctx, key, card);
+                        ui.add_space(8.0);
+                    }
                 }
             });
 
@@ -326,40 +328,22 @@ impl App {
         egui::CentralPanel::default()
             .frame(
                 Frame::new()
-                    .fill(theme::CREAM)
+                    .fill(theme::cream())
                     .inner_margin(Margin::same(24)),
             )
             .show(ui, |ui| {
                 ui.add_space(4.0);
 
-                // Breadcrumb row; storage info at the right.
-                ui.horizontal(|ui| {
-                    if ui
-                        .add(Button::new(RichText::new("Home").size(13.0)).frame(false))
-                        .clicked()
-                    {
-                        self.screen = Screen::Home;
-                    }
-                    ui.label(theme::muted("/").size(12.0));
-                    if ui
-                        .add(Button::new(theme::muted("Question Banks").size(13.0)).frame(false))
-                        .clicked()
-                    {
-                        self.screen = Screen::Banks;
-                    }
-                    ui.label(theme::muted("/").size(12.0));
-                    ui.label(theme::muted(bank_name.clone()).size(13.0));
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.add(Button::new(RichText::new("ⓘ").size(11.0)).frame(false))
-                            .clicked()
-                        {
-                            with_state(&ctx, key.with("storage_info"), |b: &mut bool| {
-                                *b = true;
-                            });
-                        }
-                        ui.label(theme::muted("Changes save immediately").size(11.5));
-                    });
-                });
+                topbar(
+                    ui,
+                    self,
+                    vec![
+                        Crumb("Home".into(), Some(crate::Screen::Home)),
+                        Crumb("Question Banks".into(), Some(crate::Screen::Banks)),
+                        Crumb(bank_name.clone(), None),
+                    ],
+                    Some(("Changes save immediately".to_string(), true)),
+                );
                 ui.add_space(6.0);
 
                 // Inline name (house serif, 18) + right toolbar.
@@ -368,8 +352,8 @@ impl App {
                     let resp = ui.add(
                         TextEdit::singleline(&mut name_buf)
                             .font(egui::FontId::new(18.0, theme::serif_family()))
-                            .text_color(theme::INK)
-                            .frame(egui::Frame::new().fill(theme::CREAM))
+                            .text_color(theme::ink())
+                            .frame(egui::Frame::new().fill(theme::cream()))
                             .desired_width(360.0),
                     );
                     let changed_now = resp.changed() && name_buf.trim() != bank_name
@@ -384,37 +368,36 @@ impl App {
                     }
                     ui.label(""); // reserves the gap; toolbar hugs the right edge
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if accent_button(ui, "＋ New question").clicked() {
+                        if accent_button(ui, "+ New question").clicked() {
                             self.qedit = Some(qedit::Draft::new(bank_id.clone()));
                         }
                         ui.add_space(8.0);
                         if ui
                             .add(
                                 Button::new(theme::text("Import"))
-                                    .fill(theme::CARD)
+                                    .fill(theme::card())
                                     .corner_radius(CornerRadius::same(8)),
                             )
                             .clicked()
                         {
                             self.import_open = true;
                         }
-                        ui.menu_button(RichText::new("⋯").size(14.0), |ui| {
-                            if ui.button("Export Question Bank").clicked() {
-                                export_bank(self, &bank_id);
-                                ui.close();
-                            }
-                            if ui.button("Import questions").clicked() {
-                                self.import_open = true;
-                                ui.close();
-                            }
-                            if ui.button("New question").clicked() {
-                                self.qedit = Some(qedit::Draft::new(bank_id.clone()));
-                                ui.close();
-                            }
-                        });
+                        let can_export = !questions.is_empty();
+                        let mut exp = Button::new(theme::text("Export"))
+                            .fill(theme::card())
+                            .corner_radius(CornerRadius::same(8));
+                        if !can_export {
+                            exp = exp.sense(egui::Sense::hover());
+                        }
+                        if ui.add(exp).clicked() && can_export {
+                            export_bank(self, &bank_id);
+                        }
+                        ui.add_space(8.0);
                     });
                 });
 
+                ui.add_space(2.0);
+                ui.label(theme::muted(format!("{} questions", questions.len())).size(12.0));
                 ui.add_space(10.0);
 
                 // Outline panel (fixed width) + question card list.
@@ -432,9 +415,8 @@ impl App {
             });
 
         // Editor-screen overlays: storage info, question delete confirmation.
-        let info_open = with_state(&ctx, key.with("storage_info"), |b: &mut bool| *b);
-        if info_open {
-            self.storage_info_modal(&ctx, key.with("storage_info"));
+        if self.storage_info {
+            self.storage_info_modal(&ctx);
         }
         draw_question_delete_confirm(self, &ctx, key);
 
@@ -482,7 +464,8 @@ fn bank_card(
             ui.horizontal(|ui| {
                 ui.label(theme::strong(name.clone()).size(14.0));
                 ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                    ui.menu_button(RichText::new("⋯").size(13.0), |ui| {
+                    ui.add_space(4.0);
+                    ui.menu_button(RichText::new("…").size(13.0), |ui| {
                         if ui.button("Rename").clicked() {
                             action = Some(CardMenu::Item);
                             ui.close();
@@ -532,7 +515,7 @@ fn draw_bank_overlays(app: &mut App, ctx: &egui::Context, key: UiId) {
             ui.horizontal(|ui| {
                 ui.label(theme::serif_strong("Rename bank").size(17.0));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.add(Button::new(RichText::new("✕").size(13.0)).frame(false)).clicked()
+                    if ui.add(Button::new(RichText::new("×").size(13.0)).frame(false)).clicked()
                     {
                         close = true;
                     }
@@ -548,7 +531,7 @@ fn draw_bank_overlays(app: &mut App, ctx: &egui::Context, key: UiId) {
                 if ui
                     .add(
                         Button::new(theme::on_accent("Rename"))
-                            .fill(theme::ACCENT)
+                            .fill(theme::accent_col())
                             .corner_radius(CornerRadius::same(8)),
                     )
                     .clicked()
@@ -602,7 +585,7 @@ fn draw_bank_overlays(app: &mut App, ctx: &egui::Context, key: UiId) {
                 if ui
                     .add(
                         Button::new(theme::on_accent("Delete"))
-                            .fill(theme::RED)
+                            .fill(theme::red())
                             .corner_radius(CornerRadius::same(8)),
                     )
                     .clicked()
@@ -662,14 +645,14 @@ pub fn export_bank(app: &mut App, bank_id: &Id) {
 
 /// "Where your work is stored" info popup; clears its flag on Close/backdrop/Esc.
 impl App {
-    fn storage_info_modal(&mut self, ctx: &egui::Context, key2: UiId) {
+    fn storage_info_modal(&mut self, ctx: &egui::Context) {
         let mut close = false;
         let modal = egui::Modal::new(UiId::new("testparrot_storage_info")).show(ctx, |ui| {
             ui.set_min_width(420.0);
             ui.horizontal(|ui| {
                 ui.label(theme::serif_strong("Where your work is stored").size(17.0));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.add(Button::new(RichText::new("✕").size(13.0)).frame(false)).clicked()
+                    if ui.add(Button::new(RichText::new("×").size(13.0)).frame(false)).clicked()
                     {
                         close = true;
                     }
@@ -685,7 +668,7 @@ impl App {
             );
             ui.add_space(6.0);
             egui::Frame::new()
-                .fill(theme::CREAM)
+                .fill(theme::cream())
                 .corner_radius(CornerRadius::same(6))
                 .inner_margin(Margin::same(8))
                 .show(ui, |ui| {
@@ -707,7 +690,7 @@ impl App {
             });
         });
         if close || modal.should_close() {
-            with_state(ctx, key2, |b: &mut bool| *b = false);
+            self.storage_info = false;
         }
     }
 }
@@ -746,7 +729,7 @@ fn draw_question_delete_confirm(app: &mut App, ctx: &egui::Context, key: UiId) {
             if ui
                 .add(
                     Button::new(theme::on_accent("Delete"))
-                        .fill(theme::RED)
+                        .fill(theme::red())
                         .corner_radius(CornerRadius::same(8)),
                 )
                 .clicked()
@@ -781,29 +764,43 @@ fn draw_question_delete_confirm(app: &mut App, ctx: &egui::Context, key: UiId) {
 /// Left outline: "All questions (N)" plus topic chips with counts; clicking a chip
 /// filters the card list.
 fn draw_outline(ui: &mut Ui, ctx: &egui::Context, key: UiId, questions: &[Question]) {
-    let some_filtered = with_state(ctx, key, |s: &mut BankEditState| {
+    let filtered = with_state(ctx, key, |s: &mut BankEditState| {
         s.topic.is_some() || s.diff.is_some() || !s.search.is_empty()
     });
-    let label = format!("All questions ({})", questions.len());
-    if some_filtered
-        && ui
-            .add(
-                Button::new(theme::on_accent(&label))
-                    .fill(theme::ACCENT)
-                    .corner_radius(CornerRadius::same(8)),
-            )
-            .clicked()
-    {
+
+    // OUTLINE section (TP parity): a persistent "All questions" pill with the
+    // count; clicking it clears any filter.
+    ui.label(
+        RichText::new("OUTLINE").size(10.5).color(theme::muted_col()),
+    );
+    let label = RichText::new("All questions").size(12.5).color(if filtered {
+        theme::text_col()
+    } else {
+        theme::accent_col()
+    });
+    let count = format!("{}", questions.len());
+    let btn = Button::new(label)
+        .fill(if filtered { theme::card() } else { theme::accent_faded() })
+        .corner_radius(CornerRadius::same(6))
+        .min_size(Vec2::new(OUTLINE_W - 20.0, 26.0));
+    let pill = ui.add(btn);
+    ui.painter().text(
+        Pos2::new(pill.rect.right() - 10.0, pill.rect.center().y),
+        Align2::RIGHT_CENTER,
+        count,
+        egui::FontId::proportional(11.0),
+        if filtered { theme::muted_col() } else { theme::accent_col() },
+    );
+    if pill.clicked() {
         with_state(ctx, key, |s: &mut BankEditState| {
             s.topic = None;
             s.diff = None;
             s.search.clear();
         });
     }
-    ui.add_space(8.0);
-    ui.label(theme::muted("Topics").size(11.0));
-
-    // Unique topics with counts, alphabetical.
+    ui.add_space(10.0);
+    ui.label(RichText::new("TOPICS").size(10.5).color(theme::muted_col()));
+    // Unique topics with counts, alphabetical; an empty-topic hint like TP's.
     let mut counts: Vec<(String, usize)> = Vec::new();
     for q in questions {
         for t in &q.topics {
@@ -822,12 +819,12 @@ fn draw_outline(ui: &mut Ui, ctx: &egui::Context, key: UiId, questions: &[Questi
         let selected =
             with_state(ctx, key, |s: &mut BankEditState| s.topic.as_deref() == Some(topic));
         let label = RichText::new(format!("{topic} ({count})"))
-            .color(if selected { theme::ACCENT } else { theme::TEXT })
+            .color(if selected { theme::accent_col() } else { theme::text_col() })
             .size(12.5);
         let btn = Button::new(label)
             .corner_radius(CornerRadius::same(6))
             .min_size(Vec2::new(OUTLINE_W - 20.0, 0.0))
-            .fill(if selected { theme::ACCENT_FADED } else { theme::CREAM });
+            .fill(if selected { theme::accent_faded() } else { theme::cream() });
         if ui.add(btn).clicked() {
             let t = topic.clone();
             with_state(ctx, key, |s: &mut BankEditState| {
@@ -891,7 +888,7 @@ fn draw_question_cards(
                     if ui
                         .add(
                             Button::new(if selected {
-                                RichText::new(format!("✓ {label}")).color(theme::ACCENT)
+                                RichText::new(format!("✓ {label}")).color(theme::accent_col())
                             } else {
                                 RichText::new(label)
                             })
@@ -956,7 +953,7 @@ fn draw_question_cards(
         ui.vertical_centered(|ui| {
             ui.label(theme::serif_strong("No questions yet").size(18.0));
             ui.add_space(4.0);
-            ui.label(theme::muted("Use ＋ New question to write the first one.").size(12.5));
+            ui.label(theme::muted("Use + New question to write the first one.").size(12.5));
         });
     } else if order.is_empty() {
         ui.label(theme::muted("No questions match those filters.").size(12.5));
@@ -1013,7 +1010,8 @@ fn question_card(
                         .corner_radius(CornerRadius::same(6)),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                    ui.menu_button(RichText::new("⋯").size(13.0), |ui| {
+                    ui.add_space(4.0);
+                    ui.menu_button(RichText::new("…").size(13.0), |ui| {
                         if ui.button("Edit").clicked() {
                             action = Some(CardMenu::Item);
                             ui.close();
@@ -1049,7 +1047,7 @@ fn question_card(
                 for (text, good) in answer_preview(q) {
                     ui.label(
                         RichText::new(text)
-                            .color(if good { theme::GREEN } else { theme::MUTED })
+                            .color(if good { theme::green() } else { theme::muted_col() })
                             .size(11.5),
                     );
                     ui.add_space(6.0);
@@ -1070,9 +1068,9 @@ fn question_card(
                         if ui
                             .add(
                                 Button::new(
-                                    RichText::new(t.clone()).size(10.5).color(theme::MUTED),
+                                    RichText::new(t.clone()).size(10.5).color(theme::muted_col()),
                                 )
-                                .fill(theme::ACCENT_FADED)
+                                .fill(theme::accent_faded())
                                 .corner_radius(CornerRadius::same(8)),
                             )
                             .clicked()

@@ -33,8 +33,11 @@ pub struct Settings {
     pub ai_model: String,
     #[serde(default)]
     pub ai_base: String, // custom OpenAI-compatible base URL
+    #[serde(default)]
+    pub dark: bool, // dark palette; applied via theme::set_dark
 }
 
+#[derive(Clone)]
 pub enum Screen {
     Welcome,
     Home,
@@ -56,6 +59,7 @@ pub struct App {
     pub import_open: bool,
     pub paste: String,
     pub ai: ai::Ai,
+    pub storage_info: bool, // topbar ⓘ: "where your work is stored" popup
     pub panel_bank: Option<Id>,          // bank tab open in the exam editor side panel
     pub export_open: bool,
     pub history_open: bool,
@@ -86,6 +90,13 @@ pub struct App {
 /// Shared constructor so the window path and the headless selftest path build the
 /// same App. `ctx` is the egui context (theme/fonts setup happens here too).
 impl App {
+    /// Flip the palette and remember it (the sidebar switch calls this).
+    pub fn set_dark_mode(&mut self, dark: bool, ctx: &egui::Context) {
+        self.settings.dark = dark;
+        theme::set_dark(dark, Some(ctx));
+        let _ = store::save_json("settings.json", &self.settings);
+    }
+
     fn new_from(ctx: &egui::Context) -> Self {
         theme::setup(ctx);
         let mut settings: Settings = store::load_json("settings.json").unwrap_or_default();
@@ -95,7 +106,8 @@ impl App {
         if settings.ai_model.trim().is_empty() {
             settings.ai_model = "gemma4:31b".to_string();
         }
-        App {
+        theme::set_dark(settings.dark, Some(ctx));
+        let mut app = App {
             store: Store::load(),
             screen: Screen::Welcome,
             bank: None,
@@ -116,11 +128,38 @@ impl App {
             help_open: false,
             confirm_restore: None,
             ai_busy: false,
+            storage_info: false,
             import_file: None,
             ai_hint: String::new(),
             import_name: String::new(),
             figs: Default::default(),
+        };
+        let mut app = app; // non-mut unless the capture hook below needs it
+        // Screen-capture/test hook: QUESHION_SCREEN opens a given screen on startup.
+        if let Ok(s) = std::env::var("QUESHION_SCREEN") {
+            app.screen = match s.trim() {
+                "home" => Screen::Home,
+                "banks" => Screen::Banks,
+                "exams" => Screen::Exams,
+                "imports" => Screen::Imports,
+                "figures" => Screen::Figures,
+                "settings" => Screen::Settings,
+                "bank" => app
+                    .store
+                    .banks
+                    .first()
+                    .map(|b| Screen::BankEdit(b.id.clone()))
+                    .unwrap_or(app.screen),
+                "exam" => app
+                    .store
+                    .exams
+                    .first()
+                    .map(|e| Screen::ExamEdit(e.id.clone()))
+                    .unwrap_or(app.screen),
+                _ => app.screen,
+            };
         }
+        app
     }
 
     fn new(cc: &eframe::CreationContext<'_>) -> Self {

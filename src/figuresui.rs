@@ -336,9 +336,9 @@ impl Workspace {
                     ui.label(theme::muted("No figures match.").size(13.0));
                     return;
                 }
-                let avail = ui.available_width();
+                let avail = ui.available_width() - 18.0; // vertical scrollbar allowance
                 let cols = ((avail + 12.0) / (CARD_W + 12.0)).floor().max(1.0) as usize;
-                let mut budget = 2u8;
+                let mut budget = 10u8;
                 for chunk in list.chunks(cols) {
                     ui.horizontal_top(|ui| {
                         for (i, def) in chunk {
@@ -369,8 +369,8 @@ impl Workspace {
 
     fn import_panel(&mut self, ui: &mut Ui) {
         Frame::new()
-            .fill(theme::CARD)
-            .stroke(Stroke::new(1.0, theme::BORDER))
+            .fill(theme::card())
+            .stroke(Stroke::new(1.0, theme::border()))
             .corner_radius(CornerRadius::same(10))
             .inner_margin(Margin::same(12))
             .show(ui, |ui| {
@@ -405,7 +405,7 @@ impl Workspace {
                         .add_enabled(
                             has,
                             Button::new(theme::on_accent("Use pasted SVG"))
-                                .fill(theme::ACCENT)
+                                .fill(theme::accent_col())
                                 .corner_radius(CornerRadius::same(8)),
                         )
                         .clicked()
@@ -414,7 +414,7 @@ impl Workspace {
                         self.import_bytes(ui.ctx(), t.as_bytes(), "pasted.svg".to_string());
                     }
                     if let Some(e) = &self.import_err {
-                        ui.label(RichText::new(e).color(theme::RED).size(12.0));
+                        ui.label(RichText::new(e).color(theme::red()).size(12.0));
                     }
                 });
             });
@@ -512,7 +512,7 @@ impl Workspace {
             ui.allocate_ui(Vec2::new(w, avail_h), |ui| {
                 Frame::new()
                     .fill(egui::Color32::WHITE)
-                    .stroke(Stroke::new(1.0, theme::BORDER))
+                    .stroke(Stroke::new(1.0, theme::border()))
                     .corner_radius(CornerRadius::same(10))
                     .inner_margin(Margin::same(10))
                     .show(ui, |ui| {
@@ -522,7 +522,7 @@ impl Workspace {
                             if let Some(t) = &preview {
                                 ui.add(egui::Image::new(t).shrink_to_fit());
                             } else if let Some(e) = &self.err {
-                                ui.label(RichText::new(e).color(theme::RED).size(12.0));
+                                ui.label(RichText::new(e).color(theme::red()).size(12.0));
                             } else {
                                 ui.spinner();
                             }
@@ -642,19 +642,19 @@ fn import_any(bytes: &[u8]) -> Result<(Option<String>, Vec<u8>), String> {
 fn ghost(ui: &mut Ui, label: &str) -> egui::Response {
     ui.add(
         Button::new(theme::text(label))
-            .fill(theme::CARD)
-            .stroke(Stroke::new(1.0, theme::BORDER))
+            .fill(theme::card())
+            .stroke(Stroke::new(1.0, theme::border()))
             .corner_radius(CornerRadius::same(6)),
     )
 }
 
 fn accent_btn(ui: &mut Ui, label: &str) -> egui::Response {
-    ui.add(Button::new(theme::on_accent(label)).fill(theme::ACCENT).corner_radius(CornerRadius::same(8)))
+    ui.add(Button::new(theme::on_accent(label)).fill(theme::accent_col()).corner_radius(CornerRadius::same(8)))
 }
 
 fn tab(ui: &mut Ui, label: &str, active: bool) -> bool {
     let b = Button::new(if active { theme::accent(label) } else { theme::text(label) })
-        .fill(if active { theme::ACCENT_FADED } else { egui::Color32::TRANSPARENT })
+        .fill(if active { theme::accent_faded() } else { egui::Color32::TRANSPARENT })
         .stroke(Stroke::NONE)
         .corner_radius(CornerRadius::same(8));
     ui.add(b).clicked()
@@ -663,29 +663,39 @@ fn tab(ui: &mut Ui, label: &str, active: bool) -> bool {
 /// One browser card; true when clicked.
 fn card(ui: &mut Ui, ctx: &egui::Context, def: &FigureDef, idx: usize, budget: &mut u8) -> bool {
     let resp = Frame::new()
-        .fill(theme::CARD)
-        .stroke(Stroke::new(1.0, theme::BORDER))
+        .fill(theme::card())
+        .stroke(Stroke::new(1.0, theme::border()))
         .corner_radius(CornerRadius::same(10))
         .inner_margin(Margin::same(10))
         .show(ui, |ui| {
             ui.set_width(CARD_W - 20.0);
             ui.set_height(190.0);
-            Frame::new().fill(egui::Color32::WHITE).corner_radius(CornerRadius::same(6)).show(ui, |ui| {
-                ui.set_width(CARD_W - 20.0);
-                ui.set_height(110.0);
-                ui.centered_and_justified(|ui| match thumb(ctx, def, budget) {
-                    Some(t) => {
-                        ui.add(egui::Image::new(&t).shrink_to_fit());
-                    }
-                    None => {
-                        ui.label(theme::muted("…"));
-                    }
+            // Vertical layout: the parent is horizontal_top, and a Frame
+            // inherits its direction — without the wrap the title, subject
+            // and blurb all draw side-by-side on one row (overwriting).
+            ui.vertical(|ui| {
+                Frame::new().fill(egui::Color32::WHITE).corner_radius(CornerRadius::same(6)).show(ui, |ui| {
+                    ui.set_width(CARD_W - 20.0);
+                    ui.set_height(100.0);
+                    ui.centered_and_justified(|ui| match thumb(ctx, def, budget) {
+                        Some(t) => {
+                            ui.add(egui::Image::new(&t).shrink_to_fit());
+                        }
+                        None => {
+                            ui.label(theme::muted("…"));
+                        }
+                    });
+                });
+                ui.add_space(5.0);
+                ui.label(theme::strong(def.title).size(13.0));
+                ui.label(theme::muted(def.subject.name()).size(11.0));
+                ui.vertical(|ui| {
+                    ui.set_max_width(CARD_W - 24.0);
+                    ui.label(
+                        theme::text(def.blurb).size(11.0),
+                    );
                 });
             });
-            ui.add_space(4.0);
-            ui.label(theme::strong(def.title).size(13.0));
-            ui.label(theme::muted(def.subject.name()).size(11.0));
-            ui.label(theme::text(def.blurb).size(11.0));
         })
         .response;
     let r = ui.interact(resp.rect, UiId::new("fig_card").with(idx), Sense::click());
@@ -693,7 +703,7 @@ fn card(ui: &mut Ui, ctx: &egui::Context, def: &FigureDef, idx: usize, budget: &
         ui.painter().rect_stroke(
             resp.rect,
             CornerRadius::same(10),
-            Stroke::new(1.5, theme::ACCENT),
+            Stroke::new(1.5, theme::accent_col()),
             egui::StrokeKind::Inside,
         );
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -793,7 +803,7 @@ impl crate::App {
         let mut ws = std::mem::take(&mut self.figs.ws);
         let mut act = Act::None;
         egui::CentralPanel::default()
-            .frame(Frame::new().fill(theme::CREAM).inner_margin(Margin::same(24)))
+            .frame(Frame::new().fill(theme::cream()).inner_margin(Margin::same(24)))
             .show(ui, |ui| {
                 ui.label(theme::serif_strong("Figures").size(28.0));
                 ui.label(

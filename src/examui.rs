@@ -119,8 +119,8 @@ fn mem_store<T: Clone + Send + Sync + 'static>(ctx: &egui::Context, id: egui::Id
 // Small drawing helpers
 // ---------------------------------------------------------------------------
 
-/// Accent (`theme::ACCENT`) button; hover uses `theme::ACCENT_HOVER`; disabled uses
-/// `theme::ACCENT_FADED`. Hand-painted so the colors are exact.
+/// Accent (`theme::accent_col()`) button; hover uses `theme::accent_hover()`; disabled uses
+/// `theme::accent_faded()`. Hand-painted so the colors are exact.
 fn accent_button_opt(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Response {
     let font = egui::FontId::proportional(13.5);
     let gsize = ui
@@ -129,12 +129,12 @@ fn accent_button_opt(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Res
         .size();
     let size = gsize + egui::vec2(20.0, 12.0);
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
-    let mut fill = theme::ACCENT;
+    let mut fill = theme::accent_col();
     if resp.hovered() {
-        fill = theme::ACCENT_HOVER;
+        fill = theme::accent_hover();
     }
     if !enabled {
-        fill = theme::ACCENT_FADED;
+        fill = theme::accent_faded();
     }
     ui.painter().rect_filled(rect, 6.0, fill);
     ui.painter().text(
@@ -142,7 +142,7 @@ fn accent_button_opt(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Res
         egui::Align2::CENTER_CENTER,
         label,
         font,
-        if enabled { egui::Color32::WHITE } else { theme::CREAM },
+        if enabled { theme::on_accent_col() } else { theme::muted_col() },
     );
     resp
 }
@@ -155,9 +155,9 @@ fn accent_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
 fn icon_btn(ui: &mut egui::Ui, label: &str) -> egui::Response {
     ui.add(
         egui::Button::new(
-            egui::RichText::new(label).size(11.5).color(theme::INK),
+            egui::RichText::new(label).size(11.5).color(theme::ink()),
         )
-        .fill(theme::CARD)
+        .fill(theme::card())
         .corner_radius(4.0),
     )
 }
@@ -171,14 +171,14 @@ fn chip(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
         .size();
     let size = gsize + egui::vec2(14.0, 9.0);
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
-    let fill = if selected { theme::ACCENT } else { theme::CARD };
+    let fill = if selected { theme::accent_col() } else { theme::card() };
     ui.painter().rect_filled(rect, 9.0, fill);
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
         label,
         font,
-        if selected { egui::Color32::WHITE } else { theme::INK },
+        if selected { theme::on_accent_col() } else { theme::ink() },
     );
     resp
 }
@@ -188,11 +188,11 @@ fn card_frame(fill: egui::Color32) -> egui::Frame {
         .fill(fill)
         .corner_radius(8.0)
         .inner_margin(egui::Margin::same(10))
-        .stroke(egui::Stroke::new(1.0, theme::BORDER))
+        .stroke(egui::Stroke::new(1.0, theme::border()))
 }
 
 fn muted(rt: impl Into<egui::RichText>) -> egui::RichText {
-    rt.into().color(theme::MUTED)
+    rt.into().color(theme::muted_col())
 }
 
 /// One printed-looking ruled line.
@@ -204,7 +204,7 @@ fn ruled_line(ui: &mut egui::Ui, width_hint: f32) {
     let y = rect.bottom() - 3.0;
     ui.painter().line_segment(
         [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
-        egui::Stroke::new(0.8, theme::RULE),
+        egui::Stroke::new(0.8, theme::rule()),
     );
 }
 
@@ -279,13 +279,22 @@ impl crate::App {
         let mut st: ListUi = mem_load(ctx, list_id());
 
         screens::shell_frame(self, ctx, true, |app, ui| {
-            ui.add_space(6.0);
+            screens::topbar(
+                ui,
+                app,
+                vec![
+                    screens::Crumb("Home".into(), Some(crate::Screen::Home)),
+                    screens::Crumb("Exams".into(), None),
+                ],
+                None,
+            );
+            ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.add(egui::Label::new(
-                    theme::strong("Exams").size(22.0).color(theme::INK),
+                    theme::strong("Exams").size(22.0).color(theme::ink()),
                 ));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("New").clicked() {
+                    if screens::accent_button(ui, "New").clicked() {
                         let id = new_exam(app);
                         app.exam = Some(id.clone());
                         app.screen = crate::Screen::ExamEdit(id);
@@ -319,14 +328,14 @@ impl crate::App {
             ui.add_space(8.0);
 
             if count == 0 {
-                card_frame(theme::CARD).show(ui, |ui| {
+                card_frame(theme::card()).show(ui, |ui| {
                     ui.allocate_ui(egui::vec2(ui.available_width(), 170.0), |ui| {
                         ui.add_space(30.0);
                         ui.vertical_centered(|ui| {
                             ui.add(egui::Label::new(
                                 theme::strong("Create your first Exam")
                                     .size(16.0)
-                                    .color(theme::INK),
+                                    .color(theme::ink()),
                             ));
                             ui.add_space(4.0);
                             ui.add(egui::Label::new(muted(
@@ -343,16 +352,11 @@ impl crate::App {
                     });
                 });
             } else {
-                egui::Grid::new("exam_grid")
-                    .spacing([10.0, 10.0])
-                    .min_col_width(250.0)
-                    .max_col_width(380.0)
-                    .show(ui, |ui| {
-                        for (_, id, _, _) in &exams {
-                            draw_exam_card(app, ui, id, &mut st);
-                            ui.end_row();
-                        }
-                    });
+                // Full-width rows (parity with the banks list).
+                for (_, id, _, _) in &exams {
+                    draw_exam_card(app, ui, id, &mut st);
+                    ui.add_space(8.0);
+                }
             }
         });
 
@@ -382,7 +386,7 @@ impl crate::App {
                                                 theme::strong("Delete")
                                                     .color(egui::Color32::WHITE),
                                             )
-                                            .fill(theme::BAD),
+                                            .fill(theme::bad()),
                                         )
                                         .clicked()
                                     {
@@ -481,53 +485,47 @@ fn draw_exam_card(app: &mut crate::App, ui: &mut egui::Ui, id: &Id, st: &mut Lis
     else {
         return;
     };
-    card_frame(theme::CARD).show(ui, |ui| {
-        // Name row doubles as the open affordance.
+    card_frame(theme::card()).show(ui, |ui| {
+        // Title doubles as the open affordance; meta under it; actions right.
         if ui
             .add(
-                egui::Button::new(theme::strong(name.clone()).size(15.0).color(theme::INK))
+                egui::Button::new(theme::strong(name.clone()).size(15.0).color(theme::ink()))
                     .fill(egui::Color32::TRANSPARENT)
-                    .min_size(egui::vec2(ui.available_width(), 22.0)),
+                    .stroke(egui::Stroke::NONE)
+                    .min_size(egui::vec2(0.0, 22.0)),
             )
-            .on_hover_text("Open")
             .clicked()
         {
             app.screen = crate::Screen::ExamEdit(id.clone());
             app.exam = Some(id.clone());
         }
         ui.add(egui::Label::new(muted(format!(
-            "{nq} question{}",
+            "{nq} question{} · {date}",
             if nq == 1 { "" } else { "s" }
         ))));
-        ui.add(egui::Label::new(muted(date)));
         ui.add_space(6.0);
-        ui.horizontal(|ui| {
+        // Direct RTL row (same pattern as the banks rows): menu rightmost.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+            ui.add_space(2.0);
+            ui.menu_button("…", |ui| {
+                if ui.button("Rename").clicked() {
+                    st.rename = Some((id.clone(), name.clone()));
+                }
+                ui.add_space(4.0);
+                if ui
+                    .add(egui::Button::new(egui::RichText::new("Delete").color(theme::bad())))
+                    .clicked()
+                {
+                    st.confirm_delete = Some(id.clone());
+                }
+            });
             if accent_button(ui, "Open").clicked() {
                 app.screen = crate::Screen::ExamEdit(id.clone());
                 app.exam = Some(id.clone());
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.menu_button("…", |ui| {
-                    if ui.button("Rename").clicked() {
-                        st.rename = Some((id.clone(), name.clone()));
-                    }
-                    ui.add_space(4.0);
-                    if ui
-                        .add(egui::Button::new(egui::RichText::new("Delete").color(theme::BAD)))
-                        .clicked()
-                    {
-                        st.confirm_delete = Some(id.clone());
-                    }
-                });
-            });
         });
     });
 }
-
-// ---------------------------------------------------------------------------
-// Exam editor screen
-// ---------------------------------------------------------------------------
-
 impl crate::App {
     pub fn draw_exam_edit(&mut self, ctx: &egui::Context) {
         let exam_id: Option<Id> = match &self.screen {
@@ -573,7 +571,7 @@ impl crate::App {
                                     theme::strong("Delete")
                                         .color(egui::Color32::WHITE),
                                 )
-                                .fill(theme::BAD),
+                                .fill(theme::bad()),
                             )
                             .clicked()
                         {
@@ -662,6 +660,7 @@ impl crate::App {
     }
 }
 
+
 fn crumb_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     ui.add(
         egui::Button::new(muted(egui::RichText::new(label).size(12.5)))
@@ -677,26 +676,22 @@ fn draw_editor_chrome(
     st: &mut EditUi,
 ) {
     ui.add_space(5.0);
-    // Row 1: breadcrumb | Save status.
-    ui.horizontal(|ui| {
-        if crumb_button(ui, "Home").clicked() {
-            app.screen = crate::Screen::Home;
-        }
-        ui.add(egui::Label::new(muted(" / ")));
-        if crumb_button(ui, "Exams").clicked() {
-            app.screen = crate::Screen::Exams;
-        }
-        if let Some(exam) = app.store.exam(exam_id) {
-            let shown = if exam.name.is_empty() {
-                "Untitled Exam".to_string()
-            } else {
-                exam.name.clone()
-            };
-            ui.add(egui::Label::new(muted(
-                egui::RichText::new(format!(" / {shown}")).size(12.5),
-            )));
-        }
-    });
+    // Row 1: breadcrumb bar with Saved status (shared topbar, plain crumbs).
+    let exam_name = app
+        .store
+        .exam(exam_id)
+        .map(|e| if e.name.is_empty() { "Untitled Exam".to_string() } else { e.name.clone() })
+        .unwrap_or_default();
+    screens::topbar(
+        ui,
+        app,
+        vec![
+            screens::Crumb("Home".into(), Some(crate::Screen::Home)),
+            screens::Crumb("Exams".into(), Some(crate::Screen::Exams)),
+            screens::Crumb(exam_name, None),
+        ],
+        Some(("Saved".to_string(), false)),
+    );
 
     // Name edit + right controls on their own line keeps the widths sane.
     ui.horizontal(|ui| {
@@ -706,7 +701,7 @@ fn draw_editor_chrome(
             egui::TextEdit::singleline(&mut name)
                 .hint_text("Untitled Exam")
                 .font(egui::FontId::proportional(18.0))
-                .text_color(theme::INK)
+                .text_color(theme::ink())
                 .frame(egui::Frame::NONE)
                 .desired_width(ui.available_width() * 0.45),
         );
@@ -724,7 +719,6 @@ fn draw_editor_chrome(
             if ui.button("Export History").clicked() {
                 app.history_open = true;
             }
-            ui.add(egui::Label::new(muted("Saved")));
         });
     });
 
@@ -746,7 +740,7 @@ fn draw_editor_chrome(
             }
             ui.add_space(4.0);
             if ui
-                .add(egui::Button::new(egui::RichText::new("Delete Exam").color(theme::BAD)))
+                .add(egui::Button::new(egui::RichText::new("Delete Exam").color(theme::bad())))
                 .clicked()
             {
                 st.confirm_delete = true;
@@ -807,7 +801,7 @@ fn draw_editor_chrome(
             egui::Frame::default()
                 .fill(PAPER)
                 .corner_radius(10.0)
-                .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                .stroke(egui::Stroke::new(1.0, theme::border()))
                 .inner_margin(egui::Margin::same(14))
                 .show(ui, |ui| {
                     draw_page(app, ui, ctx, exam_id, st);
@@ -825,7 +819,7 @@ fn draw_editor_chrome(
             ],
             egui::Stroke::new(
                 if hovered { 2.5 } else { 1.5 },
-                if hovered { theme::BROWN } else { theme::BORDER },
+                if hovered { theme::brown() } else { theme::border() },
             ),
         );
         if sep_resp.dragged() {
@@ -834,9 +828,9 @@ fn draw_editor_chrome(
         // RIGHT: open bank panel.
         ui.allocate_ui(egui::vec2(right, height), |ui| {
             egui::Frame::default()
-                .fill(theme::CREAM)
+                .fill(theme::cream())
                 .corner_radius(10.0)
-                .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                .stroke(egui::Stroke::new(1.0, theme::border()))
                 .inner_margin(egui::Margin::same(12))
                 .show(ui, |ui| {
                     draw_bank_panel(app, ui, ctx, exam_id, st);
@@ -870,7 +864,9 @@ fn draw_page(
                 .map(|e| e.items.clone())
                 .unwrap_or_default();
 
-            ui.horizontal(|ui| {
+            // horizontal_top: egui's default horizontal layout centers children
+            // vertically, which dropped the article into the bottom half.
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                 ui.add_space(inset);
                 ui.vertical(|ui| {
                     ui.set_max_width(art_w);
@@ -911,7 +907,7 @@ fn draw_page(
                                 egui::pos2(ui.clip_rect().left(), yl),
                                 egui::pos2(ui.clip_rect().right(), yl),
                             ],
-                            egui::Stroke::new(2.0, theme::ACCENT),
+                            egui::Stroke::new(2.0, theme::accent_col()),
                         );
                     }
                     let font = egui::FontId::proportional(12.0);
@@ -926,14 +922,14 @@ fn draw_page(
                             egui::Order::Tooltip,
                             egui::Id::NULL.with("examui_ghost"),
                         ));
-                    p.rect_filled(g_rect, 8.0, theme::CARD);
-                    p.rect_stroke(g_rect, 8.0, egui::Stroke::new(1.2, theme::ACCENT), egui::StrokeKind::Inside);
+                    p.rect_filled(g_rect, 8.0, theme::card());
+                    p.rect_stroke(g_rect, 8.0, egui::Stroke::new(1.2, theme::accent_col()), egui::StrokeKind::Inside);
                     p.text(
                         egui::pos2(g_rect.left() + 8.0, g_rect.center().y),
                         egui::Align2::LEFT_CENTER,
                         truncate_str(&drag.stem, 46),
                         font,
-                        theme::INK,
+                        theme::ink(),
                     );
                 }
             }
@@ -962,7 +958,7 @@ fn draw_page_article(
         egui::Label::new(
             theme::serif_strong(title)
                 .size(exam.heading_pt)
-                .color(theme::INK),
+                .color(theme::ink()),
         )
         .wrap(),
     );
@@ -973,7 +969,7 @@ fn draw_page_article(
     ui.add(
         egui::TextEdit::singleline(&mut header)
             .font(egui::FontId::proportional(body_pt * 0.92))
-            .text_color(theme::MUTED)
+            .text_color(theme::muted_col())
             .frame(egui::Frame::NONE)
             .desired_width(art_w),
     );
@@ -1033,7 +1029,7 @@ fn draw_page_article(
         egui::Label::new(
             theme::serif_strong("Answer Section")
                 .size(body_pt + 1.0)
-                .color(theme::INK),
+                .color(theme::ink()),
         )
         .wrap(),
     );
@@ -1062,7 +1058,7 @@ fn draw_page_article(
                     egui::Align2::LEFT_CENTER,
                     format!("{n}. ______"),
                     egui::FontId::proportional(body_pt),
-                    theme::INK,
+                    theme::ink(),
                 );
             }
         });
@@ -1106,9 +1102,9 @@ fn draw_item(
                 egui::Sense::click_and_drag(),
             );
             let grip_color = if dragging || gresp.hovered() {
-                theme::BROWN
+                theme::brown()
             } else {
-                theme::MUTED
+                theme::muted_col()
             };
             {
                 let p = ui.painter();
@@ -1143,14 +1139,14 @@ fn draw_item(
                 egui::Label::new(
                     egui::RichText::new(format!("{number}."))
                         .size(12.0)
-                        .color(theme::BROWN),
+                        .color(theme::brown()),
                 ),
             );
             ui.add(
                 egui::Label::new(
                     egui::RichText::new(q.stem.replace('\n', " — "))
                         .size(body_pt)
-                        .color(theme::INK),
+                        .color(theme::ink()),
                 )
                 .wrap(),
             );
@@ -1189,14 +1185,14 @@ fn draw_item(
                             egui::Label::new(
                                 egui::RichText::new(format!("{}. ", letter(ci)))
                                     .size(body_pt - 1.0)
-                                    .color(theme::BROWN),
+                                    .color(theme::brown()),
                             ),
                         );
                         ui.add(
                             egui::Label::new(
                                 egui::RichText::new(a.text.clone())
                                     .size(body_pt)
-                                    .color(theme::INK),
+                                    .color(theme::ink()),
                             ),
                         );
                     });
@@ -1208,7 +1204,7 @@ fn draw_item(
                     egui::Label::new(
                         egui::RichText::new("True / False")
                             .size(body_pt - 1.0)
-                            .color(theme::MUTED),
+                            .color(theme::muted_col()),
                     ),
                 );
             }
@@ -1229,14 +1225,14 @@ fn draw_item(
                                         number + li as u32
                                     ))
                                     .size(12.0)
-                                    .color(theme::BROWN),
+                                    .color(theme::brown()),
                                 ),
                             );
                             ui.add(
                                 egui::Label::new(
                                     egui::RichText::new(p.left.clone())
                                         .size(body_pt)
-                                        .color(theme::INK),
+                                        .color(theme::ink()),
                                 ),
                             );
                         });
@@ -1247,7 +1243,7 @@ fn draw_item(
                                 egui::Label::new(
                                     egui::RichText::new(format!("{}. {}", letter(ri), r))
                                         .size(body_pt)
-                                        .color(theme::INK),
+                                        .color(theme::ink()),
                                 ),
                             );
                         });
@@ -1279,14 +1275,14 @@ fn draw_item(
                                     egui::Label::new(
                                         egui::RichText::new(format!("{}. ", roman(pi)))
                                             .size(12.0)
-                                            .color(theme::BROWN),
+                                            .color(theme::brown()),
                                     ),
                                 );
                                 ui.add(
                                     egui::Label::new(
                                         egui::RichText::new(part.stem.clone())
                                             .size(body_pt)
-                                            .color(theme::INK),
+                                            .color(theme::ink()),
                                     ),
                                 );
                             });
@@ -1296,14 +1292,14 @@ fn draw_item(
                                         egui::Label::new(
                                             egui::RichText::new(format!("{}. ", letter(ci)))
                                                 .size(body_pt - 1.0)
-                                                .color(theme::MUTED),
+                                                .color(theme::muted_col()),
                                         ),
                                     );
                                     ui.add(
                                         egui::Label::new(
                                             egui::RichText::new(a.text.clone())
                                                 .size(body_pt)
-                                                .color(theme::INK),
+                                                .color(theme::ink()),
                                         ),
                                     );
                                 });
@@ -1318,7 +1314,7 @@ fn draw_item(
                                         part.stem
                                     ))
                                     .size(body_pt)
-                                    .color(theme::INK),
+                                    .color(theme::ink()),
                                 ),
                             );
                         }
@@ -1331,7 +1327,7 @@ fn draw_item(
                                         part.stem
                                     ))
                                     .size(body_pt)
-                                    .color(theme::INK),
+                                    .color(theme::ink()),
                                 ),
                             );
                             rules += 2;
@@ -1503,142 +1499,146 @@ fn draw_bank_panel(
     exam_id: &Id,
     st: &mut EditUi,
 ) {
-    ui.horizontal(|ui| {
-        ui.add(
-            egui::Label::new(
-                theme::serif_strong("Question Bank")
-                    .size(15.0)
-                    .color(theme::INK),
+    // vertical: the parent layout is horizontal (children are centered and
+    // side-placed otherwise).
+    ui.vertical(|ui| {
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::Label::new(
+                    theme::serif_strong("Question Bank")
+                        .size(15.0)
+                        .color(theme::ink()),
+                )
+                .wrap(),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if app.panel_bank.is_some() && icon_btn(ui, "×").clicked() {
+                    app.panel_bank = None;
+                }
+            });
+        });
+        ui.add_space(4.0);
+        egui::ComboBox::from_id_salt("exam_panel_bank")
+            .selected_text(
+                app.panel_bank
+                    .as_ref()
+                    .and_then(|id| app.store.bank(id))
+                    .map(|b| b.name.clone())
+                    .unwrap_or_else(|| "Open bank…".to_string()),
             )
-            .wrap(),
+            .width(ui.available_width().min(280.0))
+            .show_ui(ui, |ui| {
+                for b in app.store.banks.clone() {
+                    ui.selectable_value(&mut app.panel_bank, Some(b.id.clone()), b.name.clone());
+                }
+            });
+    
+        let Some(bank_id) = app.panel_bank.clone() else {
+            ui.add_space(12.0);
+            ui.add(egui::Label::new(muted(
+                "Choose a bank above, or open one from the Banks screen.",
+            )));
+            return;
+        };
+        let Some(bank) = app.store.bank(&bank_id).cloned() else {
+            app.panel_bank = None;
+            return;
+        };
+    
+        ui.add_space(4.0);
+        ui.add(
+            egui::TextEdit::singleline(&mut st.search)
+                .hint_text("Search question stems")
+                .desired_width(ui.available_width().min(280.0)),
         );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if app.panel_bank.is_some() && icon_btn(ui, "×").clicked() {
-                app.panel_bank = None;
-            }
-        });
-    });
-    ui.add_space(4.0);
-    egui::ComboBox::from_id_salt("exam_panel_bank")
-        .selected_text(
-            app.panel_bank
-                .as_ref()
-                .and_then(|id| app.store.bank(id))
-                .map(|b| b.name.clone())
-                .unwrap_or_else(|| "Open bank…".to_string()),
-        )
-        .width(ui.available_width().min(280.0))
-        .show_ui(ui, |ui| {
-            for b in app.store.banks.clone() {
-                ui.selectable_value(&mut app.panel_bank, Some(b.id.clone()), b.name.clone());
-            }
-        });
-
-    let Some(bank_id) = app.panel_bank.clone() else {
-        ui.add_space(12.0);
-        ui.add(egui::Label::new(muted(
-            "Choose a bank above, or open one from the Banks screen.",
-        )));
-        return;
-    };
-    let Some(bank) = app.store.bank(&bank_id).cloned() else {
-        app.panel_bank = None;
-        return;
-    };
-
-    ui.add_space(4.0);
-    ui.add(
-        egui::TextEdit::singleline(&mut st.search)
-            .hint_text("Search question stems")
-            .desired_width(ui.available_width().min(280.0)),
-    );
-    ui.add_space(4.0);
-
-    // Topic chips.
-    let mut topics: Vec<String> = bank
-        .questions
-        .iter()
-        .flat_map(|q| q.topics.clone())
-        .filter(|t| !t.trim().is_empty())
-        .collect();
-    topics.sort();
-    topics.dedup();
-    if !topics.is_empty() {
-        ui.add(egui::Label::new(muted(
-            egui::RichText::new("Topics").size(10.5),
-        )));
+        ui.add_space(4.0);
+    
+        // Topic chips.
+        let mut topics: Vec<String> = bank
+            .questions
+            .iter()
+            .flat_map(|q| q.topics.clone())
+            .filter(|t| !t.trim().is_empty())
+            .collect();
+        topics.sort();
+        topics.dedup();
+        if !topics.is_empty() {
+            ui.add(egui::Label::new(muted(
+                egui::RichText::new("Topics").size(10.5),
+            )));
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(5.0, 5.0);
+                for t in &topics {
+                    let sel = st.topics.contains(t);
+                    if chip(ui, t, sel).clicked() {
+                        if sel {
+                            st.topics.retain(|x| x != t);
+                        } else {
+                            st.topics.push(t.clone());
+                        }
+                    }
+                }
+            });
+            ui.add_space(2.0);
+        }
+    
+        // Difficulty filter + sort toggle.
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(5.0, 5.0);
-            for t in &topics {
-                let sel = st.topics.contains(t);
-                if chip(ui, t, sel).clicked() {
-                    if sel {
-                        st.topics.retain(|x| x != t);
-                    } else {
-                        st.topics.push(t.clone());
-                    }
+            for (di, label) in [(0u8, "All"), (1, "Low"), (2, "Medium"), (3, "High")] {
+                if chip(ui, label, st.diff == di).clicked() {
+                    st.diff = di;
                 }
             }
         });
-        ui.add_space(2.0);
-    }
-
-    // Difficulty filter + sort toggle.
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(5.0, 5.0);
-        for (di, label) in [(0u8, "All"), (1, "Low"), (2, "Medium"), (3, "High")] {
-            if chip(ui, label, st.diff == di).clicked() {
-                st.diff = di;
-            }
-        }
-    });
-    ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        if ui
-            .button(if st.sort_newest { "Newest first" } else { "Oldest first" })
-            .clicked()
-        {
-            st.sort_newest = !st.sort_newest;
-        }
-    });
-    ui.add_space(4.0);
-
-    egui::ScrollArea::vertical()
-        .id_salt("bank_panel_scroll")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            let needle = st.search.trim().to_lowercase();
-            let mut qs: Vec<model::Question> = bank
-                .questions
-                .iter()
-                .filter(|q| needle.is_empty() || q.stem.to_lowercase().contains(&needle))
-                .filter(|q| {
-                    st.topics.is_empty() || st.topics.iter().any(|t| q.topics.contains(t))
-                })
-                .filter(|q| match (st.diff, &q.difficulty) {
-                    (0, _) => true,
-                    (1, Some(model::Difficulty::Low))
-                    | (2, Some(model::Difficulty::Medium))
-                    | (3, Some(model::Difficulty::High)) => true,
-                    _ => false,
-                })
-                .cloned()
-                .collect();
-            if st.sort_newest {
-                qs.sort_by_key(|q| -q.created);
-            } else {
-                qs.sort_by_key(|q| q.created);
-            }
-
-            if qs.is_empty() {
-                ui.add(egui::Label::new(muted("No questions match.")));
-                return;
-            }
-            for q in &qs {
-                draw_bank_card(app, ui, ctx, &bank_id, exam_id, q);
-                ui.add_space(6.0);
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            if ui
+                .button(if st.sort_newest { "Newest first" } else { "Oldest first" })
+                .clicked()
+            {
+                st.sort_newest = !st.sort_newest;
             }
         });
+        ui.add_space(4.0);
+    
+        egui::ScrollArea::vertical()
+            .id_salt("bank_panel_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let needle = st.search.trim().to_lowercase();
+                let mut qs: Vec<model::Question> = bank
+                    .questions
+                    .iter()
+                    .filter(|q| needle.is_empty() || q.stem.to_lowercase().contains(&needle))
+                    .filter(|q| {
+                        st.topics.is_empty() || st.topics.iter().any(|t| q.topics.contains(t))
+                    })
+                    .filter(|q| match (st.diff, &q.difficulty) {
+                        (0, _) => true,
+                        (1, Some(model::Difficulty::Low))
+                        | (2, Some(model::Difficulty::Medium))
+                        | (3, Some(model::Difficulty::High)) => true,
+                        _ => false,
+                    })
+                    .cloned()
+                    .collect();
+                if st.sort_newest {
+                    qs.sort_by_key(|q| -q.created);
+                } else {
+                    qs.sort_by_key(|q| q.created);
+                }
+    
+                if qs.is_empty() {
+                    ui.add(egui::Label::new(muted("No questions match.")));
+                    return;
+                }
+                for q in &qs {
+                    draw_bank_card(app, ui, ctx, &bank_id, exam_id, q);
+                    ui.add_space(6.0);
+                }
+            });
+    });
 }
 
 fn draw_bank_card(
@@ -1649,13 +1649,13 @@ fn draw_bank_card(
     exam_id: &Id,
     q: &model::Question,
 ) {
-    card_frame(theme::CARD).show(ui, |ui| {
+    card_frame(theme::card()).show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.add(
                 egui::Label::new(
                     theme::strong(q.kind.qkind().label())
                         .size(10.5)
-                        .color(theme::BROWN),
+                        .color(theme::brown()),
                 ),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1704,7 +1704,7 @@ fn draw_bank_card(
             egui::Label::new(
                 egui::RichText::new(truncate_str(&q.stem, 150))
                     .size(12.5)
-                    .color(theme::INK),
+                    .color(theme::ink()),
             ),
         );
     });
@@ -2175,13 +2175,13 @@ impl crate::App {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .default_width(560.0)
             .show(ctx, |ui| {
-                card_frame(theme::CREAM).show(ui, |ui| {
+                card_frame(theme::cream()).show(ui, |ui| {
                     ui.add(egui::Label::new(muted("Preview")));
                     ui.add(
                         egui::Label::new(
                             theme::serif_strong(name.clone())
                                 .size(18.0)
-                                .color(theme::INK),
+                                .color(theme::ink()),
                         )
                         .wrap(),
                     );
@@ -2506,10 +2506,10 @@ impl crate::App {
                         let recs: Vec<model::ExportRecord> = self.store.exports.clone();
                         for rec in recs.iter().rev() {
                             egui::Frame::default()
-                                .fill(theme::CARD)
+                                .fill(theme::card())
                                 .corner_radius(8.0)
                                 .inner_margin(egui::Margin::same(10))
-                                .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                                .stroke(egui::Stroke::new(1.0, theme::border()))
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
                                         ui.add(egui::Label::new(bankui::fmt_date(rec.time)));
@@ -2517,7 +2517,7 @@ impl crate::App {
                                             egui::Label::new(
                                                 theme::strong(rec.exam_name.clone())
                                                     .size(14.0)
-                                                    .color(theme::INK),
+                                                    .color(theme::ink()),
                                             )
                                             .wrap(),
                                         );
