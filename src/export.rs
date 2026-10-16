@@ -1263,7 +1263,7 @@ mod tests {
         let mut docxml = String::new();
         z.by_name("word/document.xml").unwrap().read_to_string(&mut docxml).unwrap();
         // empty pages are still a valid PDF with one page
-        assert!(pdf_pages(&pdf) >= 0);
+        let _ = pdf_pages(&pdf);
         assert!(docxml.contains("<w:sectPr>"));
     }
 }

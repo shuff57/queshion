@@ -41,7 +41,6 @@ pub fn greek(s: &str) -> String {
     .to_string()
 }
 
-pub fn tw(s: &str, size: f64) -> f64 { s.chars().count() as f64 * size * 0.58 }
 
 /// Nice tick step (1, 2, 5 x 10^k) giving roughly `target` ticks over `range`.
 pub fn nice_step(range: f64, target: f64) -> f64 {
@@ -63,12 +62,11 @@ pub fn fmt_num(v: f64) -> String {
 pub struct G {
     pub d: Doc,
     pub w: f64,
-    pub h: f64,
     pub mir: bool,
 }
 
 impl G {
-    pub fn new(w: f64, h: f64, mir: bool) -> Self { G { d: Doc::new(w, h), w, h, mir } }
+    pub fn new(w: f64, h: f64, mir: bool) -> Self { G { d: Doc::new(w, h), w, mir } }
     pub fn x(&self, x: f64) -> f64 { if self.mir { self.w - x } else { x } }
     pub fn finish(&self) -> String { self.d.finish() }
 

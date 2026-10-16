@@ -13,24 +13,28 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use egui::{
-    Color32, Context, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin,
+    Color32, Context, CornerRadius, FontData, FontDefinitions, FontFamily, FontId,
     RichText, Stroke, TextStyle, ThemePreference,
 };
 
 // ---------- palette ----------
 
-/// One palette of the whole app. `light` is the Test Parrot cream/brown house
-/// palette; `dark` is the same warm hue family for dark rooms. All surfaces,
-/// text roles and accents come from here — no screen keeps its own hexes.
+/// One palette of the whole app: the V4 "Study Studio in paper tones" tokens
+/// (cream/brown neutrals, chalkboard-green accent, highlighter-yellow marker).
+/// All surfaces, text roles and accents come from here — no screen keeps its own hexes.
 #[derive(Clone, Copy)]
 pub struct Palette {
-    /// Whole-app background (warm cream / warm near-black).
+    /// Desk: whole-app background (under the faint graph-paper grid).
     pub cream: Color32,
-    /// Cards, windows, widgets (slightly lighter than the page).
+    /// Left dock.
+    pub rail: Color32,
+    /// Cards, windows, popovers.
     pub card: Color32,
+    /// Inputs and inset areas.
+    pub field: Color32,
     /// Hairline borders around cards and windows.
     pub border: Color32,
-    /// Ruled answer lines on printed forms and dialogs.
+    /// Stronger divider / grip dots / checkbox outline.
     pub rule: Color32,
     /// Headings and emphasized text.
     pub ink: Color32,
@@ -38,56 +42,72 @@ pub struct Palette {
     pub text: Color32,
     /// De-emphasized text (captions, counters).
     pub muted: Color32,
-    /// Buttons / filled actions.
+    /// Primary button, links, active controls (chalkboard green).
     pub accent: Color32,
     pub accent_hover: Color32,
-    /// Soft accent wash (chips, selection, active widgets).
+    /// Soft accent wash (selected chips, type pills, icon tiles).
     pub accent_faded: Color32,
+    /// Inverse text for filled (accent) buttons and chips.
+    pub on_accent: Color32,
+    /// Marker: active dock item, "just added", "needs AI" tags. Always dark ink text.
+    pub highlighter: Color32,
     /// Hover state on cards and widgets.
     pub hover_bg: Color32,
-    /// Correct-answer marks.
+    /// Correct-answer marks (same family as the accent).
     pub green: Color32,
     /// Errors and destructive confirmations.
     pub red: Color32,
-    /// Inverse text for filled (accent) buttons and chips.
-    pub on_accent: Color32,
+    /// Exam desk behind the paper.
+    pub table: Color32,
+    /// 24 px graph-paper grid line (alpha-blended).
+    pub grid_line: Color32,
 }
 
 pub const fn light_palette() -> Palette {
     Palette {
         cream: Color32::from_rgb(0xf7, 0xf4, 0xed),
+        rail: Color32::from_rgb(0x33, 0x2a, 0x24),
         card: Color32::from_rgb(0xff, 0xfd, 0xf8),
+        field: Color32::from_rgb(0xf3, 0xee, 0xe3),
         border: Color32::from_rgb(0xe0, 0xd3, 0xc2),
         rule: Color32::from_rgb(0xbd, 0xa9, 0x95),
         ink: Color32::from_rgb(0x33, 0x2a, 0x24),
-        text: Color32::from_rgb(0x6e, 0x5b, 0x4d),
-        muted: Color32::from_rgb(0x7c, 0x5f, 0x43),
-        accent: Color32::from_rgb(0x9f, 0x50, 0x37),
-        accent_hover: Color32::from_rgb(0xb6, 0x5f, 0x43),
-        accent_faded: Color32::from_rgb(0xf4, 0xe0, 0xcf),
-        hover_bg: Color32::from_rgb(0xf2, 0xe6, 0xd8),
-        green: Color32::from_rgb(0x3e, 0x6b, 0x48),
+        text: Color32::from_rgb(0x5e, 0x4c, 0x40),
+        muted: Color32::from_rgb(0x7a, 0x63, 0x50),
+        accent: Color32::from_rgb(0x2f, 0x61, 0x44),
+        accent_hover: Color32::from_rgb(0x3b, 0x74, 0x53),
+        accent_faded: Color32::from_rgb(0xdf, 0xe9, 0xd4),
+        on_accent: Color32::from_rgb(0xf7, 0xfb, 0xf3),
+        highlighter: Color32::from_rgb(0xf3, 0xdc, 0x6a),
+        hover_bg: Color32::from_rgb(0xef, 0xe8, 0xdb),
+        green: Color32::from_rgb(0x2f, 0x61, 0x44),
         red: Color32::from_rgb(0xa3, 0x3b, 0x2e),
-        on_accent: Color32::from_rgb(0xfd, 0xf6, 0xf0),
+        table: Color32::from_rgb(0xe8, 0xdf, 0xce),
+        grid_line: Color32::from_rgba_premultiplied(3, 2, 2, 14),
     }
 }
 
 pub const fn dark_palette() -> Palette {
     Palette {
         cream: Color32::from_rgb(0x21, 0x1c, 0x18),
+        rail: Color32::from_rgb(0x14, 0x10, 0x0d),
         card: Color32::from_rgb(0x2b, 0x25, 0x20),
+        field: Color32::from_rgb(0x21, 0x1c, 0x18),
         border: Color32::from_rgb(0x4b, 0x3f, 0x35),
         rule: Color32::from_rgb(0x6d, 0x5c, 0x4b),
         ink: Color32::from_rgb(0xf2, 0xe8, 0xdd),
         text: Color32::from_rgb(0xd3, 0xc2, 0xb2),
         muted: Color32::from_rgb(0xa9, 0x93, 0x7e),
-        accent: Color32::from_rgb(0xcd, 0x74, 0x51),
-        accent_hover: Color32::from_rgb(0xdb, 0x86, 0x64),
-        accent_faded: Color32::from_rgb(0x50, 0x39, 0x2b),
+        accent: Color32::from_rgb(0x9d, 0xcb, 0xa0),
+        accent_hover: Color32::from_rgb(0xb3, 0xdc, 0xb5),
+        accent_faded: Color32::from_rgb(0x2d, 0x3b, 0x2c),
+        on_accent: Color32::from_rgb(0x0e, 0x20, 0x12),
+        highlighter: Color32::from_rgb(0xe9, 0xcf, 0x55),
         hover_bg: Color32::from_rgb(0x38, 0x30, 0x28),
-        green: Color32::from_rgb(0x8c, 0xbf, 0x99),
+        green: Color32::from_rgb(0x9d, 0xcb, 0xa0),
         red: Color32::from_rgb(0xe0, 0x82, 0x6e),
-        on_accent: Color32::from_rgb(0xff, 0xf8, 0xf2),
+        table: Color32::from_rgb(0x16, 0x12, 0x10),
+        grid_line: Color32::from_rgba_premultiplied(2, 2, 2, 11),
     }
 }
 
@@ -126,6 +146,22 @@ pub fn paper_edge() -> Color32 {
     }
 }
 
+/// Paint the faint 24 px graph-paper grid across `rect` (clipped to the painter).
+pub fn paint_grid(painter: &egui::Painter, rect: egui::Rect) {
+    let step = 24.0;
+    let stroke = Stroke::new(1.0, grid_line());
+    let mut x = (rect.left() / step).floor() * step;
+    while x <= rect.right() {
+        painter.line_segment([egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())], stroke);
+        x += step;
+    }
+    let mut y = (rect.top() / step).floor() * step;
+    while y <= rect.bottom() {
+        painter.line_segment([egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)], stroke);
+        y += step;
+    }
+}
+
 /// Aliases other screens reference for the same tokens.
 /// The warm accent-brown used on page numbers and grips.
 pub fn brown() -> Color32 { pal().accent }
@@ -137,6 +173,9 @@ pub fn serif_family() -> FontFamily {
 /// Named family: heavier serif for large headings.
 pub fn serif_bold_family() -> FontFamily {
     FontFamily::Name("serif-bold".into())
+}
+pub fn serif_strong_family() -> FontFamily {
+    serif_bold_family()
 }
 /// Named family: real bold sans (used by [`strong`]).
 pub fn bold_family() -> FontFamily {
@@ -225,6 +264,15 @@ pub fn accent_col() -> Color32 { pal().accent }
 pub fn accent_hover() -> Color32 { pal().accent_hover }
 pub fn accent_faded() -> Color32 { pal().accent_faded }
 pub fn hover_bg() -> Color32 { pal().hover_bg }
+pub fn rail() -> Color32 { pal().rail }
+pub fn field() -> Color32 { pal().field }
+pub fn highlighter() -> Color32 { pal().highlighter }
+pub fn table() -> Color32 { pal().table }
+pub fn grid_line() -> Color32 { pal().grid_line }
+/// Dark ink for text painted on the highlighter (same in both modes).
+pub fn on_highlighter() -> Color32 { Color32::from_rgb(0x33, 0x2a, 0x24) }
+/// Dock label color (AA on the rail in both modes).
+pub fn dock_text() -> Color32 { Color32::from_rgb(0xe9, 0xdf, 0xd2) }
 pub fn green() -> Color32 { pal().green }
 pub fn red() -> Color32 { pal().red }
 pub fn bad() -> Color32 { pal().red }
@@ -361,11 +409,11 @@ fn setup_style(ctx: &Context) {
         v.panel_fill = p.cream;
         v.window_fill = p.card;
         v.window_stroke = Stroke::new(1.0, p.border);
-        v.window_corner_radius = CornerRadius::same(10);
-        v.menu_corner_radius = CornerRadius::same(8);
+        v.window_corner_radius = CornerRadius::same(16);
+        v.menu_corner_radius = CornerRadius::same(12);
         v.faint_bg_color = p.cream;
-        v.extreme_bg_color = if is_dark() { p.cream } else { p.card }; // text edit backgrounds
-        v.text_edit_bg_color = Some(p.card);
+        v.extreme_bg_color = p.field; // text edit backgrounds
+        v.text_edit_bg_color = Some(p.field);
         v.code_bg_color = p.accent_faded;
         v.hyperlink_color = p.accent;
         v.warn_fg_color = p.muted;
@@ -375,6 +423,8 @@ fn setup_style(ctx: &Context) {
 
         v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, p.text);
         v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, p.border);
+        v.widgets.noninteractive.corner_radius = CornerRadius::same(12);
+        v.widgets.inactive.corner_radius = CornerRadius::same(12);
         v.widgets.inactive.weak_bg_fill = p.card;
         v.widgets.inactive.bg_fill = p.card;
         v.widgets.inactive.bg_stroke = Stroke::new(1.0, p.border);
@@ -382,17 +432,17 @@ fn setup_style(ctx: &Context) {
         v.widgets.hovered.bg_fill = p.hover_bg;
         v.widgets.hovered.fg_stroke = Stroke::new(1.0, p.ink);
         v.widgets.hovered.bg_stroke = Stroke::new(1.0, p.border);
-        v.widgets.hovered.corner_radius = CornerRadius::same(6);
+        v.widgets.hovered.corner_radius = CornerRadius::same(12);
         v.widgets.active.weak_bg_fill = p.accent_faded;
         v.widgets.active.bg_fill = p.accent_faded;
         v.widgets.active.fg_stroke = Stroke::new(1.0, p.ink);
         v.widgets.active.bg_stroke = Stroke::new(1.0, p.accent);
-        v.widgets.active.corner_radius = CornerRadius::same(6);
+        v.widgets.active.corner_radius = CornerRadius::same(12);
         v.widgets.open.weak_bg_fill = p.hover_bg;
         v.widgets.open.bg_fill = p.hover_bg;
         v.widgets.open.fg_stroke = Stroke::new(1.0, p.ink);
         v.widgets.open.bg_stroke = Stroke::new(1.0, p.border);
-        v.widgets.open.corner_radius = CornerRadius::same(6);
+        v.widgets.open.corner_radius = CornerRadius::same(12);
 
         style.text_styles.clear();
         style.text_styles.insert(TextStyle::Body, FontId::new(13.0, FontFamily::Proportional));

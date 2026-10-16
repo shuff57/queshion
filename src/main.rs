@@ -11,10 +11,13 @@ use eframe::egui;
 pub mod ai;
 pub mod bankui;
 pub mod examui;
+pub mod equation;
 pub mod export;
 pub mod figures;
 pub mod figuresui;
+pub mod kit;
 pub mod formats;
+pub mod importui;
 pub mod layout;
 pub mod model;
 pub mod qedit;
@@ -35,6 +38,16 @@ pub struct Settings {
     pub ai_base: String, // custom OpenAI-compatible base URL
     #[serde(default)]
     pub dark: bool, // dark palette; applied via theme::set_dark
+    /// Home screen view modes (false = Cards, true = List).
+    #[serde(default)]
+    pub home_exams_list: bool,
+    #[serde(default)]
+    pub home_banks_list: bool,
+    /// Banks list / Bank editor view modes (false = Cards, true = List), bank worker.
+    #[serde(default)]
+    pub banks_list_view: bool,
+    #[serde(default)]
+    pub bank_edit_list_view: bool,
 }
 
 #[derive(Clone)]
@@ -56,7 +69,6 @@ pub struct App {
     pub bank: Option<Id>,                // open bank editor
     pub exam: Option<Id>,                // open exam editor
     pub qedit: Option<qedit::Draft>,     // open question editor modal
-    pub import_open: bool,
     pub paste: String,
     pub ai: ai::Ai,
     pub storage_info: bool, // topbar ⓘ: "where your work is stored" popup
@@ -85,6 +97,9 @@ pub struct App {
     pub import_name: String,
     /// Figures screen + insert-figure modal state.
     pub figs: figuresui::FigUi,
+    /// QA hook: scripted input (QUESHION_SCRIPT), see `raw_input_hook`.
+    pub qa_steps: Vec<String>,
+    pub qa_frame: u64,
 }
 
 /// Shared constructor so the window path and the headless selftest path build the
@@ -107,13 +122,12 @@ impl App {
             settings.ai_model = "gemma4:31b".to_string();
         }
         theme::set_dark(settings.dark, Some(ctx));
-        let mut app = App {
+        let app = App {
             store: Store::load(),
             screen: Screen::Welcome,
             bank: None,
             exam: None,
             qedit: None,
-            import_open: false,
             paste: String::new(),
             ai: ai::Ai::default(),
             panel_bank: None,
@@ -133,6 +147,10 @@ impl App {
             ai_hint: String::new(),
             import_name: String::new(),
             figs: Default::default(),
+            qa_steps: std::env::var("QUESHION_SCRIPT")
+                .map(|v| v.split(';').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect())
+                .unwrap_or_default(),
+            qa_frame: 0,
         };
         let mut app = app; // non-mut unless the capture hook below needs it
         // Screen-capture/test hook: QUESHION_SCREEN opens a given screen on startup.
@@ -168,6 +186,59 @@ impl App {
 }
 
 impl eframe::App for App {
+    /// Test hook: QUESHION_SCRIPT="click:x,y;text:abc;key:Enter;wait" injects one input step
+    /// every 10 frames after a 60 frame warm-up. Coordinates are egui points.
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        if self.qa_steps.is_empty() {
+            return;
+        }
+        ctx.request_repaint();
+        self.qa_frame += 1;
+        if self.qa_frame < 60 || self.qa_frame % 10 != 0 {
+            return;
+        }
+        let step = self.qa_steps.remove(0);
+        eprintln!("qa step {} at frame {}", step, self.qa_frame);
+        if step == "dump" {
+            eprintln!("qa draft stem = {:?}", self.qedit.as_ref().map(|d| d.stem.clone()));
+        }
+        let (cmd, arg) = step.split_once(':').unwrap_or((step.as_str(), ""));
+        let mods = egui::Modifiers::NONE;
+        let pt = |a: &str| {
+            let (x, y) = a.split_once(',').unwrap_or(("0", "0"));
+            egui::pos2(x.parse().unwrap_or(0.0), y.parse().unwrap_or(0.0))
+        };
+        match cmd {
+            "click" => {
+                let p = pt(arg);
+                raw.events.push(egui::Event::PointerMoved(p));
+                raw.events.push(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: true, modifiers: mods });
+                raw.events.push(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: false, modifiers: mods });
+            }
+            "move" => raw.events.push(egui::Event::PointerMoved(pt(arg))),
+            "text" => raw.events.push(egui::Event::Text(arg.to_string())),
+            "key" => {
+                let key = match arg {
+                    "Enter" => Some(egui::Key::Enter),
+                    "Escape" => Some(egui::Key::Escape),
+                    "End" => Some(egui::Key::End),
+                    "Home" => Some(egui::Key::Home),
+                    "Tab" => Some(egui::Key::Tab),
+                    "ArrowRight" => Some(egui::Key::ArrowRight),
+                    "ArrowLeft" => Some(egui::Key::ArrowLeft),
+                    "Backspace" => Some(egui::Key::Backspace),
+                    _ => None,
+                };
+                if let Some(key) = key {
+                    for pressed in [true, false] {
+                        raw.events.push(egui::Event::Key { key, physical_key: Some(key), pressed, repeat: false, modifiers: mods });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         // Sidebar + active screen + shell overlays (import dialog, help, toasts).
@@ -247,11 +318,19 @@ fn main() -> Result<(), eframe::Error> {
     if handle_headless() {
         return Ok(());
     }
+    // Test hook: QUESHION_WINSIZE=WxH forces the initial inner size (e.g. 860x700).
+    let size = std::env::var("QUESHION_WINSIZE")
+        .ok()
+        .and_then(|v| {
+            let (w, h) = v.trim().split_once('x')?;
+            Some([w.parse::<f32>().ok()?, h.parse::<f32>().ok()?])
+        })
+        .unwrap_or([1180.0, 780.0]);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("queShion")
             .with_decorations(true)
-            .with_inner_size([1180.0, 780.0])
+            .with_inner_size(size)
             .with_min_inner_size([760.0, 520.0]),
         ..Default::default()
     };

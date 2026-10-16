@@ -205,7 +205,7 @@ fn parse_tagged(tag: &str, lines: &[String]) -> Result<(String, Kind), String> {
                     flag
                 });
             }
-            let mut stem = stem_lines.join(" ");
+            let stem = stem_lines.join(" ");
             if stem.is_empty() {
                 return Err("no stem — write the statement on the line after the TF tag, and T or F on a later line".into());
             }

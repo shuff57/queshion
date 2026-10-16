@@ -663,7 +663,7 @@ fn coordinate_grid_params() -> Vec<ParamDef> {
 const PALETTE: [&str; 5] = ["#1f5fbf", "#c0392b", "#2a8a3e", "#8e44ad", "#d68910"];
 
 fn coordinate_grid_render(p: &Params) -> String {
-    let (mut x0, mut x1, mut y0, mut y1) = (p.f("xmin"), p.f("xmax"), p.f("ymin"), p.f("ymax"));
+    let (x0, mut x1, y0, mut y1) = (p.f("xmin"), p.f("xmax"), p.f("ymin"), p.f("ymax"));
     if x1 <= x0 { x1 = x0 + 1.0; }
     if y1 <= y0 { y1 = y0 + 1.0; }
     let (xs, ys) = (p.f("xstep").max(1e-6), p.f("ystep").max(1e-6));
@@ -833,7 +833,7 @@ fn number_line_params() -> Vec<ParamDef> {
 }
 
 fn number_line_render(p: &Params) -> String {
-    let (mut lo, mut hi) = (p.f("min"), p.f("max"));
+    let (lo, mut hi) = (p.f("min"), p.f("max"));
     if hi <= lo { hi = lo + 1.0; }
     let step = p.f("step").max(1e-6);
     let (w, h) = (680.0, 120.0);
@@ -1043,7 +1043,6 @@ fn obl(p: P3) -> Pt {
 }
 fn obl_view() -> P3 { let (k, a) = (0.5f64, 40f64.to_radians()); (k * a.cos(), -1.0, k * a.sin()) }
 fn sub3(a: P3, b: P3) -> P3 { (a.0 - b.0, a.1 - b.1, a.2 - b.2) }
-fn cross3(a: P3, b: P3) -> P3 { (a.1 * b.2 - a.2 * b.1, a.2 * b.0 - a.0 * b.2, a.0 * b.1 - a.1 * b.0) }
 fn dot3(a: P3, b: P3) -> f64 { a.0 * b.0 + a.1 * b.1 + a.2 * b.2 }
 
 struct Solid { v: Vec<P3>, faces: Vec<Vec<usize>> }
@@ -1772,8 +1771,6 @@ fn composite_render(p: &Params) -> String {
     for (a, b, t) in &dims {
         let (pa, pb) = (m.p(*a), m.p(*b));
         let u = unit_v(pa, pb);
-        let nr = (-u.1, u.0); // right of travel on screen (y down): rotate +90 degrees
-        let nr = (-nr.0, -nr.1);
         let nr = (u.1 * -1.0 * -1.0, -u.0); // right of travel in screen coords
         let _ = nr;
         let right = (-u.1, u.0);

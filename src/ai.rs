@@ -297,7 +297,7 @@ mod tests {
     use super::*;
 
     fn settings(provider: &str, model: &str, base: &str) -> Settings {
-        Settings { ai_provider: provider.into(), ai_model: model.into(), ai_base: base.into(), dark: bool::default() }
+        Settings { ai_provider: provider.into(), ai_model: model.into(), ai_base: base.into(), dark: bool::default(), ..Default::default() }
     }
 
     #[test]

@@ -339,10 +339,16 @@ impl Workspace {
                 let avail = ui.available_width() - 18.0; // vertical scrollbar allowance
                 let cols = ((avail + 12.0) / (CARD_W + 12.0)).floor().max(1.0) as usize;
                 let mut budget = 10u8;
+                // Cards flex to fill the row (no blank strip at wide sizes).
+                let mut cw = ((avail - 12.0 * (cols as f32 - 1.0)) / cols as f32).max(CARD_W);
+                if self.modal {
+                    cw = cw.min(CARD_W + 60.0);
+                }
                 for chunk in list.chunks(cols) {
                     ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing.x = 12.0;
                         for (i, def) in chunk {
-                            if card(ui, &ctx, def, *i, &mut budget) {
+                            if card(ui, &ctx, def, *i, &mut budget, cw) {
                                 picked = Some(*i);
                             }
                         }
@@ -371,7 +377,7 @@ impl Workspace {
         Frame::new()
             .fill(theme::card())
             .stroke(Stroke::new(1.0, theme::border()))
-            .corner_radius(CornerRadius::same(10))
+            .corner_radius(CornerRadius::same(crate::kit::R_CARD))
             .inner_margin(Margin::same(12))
             .show(ui, |ui| {
                 ui.label(theme::strong("Import your own figure").size(13.0));
@@ -513,7 +519,7 @@ impl Workspace {
                 Frame::new()
                     .fill(egui::Color32::WHITE)
                     .stroke(Stroke::new(1.0, theme::border()))
-                    .corner_radius(CornerRadius::same(10))
+                    .corner_radius(CornerRadius::same(crate::kit::R_CARD))
                     .inner_margin(Margin::same(10))
                     .show(ui, |ui| {
                         ui.set_width((w - 22.0).max(100.0));
@@ -640,42 +646,33 @@ fn import_any(bytes: &[u8]) -> Result<(Option<String>, Vec<u8>), String> {
 // ---------- widgets ----------
 
 fn ghost(ui: &mut Ui, label: &str) -> egui::Response {
-    ui.add(
-        Button::new(theme::text(label))
-            .fill(theme::card())
-            .stroke(Stroke::new(1.0, theme::border()))
-            .corner_radius(CornerRadius::same(6)),
-    )
+    crate::kit::ghost_button(ui, label)
 }
 
 fn accent_btn(ui: &mut Ui, label: &str) -> egui::Response {
-    ui.add(Button::new(theme::on_accent(label)).fill(theme::accent_col()).corner_radius(CornerRadius::same(8)))
+    crate::kit::primary_button(ui, label)
 }
 
 fn tab(ui: &mut Ui, label: &str, active: bool) -> bool {
-    let b = Button::new(if active { theme::accent(label) } else { theme::text(label) })
-        .fill(if active { theme::accent_faded() } else { egui::Color32::TRANSPARENT })
-        .stroke(Stroke::NONE)
-        .corner_radius(CornerRadius::same(8));
-    ui.add(b).clicked()
+    crate::kit::chip_toggle(ui, label, active).clicked()
 }
 
 /// One browser card; true when clicked.
-fn card(ui: &mut Ui, ctx: &egui::Context, def: &FigureDef, idx: usize, budget: &mut u8) -> bool {
+fn card(ui: &mut Ui, ctx: &egui::Context, def: &FigureDef, idx: usize, budget: &mut u8, cw: f32) -> bool {
     let resp = Frame::new()
         .fill(theme::card())
         .stroke(Stroke::new(1.0, theme::border()))
-        .corner_radius(CornerRadius::same(10))
+        .corner_radius(CornerRadius::same(crate::kit::R_CARD))
         .inner_margin(Margin::same(10))
         .show(ui, |ui| {
-            ui.set_width(CARD_W - 20.0);
-            ui.set_height(190.0);
+            ui.set_width(cw - 20.0);
+            ui.set_height(218.0);
             // Vertical layout: the parent is horizontal_top, and a Frame
             // inherits its direction — without the wrap the title, subject
             // and blurb all draw side-by-side on one row (overwriting).
             ui.vertical(|ui| {
                 Frame::new().fill(egui::Color32::WHITE).corner_radius(CornerRadius::same(6)).show(ui, |ui| {
-                    ui.set_width(CARD_W - 20.0);
+                    ui.set_width(cw - 20.0);
                     ui.set_height(100.0);
                     ui.centered_and_justified(|ui| match thumb(ctx, def, budget) {
                         Some(t) => {
@@ -690,7 +687,7 @@ fn card(ui: &mut Ui, ctx: &egui::Context, def: &FigureDef, idx: usize, budget: &
                 ui.label(theme::strong(def.title).size(13.0));
                 ui.label(theme::muted(def.subject.name()).size(11.0));
                 ui.vertical(|ui| {
-                    ui.set_max_width(CARD_W - 24.0);
+                    ui.set_max_width(cw - 24.0);
                     ui.label(
                         theme::text(def.blurb).size(11.0),
                     );
@@ -702,7 +699,7 @@ fn card(ui: &mut Ui, ctx: &egui::Context, def: &FigureDef, idx: usize, budget: &
     if r.hovered() {
         ui.painter().rect_stroke(
             resp.rect,
-            CornerRadius::same(10),
+            CornerRadius::same(crate::kit::R_CARD),
             Stroke::new(1.5, theme::accent_col()),
             egui::StrokeKind::Inside,
         );
@@ -802,17 +799,16 @@ impl crate::App {
         let ctx = ui.ctx().clone();
         let mut ws = std::mem::take(&mut self.figs.ws);
         let mut act = Act::None;
-        egui::CentralPanel::default()
-            .frame(Frame::new().fill(theme::cream()).inner_margin(Margin::same(24)))
-            .show(ui, |ui| {
-                ui.label(theme::serif_strong("Figures").size(28.0));
-                ui.label(
-                    theme::muted("Physics, biology, chemistry and math diagrams you can tune, export, or attach to a question.")
-                        .size(13.0),
-                );
-                ui.add_space(12.0);
-                act = ws.show(ui);
-            });
+        crate::screens::desk_panel(ui, 24, |ui| {
+            crate::kit::page_header(
+                ui,
+                &["Home", "Figures"],
+                "Figures",
+                Some("Physics, biology, chemistry and math diagrams you can tune, export, or attach to a question."),
+            );
+            ui.add_space(12.0);
+            act = ws.show(ui);
+        });
         self.figs.ws = ws;
         match act {
             Act::Save(out) => {
@@ -1070,7 +1066,7 @@ mod tests {
         let ctx = egui::Context::default();
         theme::setup(&ctx);
         let mut ws = Workspace::new(false);
-        let mut frame = |ws: &mut Workspace| {
+        let frame = |ws: &mut Workspace| {
             let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
                 let _ = ws.show(ui);
             });
