@@ -79,4 +79,4 @@ User picked **queShion** — over the screening's top pick Chalkshed, and over t
 families (Shufflery, Freshsheet, etc.). queShion wasn't from those rounds: the "sh" sound is
 carried by `-tion` (ques**tion**), not by the literal letters S–H.
 Renamed 2026-10-15: crate `queshion`, app title "queShion", store dir `~/.local/share/queshion/`,
-env vars `QUESHION_*`; repo dir stays `~/testparrot`. GitHub repo: `queshion` (public).
+env vars `QUESHION_*`; repo dir moved to `~/queshion` 2026-10-15. GitHub repo: `queshion` (public).
