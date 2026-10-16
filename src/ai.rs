@@ -1,0 +1,390 @@
+//! LLM conversion of a test photo/scan/screenshot into Blackboard import text (see
+//! `formats::parse_blackboard` for the exact grammar the model must produce).
+//!
+//! One conversion job at a time: `send_image` spawns a `std::thread` (egui never blocks)
+//! and keeps the result channel in [`Ai`]; the Imports screen calls `poll` each frame and
+//! the thread calls `ctx.request_repaint()` when it finishes, so the parsed questions show
+//! up on the next frame. API keys only travel as environment variables — `OPENROUTER_API_KEY`
+//! for OpenRouter, `QUESHION_AI_KEY` for a custom OpenAI-compatible endpoint — they are
+//! read at request time and never stored, logged or echoed.
+
+pub use crate::Settings;
+
+use serde_json::{Value, json};
+use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use std::time::Duration;
+
+const OLLAMA_DEFAULT_BASE: &str = "http://127.0.0.1:11434";
+const OPENROUTER_BASE: &str = "https://openrouter.ai/api/v1";
+/// Small local vision model that a laptop GPU can carry through a slow image round trip.
+const OLLAMA_DEFAULT_MODEL: &str = "gemma4:31b";
+/// OpenRouter default mirrors the local Ollama model on the free tier; set `ai_model` to override.
+const OPENROUTER_DEFAULT_MODEL: &str = "qwen/qwen3-vl-8b-instruct:free";
+/// Custom OpenAI-compatible endpoints default to the same model as local Ollama unless
+/// `ai_model` says otherwise (the base URL decides what that model id actually means).
+const CUSTOM_DEFAULT_MODEL: &str = "gemma4:31b";
+/// Images are slow, on small local GPUs especially.
+const TIMEOUT: Duration = Duration::from_secs(300);
+
+const OPENROUTER_KEY_ENV: &str = "OPENROUTER_API_KEY";
+const CUSTOM_KEY_ENV: &str = "QUESHION_AI_KEY";
+/// Ollama's hosted service: same OpenAI-compatible surface (`/v1`), keyed.
+const OLLAMA_CLOUD_BASE: &str = "https://api.ollama.com/v1";
+const OLLAMA_CLOUD_DEFAULT_MODEL: &str = "gemma4:31b";
+/// Ollama Cloud's key: `OLLAMA_API_KEY`, else the ollama-cloud tool's own credentials file.
+const CLOUD_KEY_ENV: &str = "OLLAMA_API_KEY";
+const CLOUD_KEY_FILE: &str = ".config/ollama-cloud/credentials.json";
+
+/// The transcription instruction. Modeled on Test Parrot's own "AI assistant" promise: it
+/// turns the photo back into a file Test Parrot imports — the test as printed, pictures
+/// and all — so the model must emit exactly what [`crate::formats`] parses.
+const TRANSCRIBE_PROMPT: &str = r#"You convert photos/scans/screenshots of printed tests, quizzes and worksheets into a plain-text question file.
+Transcribe the ENTIRE test in the Blackboard import text format, preserving the original question order and answer order:
+- One blank line between questions.
+- Start each question with its type tag on its own line: MC (multiple choice, pick one), MA (multiple correct answers), TF (statement then T or F as its correct answer), ESS (short answer - give a concise sample answer), NUM (numeric - the bare number, like 4.5 or 3/8 allowed only if the source shows one), FIB (fill-in-the-blank: keep the ___ in the stem; then one line per blank: its accepted answer, alternatives separated by " OR "), MAT (then pairs of lines: left item line, right item line, for each pair; then a line with only `-`, then any distractor lines), ORD (ordered answers one per line in the correct order).
+- Put * before the correct choice line for MC/MA (keep the star off the text itself).
+- Transcribe text EXACTLY as printed: same capitalization, punctuation, and spelling; fix nothing.
+- Keep each answer choice on one line; shorten only if a choice was inline on the source line.
+- If a question shows a diagram/image you cannot transcribe, keep the stem and add a line `[picture: short description]`.
+- Do not add, merge, drop, or renumber questions. Do not add explanations or commentary.
+- Output ONLY the plain text file, no markdown fences, no headers."#;
+
+/// The instruction plus the user's typed note about the source, if any.
+/// Public so the headless `QUESHION_CONVERT` path shares the UI's prompt.
+pub fn prompt_for(hint: &str) -> String {
+    transcription_prompt(hint)
+}
+
+fn transcription_prompt(hint: &str) -> String {
+    let hint = hint.trim();
+    if hint.is_empty() {
+        return TRANSCRIBE_PROMPT.to_string();
+    }
+    format!("{TRANSCRIBE_PROMPT}\n\nUser note about this source:\n{hint}")
+}
+
+#[derive(Clone, Debug)]
+pub struct AiCfg {
+    /// Normalized provider: "ollama" (the default), "openrouter", or "custom".
+    pub provider: String,
+    pub base: String,
+    pub model: String,
+}
+
+impl AiCfg {
+    pub fn from(s: &Settings) -> AiCfg {
+        let provider = match s.ai_provider.trim().to_ascii_lowercase().as_str() {
+            "openrouter" => "openrouter",
+            "custom" => "custom",
+            "ollama-cloud" | "cloud" | "ollama cloud" => "cloud",
+            // Empty or unknown settings fall back to local Ollama.
+            _ => "ollama",
+        };
+        let model: String = if s.ai_model.trim().is_empty() {
+            match provider {
+                "openrouter" => OPENROUTER_DEFAULT_MODEL.to_string(),
+                "custom" => CUSTOM_DEFAULT_MODEL.to_string(),
+                "cloud" => OLLAMA_CLOUD_DEFAULT_MODEL.to_string(),
+                _ => OLLAMA_DEFAULT_MODEL.to_string(),
+            }
+        } else {
+            s.ai_model.trim().to_string()
+        };
+        let base: String = match provider {
+            "openrouter" => OPENROUTER_BASE.to_string(),
+            "cloud" => OLLAMA_CLOUD_BASE.to_string(),
+            "custom" => s.ai_base.trim().trim_end_matches('/').to_string(),
+            _ => OLLAMA_DEFAULT_BASE.to_string(),
+        };
+        AiCfg { provider: provider.to_string(), base, model }
+    }
+
+    /// One human sentence about where the API key for this provider comes from.
+    pub fn key_source_help(&self) -> String {
+        match self.provider.as_str() {
+            "openrouter" => format!("OpenRouter reads the API key from the {OPENROUTER_KEY_ENV} environment variable."),
+            "cloud" => format!(
+                "Ollama Cloud reads the API key from the {CLOUD_KEY_ENV} environment variable, or from ~/{CLOUD_KEY_FILE} when the variable is unset."
+            ),
+            "custom" => format!("A custom endpoint optionally reads an API key from the {CUSTOM_KEY_ENV} environment variable."),
+            _ => "Ollama runs on the local machine and needs no API key.".to_string(),
+        }
+    }
+
+    fn key_env(&self) -> Option<&'static str> {
+        match self.provider.as_str() {
+            "openrouter" => Some(OPENROUTER_KEY_ENV),
+            "custom" => Some(CUSTOM_KEY_ENV),
+            "cloud" => Some(CLOUD_KEY_ENV),
+            _ => None,
+        }
+    }
+}
+
+/// The API key for a request, resolved at request time. Never stored, logged or echoed:
+/// for Ollama Cloud the environment wins, then the ollama-cloud tool's own credentials
+/// file (the `apiKey` field, whatever file the tool wrote); other providers use env only.
+fn request_key(cfg: &AiCfg) -> Option<String> {
+    if let Some(var) = cfg.key_env()
+        && let Ok(k) = std::env::var(var)
+        && !k.is_empty()
+    {
+        return Some(k);
+    }
+    if cfg.provider == "cloud" {
+        let file = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .map(|h| h.join(CLOUD_KEY_FILE));
+        if let Some(bytes) = file.and_then(|p| std::fs::read(p).ok())
+            && let Ok(v) = serde_json::from_slice::<Value>(&bytes)
+            && let Some(k) = v.get("apiKey").and_then(Value::as_str)
+        {
+            return Some(k.to_string());
+        }
+    }
+    None
+}
+
+/// One pending conversion job; `Default` starts with none.
+#[derive(Default)]
+pub struct Ai {
+    job: Option<Receiver<Result<String, String>>>,
+}
+
+impl Ai {
+    /// Starts converting one image in the background. The channel delivers the model's
+    /// reply with [`extract_import_text`] already applied, so `poll` returns import-ready
+    /// text; the thread asks egui to repaint the moment it is done.
+    pub fn send_image(&mut self, bytes: Vec<u8>, mime: &str, hint: String, cfg: &AiCfg, ctx: &egui::Context) {
+        let prompt = transcription_prompt(&hint);
+        let (tx, rx) = channel();
+        self.job = Some(rx);
+        let cfg = cfg.clone();
+        let mime = mime.to_string();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = transcribe(&bytes, &mime, &cfg, &prompt).and_then(|raw| {
+                let cleaned = extract_import_text(&raw);
+                if cleaned.is_empty() { Err("The model returned no text.".to_string()) } else { Ok(cleaned) }
+            });
+            let _ = tx.send(result);
+            ctx.request_repaint();
+        });
+    }
+
+    /// Picks up a finished job, if any. Called every frame from the Imports screen.
+    pub fn poll(&mut self) -> Option<Result<String, String>> {
+        let Some(rx) = self.job.as_mut() else { return None };
+        match rx.try_recv() {
+            Ok(r) => {
+                self.job = None;
+                Some(r)
+            }
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => {
+                self.job = None;
+                Some(Err("the AI job ended without sending a result".to_string()))
+            }
+        }
+    }
+}
+
+/// One round trip: Ollama's native `/api/chat` or an OpenAI-compatible `/chat/completions`.
+/// Also the entry point for the headless `QUESHION_CONVERT` path.
+pub fn transcribe(bytes: &[u8], mime: &str, cfg: &AiCfg, prompt: &str) -> Result<String, String> {
+    match cfg.provider.as_str() {
+        "ollama" => ollama_chat(cfg, prompt, bytes),
+        _ => openai_chat(cfg, prompt, mime, bytes),
+    }
+}
+
+fn agent() -> ureq::Agent {
+    ureq::Agent::config_builder().timeout_global(Some(TIMEOUT)).http_status_as_error(false).build().into()
+}
+
+/// Ollama's native chat API: images ride in the message's `images` array as raw base64.
+fn ollama_chat(cfg: &AiCfg, prompt: &str, bytes: &[u8]) -> Result<String, String> {
+    let url = format!("{}/api/chat", cfg.base.trim_end_matches('/'));
+    let body = json!({
+        "model": cfg.model,
+        "messages": [{"role": "user", "content": prompt, "images": [base64_encode(bytes)]}],
+        "stream": false,
+    });
+    let reply = post_json(&url, body, None)?;
+    reply
+        .pointer("/message/content")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "The Ollama reply had no message content.".to_string())
+}
+
+/// OpenRouter and any custom OpenAI-compatible endpoint, with the image as a data URI.
+fn openai_chat(cfg: &AiCfg, prompt: &str, mime: &str, bytes: &[u8]) -> Result<String, String> {
+    let base = cfg.base.trim_end_matches('/');
+    if base.is_empty() {
+        return Err("Set a base URL for the custom AI endpoint in Settings.".to_string());
+    }
+    let url = format!("{base}/chat/completions");
+    let data_uri = format!("data:{mime};base64,{}", base64_encode(bytes));
+    let body = json!({
+        "model": cfg.model,
+        "stream": false,
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": data_uri}},
+        ]}],
+    });
+    let key = request_key(cfg);
+    let reply = post_json(&url, body, key.as_deref())?;
+    reply
+        .pointer("/choices/0/message/content")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "The reply had no message content.".to_string())
+}
+
+/// One JSON POST, with the same error shapes for both providers; answers with the body.
+fn post_json(url: &str, body: Value, key: Option<&str>) -> Result<Value, String> {
+    let mut req = agent().post(url).header("Content-Type", "application/json");
+    if let Some(k) = key {
+        req = req.header("Authorization", &format!("Bearer {k}"));
+    }
+    let mut resp = req.send(body.to_string()).map_err(|e| format!("Can't reach {url}: {e}"))?;
+    let status = resp.status().as_u16();
+    let text = resp.body_mut().read_to_string().map_err(|e| format!("Bad reply from {url}: {e}"))?;
+    let v: Value = serde_json::from_str(&text)
+        .map_err(|e| format!("{url} did not answer with JSON ({e}): {}", text.chars().take(160).collect::<String>()))?;
+    if !(200..300).contains(&status) {
+        let msg = v.pointer("/error/message").and_then(Value::as_str).or_else(|| v.get("error").and_then(Value::as_str)).unwrap_or("request failed");
+        return Err(format!("{url} answered {status}: {msg}"));
+    }
+    Ok(v)
+}
+
+/// Strips an accidental markdown fence (with its language tag) and outer whitespace; the
+/// `formats` parsers tolerate everything else a model might add around the import text.
+pub fn extract_import_text(raw: &str) -> String {
+    let mut s = raw.trim();
+    if let Some(rest) = s.strip_prefix("```")
+        && let Some((_, body)) = rest.split_once('\n')
+    {
+        let body = body.trim_end();
+        let body = body.strip_suffix("```").map_or(body, str::trim_end);
+        s = body;
+    }
+    s.trim().to_string()
+}
+
+/// Standard base64 (RFC 4648, with padding). Small local encoder; base64 is not a crate here.
+fn base64_encode(data: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let a = u32::from(chunk[0]);
+        let b = chunk.get(1).copied().map_or(0, u32::from);
+        let c = chunk.get(2).copied().map_or(0, u32::from);
+        let n = (a << 16) | (b << 8) | c;
+        out.push(TABLE[(n >> 18) as usize & 63] as char);
+        out.push(TABLE[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 { TABLE[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 2 { TABLE[n as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn settings(provider: &str, model: &str, base: &str) -> Settings {
+        Settings { ai_provider: provider.into(), ai_model: model.into(), ai_base: base.into() }
+    }
+
+    #[test]
+    fn prompt_names_every_tag_and_the_conventions() {
+        let p = transcription_prompt("");
+        for tag in ["MC", "MA", "TF", "ESS", "NUM", "FIB", "MAT", "ORD"] {
+            assert!(p.contains(&format!("{tag} (")), "prompt must name {tag}");
+        }
+        assert!(p.contains("___"), "prompt must mention fill-in-the-blank markers");
+        assert!(p.contains(" OR "), "prompt must mention the alternatives separator");
+        assert!(!p.contains("```"), "prompt must forbid markdown fences");
+    }
+
+    #[test]
+    fn prompt_appends_the_user_hint() {
+        let p = transcription_prompt("page 2 is multiple choice");
+        assert!(p.contains("User note about this source:\npage 2 is multiple choice"), "{p}");
+        // Empty hint changes nothing.
+        assert_eq!(transcription_prompt("  "), TRANSCRIBE_PROMPT);
+    }
+
+    #[test]
+    fn extract_strips_fences_and_whitespace() {
+        assert_eq!(extract_import_text("  \n```text\nMC\nQ?\n*a. 1\n```\n  "), "MC\nQ?\n*a. 1");
+        assert_eq!(extract_import_text("```\nMC\nQ?\n*a. 1\n```"), "MC\nQ?\n*a. 1");
+        assert_eq!(extract_import_text(" MC\nQ? "), "MC\nQ?");
+        // No content line after the fence: left as-is for the parsers to report.
+        assert_eq!(extract_import_text("```junk"), "```junk");
+    }
+
+    #[test]
+    fn cfg_maps_the_three_providers() {
+        let c = AiCfg::from(&settings("ollama", "", ""));
+        assert_eq!(c.provider, "ollama");
+        assert_eq!(c.base, OLLAMA_DEFAULT_BASE);
+        assert_eq!(c.model, OLLAMA_DEFAULT_MODEL);
+
+        let c = AiCfg::from(&settings("openrouter", "vendor/my-model", ""));
+        assert_eq!(c.provider, "openrouter");
+        assert_eq!(c.base, OPENROUTER_BASE);
+        assert_eq!(c.model, "vendor/my-model");
+
+        let c = AiCfg::from(&settings("custom", "", "https://api.example.com/v1/"));
+        assert_eq!(c.provider, "custom");
+        assert_eq!(c.base, "https://api.example.com/v1");
+        assert_eq!(c.model, CUSTOM_DEFAULT_MODEL);
+
+        // Empty or unknown provider settings fall back to local Ollama.
+        let c = AiCfg::from(&Settings::default());
+        assert_eq!(c.provider, "ollama");
+        assert_eq!(c.model, OLLAMA_DEFAULT_MODEL);
+    }
+
+    #[test]
+    fn key_help_names_the_env_var() {
+        assert!(AiCfg::from(&settings("openrouter", "", "")).key_source_help().contains(OPENROUTER_KEY_ENV));
+        assert!(AiCfg::from(&settings("custom", "", "")).key_source_help().contains(CUSTOM_KEY_ENV));
+        assert!(AiCfg::from(&settings("ollama", "", "")).key_source_help().contains("no API key"));
+    }
+
+    #[test]
+    fn base64_matches_known_vectors() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"hello"), "aGVsbG8=");
+        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+    }
+
+    #[test]
+    fn poll_reports_a_job_that_ended_without_a_result() {
+        let (tx, rx) = channel::<Result<String, String>>();
+        drop(tx);
+        let mut ai = Ai { job: Some(rx) };
+        assert!(matches!(ai.poll(), Some(Err(_))), "a dropped sender is an error, not silence");
+        assert!(ai.poll().is_none(), "the ended job must not stick");
+    }
+
+    #[test]
+    fn poll_silently_waits_for_a_running_job() {
+        let (tx, rx) = channel::<Result<String, String>>();
+        let mut ai = Ai { job: Some(rx) };
+        assert!(ai.poll().is_none());
+        assert!(ai.job.is_some());
+        tx.send(Ok("MC\nQ?\n*a. 1\n".to_string())).unwrap();
+        let _ = tx; // keep the channel alive until the reply is read
+        assert_eq!(ai.poll().unwrap().unwrap(), "MC\nQ?\n*a. 1\n");
+        assert!(ai.poll().is_none(), "the job is consumed once read");
+    }
+}

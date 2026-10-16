@@ -1,0 +1,23 @@
+[package]
+name = "queshion"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Turn anything into an exam: local question banks, exam layout, and AI conversion. queShion — a Rust clone of Test Parrot."
+rust-version = "1.90"
+
+[dependencies]
+egui = "0.36"
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11", "links"] }
+rfd = "0.17"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = "3"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp"] }
+sha2 = "0.10"
+zip = { version = "3", default-features = false, features = ["deflate"] }
+resvg = { version = "0.45", default-features = false, features = ["text", "system-fonts"] }
+
+[profile.release]
+strip = true
+lto = "thin"
