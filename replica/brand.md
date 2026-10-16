@@ -1,4 +1,4 @@
-# Brand — Test Parrot clone → SH-named app
+# Brand — queShion naming research
 
 Angle: teacher tool; local-first; question banks; print; versions; AI conversion.
 Name family: SH-initial compounds (user's initials). Second family (per user direction,

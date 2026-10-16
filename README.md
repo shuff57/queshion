@@ -21,6 +21,3 @@ question banks, printable exams, and one-shot AI conversion, all local-first.
 
 Data lives in `${XDG_DATA_HOME:-~/.local/share}/queshion/`. Headless helpers:
 `QUESHION_SELFTEST=1`, `QUESHION_SEED=1`, `QUESHION_CONVERT=<file>` (prints import text).
-
-Clone provenance: the original app's AI instructions document is archived at
-`assets/reference-test-parrot-ai-instructions.md` as the source-of-truth recon artifact.

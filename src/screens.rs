@@ -538,7 +538,7 @@ impl crate::App {
                 ui.label(
                     theme::text(
                         "PDFs, scans, screenshots, old Word documents, questions you type \
-                         yourself — Test Parrot gathers them into Question Banks and lays \
+                         yourself — queShion gathers them into Question Banks and lays \
                          them out as a clean, printable exam.",
                     )
                     .size(14.0),
@@ -774,7 +774,7 @@ impl crate::App {
             });
             ui.add_space(6.0);
             ui.label(theme::muted(
-                "Everything Test Parrot has read — pasted, converted by the AI, or read \
+                "Everything queShion has read — pasted, converted by the AI, or read \
                  from a file.",
             ));
             ui.add_space(10.0);
@@ -860,12 +860,12 @@ impl crate::App {
     pub fn ai_help_line(&self) -> String {
         match self.settings.ai_provider.as_str() {
             "cloud" => {
-                "Ollama Cloud runs gemma4:31b on Ollama's servers; Test Parrot reads the \
+                "Ollama Cloud runs gemma4:31b on Ollama's servers; queShion reads the \
                  key from the OLLAMA_API_KEY environment variable, or from ~/.config/ollama-cloud/credentials.json."
                     .to_string()
             }
             "openrouter" => {
-                "OpenRouter is a keyed service; Test Parrot reads the key from the \
+                "OpenRouter is a keyed service; queShion reads the key from the \
                  OPENROUTER_API_KEY environment variable."
                     .to_string()
             }
@@ -875,7 +875,7 @@ impl crate::App {
                     .to_string()
             }
             _ => "Ollama runs on your machine: install it, pull a vision model (the \
-                  default is gemma4:31b), and Test Parrot finds it at 127.0.0.1:11434."
+                  default is gemma4:31b), and queShion finds it at 127.0.0.1:11434."
                 .to_string(),
         }
     }
@@ -1258,14 +1258,14 @@ impl crate::App {
             return;
         }
         let mut open = true;
-        egui::Window::new("How Test Parrot works")
+        egui::Window::new("How queShion works")
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .min_width(560.0)
             .show(ctx, |ui| {
                 ui.label(theme::text(
-                    "Test Parrot is built around two ideas: Question Banks, which hold \
+                    "queShion is built around two ideas: Question Banks, which hold \
                      questions, and Exams, which pick and arrange them for printing.",
                 ));
                 ui.add_space(10.0);
@@ -1300,7 +1300,7 @@ impl crate::App {
 
     pub fn backup_now(&mut self) {
         let dest = rfd::FileDialog::new()
-            .set_file_name(format!("testparrot-backup-{}.zip", fmt_date(now_secs())))
+            .set_file_name(format!("queshion-backup-{}.zip", fmt_date(now_secs())))
             .save_file();
         let Some(dest) = dest else { return };
         match write_backup(&dest) {
@@ -1311,7 +1311,7 @@ impl crate::App {
 
     pub fn start_restore(&mut self) {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Test Parrot backups", &["zip"])
+            .add_filter("queShion backups", &["zip"])
             .pick_file()
         else {
             return;
@@ -1491,7 +1491,7 @@ fn mime_of(ext: &str) -> &'static str {
 fn pdf_first_page_png(data: &[u8]) -> Result<Vec<u8>, String> {
     use std::process::{Command, Stdio};
 
-    let dir = std::env::temp_dir().join(format!("testparrot-pdf-{}", now_ms()));
+    let dir = std::env::temp_dir().join(format!("queshion-pdf-{}", now_ms()));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let src = dir.join("in.pdf");
     std::fs::write(&src, data).map_err(|e| e.to_string())?;
