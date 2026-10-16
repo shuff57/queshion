@@ -13,7 +13,7 @@ use egui::{Align, Color32, CornerRadius, FontId, Layout, Margin, Painter, Pos2, 
 use crate::formats::ImportDoc;
 use crate::kit;
 use crate::model::{self, Id, Import, QKind, Question, QuestionBank};
-use crate::screens::{fmt_time, import_how_label, mime_of, now_secs, pdf_first_page_png, remap_empty_bank_ids, shell_frame, ImportFile};
+use crate::screens::{fmt_time, import_how_label, mime_of, now_secs, pdf_pages_png, remap_empty_bank_ids, shell_frame, ImportFile};
 use crate::theme;
 
 // ---------- screen state (UI-only, never persisted) ----------
@@ -190,8 +190,14 @@ fn add_bytes(app: &mut crate::App, st: &mut State, name: &str, bytes: Vec<u8>, h
             return;
         }
         "pdf" => {
-            match pdf_first_page_png(&bytes) {
-                Ok(png) => st.push_photo(name, "PDF, first page", "image/png", png),
+            match pdf_pages_png(&bytes) {
+                Ok(pages) => {
+                    let n = pages.len();
+                    for (i, png) in pages.into_iter().enumerate() {
+                        let label = if n == 1 { name.to_string() } else { format!("{name} · page {}", i + 1) };
+                        st.push_photo(&label, "PDF page", "image/png", png);
+                    }
+                }
                 Err(e) => app.toast_err(e),
             }
             return;
@@ -262,7 +268,8 @@ impl crate::App {
         };
         let cfg = crate::ai::AiCfg::from(&self.settings.clone());
         self.ai_busy = true;
-        self.ai.send_image(f.bytes, &f.mime, self.ai_hint.clone(), &cfg, ctx);
+        let page_no = f.name.rsplit_once("page ").and_then(|(_, n)| n.trim().parse().ok()).unwrap_or(1);
+        self.ai.send_image(f.bytes, &f.mime, self.ai_hint.clone(), page_no, &cfg, ctx);
     }
 
     /// Drains the background AI job into the matching source (never auto-imports).
@@ -273,12 +280,15 @@ impl crate::App {
         let Some(res) = self.ai.poll() else { return };
         self.ai_busy = false;
         let name = self.import_file.take().map(|f| f.name).unwrap_or_default();
+        let mut notes: Vec<String> = Vec::new();
         let outcome: Result<ImportDoc, String> = match res {
-            Ok(text) => match crate::formats::detect_and_parse(text.as_bytes(), "converted") {
-                Ok(d) if d.questions.is_empty() => Err("The AI found no questions in it.".to_string()),
-                Ok(d) => Ok(d),
-                Err(e) => Err(format!("Couldn't parse the AI transcription: {e}")),
-            },
+            Ok(c) => {
+                notes = c.warnings;
+                if c.cropped > 0 {
+                    notes.insert(0, format!("{} figure{} cropped from the page, {} redrawn as editable Figures-tab figures.", c.cropped, if c.cropped == 1 { "" } else { "s" }, c.redrawn));
+                }
+                if c.doc.questions.is_empty() { Err("The AI found no questions in it.".to_string()) } else { Ok(c.doc) }
+            }
             Err(e) => Err(format!("The AI couldn't read that: {e}")),
         };
         let mut err = None;
@@ -305,6 +315,8 @@ impl crate::App {
         });
         if let Some(e) = err {
             self.toast_err(e);
+        } else if let Some(n) = notes.iter().find(|n| !n.contains("cropped from the page")) {
+            self.toast_err(format!("{} (+{} more notes)", n, notes.len().saturating_sub(1)));
         }
     }
 }

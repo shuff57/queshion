@@ -156,6 +156,22 @@ pub fn registry() -> Vec<FigureDef> {
     v
 }
 
+/// Params for `def`: its defaults overridden by a JSON object of strings, bools and numbers
+/// (used by the headless figure hooks).
+pub fn params_from_json(def: &FigureDef, over: &serde_json::Value) -> Params {
+    let mut p = Params::defaults(&(def.params)());
+    for (k, v) in over.as_object().into_iter().flatten() {
+        match v {
+            serde_json::Value::Bool(b) => p.set_b(k, *b),
+            serde_json::Value::Number(n) if n.is_i64() => p.set_i(k, n.as_i64().unwrap_or(0)),
+            serde_json::Value::Number(n) => p.set_f(k, n.as_f64().unwrap_or(0.0)),
+            serde_json::Value::String(t) => p.set_s(k, t),
+            _ => {}
+        }
+    }
+    p
+}
+
 /// System fonts are loaded once and shared (loading per render made live drags stutter).
 fn fontdb() -> std::sync::Arc<resvg::usvg::fontdb::Database> {
     static DB: std::sync::OnceLock<std::sync::Arc<resvg::usvg::fontdb::Database>> = std::sync::OnceLock::new();

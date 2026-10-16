@@ -30,25 +30,14 @@ const TIMEOUT: Duration = Duration::from_secs(300);
 const OPENROUTER_KEY_ENV: &str = "OPENROUTER_API_KEY";
 const CUSTOM_KEY_ENV: &str = "QUESHION_AI_KEY";
 /// Ollama's hosted service: same OpenAI-compatible surface (`/v1`), keyed.
-const OLLAMA_CLOUD_BASE: &str = "https://api.ollama.com/v1";
+const OLLAMA_CLOUD_BASE: &str = "https://ollama.com/v1";
 const OLLAMA_CLOUD_DEFAULT_MODEL: &str = "gemma4:31b";
 /// Ollama Cloud's key: `OLLAMA_API_KEY`, else the ollama-cloud tool's own credentials file.
 const CLOUD_KEY_ENV: &str = "OLLAMA_API_KEY";
 const CLOUD_KEY_FILE: &str = ".config/ollama-cloud/credentials.json";
 
-/// The transcription instruction. Modeled on Test Parrot's own "AI assistant" promise: it
-/// turns the photo back into a file Test Parrot imports — the test as printed, pictures
-/// and all — so the model must emit exactly what [`crate::formats`] parses.
-const TRANSCRIBE_PROMPT: &str = r#"You convert photos/scans/screenshots of printed tests, quizzes and worksheets into a plain-text question file.
-Transcribe the ENTIRE test in the Blackboard import text format, preserving the original question order and answer order:
-- One blank line between questions.
-- Start each question with its type tag on its own line: MC (multiple choice, pick one), MA (multiple correct answers), TF (statement then T or F as its correct answer), ESS (short answer - give a concise sample answer), NUM (numeric - the bare number, like 4.5 or 3/8 allowed only if the source shows one), FIB (fill-in-the-blank: keep the ___ in the stem; then one line per blank: its accepted answer, alternatives separated by " OR "), MAT (then pairs of lines: left item line, right item line, for each pair; then a line with only `-`, then any distractor lines), ORD (ordered answers one per line in the correct order).
-- Put * before the correct choice line for MC/MA (keep the star off the text itself).
-- Transcribe text EXACTLY as printed: same capitalization, punctuation, and spelling; fix nothing.
-- Keep each answer choice on one line; shorten only if a choice was inline on the source line.
-- If a question shows a diagram/image you cannot transcribe, keep the stem and add a line `[picture: short description]`.
-- Do not add, merge, drop, or renumber questions. Do not add explanations or commentary.
-- Output ONLY the plain text file, no markdown fences, no headers."#;
+/// The conversion prompt: one page in, one queShion Ditto package (`docs/ditto-format.md`) out.
+const TRANSCRIBE_PROMPT: &str = include_str!("../prompts/ditto-convert.md");
 
 /// The instruction plus the user's typed note about the source, if any.
 /// Public so the headless `QUESHION_CONVERT` path shares the UI's prompt.
@@ -291,32 +280,27 @@ pub fn test_connection(cfg: &AiCfg) -> Result<(), String> {
 /// One pending conversion job; `Default` starts with none.
 #[derive(Default)]
 pub struct Ai {
-    job: Option<Receiver<Result<String, String>>>,
+    job: Option<Receiver<Result<Converted, String>>>,
 }
 
 impl Ai {
     /// Starts converting one image in the background. The channel delivers the model's
     /// reply with [`extract_import_text`] already applied, so `poll` returns import-ready
     /// text; the thread asks egui to repaint the moment it is done.
-    pub fn send_image(&mut self, bytes: Vec<u8>, mime: &str, hint: String, cfg: &AiCfg, ctx: &egui::Context) {
-        let prompt = transcription_prompt(&hint);
+    pub fn send_image(&mut self, bytes: Vec<u8>, mime: &str, hint: String, page_no: usize, cfg: &AiCfg, ctx: &egui::Context) {
         let (tx, rx) = channel();
         self.job = Some(rx);
         let cfg = cfg.clone();
         let mime = mime.to_string();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let result = transcribe(&bytes, &mime, &cfg, &prompt).and_then(|raw| {
-                let cleaned = extract_import_text(&raw);
-                if cleaned.is_empty() { Err("The model returned no text.".to_string()) } else { Ok(cleaned) }
-            });
-            let _ = tx.send(result);
+            let _ = tx.send(convert_page(&bytes, &mime, &hint, &cfg, page_no));
             ctx.request_repaint();
         });
     }
 
     /// Picks up a finished job, if any. Called every frame from the Imports screen.
-    pub fn poll(&mut self) -> Option<Result<String, String>> {
+    pub fn poll(&mut self) -> Option<Result<Converted, String>> {
         let Some(rx) = self.job.as_mut() else { return None };
         match rx.try_recv() {
             Ok(r) => {
@@ -335,10 +319,83 @@ impl Ai {
 /// One round trip: Ollama's native `/api/chat` or an OpenAI-compatible `/chat/completions`.
 /// Also the entry point for the headless `QUESHION_CONVERT` path.
 pub fn transcribe(bytes: &[u8], mime: &str, cfg: &AiCfg, prompt: &str) -> Result<String, String> {
+    transcribe_at(bytes, mime, cfg, prompt, 0.0)
+}
+
+fn transcribe_at(bytes: &[u8], mime: &str, cfg: &AiCfg, prompt: &str, temp: f64) -> Result<String, String> {
     match cfg.provider.as_str() {
-        "ollama" => ollama_chat(cfg, prompt, bytes),
-        _ => openai_chat(cfg, prompt, mime, bytes),
+        "ollama" => ollama_chat(cfg, prompt, &[bytes], temp),
+        _ => openai_chat(cfg, prompt, mime, &[bytes], temp),
     }
+}
+
+/// A question to the model about one or more PNG images, answered with JSON.
+pub fn ask_images(images: &[&[u8]], cfg: &AiCfg, prompt: &str, temp: f64) -> Result<String, String> {
+    match cfg.provider.as_str() {
+        "ollama" => ollama_chat(cfg, prompt, images, temp),
+        _ => openai_chat(cfg, prompt, "image/png", images, temp),
+    }
+}
+
+/// What one converted page yields.
+#[derive(Debug)]
+pub struct Converted {
+    pub doc: crate::formats::ImportDoc,
+    /// Skipped questions, dropped figures, figures kept as plain images.
+    pub warnings: Vec<String>,
+    /// Pictures cropped from the page, and how many of those became editable Figures-tab figures.
+    pub cropped: usize,
+    pub redrawn: usize,
+}
+
+/// The whole Import path for one page image: model reply -> Ditto parse (figures cropped) ->
+/// figure fitting (crops become editable Figures-tab figures when a generator matches).
+pub fn convert_page(bytes: &[u8], mime: &str, hint: &str, cfg: &AiCfg, page_no: usize) -> Result<Converted, String> {
+    let raw = transcribe_checked(bytes, mime, cfg, &transcription_prompt(hint))?;
+    let text = extract_import_text(&raw);
+    if text.is_empty() {
+        return Err("The model returned no text.".to_string());
+    }
+    if !crate::ditto::is_ditto(&text) {
+        let doc = crate::formats::detect_and_parse(text.as_bytes(), "converted")?;
+        return Ok(Converted { doc, warnings: Vec::new(), cropped: 0, redrawn: 0 });
+    }
+    let mut r = crate::ditto::import_text(&text, Some(bytes), page_no, "converted")?;
+    let mut redrawn = 0;
+    for (i, q) in r.doc.questions.iter_mut().enumerate() {
+        if q.image.is_none() || q.figure.is_some() {
+            continue;
+        }
+        let crop = std::fs::read(crate::store::media_path(q.image.as_ref().expect("checked"))).unwrap_or_default();
+        match crate::figfit::fit(&crop, &q.stem, cfg) {
+            Ok(Some(f)) => match crate::store::put_image(&f.png) {
+                Ok(img) => {
+                    q.image = Some(img);
+                    q.figure = Some(f.spec);
+                    redrawn += 1;
+                }
+                Err(e) => r.warnings.push(format!("Question {}: couldn't save the redrawn figure ({e}).", i + 1)),
+            },
+            Ok(None) => r.warnings.push(format!("Question {}: no Figures-tab generator matched its picture, kept the cropped image.", i + 1)),
+            Err(e) => r.warnings.push(format!("Question {}: figure fitting failed ({e}), kept the cropped image.", i + 1)),
+        }
+    }
+    Ok(Converted { doc: r.doc, warnings: r.warnings, cropped: r.figures, redrawn })
+}
+
+/// `transcribe`, then up to two retries when the reply isn't valid JSON: the error is quoted
+/// back to the model and the temperature nudged up so it doesn't repeat the same slip.
+pub fn transcribe_checked(bytes: &[u8], mime: &str, cfg: &AiCfg, prompt: &str) -> Result<String, String> {
+    let mut reply = transcribe_at(bytes, mime, cfg, prompt, 0.0)?;
+    for attempt in 1..=2 {
+        let Some(err) = crate::ditto::json_error(&reply) else { break };
+        let again = format!("{prompt}\n\nYour previous reply was not valid JSON ({err}). Output the complete package again as strictly valid JSON: commas between members, no trailing commas, no comments.");
+        match transcribe_at(bytes, mime, cfg, &again, 0.2 * attempt as f64) {
+            Ok(r) => reply = r,
+            Err(_) => break,
+        }
+    }
+    Ok(reply)
 }
 
 fn agent() -> ureq::Agent {
@@ -346,12 +403,14 @@ fn agent() -> ureq::Agent {
 }
 
 /// Ollama's native chat API: images ride in the message's `images` array as raw base64.
-fn ollama_chat(cfg: &AiCfg, prompt: &str, bytes: &[u8]) -> Result<String, String> {
+fn ollama_chat(cfg: &AiCfg, prompt: &str, images: &[&[u8]], temp: f64) -> Result<String, String> {
     let url = format!("{}/api/chat", cfg.base.trim_end_matches('/'));
     let body = json!({
         "model": cfg.model,
-        "messages": [{"role": "user", "content": prompt, "images": [base64_encode(bytes)]}],
+        "messages": [{"role": "user", "content": prompt, "images": images.iter().map(|b| base64_encode(b)).collect::<Vec<_>>()}],
         "stream": false,
+        "format": "json",
+        "options": {"temperature": temp},
     });
     let reply = post_json(&url, body, None)?;
     reply
@@ -362,20 +421,22 @@ fn ollama_chat(cfg: &AiCfg, prompt: &str, bytes: &[u8]) -> Result<String, String
 }
 
 /// OpenRouter and any custom OpenAI-compatible endpoint, with the image as a data URI.
-fn openai_chat(cfg: &AiCfg, prompt: &str, mime: &str, bytes: &[u8]) -> Result<String, String> {
+fn openai_chat(cfg: &AiCfg, prompt: &str, mime: &str, images: &[&[u8]], temp: f64) -> Result<String, String> {
     let base = cfg.base.trim_end_matches('/');
     if base.is_empty() {
         return Err("Set a base URL for the custom AI endpoint in Settings.".to_string());
     }
     let url = format!("{base}/chat/completions");
-    let data_uri = format!("data:{mime};base64,{}", base64_encode(bytes));
+    let mut content = vec![json!({"type": "text", "text": prompt})];
+    for b in images {
+        content.push(json!({"type": "image_url", "image_url": {"url": format!("data:{mime};base64,{}", base64_encode(b))}}));
+    }
     let body = json!({
         "model": cfg.model,
         "stream": false,
-        "messages": [{"role": "user", "content": [
-            {"type": "text", "text": prompt},
-            {"type": "image_url", "image_url": {"url": data_uri}},
-        ]}],
+        "temperature": temp,
+        "response_format": {"type": "json_object"},
+        "messages": [{"role": "user", "content": content}],
     });
     let key = request_key(cfg);
     let reply = post_json(&url, body, key.as_deref())?;
@@ -444,14 +505,14 @@ mod tests {
     }
 
     #[test]
-    fn prompt_names_every_tag_and_the_conventions() {
+    fn prompt_names_every_type_and_the_figure_rules() {
         let p = transcription_prompt("");
-        for tag in ["MC", "MA", "TF", "ESS", "NUM", "FIB", "MAT", "ORD"] {
-            assert!(p.contains(&format!("{tag} (")), "prompt must name {tag}");
+        for ty in ["multiple-choice", "true-false", "matching", "fill-in-the-blank", "short-answer", "multipart"] {
+            assert!(p.contains(ty), "prompt must name {ty}");
         }
-        assert!(p.contains("___"), "prompt must mention fill-in-the-blank markers");
-        assert!(p.contains(" OR "), "prompt must mention the alternatives separator");
-        assert!(!p.contains("```"), "prompt must forbid markdown fences");
+        for must in ["___", "\"box\"", "queshion/ditto", "No markdown fences", "FRACTIONS"] {
+            assert!(p.contains(must), "prompt must mention {must}");
+        }
     }
 
     #[test]
@@ -512,7 +573,7 @@ mod tests {
 
     #[test]
     fn poll_reports_a_job_that_ended_without_a_result() {
-        let (tx, rx) = channel::<Result<String, String>>();
+        let (tx, rx) = channel::<Result<Converted, String>>();
         drop(tx);
         let mut ai = Ai { job: Some(rx) };
         assert!(matches!(ai.poll(), Some(Err(_))), "a dropped sender is an error, not silence");
@@ -521,13 +582,14 @@ mod tests {
 
     #[test]
     fn poll_silently_waits_for_a_running_job() {
-        let (tx, rx) = channel::<Result<String, String>>();
+        let (tx, rx) = channel::<Result<Converted, String>>();
         let mut ai = Ai { job: Some(rx) };
         assert!(ai.poll().is_none());
         assert!(ai.job.is_some());
-        tx.send(Ok("MC\nQ?\n*a. 1\n".to_string())).unwrap();
+        let doc = crate::formats::detect_and_parse(b"MC\nQ?\n*a. 1\nb. 2\n", "x").unwrap();
+        tx.send(Ok(Converted { doc, warnings: Vec::new(), cropped: 0, redrawn: 0 })).unwrap();
         let _ = tx; // keep the channel alive until the reply is read
-        assert_eq!(ai.poll().unwrap().unwrap(), "MC\nQ?\n*a. 1\n");
+        assert_eq!(ai.poll().unwrap().unwrap().doc.questions.len(), 1);
         assert!(ai.poll().is_none(), "the job is consumed once read");
     }
 

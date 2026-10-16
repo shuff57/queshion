@@ -1,0 +1,158 @@
+{
+  "name": "Ch4 Quiz 5A + 5B (answer key, 4 pages)",
+  "pages": {
+    "1": [
+      {
+        "num": "5A-1",
+        "stem": "Give the number of bonding and nonbonding electrons for the structure below:",
+        "kinds": [
+          "Blank",
+          "Short"
+        ],
+        "needs_image": true,
+        "answers": [
+          "14",
+          "10"
+        ],
+        "figure_box": [
+          0.44,
+          0.27,
+          0.61,
+          0.36
+        ]
+      },
+      {
+        "num": "5A-2",
+        "stem": "Name the following compounds. Be sure to determine whether each is ionic or covalent so that you use the correct rules.",
+        "kinds": [
+          "Blank",
+          "Short"
+        ],
+        "needs_image": false,
+        "answers": [
+          "magnesium nitrite",
+          "sulfur trioxide",
+          "nitrogen monoxide",
+          "potassium iodide",
+          "diphosphorus pentasulfide"
+        ]
+      },
+      {
+        "num": "5A-3",
+        "stem": "Which of the following elements is the most electronegative?",
+        "kinds": [
+          "Mc"
+        ],
+        "needs_image": false,
+        "choices": [
+          "Ge",
+          "Ca",
+          "O",
+          "C"
+        ],
+        "correct": [
+          "O"
+        ]
+      }
+    ],
+    "2": [
+      {
+        "num": "5A-4",
+        "stem": "For the following compounds, do all to receive full credit: Draw a valid Lewis structure. Count the number of electron clouds. Name the shape of the molecule. Determine whether the molecule is polar or nonpolar.",
+        "kinds": [
+          "Multipart",
+          "Short"
+        ],
+        "needs_image": false,
+        "answers": [
+          "trigonal pyramidal",
+          "linear"
+        ]
+      },
+      {
+        "num": "5A-5",
+        "stem": "A milliliter of cow's milk contains 0.026 g of casein protein. How many grams of casein protein would be in an 8-ounce cup of cow's milk? (There are 29.57 mL in one ounce.)",
+        "kinds": [
+          "Short"
+        ],
+        "needs_image": false
+      }
+    ],
+    "3": [
+      {
+        "num": "5B-1",
+        "stem": "Give the number of bonding and nonbonding electrons for the structure below:",
+        "kinds": [
+          "Blank",
+          "Short"
+        ],
+        "needs_image": true,
+        "answers": [
+          "14",
+          "10"
+        ],
+        "figure_box": [
+          0.44,
+          0.265,
+          0.61,
+          0.355
+        ]
+      },
+      {
+        "num": "5B-2",
+        "stem": "Name the following compounds. Be sure to determine whether each is ionic or covalent so that you use the correct rules.",
+        "kinds": [
+          "Blank",
+          "Short"
+        ],
+        "needs_image": false,
+        "answers": [
+          "dinitrogen monoxide",
+          "potassium iodide",
+          "calcium nitrite",
+          "sulfur dioxide"
+        ]
+      },
+      {
+        "num": "5B-3",
+        "stem": "Which of the following elements is the least electronegative?",
+        "kinds": [
+          "Mc"
+        ],
+        "needs_image": false,
+        "choices": [
+          "Ca",
+          "O",
+          "Ge",
+          "C"
+        ],
+        "correct": [
+          "Ca"
+        ]
+      }
+    ],
+    "4": [
+      {
+        "num": "5B-4",
+        "stem": "For the following compounds, do all to receive full credit: Draw a valid Lewis structure. Count the number of electron clouds. Name the shape of the molecule. Determine whether the molecule is polar or nonpolar.",
+        "kinds": [
+          "Multipart",
+          "Short"
+        ],
+        "needs_image": false,
+        "answers": [
+          "linear",
+          "trigonal pyramidal"
+        ]
+      },
+      {
+        "num": "5B-5",
+        "stem": "A milliliter of cow's milk contains 0.0065 g of whey protein. How many grams of whey protein would be in a 16-ounce pint of cow's milk? (There are 29.57 mL in one ounce.)",
+        "kinds": [
+          "Short"
+        ],
+        "needs_image": false
+      }
+    ]
+  }
+}

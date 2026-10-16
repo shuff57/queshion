@@ -132,7 +132,7 @@ fn hash_params(id: &str, p: &Params) -> u64 {
 // ---------- raster helpers ----------
 
 /// Composites over white and re-encodes as PNG (exports turn transparency black otherwise).
-fn flatten_white(png: &[u8]) -> Result<Vec<u8>, String> {
+pub(crate) fn flatten_white(png: &[u8]) -> Result<Vec<u8>, String> {
     let mut img = image::load_from_memory(png).map_err(|e| e.to_string())?.to_rgba8();
     for px in img.pixels_mut() {
         let a = px[3] as u32;

@@ -11,9 +11,9 @@ pub fn defs() -> Vec<FigureDef> {
     }]
 }
 
-const PRESETS: [&str; 19] = [
+const PRESETS: [&str; 20] = [
     "None (use the formula)", "C₂H₆, ethane", "C₂H₄, ethene", "C₂H₂, ethyne", "CH₃OH, methanol", "C₂H₅OH, ethanol",
-    "CH₃OCH₃, dimethyl ether", "CH₃COOH, acetic acid", "HCOOH, formic acid", "CH₃NH₂, methylamine", "N₂H₄, hydrazine",
+    "CH₃OCH₃, dimethyl ether", "CH₃COOH, acetic acid", "CH₃COCl, acetyl chloride", "HCOOH, formic acid", "CH₃NH₂, methylamine", "N₂H₄, hydrazine",
     "H₂O₂, hydrogen peroxide", "N₂O, nitrous oxide", "HOCl, hypochlorous acid", "HNO₃, nitric acid",
     "H₂CO₃, carbonic acid", "H₂SO₄, sulfuric acid", "H₃PO₄, phosphoric acid", "HClO₄, perchloric acid",
 ];
@@ -21,7 +21,7 @@ const PRESETS: [&str; 19] = [
 fn params() -> Vec<ParamDef> {
     vec![
         ParamDef::text("formula", "Formula (e.g. H2O, CO2, NH4+, SO4 2-)", "H2O"),
-        ParamDef::choice("preset", "Or pick a multi-centre molecule", &PRESETS, "None (use the formula)"),
+        ParamDef::choice("preset", "Or pick a molecule from the list (overrides the formula)", &PRESETS, "None (use the formula)"),
         ParamDef::bool("lone", "Show lone pairs", true),
         ParamDef::bool("formal", "Show formal charges", false),
         ParamDef::bool("expand", "Expand the octet to lower formal charges", false),
@@ -70,6 +70,7 @@ fn preset(name: &str) -> Mol {
         "C₂H₅OH" => { let a = m.add("C", None, 0.0, 1); let b = m.add("C", Some(a), 0.0, 1); let o = m.add("O", Some(b), 0.0, 1); hs(&mut m, a, &[90.0, 180.0, 270.0]); hs(&mut m, b, &[90.0, 270.0]); hs(&mut m, o, &[330.0]); }
         "CH₃OCH₃" => { let a = m.add("C", None, 0.0, 1); let o = m.add("O", Some(a), 330.0, 1); let c = m.add("C", Some(o), 30.0, 1); hs(&mut m, a, &[90.0, 180.0, 270.0]); hs(&mut m, c, &[90.0, 0.0, 270.0]); }
         "CH₃COOH" => { let a = m.add("C", None, 0.0, 1); let b = m.add("C", Some(a), 0.0, 1); m.add("O", Some(b), 90.0, 2); let o = m.add("O", Some(b), 0.0, 1); hs(&mut m, a, &[90.0, 180.0, 270.0]); hs(&mut m, o, &[330.0]); m.atoms[o].forced = None; }
+        "CH₃COCl" => { let a = m.add("C", None, 0.0, 1); let b = m.add("C", Some(a), 0.0, 1); m.add("O", Some(b), 90.0, 2); m.add("Cl", Some(b), 330.0, 1); hs(&mut m, a, &[90.0, 180.0, 270.0]); }
         "HCOOH" => { let a = m.add("C", None, 0.0, 1); m.add("O", Some(a), 90.0, 2); hs(&mut m, a, &[180.0]); let o = m.add("O", Some(a), 0.0, 1); hs(&mut m, o, &[330.0]); }
         "CH₃NH₂" => { let a = m.add("C", None, 0.0, 1); let n = m.add("N", Some(a), 0.0, 1); hs(&mut m, a, &[90.0, 180.0, 270.0]); hs(&mut m, n, &[45.0, 315.0]); }
         "N₂H₄" => { let a = m.add("N", None, 0.0, 1); let b = m.add("N", Some(a), 0.0, 1); hs(&mut m, a, &[135.0, 225.0]); hs(&mut m, b, &[45.0, 315.0]); }

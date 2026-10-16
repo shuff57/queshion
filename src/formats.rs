@@ -95,7 +95,7 @@ const PACKAGE_FORMAT: &str = "test-parrot/package";
 const RECORD_FORMAT: &str = "test-parrot/question-bank";
 const LEGACY_KIND: &str = "test-parrot-question-bank";
 /// model::Exam's default printed header (matches the model's documented default).
-const DEFAULT_HEADER: &str = "Name: __________________ Class: ___________ Date: ___________";
+pub(crate) const DEFAULT_HEADER: &str = "Name: __________________ Class: ___________ Date: ___________";
 /// Block type tags, matched case-insensitively as the whole first line (trailing `. : )` trimmed).
 const TAGS: [&str; 8] = ["mc", "ma", "tf", "ess", "num", "mat", "fib", "ord"];
 /// Default stem for a MAT block that has no stem text of its own.
@@ -111,6 +111,9 @@ pub fn detect_and_parse(data: &[u8], filename: &str) -> Result<ImportDoc, String
     let text = decode_text(data);
     let lower = filename.to_ascii_lowercase();
     let name = doc_name(filename);
+    if crate::ditto::is_ditto(&text) {
+        return crate::ditto::import_text(&text, None, 0, &name).map(|r| r.doc);
+    }
     if let Some(result) = try_json(&text, &name, lower.ends_with(".json")) {
         return result;
     }
@@ -1344,7 +1347,7 @@ fn split_blocks(text: &str) -> Vec<Vec<String>> {
     blocks
 }
 
-fn make_question(stem: String, kind: Kind) -> Question {
+pub(crate) fn make_question(stem: String, kind: Kind) -> Question {
     let now = now_secs();
     Question {
         id: crate::model::new_id(),

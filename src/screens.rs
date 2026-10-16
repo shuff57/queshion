@@ -1970,31 +1970,36 @@ pub(crate) fn mime_of(ext: &str) -> &'static str {
     }
 }
 
-/// Rasterizes page 1 of a PDF via `pdftoppm` (optional runtime dependency).
-pub(crate) fn pdf_first_page_png(data: &[u8]) -> Result<Vec<u8>, String> {
+/// Rasterizes every page of a PDF (up to `MAX_PDF_PAGES`) to PNG with `pdftoppm`.
+pub(crate) fn pdf_pages_png(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {
     use std::process::{Command, Stdio};
+    const MAX_PDF_PAGES: usize = 30;
 
     let dir = std::env::temp_dir().join(format!("queshion-pdf-{}", now_ms()));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let src = dir.join("in.pdf");
     std::fs::write(&src, data).map_err(|e| e.to_string())?;
     let out = Command::new("pdftoppm")
-        .args(["-png", "-singlefile", "-f", "1", "-l", "1", "-r", "150"])
+        .args(["-png", "-r", "150", "-l", &MAX_PDF_PAGES.to_string()])
         .arg(&src)
-        .arg("-") // the image goes to stdout
-        .stdout(Stdio::piped())
+        .arg(dir.join("page"))
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .stdin(Stdio::null())
         .output();
     let result = match out {
-        Ok(o) if o.status.success() && !o.stdout.is_empty() => Ok(o.stdout),
-        Ok(o) => Err(format!(
-            "pdftoppm failed: {}",
-            String::from_utf8_lossy(&o.stderr).trim()
-        )),
+        Ok(o) if o.status.success() => {
+            let mut files: Vec<_> = std::fs::read_dir(&dir)
+                .map(|d| d.flatten().map(|e| e.path()).collect())
+                .unwrap_or_default();
+            files.retain(|f| f.extension().is_some_and(|e| e == "png"));
+            files.sort(); // pdftoppm zero-pads the page number, so name order is page order
+            let pages: Vec<Vec<u8>> = files.iter().filter_map(|f| std::fs::read(f).ok()).collect();
+            if pages.is_empty() { Err("pdftoppm produced no pages".to_string()) } else { Ok(pages) }
+        }
+        Ok(o) => Err(format!("pdftoppm failed: {}", String::from_utf8_lossy(&o.stderr).trim())),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(
-            "PDF rasterizer (pdftoppm) not found — export the pages as images instead"
-                .to_string(),
+            "PDF rasterizer (pdftoppm) not found — export the pages as images instead".to_string(),
         ),
         Err(e) => Err(e.to_string()),
     };

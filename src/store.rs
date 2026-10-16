@@ -49,6 +49,11 @@ pub fn put_image(bytes: &[u8]) -> Result<crate::model::ImageRef, String> {
     Ok(crate::model::ImageRef { file, width: w, height: h })
 }
 
+/// The store directory as text (headless hooks print it so tests can find media files).
+pub fn store_dir_string() -> String {
+    store_dir().to_string_lossy().into_owned()
+}
+
 pub fn media_path(image: &crate::model::ImageRef) -> PathBuf {
     store_dir().join(&image.file)
 }

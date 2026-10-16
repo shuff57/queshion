@@ -10,6 +10,8 @@ use eframe::egui;
 
 pub mod ai;
 pub mod bankui;
+pub mod ditto;
+pub mod figfit;
 pub mod examui;
 pub mod equation;
 pub mod export;
@@ -305,6 +307,60 @@ fn handle_headless() -> bool {
 }
 
 fn main() -> Result<(), eframe::Error> {
+    // Headless one-shot: QUESHION_RENDER_FIG=<figure id> [QUESHION_FIG_PARAMS='{"formula":"NH3"}']
+    // QUESHION_OUT=<file.png> renders a Figures-tab figure to a PNG (strings/bools/numbers).
+    if let Ok(id) = std::env::var("QUESHION_RENDER_FIG") {
+        let def = figures::registry().into_iter().find(|d| d.id == id).unwrap_or_else(|| panic!("no figure {id}"));
+        let over: serde_json::Value = std::env::var("QUESHION_FIG_PARAMS").ok().and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default();
+        let p = figures::params_from_json(&def, &over);
+        let png = figures::to_png(&(def.render)(&p), 1.5).expect("render");
+        std::fs::write(std::env::var("QUESHION_OUT").expect("QUESHION_OUT"), png).expect("write");
+        return Ok(());
+    }
+    // Headless one-shot: QUESHION_FIT=<crop.png> runs the figure-fitting loop on one picture.
+    if let Ok(png) = std::env::var("QUESHION_FIT") {
+        let bytes = std::fs::read(&png).unwrap_or_else(|e| panic!("cannot read {png}: {e}"));
+        let settings: Settings = store::load_json("settings.json").unwrap_or_default();
+        let cfg = ai::AiCfg::from(&settings);
+        match figfit::fit(&bytes, "Give the number of bonding and nonbonding electrons for the structure below:", &cfg) {
+            Ok(Some(f)) => println!("fit: {} {:?}", f.spec.id, f.spec.params.iter().filter(|(k, _)| *k == "formula" || *k == "preset").collect::<Vec<_>>()),
+            Ok(None) => println!("no fit"),
+            Err(e) => println!("error: {e}"),
+        }
+        return Ok(());
+    }
+    // Headless one-shot: QUESHION_IMPORT_PDF=<file.pdf> [QUESHION_BANK_NAME=..]
+    // runs the Import screen's whole AI path (pages -> model -> Ditto parse -> figure crops)
+    // and saves the result as a new bank in the store.
+    if let Ok(pdf) = std::env::var("QUESHION_IMPORT_PDF") {
+        import_pdf_headless(&pdf);
+        return Ok(());
+    }
+    // Headless one-shot: QUESHION_PARSE=<reply text> [QUESHION_PAGE=<page.png> QUESHION_PAGE_NO=<n>]
+    // runs the AI-import parser (figures cropped from the page image) and prints
+    // {questions, warnings, figures} as JSON; the import test battery scores this.
+    if let Ok(path) = std::env::var("QUESHION_PARSE") {
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"));
+        let text = String::from_utf8_lossy(&bytes).to_string();
+        let page = std::env::var("QUESHION_PAGE").ok().and_then(|p| std::fs::read(p).ok());
+        let page_no = std::env::var("QUESHION_PAGE_NO").ok().and_then(|n| n.parse().ok()).unwrap_or(1);
+        let res = if ditto::is_ditto(&text) {
+            ditto::import_text(&text, page.as_deref(), page_no, "converted")
+        } else {
+            formats::detect_and_parse(&bytes, &path).map(|doc| ditto::DittoImport { doc, warnings: Vec::new(), figures: 0 })
+        };
+        match res {
+            Ok(r) => println!(
+                "{}",
+                serde_json::json!({"questions": r.doc.questions, "warnings": r.warnings, "figures": r.figures, "store": store::store_dir_string()})
+            ),
+            Err(e) => {
+                eprintln!("parse failed: {e}");
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
+    }
     // Headless one-shot: QUESHION_CONVERT=<file> [QUESHION_HINT="..."] transcribes a
     // photo/scan through the configured provider and prints the Blackboard import text.
     if let Ok(path) = std::env::var("QUESHION_CONVERT") {
@@ -320,7 +376,7 @@ fn main() -> Result<(), eframe::Error> {
         let settings: Settings = store::load_json("settings.json").unwrap_or_default();
         let cfg = ai::AiCfg::from(&settings);
         let hint = std::env::var("QUESHION_HINT").unwrap_or_default();
-        let text = ai::transcribe(&bytes, mime, &cfg, &ai::prompt_for(&hint))
+        let text = ai::transcribe_checked(&bytes, mime, &cfg, &ai::prompt_for(&hint))
             .map(|raw| ai::extract_import_text(&raw));
         match text {
             Ok(t) => println!("{t}"),
@@ -352,4 +408,30 @@ fn main() -> Result<(), eframe::Error> {
         ..Default::default()
     };
     eframe::run_native("queShion", options, Box::new(|cc| Ok(Box::new(App::new(cc)))))
+}
+fn import_pdf_headless(pdf: &str) {
+    let bytes = std::fs::read(pdf).unwrap_or_else(|e| panic!("cannot read {pdf}: {e}"));
+    let pages = screens::pdf_pages_png(&bytes).unwrap_or_else(|e| panic!("{e}"));
+    let settings: Settings = store::load_json("settings.json").unwrap_or_default();
+    let cfg = ai::AiCfg::from(&settings);
+    let converted: Vec<Result<ai::Converted, String>> = std::thread::scope(|sc| {
+        let hs: Vec<_> = pages.iter().enumerate().map(|(i, png)| sc.spawn({ let cfg = &cfg; move || ai::convert_page(png, "image/png", "", cfg, i + 1) })).collect();
+        hs.into_iter().map(|h| h.join().unwrap_or_else(|_| Err("thread panicked".into()))).collect()
+    });
+    let mut questions = Vec::new();
+    for (i, c) in converted.into_iter().enumerate() {
+        let c = c.unwrap_or_else(|e| panic!("page {} failed: {e}", i + 1));
+        eprintln!("page {}: {} questions, {} cropped, {} redrawn, notes {:?}", i + 1, c.doc.questions.len(), c.cropped, c.redrawn, c.warnings);
+        questions.extend(c.doc.questions);
+    }
+    for q in &mut questions {
+        q.points.get_or_insert(1.0);
+    }
+    let name = std::env::var("QUESHION_BANK_NAME").unwrap_or_else(|_| "Imported questions".into());
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    let mut st = store::Store::load();
+    let n = questions.len();
+    st.banks.push(model::QuestionBank { id: model::new_id(), name: name.clone(), questions, created: now, modified: now });
+    st.save_banks();
+    println!("saved bank \"{name}\" with {n} questions to {}", store::store_dir_string());
 }
