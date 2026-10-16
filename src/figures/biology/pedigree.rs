@@ -6,18 +6,46 @@
 //! (person = generation roman numeral, dash, number counted left to right).
 use super::*;
 
+/// One drawn individual (for interaction handles).
+#[derive(Clone, Debug)]
+pub struct Who { pub x: f64, pub y: f64, pub gi: usize, pub num: usize, pub male: bool, pub status: u8, pub r: f64 }
+
+thread_local! {
+    static LAST: std::cell::RefCell<(f64, f64, Vec<Who>)> = const { std::cell::RefCell::new((0.0, 0.0, Vec::new())) };
+}
+
+/// Renders and returns (canvas w, h, people) of the figure.
+pub fn people_of(p: &Params) -> (f64, f64, Vec<Who>) {
+    LAST.with(|l| *l.borrow_mut() = (0.0, 0.0, Vec::new()));
+    let _ = render(p);
+    LAST.with(|l| l.borrow().clone())
+}
+
+/// Set `II-3=affected` style override for one person, replacing any earlier token for them.
+/// `status`: 0 unaffected, 1 carrier, 2 affected.
+pub fn set_status(p: &mut Params, gi: usize, num: usize, status: u8) {
+    let who = format!("{}-{}", roman(gi), num);
+    let mut toks: Vec<String> = p.s("changes").split([',', ';']).map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
+    toks.retain(|t| t.split_once('=').map(|(a, _)| !a.trim().eq_ignore_ascii_case(&who)).unwrap_or(true));
+    let name = ["unaffected", "carrier", "affected"][status.min(2) as usize];
+    toks.push(format!("{who}={name}"));
+    p.set_s("changes", &toks.join(", "));
+}
+
 pub fn params() -> Vec<ParamDef> {
     vec![
         ParamDef::choice("inherit", "Inheritance", &["Autosomal dominant", "Autosomal recessive", "X-linked recessive", "X-linked dominant", "Y-linked"], "Autosomal recessive"),
         ParamDef::int("gens", "Generations", 2, 4, 3),
         ParamDef::choice("size", "Family size", &["Small", "Medium", "Large"], "Medium"),
         ParamDef::int("seed", "New pedigree (change the number for a different family)", 1, 9999, 3),
-        ParamDef::text("changes", "Changes, e.g. II-3=affected, III-2=carrier", ""),
+        ParamDef::list("changes", "Overrides (person = status), e.g. II-3=affected", ""),
         ParamDef::bool("carriers", "Show carriers (dot in the symbol)", false),
         ParamDef::bool("gen_labels", "Generation labels (I, II, III)", true),
         ParamDef::bool("numbers", "Individual numbers", true),
         ParamDef::bool("key", "Key", true),
         ParamDef::text("title", "Chart title (blank = none)", ""),
+        ParamDef::float("symbol_size", "Symbol size", 12.0, 26.0, 1.0, 18.0),
+        ParamDef::text("gen_prefix", "Generation label style (I, II, III or custom list)", ""),
     ]
 }
 
@@ -211,7 +239,7 @@ pub fn render(p: &Params) -> String {
     }
 
     let slot = 74.0;
-    let r = 18.0;
+    let r = p.f("symbol_size").clamp(12.0, 26.0);
     let gen_h = 112.0;
     let width_slots = root.width;
     let title = p.s("title").trim().to_string();
@@ -272,9 +300,16 @@ pub fn render(p: &Params) -> String {
     }
     if p.b("gen_labels") {
         for g in 0..gens {
-            txt(&mut d, ox + 24.0, py(g) + 6.0, 19.0, "middle", SERIF, r#"font-weight="bold""#, roman(g));
+            let custom: Vec<String> = p.s("gen_prefix").split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
+            let lab = custom.get(g).cloned().unwrap_or_else(|| roman(g).to_string());
+            txt(&mut d, ox + 24.0, py(g) + 6.0, 19.0, "middle", SERIF, r#"font-weight="bold""#, &lab);
         }
     }
+    let whos: Vec<Who> = sim.people.iter().enumerate().map(|(i, q)| Who {
+        x: px(q), y: py(q.gn), gi: q.gn, num: num[i], male: q.male, r,
+        status: match q.status { Status::Unaffected => 0, Status::Carrier => 1, Status::Affected => 2 },
+    }).collect();
+    LAST.with(|l| *l.borrow_mut() = (w, h, whos));
     if key_on {
         let kx = (w - key_w) / 2.0;
         let ky = tree_bottom + 4.0;

@@ -118,6 +118,7 @@ pub fn params_from_spec(def: &FigureDef, spec: &FigureSpec) -> Params {
             p.0.insert(d.key.to_string(), v);
         }
     }
+    p.normalize(&defs, false);
     p
 }
 
@@ -224,6 +225,15 @@ pub struct Workspace {
     pending: Option<(u64, Instant)>,
     shown: Option<(u64, TextureHandle)>,
     err: Option<String>,
+    /// Canvas size of the shown SVG in its own units (maps pointer <-> figure coordinates).
+    canvas: (f64, f64),
+    /// "Handles" chip off = plain preview.
+    hide_handles: bool,
+    /// A handle is being dragged: render without waiting for the debounce.
+    live: bool,
+    /// Inline label edit: (param key, buffer, just-opened).
+    editing: Option<(&'static str, String, bool)>,
+    qa_init: bool,
 }
 
 impl Workspace {
@@ -244,6 +254,7 @@ impl Workspace {
     fn select(&mut self, i: usize) {
         self.sel = Some(i);
         self.params = Params::defaults(&(reg()[i].params)());
+        self.editing = None;
         self.shown = None;
         self.pending = None;
         self.err = None;
@@ -269,6 +280,15 @@ impl Workspace {
     }
 
     pub fn show(&mut self, ui: &mut Ui) -> Act {
+        if !self.qa_init {
+            self.qa_init = true;
+            // QA hook: QUESHION_FIG=<figure id> opens that figure straight away.
+            if let Ok(id) = std::env::var("QUESHION_FIG")
+                && let Some((i, _)) = find_def(&id)
+            {
+                self.select(i);
+            }
+        }
         if self.sel.is_some() || self.imp.is_some() {
             self.workspace_view(ui)
         } else {
@@ -478,8 +498,9 @@ impl Workspace {
                         now
                     }
                 };
-                if first || t0.elapsed() >= DEBOUNCE {
+                if first || self.live || t0.elapsed() >= DEBOUNCE {
                     let svg = (def.render)(&self.params);
+                    self.canvas = figures::svg_size(&svg);
                     match figures::to_png(&svg, 1.5).map_err(|e| e.to_string()).and_then(|p| {
                         texture(&ctx, format!("testparrot:fig:{}", def.id), &p).ok_or("decode failed".to_string())
                     }) {
@@ -524,15 +545,21 @@ impl Workspace {
                     .show(ui, |ui| {
                         ui.set_width((w - 22.0).max(100.0));
                         ui.set_height((avail_h - 22.0).max(100.0));
-                        ui.centered_and_justified(|ui| {
-                            if let Some(t) = &preview {
+                        if generated && let Some(t) = &preview {
+                            self.preview_interactive(ui, t);
+                        } else if let Some(t) = &preview {
+                            ui.centered_and_justified(|ui| {
                                 ui.add(egui::Image::new(t).shrink_to_fit());
-                            } else if let Some(e) = &self.err {
-                                ui.label(RichText::new(e).color(theme::red()).size(12.0));
-                            } else {
-                                ui.spinner();
-                            }
-                        });
+                            });
+                        } else {
+                            ui.centered_and_justified(|ui| {
+                                if let Some(e) = &self.err {
+                                    ui.label(RichText::new(e).color(theme::red()).size(12.0));
+                                } else {
+                                    ui.spinner();
+                                }
+                            });
+                        }
                     });
             });
         });
@@ -569,11 +596,168 @@ impl Workspace {
                     None => Act::Toast("Couldn't render the figure".into(), true),
                 };
             }
+            if generated && chip_handles(ui, !self.hide_handles) {
+                self.hide_handles = !self.hide_handles;
+            }
             if self.modal && ghost(ui, "Cancel").clicked() {
                 act = Act::Close;
             }
         });
         act
+    }
+
+    /// The preview with its interaction layer: draws the texture fitted into the frame, then
+    /// the figure's handles; pointer input is mapped back into `self.params`.
+    fn preview_interactive(&mut self, ui: &mut Ui, tex: &TextureHandle) {
+        use figures::interact::{Cursor, Shape};
+        let Some(si) = self.sel else { return };
+        let def = &reg()[si];
+        let space = ui.available_size();
+        let (full, _) = ui.allocate_exact_size(space, Sense::hover());
+        let area = egui::Rect::from_min_max(full.min, egui::pos2(full.max.x, full.max.y - 16.0));
+        let nat = tex.size_vec2();
+        let fit = (area.width() / nat.x).min(area.height() / nat.y).min(1.0).max(0.05);
+        let img = egui::Rect::from_center_size(area.center(), nat * fit);
+        egui::Image::new(tex).fit_to_exact_size(img.size()).paint_at(ui, img);
+        let (cw, ch) = if self.canvas.0 > 1.0 { self.canvas } else { ((nat.x / 1.5) as f64, (nat.y / 1.5) as f64) };
+        let k = img.width() as f64 / cw; // screen points per SVG unit
+        let to_screen = |p: (f64, f64)| egui::pos2(img.left() + (p.0 * k) as f32, img.top() + (p.1 * k) as f32);
+        let to_svg = |p: egui::Pos2| ((p.x - img.left()) as f64 / k, (p.y - img.top()) as f64 / k);
+        let _ = ch;
+        let pdefs = (def.params)();
+
+        self.live = false;
+        if self.hide_handles {
+            return;
+        }
+        let mut hs = def.handles(&self.params, (cw, ch));
+        // Zones first so knobs on top win the hit test.
+        hs.sort_by_key(|h| h.shape != Shape::Zone);
+        let painter = ui.painter_at(full.expand(8.0));
+        let acc = theme::accent_col();
+        let mut changed = false;
+        let mut start_edit: Option<(&'static str, String)> = None;
+        for (i, h) in hs.iter().enumerate() {
+            let c = to_screen(h.pos);
+            let hx = (h.half.0 * k).max(9.0) as f32;
+            let hy = (h.half.1 * k).max(9.0) as f32;
+            let hit = egui::Rect::from_center_size(c, Vec2::new(hx * 2.0, hy * 2.0));
+            let sense = if h.drag.is_some() { Sense::click_and_drag() } else { Sense::click() };
+            let r = ui.interact(hit, UiId::new(("fig_handle", si, i)), sense);
+            let active = r.dragged();
+            if r.hovered() || active {
+                ui.ctx().set_cursor_icon(if active {
+                    egui::CursorIcon::Grabbing
+                } else {
+                    match h.cursor {
+                        Cursor::Grab => egui::CursorIcon::Grab,
+                        Cursor::Move => egui::CursorIcon::Move,
+                        Cursor::ResizeH => egui::CursorIcon::ResizeHorizontal,
+                        Cursor::ResizeV => egui::CursorIcon::ResizeVertical,
+                        Cursor::Pointer => egui::CursorIcon::PointingHand,
+                        Cursor::Crosshair => egui::CursorIcon::Crosshair,
+                    }
+                });
+            }
+            if r.drag_started()
+                && let Some(ptr) = r.interact_pointer_pos()
+            {
+                let t = to_svg(ptr);
+                ui.data_mut(|d| d.insert_temp(UiId::new("fig_drag_off"), (t.0 - h.pos.0, t.1 - h.pos.1)));
+            }
+            if active
+                && let (Some(f), Some(ptr)) = (&h.drag, r.interact_pointer_pos())
+            {
+                let off: (f64, f64) = ui.data(|d| d.get_temp(UiId::new("fig_drag_off"))).unwrap_or((0.0, 0.0));
+                let t = to_svg(ptr);
+                f(&mut self.params, (t.0 - off.0, t.1 - off.1));
+                self.params.normalize(&pdefs, true);
+                self.live = true;
+                changed = true;
+            }
+            if r.double_clicked()
+                && let Some(key) = h.edit
+            {
+                start_edit = Some((key, self.params.s(key).to_string()));
+            } else if r.clicked()
+                && let Some(f) = &h.click
+            {
+                f(&mut self.params);
+                self.params.normalize(&pdefs, true);
+                changed = true;
+            }
+            if r.hovered()
+                && let Some(f) = &h.scroll
+            {
+                let dy = ui.input(|i| i.smooth_scroll_delta.y);
+                if dy.abs() > 0.5 {
+                    f(&mut self.params, (dy / 40.0) as f64);
+                    self.params.normalize(&pdefs, true);
+                    changed = true;
+                }
+            }
+            let hot = r.hovered() || active;
+            match h.shape {
+                Shape::Zone => {
+                    if hot {
+                        painter.rect(hit, 4.0, theme::accent_faded().gamma_multiply(0.6), Stroke::new(1.5, acc), egui::StrokeKind::Inside);
+                    }
+                }
+                sh => {
+                    let rad = if hot { 7.5 } else { 5.5 };
+                    let (fill, stroke) = if hot {
+                        (acc, Stroke::new(2.0, egui::Color32::WHITE))
+                    } else {
+                        (egui::Color32::WHITE, Stroke::new(1.8, acc))
+                    };
+                    match sh {
+                        Shape::Circle => {
+                            painter.circle(c, rad, fill, stroke);
+                        }
+                        Shape::Square => {
+                            painter.rect(egui::Rect::from_center_size(c, Vec2::splat(rad * 1.7)), 2.0, fill, stroke, egui::StrokeKind::Middle);
+                        }
+                        _ => {
+                            let d = rad * 1.3;
+                            let pts = vec![c + Vec2::new(0.0, -d), c + Vec2::new(d, 0.0), c + Vec2::new(0.0, d), c + Vec2::new(-d, 0.0)];
+                            painter.add(egui::Shape::convex_polygon(pts, fill, stroke));
+                        }
+                    }
+                }
+            }
+            if r.hovered() && !active && !h.tip.is_empty() {
+                r.on_hover_text(&h.tip);
+            }
+        }
+        if changed {
+            ui.ctx().request_repaint();
+        }
+        if start_edit.is_some() {
+            self.editing = start_edit.map(|(k, v)| (k, v, true));
+        }
+        if let Some((key, mut buf, fresh)) = self.editing.take() {
+            let at = egui::Rect::from_center_size(area.center_top() + Vec2::new(0.0, 22.0), Vec2::new(220.0, 26.0));
+            let resp = ui.put(at, TextEdit::singleline(&mut buf).desired_width(220.0).hint_text("Edit label"));
+            if fresh {
+                resp.request_focus();
+            }
+            let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
+            if enter || (resp.lost_focus() && !esc) {
+                self.params.set_s(key, &buf);
+            } else if !esc {
+                self.editing = Some((key, buf, false));
+            }
+        }
+        if !hs.is_empty() {
+            painter.text(
+                full.left_bottom() + Vec2::new(4.0, -2.0),
+                egui::Align2::LEFT_BOTTOM,
+                "Drag the dots to edit; double-click a label to rename it",
+                egui::FontId::proportional(10.5),
+                theme::muted_col(),
+            );
+        }
     }
 
     fn controls(&mut self, ui: &mut Ui, max_h: f32) {
@@ -589,13 +773,29 @@ impl Workspace {
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
                     ui.spacing_mut().slider_width = 170.0;
-                    for pd in &pdefs {
-                        param_control(ui, pd, &mut self.params);
-                        ui.add_space(6.0);
+                    let n_now = pdefs.iter().any(|d| d.key == "n").then(|| self.params.i("n"));
+                    for sec in figures::layout::sections(def.id, &pdefs, n_now) {
+                        ui.horizontal(|ui| {
+                            crate::kit::small_caps(ui, &sec.title);
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                let r = ui.add(Button::new(theme::muted("Reset").size(11.0)).frame(false));
+                                if r.on_hover_text("Reset this section to its defaults").clicked() {
+                                    for &i in &sec.items {
+                                        self.params.0.insert(pdefs[i].key.to_string(), pdefs[i].default.clone());
+                                    }
+                                }
+                            });
+                        });
+                        ui.add_space(2.0);
+                        for &i in &sec.items {
+                            param_control(ui, &pdefs[i], &mut self.params);
+                            ui.add_space(6.0);
+                        }
+                        ui.add_space(8.0);
                     }
                 });
             ui.add_space(4.0);
-            if ghost(ui, "Reset").clicked() {
+            if ghost(ui, "Reset all").clicked() {
                 self.params = Params::defaults(&pdefs);
             }
         });
@@ -708,25 +908,70 @@ fn card(ui: &mut Ui, ctx: &egui::Context, def: &FigureDef, idx: usize, budget: &
     r.clicked()
 }
 
+fn chip_handles(ui: &mut Ui, on: bool) -> bool {
+    crate::kit::chip_toggle(ui, "Handles", on).on_hover_text("Show drag handles on the figure").clicked()
+}
+
+/// Splits a list value on the separators the generators accept.
+fn list_items(s: &str) -> (Vec<String>, char) {
+    let sep = if s.contains(';') { ';' } else { ',' };
+    let v: Vec<String> = s.split(sep).map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
+    (v, sep)
+}
+
+/// Palette used by Kind::Color swatches.
+fn swatch(hex: &str) -> egui::Color32 {
+    let h = hex.trim_start_matches('#');
+    let v = u32::from_str_radix(h, 16).unwrap_or(0);
+    egui::Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)
+}
+
 /// Control auto-built from one ParamDef.
 fn param_control(ui: &mut Ui, pd: &ParamDef, p: &mut Params) {
     match &pd.kind {
         Kind::Float { min, max, step } => {
             ui.label(theme::muted(pd.label).size(11.0));
             let mut v = p.f(pd.key);
-            let mut s = egui::Slider::new(&mut v, *min..=*max);
-            if *step > 0.0 {
+            let mut s = egui::Slider::new(&mut v, *min..=*max).clamping(egui::SliderClamping::Always);
+            // Ranges spanning orders of magnitude are unusable on a linear slider; a log slider
+            // can't also snap to a step, so round to 3 significant digits instead.
+            let log = *min > 0.0 && *max / *min >= 200.0;
+            if log {
+                s = s.logarithmic(true).smallest_positive(*min).max_decimals(4);
+            } else if *step > 0.0 {
                 s = s.step_by(*step);
             }
             if ui.add(s).changed() {
-                p.0.insert(pd.key.to_string(), Value::F(v));
+                if log && v > 0.0 {
+                    let mag = 10f64.powf(v.log10().floor() - 2.0);
+                    v = (v / mag).round() * mag;
+                }
+                p.0.insert(pd.key.to_string(), Value::F(v.clamp(*min, *max)));
             }
         }
         Kind::Int { min, max } => {
-            ui.label(theme::muted(pd.label).size(11.0));
             let mut v = p.i(pd.key);
-            if ui.add(egui::Slider::new(&mut v, *min..=*max)).changed() {
-                p.0.insert(pd.key.to_string(), Value::I(v));
+            if max - min <= 12 {
+                ui.horizontal(|ui| {
+                    ui.label(theme::muted(pd.label).size(11.0));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui.add_enabled(v < *max, Button::new("+").min_size(Vec2::splat(22.0))).clicked() {
+                            v += 1;
+                        }
+                        ui.label(theme::strong(v.to_string()).size(13.0));
+                        if ui.add_enabled(v > *min, Button::new("-").min_size(Vec2::splat(22.0))).clicked() {
+                            v -= 1;
+                        }
+                    });
+                });
+                if v != p.i(pd.key) {
+                    p.0.insert(pd.key.to_string(), Value::I(v.clamp(*min, *max)));
+                }
+            } else {
+                ui.label(theme::muted(pd.label).size(11.0));
+                if ui.add(egui::Slider::new(&mut v, *min..=*max).clamping(egui::SliderClamping::Always)).changed() {
+                    p.0.insert(pd.key.to_string(), Value::I(v));
+                }
             }
         }
         Kind::Bool => {
@@ -756,6 +1001,60 @@ fn param_control(ui: &mut Ui, pd: &ParamDef, p: &mut Params) {
             if ui.add(TextEdit::singleline(&mut cur).desired_width(220.0)).changed() {
                 p.0.insert(pd.key.to_string(), Value::S(cur));
             }
+        }
+        Kind::Long => {
+            ui.label(theme::muted(pd.label).size(11.0));
+            let mut cur = p.s(pd.key).to_string();
+            if ui
+                .add(TextEdit::multiline(&mut cur).desired_width(240.0).desired_rows(4).font(egui::TextStyle::Monospace))
+                .changed()
+            {
+                p.0.insert(pd.key.to_string(), Value::S(cur));
+            }
+        }
+        Kind::List => {
+            ui.label(theme::muted(pd.label).size(11.0));
+            let (mut items, sep) = list_items(p.s(pd.key));
+            let mut changed = false;
+            let mut del = None;
+            for (i, it) in items.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    if ui.add(TextEdit::singleline(it).desired_width(176.0)).changed() {
+                        changed = true;
+                    }
+                    if ui.add(Button::new("-").min_size(Vec2::splat(22.0))).on_hover_text("Remove").clicked() {
+                        del = Some(i);
+                    }
+                });
+            }
+            if let Some(i) = del {
+                items.remove(i);
+                changed = true;
+            }
+            if ui.add(Button::new("+ Add").small()).clicked() {
+                items.push(items.last().cloned().unwrap_or_else(|| "0".into()));
+                changed = true;
+            }
+            if changed {
+                let joined = items.join(if sep == ';' { "; " } else { ", " });
+                p.0.insert(pd.key.to_string(), Value::S(joined));
+            }
+        }
+        Kind::Color(pal) => {
+            ui.label(theme::muted(pd.label).size(11.0));
+            let cur = p.s(pd.key).to_string();
+            ui.horizontal_wrapped(|ui| {
+                for hex in pal {
+                    let (r, resp) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::click());
+                    ui.painter().circle_filled(r.center(), 8.0, swatch(hex));
+                    if cur.eq_ignore_ascii_case(hex) {
+                        ui.painter().circle_stroke(r.center(), 10.0, Stroke::new(2.0, theme::accent_col()));
+                    }
+                    if resp.on_hover_text(*hex).clicked() {
+                        p.0.insert(pd.key.to_string(), Value::S((*hex).to_string()));
+                    }
+                }
+            });
         }
     }
 }
@@ -1077,5 +1376,24 @@ mod tests {
         frame(&mut ws);
         frame(&mut ws);
         assert!(ws.shown.is_some());
+    }
+
+    /// Every real figure opens in the workspace and draws its handle overlay without panicking.
+    #[test]
+    fn every_figure_opens_with_overlay() {
+        let ctx = egui::Context::default();
+        theme::setup(&ctx);
+        for (i, d) in reg().iter().enumerate().filter(|(_, d)| d.id != "demo-shapes") {
+            let mut ws = Workspace::new(false);
+            ws.select(i);
+            for _ in 0..3 {
+                let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    let _ = ws.show(ui);
+                });
+                out.textures_delta.clear();
+            }
+            assert!(ws.shown.is_some(), "{} did not render", d.id);
+            assert!(ws.canvas.0 > 50.0, "{} canvas unknown", d.id);
+        }
     }
 }

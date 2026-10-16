@@ -216,6 +216,20 @@ impl eframe::App for App {
                 raw.events.push(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: false, modifiers: mods });
             }
             "move" => raw.events.push(egui::Event::PointerMoved(pt(arg))),
+            // Drag support: down:x,y then move:x,y ... then up:x,y (one step per 10 frames).
+            "down" | "up" => {
+                let p = pt(arg);
+                raw.events.push(egui::Event::PointerMoved(p));
+                raw.events.push(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: cmd == "down", modifiers: mods });
+            }
+            "dclick" => {
+                let p = pt(arg);
+                raw.events.push(egui::Event::PointerMoved(p));
+                for _ in 0..2 {
+                    raw.events.push(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: true, modifiers: mods });
+                    raw.events.push(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: false, modifiers: mods });
+                }
+            }
             "text" => raw.events.push(egui::Event::Text(arg.to_string())),
             "key" => {
                 let key = match arg {
@@ -241,6 +255,9 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        if !self.qa_steps.is_empty() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(16)); // keep the QUESHION_SCRIPT clock advancing
+        }
         // Sidebar + active screen + shell overlays (import dialog, help, toasts).
         self.draw_screen(&ctx);
     }

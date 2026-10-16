@@ -4,12 +4,18 @@
 use super::svg::{esc, Doc};
 use super::*;
 
+mod handles;
 mod gel;
 mod pedigree;
 mod pipette;
 mod plot;
 mod popdyn;
 mod punnett;
+
+/// Direct-manipulation handles for this subject's figures (None = not one of ours).
+pub fn handles(id: &str, p: &Params, size: (f64, f64)) -> Option<Vec<interact::Handle>> {
+    handles::handles(id, p, size)
+}
 
 pub fn defs() -> Vec<FigureDef> {
     vec![

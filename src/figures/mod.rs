@@ -9,7 +9,11 @@ use std::collections::BTreeMap;
 
 pub mod biology;
 pub mod chemistry;
+pub mod interact;
+pub mod layout;
 pub mod math;
+pub mod math_geo;
+pub mod math_plot;
 pub mod physics;
 pub mod svg;
 
@@ -24,6 +28,13 @@ pub enum Kind {
     /// Dropdown; value is the chosen string.
     Choice(Vec<&'static str>),
     Text,
+    /// Multi-line text (DSL specs, lane tables). Stored as a string like `Text`.
+    Long,
+    /// Comma/semicolon separated list edited as rows (data tables, point lists). Stored as the
+    /// same string the generator already parses, so saved specs stay compatible.
+    List,
+    /// Colour from a small palette of `#rrggbb` swatches (stored as the hex string).
+    Color(Vec<&'static str>),
 }
 
 #[derive(Clone, Debug)]
@@ -50,6 +61,15 @@ impl ParamDef {
     pub fn text(key: &'static str, label: &'static str, d: &str) -> Self {
         Self { key, label, kind: Kind::Text, default: Value::S(d.into()) }
     }
+    pub fn long(key: &'static str, label: &'static str, d: &str) -> Self {
+        Self { key, label, kind: Kind::Long, default: Value::S(d.into()) }
+    }
+    pub fn list(key: &'static str, label: &'static str, d: &str) -> Self {
+        Self { key, label, kind: Kind::List, default: Value::S(d.into()) }
+    }
+    pub fn color(key: &'static str, label: &'static str, palette: &[&'static str], d: &str) -> Self {
+        Self { key, label, kind: Kind::Color(palette.to_vec()), default: Value::S(d.into()) }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -68,6 +88,40 @@ impl Params {
     pub fn b(&self, k: &str) -> bool { matches!(self.0.get(k), Some(Value::B(true))) }
     pub fn s(&self, k: &str) -> &str {
         match self.0.get(k) { Some(Value::S(v)) => v, _ => "" }
+    }
+    pub fn set_f(&mut self, k: &str, v: f64) { self.0.insert(k.to_string(), Value::F(v)); }
+    pub fn set_i(&mut self, k: &str, v: i64) { self.0.insert(k.to_string(), Value::I(v)); }
+    pub fn set_b(&mut self, k: &str, v: bool) { self.0.insert(k.to_string(), Value::B(v)); }
+    pub fn set_s(&mut self, k: &str, v: &str) { self.0.insert(k.to_string(), Value::S(v.to_string())); }
+
+    /// Clamp every value into its declared range / option set (never panics, ignores unknown
+    /// keys). With `snap`, floats are also rounded to their step grid (used after drags).
+    pub fn normalize(&mut self, defs: &[ParamDef], snap: bool) {
+        for d in defs {
+            let Some(cur) = self.0.get(d.key).cloned() else { continue };
+            let new = match (&d.kind, cur) {
+                (Kind::Float { min, max, step }, Value::F(v)) => {
+                    let mut v = if v.is_nan() { *min } else { v };
+                    if snap && *step > 0.0 {
+                        v = min + ((v - min) / step).round() * step;
+                        v = (v * 1e6).round() / 1e6;
+                    }
+                    Value::F(v.clamp(*min, *max))
+                }
+                (Kind::Int { min, max }, Value::I(v)) => Value::I(v.clamp(*min, *max)),
+                (Kind::Choice(opts), Value::S(v)) if !opts.contains(&v.as_str()) => d.default.clone(),
+                (_, v) => v,
+            };
+            self.0.insert(d.key.to_string(), new);
+        }
+    }
+}
+
+/// Optional interaction layer for a figure: draggable handles over the rendered preview.
+/// Dispatch lives in `interact::handles_for` (keeps `FigureDef` literals untouched).
+impl FigureDef {
+    pub fn handles(&self, p: &Params, size: (f64, f64)) -> Vec<interact::Handle> {
+        interact::handles_for(self.id, p, size)
     }
 }
 
@@ -102,10 +156,32 @@ pub fn registry() -> Vec<FigureDef> {
     v
 }
 
+/// System fonts are loaded once and shared (loading per render made live drags stutter).
+fn fontdb() -> std::sync::Arc<resvg::usvg::fontdb::Database> {
+    static DB: std::sync::OnceLock<std::sync::Arc<resvg::usvg::fontdb::Database>> = std::sync::OnceLock::new();
+    DB.get_or_init(|| {
+        let mut db = resvg::usvg::fontdb::Database::new();
+        db.load_system_fonts();
+        std::sync::Arc::new(db)
+    })
+    .clone()
+}
+
+/// Size (w, h) of the SVG canvas in its own units, read from the root `width`/`height`.
+pub fn svg_size(svg: &str) -> (f64, f64) {
+    let head = &svg[..svg.len().min(400)];
+    let get = |name: &str| {
+        head.find(&format!(" {name}=\""))
+            .and_then(|i| head[i + name.len() + 3..].split('"').next())
+            .and_then(|v| v.trim_end_matches("px").parse::<f64>().ok())
+    };
+    (get("width").unwrap_or(400.0), get("height").unwrap_or(300.0))
+}
+
 /// Rasterize SVG to PNG at `scale`x its natural size. System fonts are loaded for text.
 pub fn to_png(svg: &str, scale: f32) -> Result<Vec<u8>, String> {
     let mut opt = resvg::usvg::Options::default();
-    opt.fontdb_mut().load_system_fonts();
+    opt.fontdb = fontdb();
     let tree = resvg::usvg::Tree::from_str(svg, &opt).map_err(|e| e.to_string())?;
     let size = tree.size();
     let (w, h) = ((size.width() * scale).ceil() as u32, (size.height() * scale).ceil() as u32);
@@ -132,3 +208,4 @@ mod tests {
         }
     }
 }
+

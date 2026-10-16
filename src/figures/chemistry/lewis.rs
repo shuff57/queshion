@@ -25,6 +25,8 @@ fn params() -> Vec<ParamDef> {
         ParamDef::bool("lone", "Show lone pairs", true),
         ParamDef::bool("formal", "Show formal charges", false),
         ParamDef::bool("expand", "Expand the octet to lower formal charges", false),
+        ParamDef::text("title", "Title (optional)", ""),
+        ParamDef::text("tweak", "Manual edits (click bonds and atoms on the figure; blank = none)", ""),
     ]
 }
 
@@ -203,12 +205,42 @@ fn from_formula(raw: &str, expand: bool) -> Result<Mol, String> {
 
 fn ang_dist(a: f64, b: f64) -> f64 { let d = (a - b).rem_euclid(360.0); d.min(360.0 - d) }
 
-fn render(p: &Params) -> String {
+/// Builds the molecule for the current params including manual edits from `tweak`
+/// ("b2=3" sets bond 2 to a triple bond, "l1=2" gives atom 1 two lone pairs).
+fn build(p: &Params) -> Result<Mol, String> {
     let expand = p.b("expand");
-    let mol = if p.s("preset") != "None (use the formula)" && !p.s("preset").is_empty() {
-        Ok(preset(p.s("preset")))
-    } else { from_formula(p.s("formula"), expand) };
-    let m = match mol {
+    let mut m = if p.s("preset") != "None (use the formula)" && !p.s("preset").is_empty() {
+        preset(p.s("preset"))
+    } else {
+        from_formula(p.s("formula"), expand)?
+    };
+    for tok in p.s("tweak").split_whitespace() {
+        let Some((k, v)) = tok.split_once('=') else { continue };
+        let (Some(kind), Ok(i), Ok(n)) = (k.chars().next(), k[1..].parse::<usize>(), v.parse::<i32>()) else { continue };
+        match kind {
+            'b' => if let Some(b) = m.bonds.get_mut(i) { b.order = n.clamp(1, 3); },
+            'l' => if let Some(a) = m.atoms.get_mut(i) { a.nb = (2 * n).clamp(0, 8); a.forced = None; },
+            _ => {}
+        }
+    }
+    Ok(m)
+}
+
+struct Frame { w: f64, h: f64, ox: f64, oy: f64, x0: f64, x1: f64, y0: f64, y1: f64 }
+
+fn frame(m: &Mol) -> Frame {
+    let (mut x0, mut x1, mut y0, mut y1) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
+    for a in &m.atoms { x0 = x0.min(a.x); x1 = x1.max(a.x); y0 = y0.min(a.y); y1 = y1.max(a.y); }
+    let margin = 56.0;
+    let extra = if m.charge != 0 { 16.0 } else { 0.0 };
+    let w = (x1 - x0 + 2.0 * margin + 2.0 * extra).max(200.0);
+    let h = (y1 - y0 + 2.0 * margin + 2.0 * extra).max(170.0);
+    let (ox, oy) = ((w - (x1 - x0)) / 2.0 - x0, (h - (y1 - y0)) / 2.0 - y0);
+    Frame { w, h, ox, oy, x0, x1, y0, y1 }
+}
+
+fn render(p: &Params) -> String {
+    let m = match build(p) {
         Ok(m) => m,
         Err(e) => {
             let mut d = Doc::new(420.0, 120.0);
@@ -216,15 +248,10 @@ fn render(p: &Params) -> String {
             return d.finish();
         }
     };
-    let (mut x0, mut x1, mut y0, mut y1) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
-    for a in &m.atoms { x0 = x0.min(a.x); x1 = x1.max(a.x); y0 = y0.min(a.y); y1 = y1.max(a.y); }
-    let margin = 56.0;
+    let Frame { w, h, ox, oy, x0, x1, y0, y1 } = frame(&m);
     let ion = m.charge != 0;
-    let extra = if ion { 16.0 } else { 0.0 };
-    let w = (x1 - x0 + 2.0 * margin + 2.0 * extra).max(200.0);
-    let h = (y1 - y0 + 2.0 * margin + 2.0 * extra).max(170.0);
-    let (ox, oy) = ((w - (x1 - x0)) / 2.0 - x0, (h - (y1 - y0)) / 2.0 - y0);
     let mut d = Doc::new(w, h);
+    title_at(&mut d, p, w / 2.0, 22.0, 15.0);
     let pos = |i: usize| (m.atoms[i].x + ox, m.atoms[i].y + oy);
     // bonds
     for b in &m.bonds {
@@ -305,4 +332,51 @@ fn render(p: &Params) -> String {
         tx(&mut d, bx1 + 4.0, by0 + 6.0, 17.0, "start", INK, true, &t);
     }
     d.finish()
+}
+
+// ---------------------------------------------------------------------------------------------
+// Handles
+// ---------------------------------------------------------------------------------------------
+
+use crate::figures::interact::Handle;
+
+/// Rewrites one `tweak` token (`b3=2`), keeping the others.
+fn set_tweak(q: &mut Params, key: &str, val: i32) {
+    let mut toks: Vec<String> = q.s("tweak").split_whitespace().filter(|t| !t.starts_with(&format!("{key}="))).map(String::from).collect();
+    toks.push(format!("{key}={val}"));
+    q.set_s("tweak", &toks.join(" "));
+}
+
+pub(super) fn handles(id: &str, p: &Params, _size: (f64, f64)) -> Option<Vec<Handle>> {
+    if id != "lewis-structures" {
+        return None;
+    }
+    let Ok(m) = build(p) else { return Some(Vec::new()) };
+    let fr = frame(&m);
+    let pos = |i: usize| (m.atoms[i].x + fr.ox, m.atoms[i].y + fr.oy);
+    let mut v = Vec::new();
+    for (i, b) in m.bonds.iter().enumerate() {
+        let (a, c) = (pos(b.a), pos(b.b));
+        let order = b.order;
+        v.push(Handle::zone(((a.0 + c.0) / 2.0, (a.1 + c.1) / 2.0), (22.0, 22.0), "Click to cycle the bond: single, double, triple", move |q| {
+            set_tweak(q, &format!("b{i}"), order % 3 + 1);
+        }));
+    }
+    if p.b("lone") {
+        for (i, a) in m.atoms.iter().enumerate() {
+            if a.sym == "H" { continue; }
+            let pairs = a.nb / 2;
+            let bs = m.bond_sum(i);
+            let cap = ((8 - 2 * bs).max(0) / 2).max(pairs);
+            let c = pos(i);
+            v.push(Handle::zone((c.0, c.1 - 2.0), (30.0, 30.0), "Click to change the number of lone pairs on this atom", move |q| {
+                set_tweak(q, &format!("l{i}"), if pairs >= cap { 0 } else { pairs + 1 });
+            }));
+        }
+    }
+    if p.s("preset") == "None (use the formula)" || p.s("preset").is_empty() {
+        v.push(Handle::label((fr.w / 2.0, 22.0), (150.0, 24.0), "formula", "Double-click to edit the formula"));
+    }
+    let _ = (fr.x0, fr.x1, fr.y0, fr.y1);
+    Some(v)
 }

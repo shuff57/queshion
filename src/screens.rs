@@ -1093,26 +1093,95 @@ impl crate::App {
 
     /// Help line under the AI settings: where the key comes from for the provider.
     pub fn ai_help_line(&self) -> String {
-        match self.settings.ai_provider.as_str() {
-            "cloud" => {
-                "Ollama Cloud runs gemma4:31b on Ollama's servers; queShion reads the \
-                 key from the OLLAMA_API_KEY environment variable, or from ~/.config/ollama-cloud/credentials.json."
-                    .to_string()
-            }
-            "openrouter" => {
-                "OpenRouter is a keyed service; queShion reads the key from the \
-                 OPENROUTER_API_KEY environment variable."
-                    .to_string()
-            }
-            "custom" => {
-                "A custom endpoint is any OpenAI-compatible chat API; it optionally reads \
-                 a key from the QUESHION_AI_KEY environment variable."
-                    .to_string()
-            }
-            _ => "Ollama runs on your machine: install it, pull a vision model (the \
+        let cfg = crate::ai::AiCfg::from(&self.settings);
+        match cfg.provider.as_str() {
+            "cloud" => format!("Ollama Cloud runs gemma4:31b on Ollama's servers. {}", cfg.key_source_help()),
+            "ollama" => "Ollama runs on your machine: install it, pull a vision model (the \
                   default is gemma4:31b), and queShion finds it at 127.0.0.1:11434."
                 .to_string(),
+            _ => cfg.key_source_help(),
         }
+    }
+
+    /// Settings > AI: masked key entry, save/remove, status and a connection test for the
+    /// current keyed provider. The key lives only in the text buffer until saved (then it is
+    /// cleared), and in `ai-keys.json`; it is never shown, logged or put in a toast.
+    fn draw_ai_key_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        use crate::kit;
+        let cfg = crate::ai::AiCfg::from(&self.settings);
+        if !cfg.uses_key() {
+            return;
+        }
+        type Probe = std::sync::Arc<std::sync::Mutex<Option<Result<(), String>>>>;
+        let id_buf = egui::Id::new("ai_key_buf");
+        let id_probe = egui::Id::new("ai_key_probe");
+        let id_msg = egui::Id::new("ai_key_msg");
+        let mut buf: String = ctx.data_mut(|d| d.get_temp(id_buf)).unwrap_or_default();
+        let probe: Probe = ctx.data_mut(|d| d.get_temp(id_probe)).unwrap_or_default();
+        let mut msg: Option<(String, bool)> = ctx.data_mut(|d| d.get_temp(id_msg));
+        if let Some(r) = probe.lock().ok().and_then(|mut g| g.take()) {
+            msg = Some(match r {
+                Ok(()) => ("Connection OK".to_string(), false),
+                Err(e) => (e, true),
+            });
+        }
+        let testing = msg.as_ref().is_some_and(|m| m.0 == "Testing…");
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.label(theme::text("API key"));
+            ui.add(
+                egui::TextEdit::singleline(&mut buf)
+                    .password(true)
+                    .desired_width(300.0)
+                    .hint_text("paste a key"),
+            );
+            if kit::primary_button(ui, "Save key").clicked() && !buf.trim().is_empty() {
+                match crate::ai::set_key(&cfg.provider, Some(&buf)) {
+                    Ok(()) => msg = Some(("Key saved on this computer".to_string(), false)),
+                    Err(e) => msg = Some((e, true)),
+                }
+                buf.clear();
+            }
+        });
+        ui.horizontal(|ui| {
+            let status = cfg.key_status();
+            ui.label(theme::muted(status.describe()).size(12.0));
+            if crate::ai::load_keys().get(&cfg.provider).is_some() && kit::danger_text_button(ui, "Remove key").clicked() {
+                match crate::ai::set_key(&cfg.provider, None) {
+                    Ok(()) => msg = Some(("Key removed".to_string(), false)),
+                    Err(e) => msg = Some((e, true)),
+                }
+            }
+            if !testing && kit::ghost_button(ui, "Test connection").clicked() {
+                msg = Some(("Testing…".to_string(), false));
+                let probe2 = probe.clone();
+                let ctx2 = ctx.clone();
+                let cfg2 = cfg.clone();
+                std::thread::spawn(move || {
+                    let r = crate::ai::test_connection(&cfg2);
+                    if let Ok(mut g) = probe2.lock() {
+                        *g = Some(r);
+                    }
+                    ctx2.request_repaint();
+                });
+            }
+        });
+        if let Some((m, bad)) = &msg {
+            let t = if *bad { theme::muted(m.clone()).color(theme::bad()) } else { theme::muted(m.clone()) };
+            ui.label(t.size(12.0));
+        }
+        ctx.data_mut(|d| {
+            d.insert_temp(id_buf, buf);
+            d.insert_temp(id_probe, probe);
+            match msg {
+                Some(m) => {
+                    d.insert_temp(id_msg, m);
+                }
+                None => {
+                    d.remove::<(String, bool)>(id_msg);
+                }
+            }
+        });
     }
 
     pub fn draw_settings(&mut self, ctx: &egui::Context) {
@@ -1222,6 +1291,8 @@ impl crate::App {
                                 .hint_text("gemma4:31b"),
                         );
                     });
+                    ui.add_space(6.0);
+                    app.draw_ai_key_ui(ui, ctx);
                     ui.add_space(6.0);
                     ui.label(theme::muted(app.ai_help_line()).size(11.5));
                     if app.settings_changed(&before) {
@@ -2044,6 +2115,18 @@ mod tests {
         assert!(!sanitize_backup_entry("/etc/passwd"));
         assert!(!sanitize_backup_entry("C:\\Windows"));
         assert!(!sanitize_backup_entry("random.txt"));
+    }
+
+    #[test]
+    fn backup_never_includes_or_restores_the_key_file() {
+        // Restore guard refuses it, so a malicious/old zip can't clobber saved keys.
+        assert!(!sanitize_backup_entry("ai-keys.json"));
+        assert!(!sanitize_backup_entry("ai-keys.json.tmp"));
+        // Backup writer works from a fixed file list that must not name it.
+        let src = include_str!("screens.rs");
+        let a = src.find("fn write_backup").unwrap();
+        let body = &src[a..a + 900];
+        assert!(!body.contains(concat!("ai-", "keys")));
     }
 
     #[test]

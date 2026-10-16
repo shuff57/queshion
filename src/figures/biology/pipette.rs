@@ -8,18 +8,20 @@ const SIZES: [&str; 6] = ["2 µL", "10 µL", "20 µL", "100 µL", "200 µL", "10
 pub fn params() -> Vec<ParamDef> {
     vec![
         ParamDef::choice("size", "Micropipette size", &SIZES, "20 µL"),
-        ParamDef::float("volume", "Volume it is set to (µL)", 0.0, 1000.0, 0.1, 12.5),
+        ParamDef::float("volume", "Volume it is set to (µL)", 0.0, 1000.0, 0.01, 12.5),
         ParamDef::bool("tip", "Tip on the end", true),
         ParamDef::bool("size_label", "Size printed above the display", true),
         ParamDef::bool("color", "Color (red marks the decimal digit)", true),
         ParamDef::bool("decimal_line", "Decimal line", true),
         ParamDef::bool("answer", "Print the reading under the figure", false),
+        ParamDef::text("title", "Title above the pipette (blank = none)", ""),
+        ParamDef::text("answer_text", "Answer text (blank = automatic)", ""),
     ]
 }
 
-struct Spec { max: f64, min: f64, unit: f64, red: usize, accent: &'static str, tip: &'static str }
+pub struct Spec { pub max: f64, pub min: f64, pub unit: f64, pub red: usize, accent: &'static str, tip: &'static str }
 
-fn spec(size: &str) -> Spec {
+pub fn spec(size: &str) -> Spec {
     match size {
         "2 µL" => Spec { max: 2.0, min: 0.2, unit: 0.01, red: 2, accent: "#a78bfa", tip: "#e5e7eb" },
         "10 µL" => Spec { max: 10.0, min: 1.0, unit: 0.1, red: 1, accent: "#d1d5db", tip: "#e5e7eb" },
@@ -85,7 +87,12 @@ pub fn render(p: &Params) -> String {
         bold(&mut d, cx, wy - 10.0, 11.0, "middle", &size);
     }
     if p.b("answer") {
-        bold(&mut d, w / 2.0, h - 8.0, 16.0, "middle", &format!("Reading: {} µL", fnum(vol)));
+        let custom = p.s("answer_text").trim();
+        let t = if custom.is_empty() { format!("Reading: {} µL", fnum(vol)) } else { custom.to_string() };
+        bold(&mut d, w / 2.0, h - 8.0, 16.0, "middle", &t);
+    }
+    if !p.s("title").trim().is_empty() {
+        bold(&mut d, w / 2.0, 22.0, 17.0, "middle", p.s("title").trim());
     }
     d.finish()
 }

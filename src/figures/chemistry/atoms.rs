@@ -30,6 +30,7 @@ fn bohr_params() -> Vec<ParamDef> {
         ParamDef::choice("placement", "Electron placement", &["Evenly spaced", "Paired"], "Evenly spaced"),
         ParamDef::bool("empty", "Empty rings (students draw the electrons)", false),
         ParamDef::bool("caption", "Caption with element name", false),
+        ParamDef::text("title", "Title (optional)", ""),
     ]
 }
 
@@ -45,6 +46,7 @@ fn bohr_render(p: &Params) -> String {
     let cx = size / 2.0;
     let h = size + if p.b("caption") { 36.0 } else { 0.0 };
     let mut d = Doc::new(size, h);
+    title_at(&mut d, p, cx, 15.0, 13.0);
     for (i, &e) in sh.iter().enumerate() {
         let r = r0 + 22.0 + gap * i as f64;
         d.circle(cx, cx, r, "none", INK, 1.5);
@@ -96,6 +98,7 @@ fn orbital_params() -> Vec<ParamDef> {
         ParamDef::bool("blank", "Empty boxes (students fill in the arrows)", false),
         ParamDef::bool("config", "Show electron configuration text", true),
         ParamDef::bool("caption", "Caption with element name", false),
+        ParamDef::text("title", "Title (optional)", ""),
     ]
 }
 
@@ -152,6 +155,7 @@ fn orbital_render(p: &Params) -> String {
         let w = (total + 80.0).max(300.0);
         let h = 150.0 + 46.0 * ncfg as f64 + 30.0 * cap as f64;
         let mut d = Doc::new(w, h);
+        title_at(&mut d, p, w / 2.0, 16.0, 13.0);
         let mut x = (w - total) / 2.0;
         let y = 40.0 + 30.0 * cap as f64;
         if cap == 1 { tx(&mut d, w / 2.0, 30.0, 16.0, "middle", INK, true, &format!("{} ({})", name(z), symbol(z))); }
@@ -173,6 +177,7 @@ fn orbital_render(p: &Params) -> String {
         let w = 90.0 + 5.0 * bs + 120.0;
         let h = 50.0 + rowh * n as f64 + 30.0 + 40.0 * ncfg as f64 + 30.0 * cap as f64;
         let mut d = Doc::new(w, h);
+        title_at(&mut d, p, w / 2.0, 16.0, 13.0);
         let top = 30.0 + 30.0 * cap as f64;
         if cap == 1 { tx(&mut d, w / 2.0, 30.0, 16.0, "middle", INK, true, &format!("{} ({})", name(z), symbol(z))); }
         let base_y = top + rowh * n as f64 + 10.0;
@@ -204,6 +209,9 @@ fn particle_params() -> Vec<ParamDef> {
         ParamDef::choice("state", "State (box, or before)", &["Gas", "Liquid", "Solid"], "Gas"),
         ParamDef::choice("state2", "State after", &["Gas", "Liquid", "Solid"], "Gas"),
     ];
+    v.push(ParamDef::text("title", "Title (optional)", ""));
+    v.push(ParamDef::text("lab_before", "Left box label", "Before"));
+    v.push(ParamDef::text("lab_after", "Right box label", "After"));
     let spec: [(&'static str, i64, &'static str, &'static str, &'static str, [&'static str; 5], [&'static str; 5]); 3] = [
         ("a", 4, "Alone", "L", "Light gray",
             ["a_count", "a_shape", "a_size", "a_shade", "a2_count"],
@@ -337,14 +345,86 @@ fn particle_render(p: &Params) -> String {
     let w = if two { bs * 2.0 + 150.0 } else { bs + 40.0 };
     let h = bs + if two { 70.0 } else { 40.0 };
     let mut d = Doc::new(w, h);
+    title_at(&mut d, p, w / 2.0, 14.0, 13.0);
     let before = build(["a_count", "b_count", "c_count"]);
     fill_box(&mut d, 20.0, 20.0, bs, p.s("state"), lattice, &before, 11);
     if two {
         let after = build(["a2_count", "b2_count", "c2_count"]);
         d.arrow(bs + 38.0, 20.0 + bs / 2.0, bs + 112.0, 20.0 + bs / 2.0, INK, 2.2);
         fill_box(&mut d, bs + 130.0, 20.0, bs, p.s("state2"), lattice, &after, 23);
-        tx(&mut d, 20.0 + bs / 2.0, bs + 52.0, 15.0, "middle", INK, true, "Before");
-        tx(&mut d, bs + 130.0 + bs / 2.0, bs + 52.0, 15.0, "middle", INK, true, "After");
+        tx(&mut d, 20.0 + bs / 2.0, bs + 52.0, 15.0, "middle", INK, true, p.s("lab_before"));
+        tx(&mut d, bs + 130.0 + bs / 2.0, bs + 52.0, 15.0, "middle", INK, true, p.s("lab_after"));
     }
     d.finish()
+}
+
+// ---------------------------------------------------------------------------------------------
+// Handles
+// ---------------------------------------------------------------------------------------------
+
+use crate::figures::interact::Handle;
+
+/// Move the element choice by `delta` (wraps within the first 36 elements).
+fn step_element(q: &mut Params, delta: i64, max_z: i64) {
+    let z = z_of(q.s("element")) as i64;
+    let nz = (z - 1 + delta).rem_euclid(max_z) + 1;
+    q.set_s("element", ELEMENT_CHOICES[(nz - 1) as usize]);
+}
+
+pub(super) fn handles(id: &str, p: &Params, size: (f64, f64)) -> Option<Vec<Handle>> {
+    match id {
+        "bohr-model" => {
+            let z = z_of(p.s("element"));
+            let nsh = shells(z, p.i("charge")).len().max(1);
+            let r0 = 36.0;
+            let gap = if nsh > 4 { 34.0 } else { 42.0 };
+            let rmax = r0 + 22.0 + gap * (nsh as f64 - 1.0);
+            let cx = rmax + 26.0;
+            Some(vec![
+                Handle::zone((cx, cx), (66.0, 66.0), "Click: next element. Scroll: change element", |q| step_element(q, 1, 36))
+                    .with_scroll(|q, dy| step_element(q, if dy > 0.0 { 1 } else { -1 }, 36)),
+                Handle::zone((cx, cx - rmax), (60.0, 22.0), "Click: add an electron (ion charge). Scroll up adds, down removes", |q| {
+                    let c = q.i("charge");
+                    q.set_i("charge", if c <= -3 { 4 } else { c - 1 });
+                })
+                .with_scroll(|q, dy| q.set_i("charge", q.i("charge") - if dy > 0.0 { 1 } else { -1 })),
+            ])
+        }
+        "orbital-diagram" => Some(vec![
+            Handle::zone((size.0 / 2.0, size.1 * 0.42), (size.0 * 0.8, size.1 * 0.5), "Click: next element. Scroll: change the ion charge", |q| step_element(q, 1, 36))
+                .with_scroll(|q, dy| q.set_i("charge", q.i("charge") - if dy > 0.0 { 1 } else { -1 })),
+        ]),
+        "particle-diagram" => {
+            let two = p.s("boxes") == "Before and after";
+            let bs = 320.0;
+            let mut v = Vec::new();
+            let boxes: Vec<(f64, &'static str, &'static str)> = if two {
+                vec![(20.0 + bs / 2.0, "a_count", "Before"), (bs + 130.0 + bs / 2.0, "a2_count", "After")]
+            } else {
+                vec![(20.0 + bs / 2.0, "a_count", "")]
+            };
+            for (cx, _first, _) in &boxes {
+                let after = *cx > bs;
+                let keys: [&'static str; 3] = if after { ["a2_count", "b2_count", "c2_count"] } else { ["a_count", "b_count", "c_count"] };
+                v.push(
+                    Handle::zone((*cx, 20.0 + bs / 2.0), (bs, bs), "Click: add a particle. Scroll up adds, down removes", move |q| {
+                        q.set_i(keys[0], q.i(keys[0]) + 1);
+                    })
+                    .with_scroll(move |q, dy| {
+                        if dy > 0.0 {
+                            q.set_i(keys[0], q.i(keys[0]) + 1);
+                        } else if let Some(k) = keys.iter().rev().find(|k| q.i(k) > 0) {
+                            q.set_i(k, q.i(k) - 1);
+                        }
+                    }),
+                );
+            }
+            if two {
+                v.push(Handle::label((20.0 + bs / 2.0, bs + 52.0), (110.0, 24.0), "lab_before", "Double-click to rename"));
+                v.push(Handle::label((bs + 130.0 + bs / 2.0, bs + 52.0), (110.0, 24.0), "lab_after", "Double-click to rename"));
+            }
+            Some(v)
+        }
+        _ => None,
+    }
 }

@@ -3,8 +3,9 @@
 //! Submodules live in `chemistry/`; this file holds shared drawing helpers and the registry.
 #![allow(dead_code)]
 use super::svg::Doc;
-use super::FigureDef;
+use super::{interact, FigureDef, Params};
 
+mod handles;
 mod atoms;
 mod curves;
 pub mod data;
@@ -131,6 +132,20 @@ pub fn object(d: &mut Doc, kind: &str, cx: f64, base: f64, size: f64, seed: u64)
             d.line(cx - w * 0.28, base - h + 6.0, cx - w * 0.28, base - 4.0, "#eef1f3", 2.0);
         }
     }
+}
+
+/// Optional centred figure title from the `title` param (nothing when empty).
+pub fn title_at(d: &mut Doc, p: &Params, cx: f64, y: f64, size: f64) {
+    let t = p.s("title").trim();
+    if !t.is_empty() { tx(d, cx, y, size, "middle", INK, true, t); }
+}
+
+/// Palette for curve colours.
+pub const CURVE_COLORS: [&str; 6] = ["#1f5fa8", "#c0392b", "#2e8b57", "#8e44ad", "#d68910", "#1b1b1b"];
+
+/// Direct-manipulation handles for this subject's figures (None = not one of ours).
+pub fn handles(id: &str, p: &Params, size: (f64, f64)) -> Option<Vec<interact::Handle>> {
+    handles::handles(id, p, size)
 }
 
 pub fn defs() -> Vec<FigureDef> {

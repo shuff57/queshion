@@ -14,7 +14,7 @@ type Pt = (f64, f64);
 
 // ───────────────────────── shared helpers ─────────────────────────
 
-fn fmt(v: f64, dec: i64) -> String {
+pub(super) fn fmt(v: f64, dec: i64) -> String {
     let s = format!("{:.*}", dec.clamp(0, 4) as usize, v);
     let s = if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s };
     if s == "-0" { "0".into() } else { s.replace('-', "\u{2212}") }
@@ -42,7 +42,14 @@ fn dpoly(doc: &mut Doc, pts: &[Pt], color: &str, sw: f64, dash: &str) {
     let _ = write!(s, r#"<polyline points="{}" fill="none" stroke="{color}" stroke-width="{sw}" stroke-dasharray="{dash}" stroke-linejoin="round"/>"#, p.join(" "));
     doc.raw(&s);
 }
-fn nums(s: &str) -> Vec<f64> {
+/// Colour param with fallback (older specs have no value for newly added colour keys).
+fn colp(p: &Params, key: &str, default: &str) -> String {
+    let v = p.s(key);
+    if v.starts_with('#') && v.len() >= 4 { v.to_string() } else { default.to_string() }
+}
+const SWATCHES: [&str; 8] = ["#111111", "#1f5fbf", "#c0392b", "#2a8a3e", "#8e44ad", "#d68910", "#e9f1fb", "#c9def4"];
+
+pub(super) fn nums(s: &str) -> Vec<f64> {
     s.split(|c: char| c == ',' || c == ';' || c.is_whitespace())
         .filter_map(|t| t.trim().replace('\u{2212}', "-").parse().ok()).collect()
 }
@@ -65,16 +72,29 @@ fn mix(c1: (f64, f64, f64), c2: (f64, f64, f64), t: f64) -> String {
 }
 
 /// Uniform fit of model points (y up) into a w x h canvas.
-struct Map { s: f64, ox: f64, oy: f64 }
+pub(super) struct Map { pub s: f64, pub ox: f64, pub oy: f64 }
+thread_local! {
+    /// Last layout produced by `Map::fit` on this thread (scale, origin x, origin y). Lets the
+    /// interaction layer (`math_geo`) place handles with exactly the renderer's geometry.
+    static LAST_MAP: std::cell::Cell<Option<(f64, f64, f64)>> = const { std::cell::Cell::new(None) };
+}
+/// Renders figure `p` with `render` and returns (scale, ox, oy) of the fit it used, if any.
+pub(super) fn probe_map(render: fn(&Params) -> String, p: &Params) -> Option<(f64, f64, f64)> {
+    LAST_MAP.with(|c| c.set(None));
+    let _ = render(p);
+    LAST_MAP.with(|c| c.get())
+}
 impl Map {
-    fn fit(pts: &[Pt], w: f64, h: f64, mx: f64, my: f64) -> Map {
+    pub(super) fn fit(pts: &[Pt], w: f64, h: f64, mx: f64, my: f64) -> Map {
         let (mut x0, mut x1, mut y0, mut y1) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
         for p in pts { x0 = x0.min(p.0); x1 = x1.max(p.0); y0 = y0.min(p.1); y1 = y1.max(p.1); }
         if x0 > x1 { x0 = 0.0; x1 = 1.0; y0 = 0.0; y1 = 1.0; }
         let s = ((w - 2.0 * mx) / (x1 - x0).max(1e-9)).min((h - 2.0 * my) / (y1 - y0).max(1e-9));
-        Map { s, ox: w / 2.0 - s * (x0 + x1) / 2.0, oy: h / 2.0 + s * (y0 + y1) / 2.0 }
+        let m = Map { s, ox: w / 2.0 - s * (x0 + x1) / 2.0, oy: h / 2.0 + s * (y0 + y1) / 2.0 };
+        LAST_MAP.with(|c| c.set(Some((m.s, m.ox, m.oy))));
+        m
     }
-    fn p(&self, q: Pt) -> Pt { (self.ox + q.0 * self.s, self.oy - q.1 * self.s) }
+    pub(super) fn p(&self, q: Pt) -> Pt { (self.ox + q.0 * self.s, self.oy - q.1 * self.s) }
 }
 
 /// Text next to segment a-b (screen coords), on the side facing away from `center`.
@@ -126,6 +146,7 @@ struct PolySpec {
     marks: Vec<Mark>,
     dots: Vec<Pt>,
     rot: f64,
+    fill: String,
 }
 
 fn auto_ticks(lens: &[f64]) -> Vec<u8> {
@@ -174,7 +195,7 @@ fn draw_poly(s: PolySpec, dec: i64, unit: &str) -> String {
     let sp: Vec<Pt> = pts.iter().map(|p| m.p(*p)).collect();
     let cen = (sp.iter().map(|p| p.0).sum::<f64>() / n as f64, sp.iter().map(|p| p.1).sum::<f64>() / n as f64);
     let mut doc = new_doc(w, h);
-    doc.poly(&sp, TINT, INK, 2.2);
+    doc.poly(&sp, &s.fill, INK, 2.2);
 
     // extras (dashed construction lines)
     for e in &s.extras {
@@ -311,7 +332,8 @@ fn poly_angles(pts: &[Pt]) -> Vec<f64> {
 /// Shared builder for polygon-type figures from parameters + geometry.
 fn poly_from_params(p: &Params, pts: Vec<Pt>, arrows: Vec<u8>, extras: Vec<Extra>, marks: Vec<Mark>, dots: Vec<Pt>) -> String {
     let n = pts.len();
-    let names: Vec<String> = (0..n).map(|i| ((b'A' + i as u8) as char).to_string()).collect();
+    let custom: Vec<String> = p.s("vnames").split(|c: char| c == ',' || c.is_whitespace()).map(|t| t.trim().to_uppercase()).filter(|t| !t.is_empty()).collect();
+    let names: Vec<String> = (0..n).map(|i| custom.get(i).cloned().unwrap_or_else(|| ((b'A' + i as u8) as char).to_string())).collect();
     let (dec, unit) = (p.i("dec"), p.s("unit").to_string());
     let show = tokens(p.s("sides"));
     let unk = tokens(p.s("unknown"));
@@ -327,6 +349,7 @@ fn poly_from_params(p: &Params, pts: Vec<Pt>, arrows: Vec<u8>, extras: Vec<Extra
     draw_poly(PolySpec {
         pts, names, side_txt, ang_txt, ticks, arrows, right_marks: p.b("right"), vlabels: p.b("vertices"),
         extras, marks, dots, rot: p.f("rotate"),
+        fill: if p.s("fill").starts_with('#') { p.s("fill").to_string() } else { TINT.to_string() },
     }, dec, &unit)
 }
 
@@ -341,6 +364,8 @@ fn common(sides: &str, angles: &str, unknown: &str) -> Vec<ParamDef> {
         ParamDef::text("unit", "Unit (e.g. cm)", ""),
         ParamDef::int("dec", "Decimal places", 0, 3, 1),
         ParamDef::float("rotate", "Rotate (degrees)", -180.0, 180.0, 5.0, 0.0),
+        ParamDef::text("vnames", "Vertex letters in order (e.g. P, Q, R; blank = A, B, C)", ""),
+        ParamDef::color("fill", "Fill colour", &["#e9f1fb", "#fdf0d5", "#e3f4e1", "#fbe3e3", "#efe5f7", "#ffffff"], "#e9f1fb"),
     ]
 }
 
@@ -631,7 +656,7 @@ impl<'a> Ev<'a> {
         }
     }
 }
-fn eval(expr: &str, x: f64) -> Option<f64> {
+pub(super) fn eval(expr: &str, x: f64) -> Option<f64> {
     let cs: Vec<char> = expr.replace('\u{2212}', "-").replace('\u{b7}', "*").to_lowercase().chars().collect();
     let mut e = Ev { s: &cs, i: 0, x };
     let v = e.expr()?;
@@ -654,9 +679,14 @@ fn coordinate_grid_params() -> Vec<ParamDef> {
         ParamDef::text("xlabel", "x-axis label", "x"),
         ParamDef::text("ylabel", "y-axis label", "y"),
         ParamDef::text("title", "Title", ""),
-        ParamDef::text("equations", "Equations, separated by ; (e.g. y = 2x + 1; y = x^2 - 3; x = 4)", "y = 2x + 1"),
+        ParamDef::long("equations", "Equations, separated by ; (e.g. y = 2x + 1; y = x^2 - 3; x = 4)", "y = 2x + 1"),
         ParamDef::bool("eq_labels", "Write each equation on its line", false),
-        ParamDef::text("points", "Points, separated by ; (e.g. (2,3) A; (-1,4) B)", ""),
+        ParamDef::long("points", "Points, separated by ; (e.g. (2,3) A; (-1,4) B)", ""),
+        ParamDef::color("eq1_color", "Equation 1 colour", &SWATCHES, "#1f5fbf"),
+        ParamDef::color("eq2_color", "Equation 2 colour", &SWATCHES, "#c0392b"),
+        ParamDef::color("eq3_color", "Equation 3 colour", &SWATCHES, "#2a8a3e"),
+        ParamDef::color("eq4_color", "Equation 4 colour", &SWATCHES, "#8e44ad"),
+        ParamDef::color("pt_color", "Point colour", &SWATCHES, "#111111"),
     ]
 }
 
@@ -730,7 +760,8 @@ fn coordinate_grid_render(p: &Params) -> String {
     for (ci, eq) in p.s("equations").split(';').enumerate() {
         let eq = eq.trim();
         if eq.is_empty() { continue; }
-        let col = PALETTE[ci % PALETTE.len()];
+        let col_s = if ci < 4 { colp(p, &format!("eq{}_color", ci + 1), PALETTE[ci]) } else { PALETTE[ci % PALETTE.len()].to_string() };
+        let col = col_s.as_str();
         let rhs = match eq.find('=') { Some(i) => (eq[..i].trim().to_lowercase(), eq[i + 1..].trim().to_string()), None => ("y".into(), eq.to_string()) };
         let mut runs: Vec<Vec<Pt>> = vec![vec![]];
         if rhs.0 == "x" {
@@ -764,7 +795,7 @@ fn coordinate_grid_render(p: &Params) -> String {
             let n = nums(&seg[a + 1..b]);
             if n.len() == 2 {
                 let (px, py) = (sx(n[0]), sy(n[1]));
-                d.circle(px, py, 4.5, INK, "#fff", 1.2);
+                d.circle(px, py, 4.5, &colp(p, "pt_color", INK), "#fff", 1.2);
                 let lab = seg[b + 1..].trim();
                 if !lab.is_empty() { txt(&mut d, px + 7.0, py - 7.0, 15.0, "start", lab); }
             }
@@ -776,9 +807,9 @@ fn coordinate_grid_render(p: &Params) -> String {
 // ───────────────────────── number line ─────────────────────────
 
 #[derive(Clone, Copy)]
-struct Interval { lo: f64, lo_c: bool, hi: f64, hi_c: bool }
+pub(super) struct Interval { pub lo: f64, pub lo_c: bool, pub hi: f64, pub hi_c: bool }
 
-fn parse_ineq(s: &str) -> Vec<Interval> {
+pub(super) fn parse_ineq(s: &str) -> Vec<Interval> {
     let s = s.replace('\u{2264}', "<=").replace('\u{2265}', ">=").replace('\u{2212}', "-").replace(" ", "").to_lowercase();
     let mut out = vec![];
     let s = s.replace("or", "|").replace('\u{222a}', "|").replace("and", "&");
@@ -827,8 +858,10 @@ fn number_line_params() -> Vec<ParamDef> {
         ParamDef::bool("numbers", "Show numbers", true),
         ParamDef::bool("arrows", "Arrowheads", true),
         ParamDef::text("inequality", "Inequality to graph (e.g. -2 < x <= 5, x > 3, x < -4 or x >= 1)", "-2 < x <= 5"),
-        ParamDef::text("points", "Points to mark, comma separated (append o for open, e.g. 3, -4, 5o)", ""),
+        ParamDef::list("points", "Points to mark (append o for open, e.g. 3, -4, 5o)", ""),
         ParamDef::text("label", "Axis label", ""),
+        ParamDef::color("ineq_color", "Inequality colour", &SWATCHES, "#1f5fbf"),
+        ParamDef::color("pt_color", "Point colour", &SWATCHES, "#c0392b"),
     ]
 }
 
@@ -857,15 +890,17 @@ fn number_line_render(p: &Params) -> String {
     }
     if !p.s("label").is_empty() { txt(&mut d, x1 + 26.0, y + 5.0, 16.0, "start", p.s("label")); }
     // inequality
+    let (blue_s, red_s) = (colp(p, "ineq_color", BLUE), colp(p, "pt_color", "#c0392b"));
+    let (blue, red) = (blue_s.as_str(), red_s.as_str());
     for iv in parse_ineq(p.s("inequality")) {
         let a = if iv.lo.is_finite() { iv.lo.max(lo) } else { lo };
         let b = if iv.hi.is_finite() { iv.hi.min(hi) } else { hi };
-        if b >= a && iv.hi != iv.lo { d.line(sx(a), y, sx(b), y, BLUE, 5.0); }
-        if !iv.lo.is_finite() && p.b("arrows") { d.arrow(sx(lo) + 4.0, y, x0 - 24.0, y, BLUE, 3.5); }
-        if !iv.hi.is_finite() && p.b("arrows") { d.arrow(x1 - 4.0, y, x1 + 24.0, y, BLUE, 3.5); }
+        if b >= a && iv.hi != iv.lo { d.line(sx(a), y, sx(b), y, blue, 5.0); }
+        if !iv.lo.is_finite() && p.b("arrows") { d.arrow(sx(lo) + 4.0, y, x0 - 24.0, y, blue, 3.5); }
+        if !iv.hi.is_finite() && p.b("arrows") { d.arrow(x1 - 4.0, y, x1 + 24.0, y, blue, 3.5); }
         for (v, closed) in [(iv.lo, iv.lo_c), (iv.hi, iv.hi_c)] {
             if v.is_finite() && v >= lo - 1e-9 && v <= hi + 1e-9 {
-                d.circle(sx(v), y, 6.5, if closed { BLUE } else { "#fff" }, BLUE, 2.4);
+                d.circle(sx(v), y, 6.5, if closed { blue } else { "#fff" }, blue, 2.4);
             }
         }
     }
@@ -873,7 +908,7 @@ fn number_line_render(p: &Params) -> String {
         let t = t.trim();
         let (open, num) = if let Some(s) = t.strip_suffix('o') { (true, s) } else { (false, t) };
         if let Ok(v) = num.trim().replace('\u{2212}', "-").parse::<f64>() {
-            if v >= lo - 1e-9 && v <= hi + 1e-9 { d.circle(sx(v), y, 6.0, if open { "#fff" } else { "#c0392b" }, "#c0392b", 2.2); }
+            if v >= lo - 1e-9 && v <= hi + 1e-9 { d.circle(sx(v), y, 6.0, if open { "#fff" } else { red }, red, 2.2); }
         }
     }
     d.finish()
@@ -908,9 +943,9 @@ fn angles_params() -> Vec<ParamDef> {
         ParamDef::choice("mode", "Diagram", &["Single angle", "Angles on a straight line", "Angles around a point", "Vertical angles", "Custom rays"], "Angles on a straight line"),
         ParamDef::float("angle", "Angle (degrees)", 5.0, 175.0, 1.0, 60.0),
         ParamDef::float("angle2", "Second angle (around a point)", 5.0, 175.0, 1.0, 110.0),
-        ParamDef::text("rays", "Custom rays: directions in degrees counterclockwise from the baseline, e.g. 0, 50, 130, 250", "0, 50, 130, 250"),
-        ParamDef::text("unknown", "Sector numbers shown as x (counterclockwise from baseline, e.g. 2)", "2"),
-        ParamDef::text("hide", "Sector numbers left unlabelled", ""),
+        ParamDef::list("rays", "Custom rays: directions in degrees counterclockwise from the baseline, e.g. 0, 50, 130, 250", "0, 50, 130, 250"),
+        ParamDef::list("unknown", "Sector numbers shown as x (counterclockwise from baseline, e.g. 2)", "2"),
+        ParamDef::list("hide", "Sector numbers left unlabelled", ""),
         ParamDef::bool("right", "Right-angle squares", true),
         ParamDef::bool("letters", "Point letters on the rays", true),
         ParamDef::int("dec", "Decimal places", 0, 3, 1),
@@ -975,8 +1010,8 @@ fn parallel_lines_params() -> Vec<ParamDef> {
         ParamDef::float("angle", "Angle 2: above m, right of the transversal (degrees)", 15.0, 165.0, 1.0, 65.0),
         ParamDef::float("gap", "Gap between lines", 0.5, 3.0, 0.1, 1.0),
         ParamDef::choice("labels", "Label style", &["Degrees", "Numbers"], "Degrees"),
-        ParamDef::text("marked", "Angles to label (1-8 at the first two crossings, 5-8 at m and n, 9-12 at the third line), e.g. 2, 6", "2, 6"),
-        ParamDef::text("unknown", "Marked angles shown as x", "6"),
+        ParamDef::list("marked", "Angles to label (1-8 at the first two crossings, 5-8 at m and n, 9-12 at the third line), e.g. 2, 6", "2, 6"),
+        ParamDef::list("unknown", "Marked angles shown as x", "6"),
         ParamDef::bool("arrows", "Parallel arrows on the lines", true),
         ParamDef::bool("names", "Line names (m, n, t)", true),
         ParamDef::int("dec", "Decimal places", 0, 3, 1),
@@ -1091,7 +1126,7 @@ fn draw_solid(d: &mut Doc, m: &Map, s: &Solid, proj: &dyn Fn(P3) -> Pt, view: P3
     }
 }
 
-fn poly_base(kind: &str, l: f64, w: f64, n: usize, side: f64) -> Vec<P3> {
+pub(super) fn poly_base(kind: &str, l: f64, w: f64, n: usize, side: f64) -> Vec<P3> {
     match kind {
         "Right triangle" => vec![(0.0, 0.0, 0.0), (l, 0.0, 0.0), (l, w, 0.0)],
         "Isosceles triangle" => vec![(0.0, 0.0, 0.0), (l, 0.0, 0.0), (l / 2.0, w, 0.0)],
@@ -1265,7 +1300,7 @@ fn dist3(a: P3, b: P3) -> f64 { dot3(sub3(a, b), sub3(a, b)).sqrt() }
 
 // ----- round solids (elevated orthographic view) -----
 
-fn ell(cx: f64, cy: f64, rx: f64, ry: f64, t0: f64, t1: f64) -> Vec<Pt> {
+pub(super) fn ell(cx: f64, cy: f64, rx: f64, ry: f64, t0: f64, t1: f64) -> Vec<Pt> {
     let n = 64;
     (0..=n).map(|i| { let t = (t0 + (t1 - t0) * i as f64 / n as f64).to_radians(); (cx + rx * t.cos(), cy + ry * t.sin()) }).collect()
 }
@@ -1446,14 +1481,14 @@ fn median(v: &[f64]) -> f64 {
     let n = v.len();
     if n == 0 { 0.0 } else if n % 2 == 1 { v[n / 2] } else { (v[n / 2 - 1] + v[n / 2]) / 2.0 }
 }
-fn five_number(data: &[f64]) -> [f64; 5] {
+pub(super) fn five_number(data: &[f64]) -> [f64; 5] {
     let mut v = data.to_vec();
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let n = v.len();
     let (lo, hi) = (&v[..n / 2], &v[(n + 1) / 2..]);
     [v[0], median(lo), median(&v), median(hi), v[n - 1]]
 }
-fn nice_step(range: f64) -> f64 {
+pub(super) fn nice_step(range: f64) -> f64 {
     let raw = range / 8.0;
     let mag = 10f64.powf(raw.log10().floor());
     for f in [1.0, 2.0, 5.0, 10.0] { if raw <= f * mag { return f * mag; } }
@@ -1462,11 +1497,11 @@ fn nice_step(range: f64) -> f64 {
 
 fn box_plot_params() -> Vec<ParamDef> {
     vec![
-        ParamDef::text("data", "Data set 1 (numbers separated by commas)", "2, 4, 5, 5, 6, 7, 8, 9, 12"),
-        ParamDef::text("summary", "Or five-number summary instead: min, Q1, median, Q3, max", ""),
+        ParamDef::list("data", "Data set 1", "2, 4, 5, 5, 6, 7, 8, 9, 12"),
+        ParamDef::list("summary", "Or five-number summary instead: min, Q1, median, Q3, max", ""),
         ParamDef::text("name1", "Name of set 1", ""),
-        ParamDef::text("data2", "Data set 2 (optional, to compare)", ""),
-        ParamDef::text("summary2", "Or five-number summary for set 2", ""),
+        ParamDef::list("data2", "Data set 2 (optional, to compare)", ""),
+        ParamDef::list("summary2", "Or five-number summary for set 2", ""),
         ParamDef::text("name2", "Name of set 2", ""),
         ParamDef::bool("values", "Write the five values", true),
         ParamDef::bool("outliers", "Mark outliers (beyond 1.5 x IQR)", false),
@@ -1476,10 +1511,11 @@ fn box_plot_params() -> Vec<ParamDef> {
         ParamDef::float("axis_step", "Number line step (if not automatic)", 0.05, 100.0, 0.5, 1.0),
         ParamDef::text("title", "Title", ""),
         ParamDef::text("axis_title", "Number line label", ""),
+        ParamDef::color("fill", "Box colour", &SWATCHES, "#e9f1fb"),
     ]
 }
 
-fn summary_for(data: &str, summ: &str, outliers: bool) -> Option<([f64; 5], Vec<f64>)> {
+pub(super) fn summary_for(data: &str, summ: &str, outliers: bool) -> Option<([f64; 5], Vec<f64>)> {
     let s = nums(summ);
     if s.len() == 5 { return Some(([s[0], s[1], s[2], s[3], s[4]], vec![])); }
     let d = nums(data);
@@ -1533,7 +1569,7 @@ fn box_plot_render(p: &Params) -> String {
         d.line(sx(f[3]), cy, sx(f[4]), cy, INK, 2.0);
         d.line(sx(f[0]), cy - 11.0, sx(f[0]), cy + 11.0, INK, 2.0);
         d.line(sx(f[4]), cy - 11.0, sx(f[4]), cy + 11.0, INK, 2.0);
-        d.rect(sx(f[1]), cy - bh / 2.0, (sx(f[3]) - sx(f[1])).max(1.0), bh, TINT, INK, 2.0);
+        d.rect(sx(f[1]), cy - bh / 2.0, (sx(f[3]) - sx(f[1])).max(1.0), bh, &colp(p, "fill", TINT), INK, 2.0);
         d.line(sx(f[2]), cy - bh / 2.0, sx(f[2]), cy + bh / 2.0, INK, 3.4);
         for o in outl { d.circle(sx(*o), cy, 3.6, "#fff", INK, 1.8); }
         if !name.is_empty() { txt(&mut d, x0 - 14.0, cy + 5.0, 15.0, "end", name); }
@@ -1553,18 +1589,19 @@ fn box_plot_render(p: &Params) -> String {
 
 // ───────────────────────── mapping diagram ─────────────────────────
 
-fn list_items(s: &str) -> Vec<String> {
+pub(super) fn list_items(s: &str) -> Vec<String> {
     s.split(|c| c == ',' || c == ';').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect()
 }
 
 fn mapping_diagram_params() -> Vec<ParamDef> {
     vec![
-        ParamDef::text("inputs", "Inputs, comma separated (order is top to bottom)", "1, 2, 3, 4"),
-        ParamDef::text("outputs", "Outputs, comma separated", "3, 5, 7, 9"),
-        ParamDef::text("pairs", "Arrows as ordered pairs, e.g. (1,3); (2,5)  or  1->3; 2->5", "(1,3); (2,5); (3,7); (4,9)"),
+        ParamDef::list("inputs", "Inputs (order is top to bottom)", "1, 2, 3, 4"),
+        ParamDef::list("outputs", "Outputs", "3, 5, 7, 9"),
+        ParamDef::long("pairs", "Arrows as ordered pairs, e.g. (1,3); (2,5)  or  1->3; 2->5", "(1,3); (2,5); (3,7); (4,9)"),
         ParamDef::text("title_in", "Input title", "Input"),
         ParamDef::text("title_out", "Output title", "Output"),
         ParamDef::choice("shape", "Sides", &["Ovals", "Rectangles", "None"], "Ovals"),
+        ParamDef::color("arrow_color", "Arrow colour", &SWATCHES, "#333333"),
     ]
 }
 
@@ -1618,7 +1655,7 @@ fn mapping_diagram_render(p: &Params) -> String {
     for (a, b) in &pairs {
         let (i, j) = (ins.iter().position(|x| x == a).unwrap(), outs.iter().position(|x| x == b).unwrap());
         let (ya, yb) = (pos(i, ins.len()), pos(j, outs.len()));
-        d.arrow(lx + 26.0, ya, rx - 28.0, yb, "#333", 1.8);
+        d.arrow(lx + 26.0, ya, rx - 28.0, yb, &colp(p, "arrow_color", "#333"), 1.8);
     }
     for (i, t) in ins.iter().enumerate() { put(&mut d, lx, pos(i, ins.len()), t, 17.0); }
     for (j, t) in outs.iter().enumerate() { put(&mut d, rx, pos(j, outs.len()), t, 17.0); }
@@ -1637,6 +1674,8 @@ fn length_reading_params() -> Vec<ParamDef> {
         ParamDef::bool("guides", "Dotted guides from the object's ends to the ruler", true),
         ParamDef::bool("show_value", "Write the length above the object", false),
         ParamDef::int("dec", "Decimals in the written length", 0, 3, 2),
+        ParamDef::color("ruler_color", "Ruler colour", &["#fbf1c7", "#e9f1fb", "#c9def4", "#f3c969", "#ffffff", "#d9d9d9"], "#fbf1c7"),
+        ParamDef::color("obj_color", "Bar colour", &["#c9def4", "#f3c969", "#e48a9a", "#b9e0b5", "#d9d9d9", "#ffffff"], "#c9def4"),
     ]
 }
 
@@ -1650,7 +1689,7 @@ fn length_reading_render(p: &Params) -> String {
     let ppu = (x1 - x0) / len;
     let ry = 96.0;
     let mut d = new_doc(w, h);
-    d.rect(x0 - 8.0, ry, x1 - x0 + 16.0, 62.0, "#fbf1c7", INK, 1.8);
+    d.rect(x0 - 8.0, ry, x1 - x0 + 16.0, 62.0, &colp(p, "ruler_color", "#fbf1c7"), INK, 1.8);
     // tick spacing guard
     let mut sub_eff = sub;
     while ppu / sub_eff as f64 <= 3.2 && sub_eff > 1 { sub_eff = if metric { if sub_eff == 10 { 5 } else if sub_eff == 5 { 1 } else { 1 } } else { sub_eff / 2 }; }
@@ -1677,7 +1716,7 @@ fn length_reading_render(p: &Params) -> String {
     let (s, l) = (p.f("start"), p.f("length"));
     let (ox0, ox1) = (x0 + s * ppu, (x0 + (s + l) * ppu).min(x1 + 8.0));
     match p.s("object") {
-        "Bar" => { d.rect(ox0, 42.0, ox1 - ox0, 26.0, "#c9def4", INK, 1.8); }
+        "Bar" => { d.rect(ox0, 42.0, ox1 - ox0, 26.0, &colp(p, "obj_color", "#c9def4"), INK, 1.8); }
         "Pencil" => {
             let tip = 16.0f64.min((ox1 - ox0) * 0.4);
             d.poly(&[(ox0, 42.0), (ox1 - tip, 42.0), (ox1, 55.0), (ox1 - tip, 68.0), (ox0, 68.0)], "#f3c969", INK, 1.8);
@@ -1705,14 +1744,15 @@ enum Piece { Poly(Vec<Pt>) }
 fn composite_params() -> Vec<ParamDef> {
     vec![
         ParamDef::choice("preset", "Start from", &["Custom (use the text below)", "L-shape", "House", "Arch", "T-shape"], "Custom (use the text below)"),
-        ParamDef::text("spec",
+        ParamDef::long("spec",
             "Pieces separated by ;  rect X Y W H | tri X1 Y1 X2 Y2 X3 Y3 | poly X Y X Y ... | circle CX CY R | semi CX CY R DIR(u/d/l/r bulge) | dash X1 Y1 X2 Y2 | dim X1 Y1 X2 Y2 TEXT (label drawn to the right of travel, go counterclockwise) | text X Y WORDS | ra X Y NE/NW/SE/SW (right angle)",
             "rect 0 0 6 4; semi 3 4 3 u; dash 3 4 6 4; text 4.5 4.6 r = 3; dim 0 0 6 0 6 cm; dim 6 0 6 4 4 cm; ra 0 0 NE; ra 6 0 NW"),
         ParamDef::bool("shade", "Shade the shape", true),
+        ParamDef::color("fill_color", "Shade colour", &SWATCHES, "#e9f1fb"),
     ]
 }
 
-fn preset_spec(name: &str) -> Option<&'static str> {
+pub(super) fn preset_spec(name: &str) -> Option<&'static str> {
     Some(match name {
         "L-shape" => "rect 0 0 8 3; rect 0 3 3 5; dim 0 0 8 0 8 cm; dim 8 0 8 3 3 cm; dim 8 3 3 3 5 cm; dim 3 3 3 8 5 cm; dim 3 8 0 8 3 cm; dim 0 8 0 0 8 cm; ra 0 0 NE; ra 8 0 NW; ra 0 8 SE",
         "House" => "rect 0 0 6 4; tri 0 4 6 4 3 7; dash 3 4 3 7; text 3.5 5.4 3 cm; dim 0 0 6 0 6 cm; dim 0 4 0 0 4 cm; ra 0 0 NE; ra 6 0 NW",
@@ -1757,7 +1797,8 @@ fn composite_render(p: &Params) -> String {
     let (w, h) = (480.0, 360.0);
     let m = Map::fit(&all, w, h, 70.0, 56.0);
     let mut d = new_doc(w, h);
-    let fill = if p.b("shade") { TINT } else { "#fff" };
+    let fill_s = colp(p, "fill_color", TINT);
+    let fill = if p.b("shade") { fill_s.as_str() } else { "#fff" };
     for Piece::Poly(v) in &pieces { d.poly(&mpts(&m, v), INK, INK, 5.0); }
     for Piece::Poly(v) in &pieces { d.poly(&mpts(&m, v), fill, fill, 1.2); }
     for (a, b) in &dashes { dline(&mut d, m.p(*a), m.p(*b), "#444", 1.6, "6 4"); }
@@ -1788,6 +1829,29 @@ fn composite_render(p: &Params) -> String {
 
 // ───────────────────────── registry ─────────────────────────
 
+/// Direct-manipulation handles for this subject's figures (None = not one of ours).
+/// Renderer lookup for the interaction layer (`math_geo`, `math_plot`).
+pub(super) fn render_for(id: &str) -> Option<fn(&Params) -> String> {
+    Some(match id {
+        "triangle" => triangle_render,
+        "rectangle" => rectangle_render,
+        "parallelogram" => parallelogram_render,
+        "trapezoid" => trapezoid_render,
+        "kite" => kite_render,
+        "regular-polygon" => regular_polygon_render,
+        "prism" => prism_render,
+        "pyramid" => pyramid_render,
+        "cylinder" => cylinder_render,
+        "cone" => cone_render,
+        "sphere" => sphere_render,
+        _ => return None,
+    })
+}
+
+pub fn handles(id: &str, p: &Params, size: (f64, f64)) -> Option<Vec<interact::Handle>> {
+    super::math_plot::handles(id, p, size).or_else(|| super::math_geo::handles(id, p, size))
+}
+
 pub fn defs() -> Vec<FigureDef> {
     let f = |id, title, blurb, params: fn() -> Vec<ParamDef>, render: fn(&Params) -> String| FigureDef { id, subject: Subject::Math, title, blurb, params, render };
     vec![
@@ -1809,7 +1873,7 @@ pub fn defs() -> Vec<FigureDef> {
         f("sphere", "Sphere", "A sphere or hemisphere with its radius or diameter.", sphere_params, sphere_render),
         f("box-plot", "Box Plot", "A box plot from a data list or five-number summary; compare two sets.", box_plot_params, box_plot_render),
         f("mapping-diagram", "Mapping Diagram", "Input and output sets joined by arrows, from ordered pairs.", mapping_diagram_params, mapping_diagram_render),
-        f("length-reading", "Length Reading", "A metric or inch ruler with an object to measure at any position and length.", length_reading_params, length_reading_render),
+        f("ruler-reading", "Ruler Reading", "A metric or inch ruler with an object to measure at any position and length.", length_reading_params, length_reading_render),
     ]
 }
 
@@ -1907,8 +1971,8 @@ mod tests {
         run("box-plot", "two", &[("data2", s("10, 12, 15, 15, 18, 20, 21, 40")), ("name1", s("Class A")), ("name2", s("Class B")), ("outliers", b(true)), ("title", s("Scores")), ("axis_title", s("Points"))]);
         run("box-plot", "summary", &[("summary", s("20, 35, 40, 55, 90"))]);
         run("mapping-diagram", "many", &[("inputs", s("a, b, c")), ("outputs", s("1, 2")), ("pairs", s("a->1; b->1; c->2")), ("shape", s("Rectangles"))]);
-        run("length-reading", "pencil", &[("object", s("Pencil")), ("start", f(2.0)), ("length", f(6.45)), ("show_value", b(true))]);
-        run("length-reading", "inch", &[("marks", s("1/8 in")), ("ruler", i(6)), ("length", f(3.625)), ("start", f(0.0))]);
-        run("length-reading", "long", &[("ruler", i(30)), ("marks", s("1 mm")), ("length", f(17.3))]);
+        run("ruler-reading", "pencil", &[("object", s("Pencil")), ("start", f(2.0)), ("length", f(6.45)), ("show_value", b(true))]);
+        run("ruler-reading", "inch", &[("marks", s("1/8 in")), ("ruler", i(6)), ("length", f(3.625)), ("start", f(0.0))]);
+        run("ruler-reading", "long", &[("ruler", i(30)), ("marks", s("1 mm")), ("length", f(17.3))]);
     }
 }

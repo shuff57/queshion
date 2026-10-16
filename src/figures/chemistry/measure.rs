@@ -84,6 +84,7 @@ fn volume_params() -> Vec<ParamDef> {
         ParamDef::float("reading", "Reading (mL)", 0.0, 1000.0, 0.05, 43.6),
         ParamDef::bool("dotted", "Dotted line at the meniscus", false),
         ParamDef::bool("answer", "Show the reading as a caption", false),
+        ParamDef::text("title", "Title (optional)", ""),
     ]
 }
 
@@ -134,6 +135,7 @@ fn volume_render(p: &Params) -> String {
         if p.b("dotted") { dashed(&mut d, cx, v.y(reading), xr + 40.0, v.y(reading), "#555", 1.2); }
     }
     if p.b("answer") { tx(&mut d, 180.0, h_img - 14.0, 14.0, "middle", INK, true, &format!("Reading: {} mL", num(reading, 2))); }
+    title_at(&mut d, p, 180.0, h_img - 38.0, 15.0);
     d.finish()
 }
 
@@ -150,6 +152,9 @@ fn disp_params() -> Vec<ParamDef> {
         ParamDef::choice("object", "Object", &["Marbles", "Rock", "Cube", "Metal cylinder"], "Marbles"),
         ParamDef::int("count", "Number of marbles", 1, 5, 2),
         ParamDef::bool("dotted", "Dotted line at the meniscus", false),
+        ParamDef::text("title", "Title (optional)", ""),
+        ParamDef::text("lab_before", "Left label", "Before"),
+        ParamDef::text("lab_after", "Right label", "After"),
     ]
 }
 
@@ -194,9 +199,10 @@ fn disp_render(p: &Params) -> String {
         d.poly(&[(xl, ybot + 6.0), (xl - 24.0, ybot + 22.0), (xr + 24.0, ybot + 22.0), (xr, ybot + 6.0)], "#eef3f6", GLASS_EDGE, 1.6);
         scale_ticks(&mut d, &v, xr, -1.0, xr + 12.0, "start", "mL");
         if p.b("dotted") { dashed(&mut d, cx, v.y(lvl), xr + 40.0, v.y(lvl), "#555", 1.2); }
-        tx(&mut d, cx, 560.0, 15.0, "middle", INK, true, if idx == 0 { "Before" } else { "After" });
+        tx(&mut d, cx, 560.0, 15.0, "middle", INK, true, if idx == 0 { p.s("lab_before") } else { p.s("lab_after") });
     }
     d.arrow(222.0, 300.0, 292.0, 300.0, INK, 2.0);
+    title_at(&mut d, p, 300.0, 592.0, 15.0);
     d.finish()
 }
 
@@ -211,6 +217,7 @@ fn syringe_params() -> Vec<ParamDef> {
         ParamDef::choice("unit", "Unit", &["cm³", "mL"], "cm³"),
         ParamDef::float("volume", "Volume of gas", 0.0, 100.0, 0.1, 43.6),
         ParamDef::bool("answer", "Show the reading as a caption", false),
+        ParamDef::text("title", "Title (optional)", ""),
     ]
 }
 
@@ -263,6 +270,7 @@ fn syringe_render(p: &Params) -> String {
     }
     tx(&mut d, x0 - 6.0, top - 6.0, 12.0, "end", INK, true, unit);
     if p.b("answer") { tx(&mut d, x0 + len / 2.0, h - 12.0, 14.0, "middle", INK, true, &format!("Reading: {} {}", num(vol, 1), unit)); }
+    title_at(&mut d, p, x0 + len / 2.0, h - 34.0, 15.0);
     d.finish()
 }
 
@@ -280,6 +288,7 @@ fn length_params() -> Vec<ParamDef> {
         ParamDef::choice("object", "Object", &["Marbles", "Rock", "Cube", "Metal cylinder"], "Metal cylinder"),
         ParamDef::bool("dashes", "Dashed lines at its ends", false),
         ParamDef::bool("answer", "Show the length as a caption", false),
+        ParamDef::text("title", "Title (optional)", ""),
     ]
 }
 
@@ -363,6 +372,7 @@ fn length_render(p: &Params) -> String {
         dashed(&mut d, x2, top_of_obj + 4.0, x2, ry + 40.0, "#c0392b", 1.1);
     }
     if p.b("answer") { tx(&mut d, 350.0, 238.0, 14.0, "middle", INK, true, &format!("Length: {} {}", num(len, 2), unit)); }
+    title_at(&mut d, p, 350.0, 26.0, 15.0);
     d.finish()
 }
 
@@ -376,6 +386,7 @@ fn mass_params() -> Vec<ParamDef> {
         ParamDef::choice("pan", "On the pan", &["Nothing", "Marbles", "Rock", "Cube", "Metal cylinder"], "Nothing"),
         ParamDef::float("mass", "Mass (g)", 0.0, 610.0, 0.01, 24.73),
         ParamDef::choice("places", "Digital decimal places", &["0.1", "0.01", "0.001"], "0.01"),
+        ParamDef::text("title", "Title (optional)", ""),
     ]
 }
 
@@ -435,6 +446,7 @@ fn mass_render(p: &Params) -> String {
         d.rect(210.0, 218.0, 220.0, 14.0, "#dde3e7", INK, 1.5);
         if pan != "Nothing" { object(&mut d, pan, 320.0, 218.0, 90.0, 5); }
     }
+    title_at(&mut d, p, 350.0, 26.0, 15.0);
     d.finish()
 }
 
@@ -449,6 +461,7 @@ fn temp_params() -> Vec<ParamDef> {
         ParamDef::choice("liquid", "Liquid color", &["Red", "Blue", "Gray"], "Red"),
         ParamDef::float("temperature", "Temperature", -50.0, 400.0, 0.1, 23.4),
         ParamDef::choice("places", "Digital decimal places", &["0", "0.1"], "0.1"),
+        ParamDef::text("title", "Title (optional)", ""),
     ]
 }
 
@@ -494,6 +507,7 @@ fn temp_render(p: &Params) -> String {
         }
         tx(&mut d, cx + 12.0, ytop - 20.0, 14.0, "start", INK, true, sym);
     }
+    title_at(&mut d, p, 180.0, 26.0, 15.0);
     d.finish()
 }
 
@@ -520,6 +534,7 @@ fn ph_params() -> Vec<ParamDef> {
         ParamDef::choice("instrument", "Instrument", &["Digital meter", "Analog meter", "pH paper"], "Digital meter"),
         ParamDef::choice("places", "Decimal places", &["0.0", "0.00"], "0.00"),
         ParamDef::float("ph", "pH", 0.0, 14.0, 0.01, 4.62),
+        ParamDef::text("title", "Title (optional)", ""),
     ]
 }
 
@@ -580,5 +595,236 @@ fn ph_render(p: &Params) -> String {
             d.rect(321.0, 372.0, 18.0, 56.0, "#b8c0c6", INK, 1.5);
         }
     }
+    title_at(&mut d, p, 280.0, 14.0, 13.0);
     d.finish()
+}
+
+// ---------------------------------------------------------------------------------------------
+// Handles
+// ---------------------------------------------------------------------------------------------
+
+use crate::figures::interact::{self, Cursor, Handle};
+use super::handles::set_eff;
+
+pub(super) fn handles(id: &str, p: &Params, _size: (f64, f64)) -> Option<Vec<Handle>> {
+    Some(match id {
+        "volume-reading" => vol_handles(p),
+        "volume-by-displacement" => disp_handles(p),
+        "gas-syringe" => syringe_handles(p),
+        "length-reading" => length_handles(p),
+        "mass-reading" => mass_handles(p),
+        "temperature-reading" => temp_handles(p),
+        "ph-reading" => ph_handles(p),
+        _ => return None,
+    })
+}
+
+/// Effective scale maximum of the volume-reading instrument (mirrors `volume_render`).
+fn vol_max(p: &Params) -> f64 {
+    let size = size_ml(p.s("size"));
+    if p.s("instrument") == "Buret" { if size <= 25.0 { 25.0 } else { 50.0 } } else { size }
+}
+
+/// y of volume `v` and its inverse, for the vessel the renderer draws.
+fn vol_axis(p: &Params) -> (f64, f64, bool, f64) {
+    match p.s("instrument") {
+        "Buret" => (60.0, 620.0, true, 140.0),
+        "Beaker" => (90.0, 470.0, false, 140.0),
+        _ => (90.0, 500.0, false, 140.0),
+    }
+}
+
+fn vol_handles(p: &Params) -> Vec<Handle> {
+    let max = vol_max(p);
+    let (ytop, ybot, inv, cx) = vol_axis(p);
+    let r = p.f("reading").clamp(0.0, max);
+    let y = if inv { ytop + r / max * (ybot - ytop) } else { ybot - r / max * (ybot - ytop) };
+    vec![Handle::bar((cx, y), true, "Drag the liquid level to set the reading", move |q, t| {
+        let max = vol_max(q);
+        let (ytop, ybot, inv, _) = vol_axis(q);
+        let v = if inv { (t.1 - ytop) / (ybot - ytop) * max } else { (ybot - t.1) / (ybot - ytop) * max };
+        set_eff(q, "reading", v, 0.0, max);
+    })
+    .with_scroll(|q, dy| {
+        let max = vol_max(q);
+        set_eff(q, "reading", q.f("reading").clamp(0.0, max) + dy * 0.1, 0.0, max);
+    })]
+}
+
+fn disp_handles(p: &Params) -> Vec<Handle> {
+    let max = size_ml(p.s("size"));
+    let (ytop, ybot) = (90.0, 500.0);
+    let before = p.f("before").clamp(0.0, max);
+    let after = p.f("after").clamp(0.0, max).max(before);
+    let ly = move |v: f64| ybot - v / max * (ybot - ytop);
+    vec![
+        Handle::bar((120.0, ly(before)), true, "Drag the 'before' liquid level", move |q, t| {
+            let max = size_ml(q.s("size"));
+            set_eff(q, "before", (ybot - t.1) / (ybot - ytop) * max, 0.0, max);
+        }),
+        Handle::bar((400.0, ly(after)), true, "Drag the 'after' liquid level", move |q, t| {
+            let max = size_ml(q.s("size"));
+            let b = q.f("before").clamp(0.0, max);
+            set_eff(q, "after", (ybot - t.1) / (ybot - ytop) * max, b, max);
+        }),
+        Handle::label((120.0, 560.0), (110.0, 26.0), "lab_before", "Double-click to rename"),
+        Handle::label((400.0, 560.0), (110.0, 26.0), "lab_after", "Double-click to rename"),
+    ]
+}
+
+fn syringe_geom(p: &Params) -> (f64, f64, f64, f64) {
+    let max = if p.s("size").starts_with("50") { 50.0 } else { 100.0 };
+    let full = p.s("show") != "Syringe only";
+    let x0 = if full { 250.0 } else { 70.0 };
+    let cy = if full { 110.0 } else { 120.0 };
+    (max, x0, 350.0, cy)
+}
+
+fn syringe_handles(p: &Params) -> Vec<Handle> {
+    let (max, x0, len, cy) = syringe_geom(p);
+    let vol = p.f("volume").clamp(0.0, max);
+    vec![Handle::bar((x0 + vol / max * len + 10.0, cy), false, "Drag the plunger to set the volume", move |q, t| {
+        let (max, x0, len, _) = syringe_geom(q);
+        set_eff(q, "volume", (t.0 - 10.0 - x0) / len * max, 0.0, max);
+    })
+    .with_scroll(|q, dy| {
+        let (max, ..) = syringe_geom(q);
+        set_eff(q, "volume", q.f("volume").clamp(0.0, max) + dy * 0.5, 0.0, max);
+    })]
+}
+
+/// Total ruler length in the ruler's own unit (mirrors `length_render`).
+fn ruler_total(p: &Params) -> f64 {
+    let imperial = p.s("units").starts_with("Imp");
+    let cm: f64 = p.s("ruler").split_whitespace().next().and_then(|t| t.parse().ok()).unwrap_or(15.0);
+    if imperial { match cm as i64 { 15 => 6.0, 20 => 8.0, 30 => 12.0, 50 => 20.0, _ => 40.0 } } else { cm }
+}
+
+fn length_handles(p: &Params) -> Vec<Handle> {
+    let total = ruler_total(p);
+    let (rx0, rw, ry) = (30.0, 640.0, 150.0);
+    let ppu = rw / total;
+    let len = p.f("length").clamp(0.05, total);
+    let off = p.f("offset").clamp(0.0, (total - len).max(0.0));
+    let ymid = ry - 18.0;
+    let (x1, x2) = (rx0 + off * ppu, rx0 + (off + len) * ppu);
+    vec![
+        Handle::knob((x1, ymid), "Left end: drag to move it (the right end stays put)", move |q, t| {
+            let total = ruler_total(q);
+            let ppu = 640.0 / total;
+            let ln = q.f("length").clamp(0.05, total);
+            let of = q.f("offset").clamp(0.0, (total - ln).max(0.0));
+            let right = of + ln;
+            let new_off = ((t.0 - 30.0) / ppu).clamp(0.0, right - 0.05);
+            set_eff(q, "offset", new_off, 0.0, total);
+            set_eff(q, "length", right - new_off, 0.05, total);
+        })
+        .with_cursor(Cursor::ResizeH),
+        Handle::knob((x2, ymid), "Right end: drag to change the length", move |q, t| {
+            let total = ruler_total(q);
+            let ppu = 640.0 / total;
+            let ln = q.f("length").clamp(0.05, total);
+            let of = q.f("offset").clamp(0.0, (total - ln).max(0.0));
+            set_eff(q, "length", ((t.0 - 30.0) / ppu - of).clamp(0.05, total - of), 0.05, total);
+        })
+        .with_cursor(Cursor::ResizeH),
+        Handle::square(((x1 + x2) / 2.0, ymid - 14.0), "Drag to slide the object along the ruler", move |q, t| {
+            let total = ruler_total(q);
+            let ppu = 640.0 / total;
+            let ln = q.f("length").clamp(0.05, total);
+            let of = q.f("offset").clamp(0.0, (total - ln).max(0.0));
+            let _ = of;
+            set_eff(q, "offset", (t.0 - 30.0) / ppu - ln / 2.0, 0.0, (total - ln).max(0.0));
+        })
+        .with_cursor(Cursor::Move),
+    ]
+}
+
+fn mass_handles(p: &Params) -> Vec<Handle> {
+    if !p.s("balance").starts_with("Triple") {
+        return vec![Handle::zone((230.0, 297.0), (230.0, 62.0), "Scroll to change the mass", |_| {}).with_scroll(|q, dy| {
+            q.set_f("mass", q.f("mass") + dy * 0.1);
+        })];
+    }
+    let mass = p.f("mass").clamp(0.0, 610.0);
+    let hundreds = ((mass / 100.0).floor() * 100.0).min(500.0);
+    let rest = mass - hundreds;
+    let tens = ((rest / 10.0).floor() * 10.0).min(90.0);
+    let ones = (rest - tens).clamp(0.0, 10.0);
+    let rx = |val: f64, range: f64| 340.0 + val / range * 310.0;
+    // (beam y, range, step, current)
+    let beams: [(f64, f64, f64, f64, &str); 3] = [
+        (70.0, 500.0, 100.0, hundreds, "100 g rider: drag along its beam"),
+        (150.0, 100.0, 10.0, tens, "10 g rider: drag along its beam"),
+        (230.0, 10.0, 0.0, ones, "1 g rider: drag along its beam"),
+    ];
+    beams
+        .iter()
+        .enumerate()
+        .map(|(i, &(y, range, step, cur, tip))| {
+            Handle::knob((rx(cur, range), y - 4.0), tip, move |q, t| {
+                let m = q.f("mass").clamp(0.0, 610.0);
+                let h = ((m / 100.0).floor() * 100.0).min(500.0);
+                let r = m - h;
+                let te = ((r / 10.0).floor() * 10.0).min(90.0);
+                let on = (r - te).clamp(0.0, 10.0);
+                let mut v = (t.0 - 340.0) / 310.0 * range;
+                if step > 0.0 { v = (v / step).round() * step; }
+                v = v.clamp(0.0, range);
+                let (nh, nt, no) = match i { 0 => (v, te, on), 1 => (h, v, on), _ => (h, te, v) };
+                set_eff(q, "mass", nh + nt + no, 0.0, 610.0);
+            })
+            .with_cursor(Cursor::ResizeH)
+        })
+        .collect()
+}
+
+/// (lo, hi) of the liquid-in-glass scale for the chosen unit.
+fn temp_scale(p: &Params) -> (f64, f64) {
+    match p.s("unit") { "Kelvin (K)" => (260.0, 380.0), "Fahrenheit (°F)" => (10.0, 230.0), _ => (-10.0, 110.0) }
+}
+
+fn temp_handles(p: &Params) -> Vec<Handle> {
+    if p.s("thermometer") == "Digital probe" {
+        return vec![Handle::zone((180.0, 109.0), (200.0, 62.0), "Scroll to change the temperature", |_| {}).with_scroll(|q, dy| {
+            q.set_f("temperature", q.f("temperature") + dy * 0.1);
+        })];
+    }
+    let (lo, hi) = temp_scale(p);
+    let (ytop, ybot) = (70.0, 500.0);
+    let t = p.f("temperature").clamp(lo, hi);
+    let y = ybot - (t - lo) / (hi - lo) * (ybot - ytop);
+    vec![Handle::bar((110.0, y), true, "Drag the top of the liquid to set the temperature", move |q, tg| {
+        let (lo, hi) = temp_scale(q);
+        set_eff(q, "temperature", lo + (500.0 - tg.1) / 430.0 * (hi - lo), lo, hi);
+    })
+    .with_scroll(|q, dy| {
+        let (lo, hi) = temp_scale(q);
+        set_eff(q, "temperature", q.f("temperature").clamp(lo, hi) + dy * 0.1, lo, hi);
+    })]
+}
+
+fn ph_handles(p: &Params) -> Vec<Handle> {
+    let ph = p.f("ph").clamp(0.0, 14.0);
+    match p.s("instrument") {
+        "Analog meter" => {
+            let (cx, cy, r) = (280.0, 270.0, 170.0);
+            let a = std::f64::consts::PI * (1.0 - ph / 14.0);
+            vec![Handle::knob((cx + (r - 8.0) * a.cos(), cy - (r - 8.0) * a.sin()), "Drag the needle to set the pH", move |q, t| {
+                let mut th = interact::angle_deg((cx, cy), t);
+                if th > 180.0 { th = if th < 270.0 { 180.0 } else { 0.0 }; }
+                set_eff(q, "ph", 14.0 * (1.0 - th / 180.0), 0.0, 14.0);
+            })]
+        }
+        "pH paper" => (0..=14)
+            .map(|i| {
+                Handle::zone((52.0 + i as f64 * 31.0, 282.0), (28.0, 40.0), &format!("Click to colour the strip like pH {i}"), move |q| {
+                    q.set_f("ph", i as f64);
+                })
+            })
+            .collect(),
+        _ => vec![Handle::zone((280.0, 95.0), (230.0, 90.0), "Scroll to change the pH", |_| {}).with_scroll(|q, dy| {
+            q.set_f("ph", q.f("ph") + dy * 0.05);
+        })],
+    }
 }

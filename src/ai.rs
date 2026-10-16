@@ -4,9 +4,10 @@
 //! One conversion job at a time: `send_image` spawns a `std::thread` (egui never blocks)
 //! and keeps the result channel in [`Ai`]; the Imports screen calls `poll` each frame and
 //! the thread calls `ctx.request_repaint()` when it finishes, so the parsed questions show
-//! up on the next frame. API keys only travel as environment variables — `OPENROUTER_API_KEY`
-//! for OpenRouter, `QUESHION_AI_KEY` for a custom OpenAI-compatible endpoint — they are
-//! read at request time and never stored, logged or echoed.
+//! up on the next frame. API keys come from, in order: a key saved in the app (`ai-keys.json`,
+//! mode 0600, never in settings.json or backups), the provider's environment variable, and
+//! (Ollama Cloud) the ollama-cloud tool's credentials file. They are read at request time
+//! and never logged, echoed, put in errors or Debug output.
 
 pub use crate::Settings;
 
@@ -100,15 +101,36 @@ impl AiCfg {
     }
 
     /// One human sentence about where the API key for this provider comes from.
+    /// Order: a key saved in the app wins, then the environment variable, then (Ollama
+    /// Cloud only) the ollama-cloud credentials file.
     pub fn key_source_help(&self) -> String {
         match self.provider.as_str() {
-            "openrouter" => format!("OpenRouter reads the API key from the {OPENROUTER_KEY_ENV} environment variable."),
-            "cloud" => format!(
-                "Ollama Cloud reads the API key from the {CLOUD_KEY_ENV} environment variable, or from ~/{CLOUD_KEY_FILE} when the variable is unset."
+            "openrouter" => format!(
+                "OpenRouter needs an API key. A key saved here is used first, otherwise the {OPENROUTER_KEY_ENV} environment variable."
             ),
-            "custom" => format!("A custom endpoint optionally reads an API key from the {CUSTOM_KEY_ENV} environment variable."),
+            "cloud" => format!(
+                "Ollama Cloud needs an API key. A key saved here is used first, then the {CLOUD_KEY_ENV} environment variable, then ~/{CLOUD_KEY_FILE}."
+            ),
+            "custom" => format!(
+                "A custom endpoint may need an API key. A key saved here is used first, otherwise the {CUSTOM_KEY_ENV} environment variable."
+            ),
             _ => "Ollama runs on the local machine and needs no API key.".to_string(),
         }
+    }
+
+    /// True for providers that take an API key (everything but local Ollama).
+    pub fn uses_key(&self) -> bool {
+        self.key_env().is_some()
+    }
+
+    /// Where the key would come from right now, for the Settings status line.
+    pub fn key_status(&self) -> KeySource {
+        resolve_key(self, &load_keys(), &|v| std::env::var(v).ok(), home_dir().as_deref()).map(|(_, s)| s).unwrap_or(KeySource::None)
+    }
+
+    /// True when a request would carry a key (or the provider needs none).
+    pub fn has_key_or_needs_none(&self) -> bool {
+        !self.uses_key() || self.provider == "custom" || self.key_status() != KeySource::None
     }
 
     fn key_env(&self) -> Option<&'static str> {
@@ -121,28 +143,149 @@ impl AiCfg {
     }
 }
 
-/// The API key for a request, resolved at request time. Never stored, logged or echoed:
-/// for Ollama Cloud the environment wins, then the ollama-cloud tool's own credentials
-/// file (the `apiKey` field, whatever file the tool wrote); other providers use env only.
-fn request_key(cfg: &AiCfg) -> Option<String> {
-    if let Some(var) = cfg.key_env()
-        && let Ok(k) = std::env::var(var)
-        && !k.is_empty()
-    {
-        return Some(k);
-    }
-    if cfg.provider == "cloud" {
-        let file = std::env::var_os("HOME")
-            .map(std::path::PathBuf::from)
-            .map(|h| h.join(CLOUD_KEY_FILE));
-        if let Some(bytes) = file.and_then(|p| std::fs::read(p).ok())
-            && let Ok(v) = serde_json::from_slice::<Value>(&bytes)
-            && let Some(k) = v.get("apiKey").and_then(Value::as_str)
-        {
-            return Some(k.to_string());
+/// Where a resolved key came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeySource {
+    Saved,
+    Env(&'static str),
+    CredentialsFile,
+    None,
+}
+
+impl KeySource {
+    pub fn describe(self) -> String {
+        match self {
+            KeySource::Saved => "Key saved on this computer".to_string(),
+            KeySource::Env(v) => format!("Using {v} from the environment"),
+            KeySource::CredentialsFile => format!("Using ~/{CLOUD_KEY_FILE}"),
+            KeySource::None => "No key".to_string(),
         }
     }
+}
+
+/// Provider -> key, as stored in `ai-keys.json`. `Debug` is deliberately redacted.
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct Keys(std::collections::BTreeMap<String, String>);
+
+impl std::fmt::Debug for Keys {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Keys({} saved, redacted)", self.0.len())
+    }
+}
+
+impl Keys {
+    pub fn get(&self, provider: &str) -> Option<&str> {
+        self.0.get(provider).map(String::as_str).filter(|k| !k.is_empty())
+    }
+}
+
+const KEYS_FILE: &str = "ai-keys.json";
+
+fn home_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(std::path::PathBuf::from)
+}
+
+pub fn load_keys() -> Keys {
+    load_keys_in(&crate::store::store_dir())
+}
+pub fn load_keys_in(dir: &std::path::Path) -> Keys {
+    std::fs::read(dir.join(KEYS_FILE)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+/// Saves (`Some`) or removes (`None`) one provider's key.
+pub fn set_key(provider: &str, key: Option<&str>) -> Result<(), String> {
+    set_key_in(&crate::store::store_dir(), provider, key)
+}
+
+/// Atomic write (temp + rename) of the whole map, mode 0600 on unix from creation.
+pub fn set_key_in(dir: &std::path::Path, provider: &str, key: Option<&str>) -> Result<(), String> {
+    use std::io::Write as _;
+    let mut keys = load_keys_in(dir);
+    match key.map(str::trim).filter(|k| !k.is_empty()) {
+        Some(k) => {
+            keys.0.insert(provider.to_string(), k.to_string());
+        }
+        None => {
+            keys.0.remove(provider);
+        }
+    }
+    std::fs::create_dir_all(dir).map_err(|e| format!("Couldn't save the key: {}", e.kind()))?;
+    let tmp = dir.join(format!("{KEYS_FILE}.tmp"));
+    let path = dir.join(KEYS_FILE);
+    let body = serde_json::to_vec(&keys).map_err(|_| "Couldn't save the key.".to_string())?;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        opts.mode(0o600);
+    }
+    let res = (|| -> std::io::Result<()> {
+        let mut f = opts.open(&tmp)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
+        f.write_all(&body)?;
+        f.sync_all()?;
+        std::fs::rename(&tmp, &path)
+    })();
+    res.map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("Couldn't save the key: {}", e.kind())
+    })
+}
+
+/// Pure resolution: saved key, then env var, then (cloud) the credentials file under `home`.
+fn resolve_key(
+    cfg: &AiCfg,
+    saved: &Keys,
+    env: &dyn Fn(&str) -> Option<String>,
+    home: Option<&std::path::Path>,
+) -> Option<(String, KeySource)> {
+    let var = cfg.key_env()?;
+    if let Some(k) = saved.get(&cfg.provider) {
+        return Some((k.to_string(), KeySource::Saved));
+    }
+    if let Some(k) = env(var).filter(|k| !k.is_empty()) {
+        return Some((k, KeySource::Env(var)));
+    }
+    if cfg.provider == "cloud"
+        && let Some(bytes) = home.and_then(|h| std::fs::read(h.join(CLOUD_KEY_FILE)).ok())
+        && let Ok(v) = serde_json::from_slice::<Value>(&bytes)
+        && let Some(k) = v.get("apiKey").and_then(Value::as_str)
+        && !k.is_empty()
+    {
+        return Some((k.to_string(), KeySource::CredentialsFile));
+    }
     None
+}
+
+/// The API key for a request, resolved at request time. Never logged or echoed.
+fn request_key(cfg: &AiCfg) -> Option<String> {
+    resolve_key(cfg, &load_keys(), &|v| std::env::var(v).ok(), home_dir().as_deref()).map(|(k, _)| k)
+}
+
+/// Cheap authenticated probe for the Settings "Test connection" button: GET {base}/models.
+/// Blocking; call from a thread. The reply never contains the key.
+pub fn test_connection(cfg: &AiCfg) -> Result<(), String> {
+    let base = cfg.base.trim_end_matches('/');
+    if base.is_empty() {
+        return Err("Set a base URL first.".to_string());
+    }
+    let url = if cfg.provider == "ollama" { format!("{base}/api/tags") } else { format!("{base}/models") };
+    let mut req = agent().get(&url);
+    if let Some(k) = request_key(cfg) {
+        req = req.header("Authorization", &format!("Bearer {k}"));
+    }
+    let resp = req.call().map_err(|_| format!("Can't reach {base}."))?;
+    match resp.status().as_u16() {
+        200..=299 => Ok(()),
+        401 | 403 => Err("Key rejected (401).".to_string()),
+        404 => Err("Reached the server, but it has no /models endpoint (404). The key may still work.".to_string()),
+        n => Err(format!("The server answered {n}.")),
+    }
 }
 
 /// One pending conversion job; `Default` starts with none.
@@ -386,5 +529,62 @@ mod tests {
         let _ = tx; // keep the channel alive until the reply is read
         assert_eq!(ai.poll().unwrap().unwrap(), "MC\nQ?\n*a. 1\n");
         assert!(ai.poll().is_none(), "the job is consumed once read");
+    }
+
+    fn tmpdir(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("queshion-keytest-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn key_store_roundtrip_remove_and_perms() {
+        let d = tmpdir("rt");
+        assert!(load_keys_in(&d).get("cloud").is_none());
+        set_key_in(&d, "cloud", Some("  sk-dummy-1 ")).unwrap();
+        set_key_in(&d, "openrouter", Some("sk-dummy-2")).unwrap();
+        let k = load_keys_in(&d);
+        assert_eq!(k.get("cloud"), Some("sk-dummy-1"));
+        assert_eq!(k.get("openrouter"), Some("sk-dummy-2"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let m = std::fs::metadata(d.join(KEYS_FILE)).unwrap().permissions().mode();
+            assert_eq!(m & 0o777, 0o600);
+        }
+        assert!(!d.join("ai-keys.json.tmp").exists());
+        set_key_in(&d, "cloud", None).unwrap();
+        assert!(load_keys_in(&d).get("cloud").is_none());
+        assert_eq!(load_keys_in(&d).get("openrouter"), Some("sk-dummy-2"));
+        assert!(!format!("{:?}", load_keys_in(&d)).contains("sk-dummy"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn key_resolution_order_saved_env_file() {
+        let home = tmpdir("home");
+        std::fs::create_dir_all(home.join(".config/ollama-cloud")).unwrap();
+        std::fs::write(home.join(CLOUD_KEY_FILE), r#"{"apiKey":"from-file"}"#).unwrap();
+        let cfg = AiCfg::from(&settings("cloud", "", ""));
+        let env_set = |v: &str| (v == CLOUD_KEY_ENV).then(|| "from-env".to_string());
+        let env_none = |_: &str| None;
+        let mut saved = Keys::default();
+        // file only
+        let r = resolve_key(&cfg, &saved, &env_none, Some(&home)).unwrap();
+        assert_eq!((r.0.as_str(), r.1), ("from-file", KeySource::CredentialsFile));
+        // env beats file
+        let r = resolve_key(&cfg, &saved, &env_set, Some(&home)).unwrap();
+        assert_eq!((r.0.as_str(), r.1), ("from-env", KeySource::Env(CLOUD_KEY_ENV)));
+        // saved beats env
+        saved.0.insert("cloud".into(), "from-app".into());
+        let r = resolve_key(&cfg, &saved, &env_set, Some(&home)).unwrap();
+        assert_eq!((r.0.as_str(), r.1), ("from-app", KeySource::Saved));
+        // openrouter ignores the credentials file; local ollama never has a key
+        let or = AiCfg::from(&settings("openrouter", "", ""));
+        assert!(resolve_key(&or, &Keys::default(), &env_none, Some(&home)).is_none());
+        let local = AiCfg::from(&settings("ollama", "", ""));
+        assert!(resolve_key(&local, &saved, &env_set, Some(&home)).is_none());
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

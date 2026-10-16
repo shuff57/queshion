@@ -1,10 +1,16 @@
 //! Physics figure generators (original re-creations of the common physics teaching figures).
 use super::*;
 
+mod handles;
 mod common;
 mod graphs;
 mod instr;
 mod mech;
+
+/// Direct-manipulation handles for this subject's figures (None = not one of ours).
+pub fn handles(id: &str, p: &Params, size: (f64, f64)) -> Option<Vec<interact::Handle>> {
+    handles::handles(id, p, size)
+}
 
 pub fn defs() -> Vec<FigureDef> {
     let mut v = mech::defs();
@@ -64,7 +70,7 @@ mod tests {
                         p.0.insert(pd.key.into(), Value::B(true));
                         check(&d, &p, "sweep");
                     }
-                    Kind::Text => {
+                    Kind::Text | Kind::Long | Kind::List | Kind::Color(_) => {
                         let mut p = base.clone();
                         p.0.insert(pd.key.into(), Value::S(String::new()));
                         check(&d, &p, "sweep");

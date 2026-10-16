@@ -4,6 +4,59 @@ use super::*;
 
 const NPTS: usize = 401;
 
+/// Axes of the most recent render, so interaction handles use the exact same geometry.
+#[derive(Clone, Copy, Debug)]
+pub struct AxInfo {
+    /// 0 size-over-time, 1 rate-over-time, 2 per-capita-over-time, 3 rate-vs-N, 4 per-capita-vs-N; 9 = pp time; 10 = pp phase
+    pub kind: u8,
+    pub x: f64, pub y: f64, pub w: f64, pub h: f64,
+    pub x0: f64, pub x1: f64, pub y0: f64, pub y1: f64,
+}
+
+impl AxInfo {
+    pub fn px(&self, v: f64) -> f64 { self.x + (v - self.x0) / (self.x1 - self.x0) * self.w }
+    pub fn py(&self, v: f64) -> f64 { self.y + self.h - (v - self.y0) / (self.y1 - self.y0) * self.h }
+    pub fn vx(&self, px: f64) -> f64 { self.x0 + (px - self.x) / self.w * (self.x1 - self.x0) }
+    pub fn vy(&self, py: f64) -> f64 { self.y0 + (self.y + self.h - py) / self.h * (self.y1 - self.y0) }
+    pub fn inside(&self, v: (f64, f64)) -> bool {
+        v.0 >= self.x0 && v.0 <= self.x1 && v.1 >= self.y0 && v.1 <= self.y1
+    }
+}
+
+thread_local! {
+    static LAST: std::cell::RefCell<Vec<AxInfo>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Renders `p` (growth or predator-prey) and returns the plot areas it drew.
+pub fn axes_of(p: &Params, pp: bool) -> Vec<AxInfo> {
+    LAST.with(|l| l.borrow_mut().clear());
+    if pp { let _ = pp_render(p); } else { let _ = growth_render(p); }
+    LAST.with(|l| l.borrow().clone())
+}
+
+fn stash(kind: u8, a: &Axes) {
+    LAST.with(|l| l.borrow_mut().push(AxInfo { kind, x: a.x, y: a.y, w: a.w, h: a.h, x0: a.x0, x1: a.x1, y0: a.y0, y1: a.y1 }));
+}
+
+/// Pure model value used by the handles (closed forms only).
+pub fn growth_value(mode: &str, n0: f64, r: f64, k: f64, t: f64) -> f64 {
+    match mode {
+        "Exponential (J-curve)" => n0 * (r * t).exp(),
+        _ => logistic(n0, r, k, t),
+    }
+}
+
+/// Inverse of `growth_value` in r: growth rate that puts the curve through (t, n).
+pub fn growth_r_for(mode: &str, n0: f64, k: f64, t: f64, n: f64) -> f64 {
+    let t = t.max(1e-6);
+    if mode == "Exponential (J-curve)" {
+        return (n.max(1e-9) / n0).ln() / t;
+    }
+    let n = n.clamp(n0 * 1.0001, k * 0.9999);
+    let arg = (k / n - 1.0) * n0 / (k - n0).max(1e-9);
+    -arg.max(1e-12).ln() / t
+}
+
 fn color_hex(name: &str) -> &'static str {
     match name {
         "Red" => "#dc2626",
@@ -34,7 +87,7 @@ pub fn growth_params() -> Vec<ParamDef> {
             "Growth rate against population size", "Per capita rate against population size", "Both rates against population size",
         ], "Population size over time"),
         ParamDef::choice("curve_color", "Curve color", &["Blue", "Red", "Green", "Black"], "Blue"),
-        ParamDef::text("census", "Census data points, e.g. 0:20, 5:150, 10:600 (time:size)", ""),
+        ParamDef::list("census", "Census data points (time:size)", ""),
         ParamDef::bool("mark_k", "Mark the carrying capacity", true),
         ParamDef::bool("mark_infl", "Mark the inflection point (logistic)", false),
         ParamDef::text("x_title", "x-axis title (blank = automatic)", ""),
@@ -45,6 +98,8 @@ pub fn growth_params() -> Vec<ParamDef> {
         ParamDef::choice("minor", "Minor gridlines", &["None", "2 per block", "4 per block", "5 per block"], "None"),
         ParamDef::bool("blank", "Blank graph (axes only, for students to draw on)", false),
         ParamDef::text("title", "Chart title (blank = none)", ""),
+        ParamDef::float("curve_width", "Curve thickness", 1.0, 7.0, 0.5, 3.0),
+        ParamDef::text("k_label", "Label on the carrying-capacity line", "Carrying capacity (K)"),
     ]
 }
 
@@ -211,6 +266,7 @@ pub fn growth_render(p: &Params) -> String {
         let yt_text = if pi == 0 && !p.s("y_title").trim().is_empty() { p.s("y_title").trim().to_string() } else { ytitle_auto };
         let xt_text = if is_time { tx.clone() } else if noun.is_empty() { "Population size (N)".to_string() } else { format!("Number of {noun} (N)") };
         draw_axes(&mut d, &a, minor_of(p.s("minor")), &xt_text, &yt_text);
+        stash(match pk { Panel::TimeN => 0, Panel::TimeRate => 1, Panel::TimePer => 2, Panel::NRate => 3, Panel::NPer => 4 }, &a);
         if blank { continue; }
 
         let clip = format!("clip{pi}");
@@ -228,7 +284,8 @@ pub fn growth_render(p: &Params) -> String {
             } else {
                 s.ys.iter().zip(yv).map(|(n, y)| a.pt((*n, *y))).collect()
             };
-            if s.dash.is_empty() { d.polyline(&pts, &s.color, 3.0); } else { dashed(&mut d, &pts, &s.color, 3.0, s.dash); }
+            let cw = p.f("curve_width").clamp(1.0, 7.0);
+            if s.dash.is_empty() { d.polyline(&pts, &s.color, cw); } else { dashed(&mut d, &pts, &s.color, cw, s.dash); }
         }
         if matches!(pk, Panel::TimeN) {
             for (t, n) in &census {
@@ -248,7 +305,7 @@ pub fn growth_render(p: &Params) -> String {
         }
         end_clip(&mut d);
         if has_k && matches!(pk, Panel::TimeN) && p.b("mark_k") {
-            bold(&mut d, a.x + 8.0, a.py(k) + 17.0, 13.0, "start", "Carrying capacity (K)");
+            bold(&mut d, a.x + 8.0, a.py(k) + 17.0, 13.0, "start", if p.s("k_label").trim().is_empty() { "Carrying capacity (K)" } else { p.s("k_label").trim() });
         }
         if has_k && matches!(pk, Panel::NRate | Panel::NPer) && p.b("mark_k") {
             bold(&mut d, a.px(k) - 5.0, a.y + 16.0, 13.0, "end", "K");
@@ -303,6 +360,8 @@ pub fn pp_params() -> Vec<ParamDef> {
         ParamDef::text("y_title", "y-axis title (blank = automatic)", ""),
         ParamDef::choice("minor", "Minor gridlines", &["None", "2 per block", "4 per block", "5 per block"], "None"),
         ParamDef::text("title", "Chart title (blank = none)", ""),
+        ParamDef::float("line_width", "Line thickness", 1.0, 7.0, 0.5, 3.0),
+        ParamDef::bool("legend", "Legend", true),
     ]
 }
 
@@ -400,6 +459,7 @@ pub fn pp_render(p: &Params) -> String {
         let a = Axes { x: ax_x, y: top, w: aw, h: ah, x0: 0.0, x1, y0: 0.0, y1: yt, xs, ys };
         let xt = if p.s("x_title").trim().is_empty() { xt_auto } else { p.s("x_title").trim().to_string() };
         draw_axes(&mut d, &a, minor, &xt, &ya);
+        stash(9, &a);
         begin_clip(&mut d, &a, "ppclip");
         let sample: Vec<(f64, f64, f64)> = if p.s("data") == "Points each time unit" {
             let step = tshow / n as f64;
@@ -408,8 +468,9 @@ pub fn pp_render(p: &Params) -> String {
             data.clone()
         };
         let pts = |f: fn(&(f64, f64, f64)) -> f64| -> Vec<(f64, f64)> { sample.iter().map(|v| a.pt((v.0, f(v)))).collect() };
-        if show_prey { d.polyline(&pts(|v| v.1), cprey, 3.0); }
-        if show_pred { dashed(&mut d, &pts(|v| v.2), cpred, 3.0, dash_pred); }
+        let lw = p.f("line_width").clamp(1.0, 7.0);
+        if show_prey { d.polyline(&pts(|v| v.1), cprey, lw); }
+        if show_pred { dashed(&mut d, &pts(|v| v.2), cpred, lw, dash_pred); }
         if p.s("data") == "Points each time unit" {
             for (f, on) in [(0usize, show_prey), (1, show_pred)] {
                 if !on { continue; }
@@ -432,7 +493,7 @@ pub fn pp_render(p: &Params) -> String {
         let mut items = Vec::new();
         if show_prey { items.push((prey.clone(), cprey.to_string(), String::new())); }
         if show_pred { items.push((pred.clone(), cpred.to_string(), dash_pred.to_string())); }
-        legend(&mut d, ax_x + aw / 2.0, top + ah + 90.0, &items);
+        if p.b("legend") { legend(&mut d, ax_x + aw / 2.0, top + ah + 90.0, &items); }
     } else {
         let xmax = maxprey;
         let ymax = maxpred;
@@ -442,8 +503,9 @@ pub fn pp_render(p: &Params) -> String {
         let xt = if p.s("x_title").trim().is_empty() { format!("{prey} (number)") } else { p.s("x_title").trim().to_string() };
         let yt = if p.s("y_title").trim().is_empty() { format!("{pred} (number)") } else { ytitle.clone() };
         draw_axes(&mut d, &a, minor, &xt, &yt);
+        stash(10, &a);
         let pts: Vec<(f64, f64)> = data.iter().map(|v| a.pt((v.1, v.2))).collect();
-        d.polyline(&pts, cprey, 2.6);
+        d.polyline(&pts, cprey, p.f("line_width").clamp(1.0, 7.0) * 0.87);
         if pts.len() > 40 {
             let (p0, p1) = (pts[20], pts[24]);
             d.arrow(p0.0, p0.1, p1.0 + (p1.0 - p0.0) * 2.0, p1.1 + (p1.1 - p0.1) * 2.0, cprey, 2.6);

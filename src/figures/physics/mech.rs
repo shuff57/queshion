@@ -26,6 +26,9 @@ fn fbd_params() -> Vec<ParamDef> {
         v.push(ParamDef::float(k[2], k[3], 0.4, 1.6, 0.05, 1.0));
         v.push(ParamDef::text(k[4], k[5], FDEF[i].1));
     }
+    v.push(ParamDef::text("body_lab", "Label inside the body (blank = none)", ""));
+    v.push(ParamDef::text("mv_lab", "Velocity label", "v"));
+    v.push(ParamDef::text("ma_lab", "Acceleration label", "a"));
     v.push(ParamDef::choice("notation", "Vector notation", &["None", "Arrow", "Bold"], "None"));
     v.push(ParamDef::choice("motion", "Motion (drawn beside the body)", &["None", "Velocity", "Acceleration", "Both"], "None"));
     v.push(ParamDef::float("mdir", "Motion direction (deg)", 0.0, 360.0, 1.0, 0.0));
@@ -34,7 +37,7 @@ fn fbd_params() -> Vec<ParamDef> {
     v
 }
 
-fn ray_exit(kind: &str, ang: f64) -> f64 {
+pub(super) fn ray_exit(kind: &str, ang: f64) -> f64 {
     let (hw, hh, circ) = match kind { "Block" => (38.0, 28.0, false), "Ball" => (28.0, 28.0, true), "Cart" => (48.0, 22.0, false), _ => (6.0, 6.0, true) };
     if circ { return hw; }
     let a = ang.to_radians();
@@ -69,11 +72,12 @@ fn fbd_render(p: &Params) -> String {
         g.label_dir(tx, ty, ux, uy, 24.0, p.s(FK[i][4]), st);
     }
     if body == "Dot" { g.circle(cx, cy, 6.0, INK, INK, 1.0); }
+    if body != "Dot" && !p.s("body_lab").trim().is_empty() { g.label_at(cx, cy, 22.0, p.s("body_lab"), ITALIC); }
     // motion indicators beside the body
     let m = p.s("motion").to_string();
     let md = p.f("mdir");
     let mut row = 0.0;
-    for (name, lab) in [("Velocity", "v"), ("Acceleration", "a")] {
+    for (name, lab) in [("Velocity", p.s("mv_lab")), ("Acceleration", p.s("ma_lab"))] {
         if m == name || m == "Both" {
             let (mx, my) = (415.0, 292.0 + row);
             let (a, b) = (pol(mx, my, -26.0, md), pol(mx, my, 26.0, md));
@@ -123,10 +127,10 @@ fn styled_arrow(g: &mut G, style: &str, a: Pt, b: Pt, c: &str, sw: f64) {
     }
 }
 
-fn vector_render(p: &Params) -> String {
-    let (w, h) = (480.0, 360.0);
-    let mut g = G::new(w, h, p.b("mirror"));
-    let col = p.b("color");
+pub(super) struct VLay { pub n: usize, pub pts: Vec<Pt>, pub res: Pt, pub u: f64, pub ox: f64, pub oy: f64, pub gx0: f64, pub gx1: f64, pub gy0: f64, pub gy1: f64 }
+
+/// Grid layout of the vector diagram: head-to-tail points (grid units, y up) and pixel mapping.
+pub(super) fn vlayout(p: &Params, w: f64, h: f64) -> VLay {
     let n = p.i("n").clamp(1, 4) as usize;
     // head-to-tail points in grid units (y up)
     let mut pts = vec![(0.0, 0.0)];
@@ -144,6 +148,14 @@ fn vector_render(p: &Params) -> String {
     let gy1 = (y1.ceil() + 1.0).max(gy0 + 4.0);
     let u = ((w - 60.0) / (gx1 - gx0)).min((h - 50.0) / (gy1 - gy0)).min(46.0);
     let (ox, oy) = ((w - u * (gx1 - gx0)) / 2.0 - gx0 * u, (h + u * (gy1 - gy0)) / 2.0 + gy0 * u);
+    VLay { n, pts, res, u, ox, oy, gx0, gx1, gy0, gy1 }
+}
+
+fn vector_render(p: &Params) -> String {
+    let (w, h) = (480.0, 360.0);
+    let mut g = G::new(w, h, p.b("mirror"));
+    let col = p.b("color");
+    let VLay { n, pts, res, u, ox, oy, gx0, gx1, gy0, gy1 } = vlayout(p, w, h);
     let pxy = |q: Pt| (ox + q.0 * u, oy - q.1 * u);
     let mode = p.s("grid").to_string();
     if mode == "Grid" {
@@ -224,7 +236,9 @@ fn incline_params() -> Vec<ParamDef> {
         ParamDef::choice("velocity", "Velocity", &DIRS, "None"),
         ParamDef::choice("accel", "Acceleration", &DIRS, "None"),
         ParamDef::bool("mark_len", "Mark the length of the ramp", false),
+        ParamDef::text("len_lab", "Length label", "L"),
         ParamDef::bool("mark_h", "Mark the height of the ramp", false),
+        ParamDef::text("h_lab", "Height label", "h"),
         ParamDef::bool("mirror", "Mirror (flip left to right)", false),
         ParamDef::bool("color", "Color (for slides)", false),
     ]
@@ -320,13 +334,13 @@ fn incline_render(p: &Params) -> String {
         let (s0, s1) = (46.0, lh - 24.0);
         let (a, b) = ((ax + uu.0 * s0 + nn.0 * o, ground + uu.1 * s0 + nn.1 * o), (ax + uu.0 * s1 + nn.0 * o, ground + uu.1 * s1 + nn.1 * o));
                 g.dim_arrow(a.0, a.1, b.0, b.1, INK, 1.4);
-        g.label_at((a.0 + b.0) / 2.0 - nn.0 * 14.0, (a.1 + b.1) / 2.0 - nn.1 * 14.0, 20.0, "L", ITALIC);
+        g.label_at((a.0 + b.0) / 2.0 - nn.0 * 14.0, (a.1 + b.1) / 2.0 - nn.1 * 14.0, 20.0, p.s("len_lab"), ITALIC);
     }
     if p.b("mark_h") {
         let x = bx + 28.0;
         g.line(tx, ty, x + 6.0, ty, INK, 1.0);
         g.dim_arrow(x, ty, x, ground, INK, 1.4);
-        g.label_at(x + 14.0, (ty + ground) / 2.0, 20.0, "h", ITALIC);
+        g.label_at(x + 14.0, (ty + ground) / 2.0, 20.0, p.s("h_lab"), ITALIC);
     }
     g.finish()
 }
@@ -580,16 +594,18 @@ fn proj_params() -> Vec<ParamDef> {
         ParamDef::bool("comps", "Its components", false),
         ParamDef::bool("show_g", "Acceleration due to gravity", false),
         ParamDef::bool("mark_h", "Mark the maximum height", false),
+        ParamDef::text("h_lab", "Height label", "H"),
         ParamDef::bool("mark_r", "Mark the range", false),
+        ParamDef::text("r_lab", "Range label", "R"),
         ParamDef::bool("mirror", "Mirror (flip left to right)", false),
         ParamDef::bool("color", "Color (for slides)", false),
     ]
 }
 
-fn proj_render(p: &Params) -> String {
-    let (w, h) = (560.0, 340.0);
-    let mut g = G::new(w, h, p.b("mirror"));
-    let col = p.b("color");
+pub(super) struct PG { pub th: f64, pub vx: f64, pub vy: f64, pub h0: f64, pub r: f64, pub ground: f64, pub lx: f64, pub ly: f64, pub s: f64, pub t_land: f64 }
+
+/// Launch geometry of the projectile figure (canvas width `w`).
+pub(super) fn proj_geo(p: &Params, w: f64) -> PG {
     let cliff = p.s("from") == "A cliff";
     let th = p.f("angle").clamp(5.0, 85.0);
     let (vx, vy) = (th.to_radians().cos(), th.to_radians().sin());
@@ -605,6 +621,15 @@ fn proj_render(p: &Params) -> String {
     let drop_px = h0 * s + r; // launch centre above the ground line
     let ly = ground - drop_px;
     let t_land = vy + (vy * vy + 2.0 * drop_px / s).sqrt();
+    PG { th, vx, vy, h0, r, ground, lx, ly, s, t_land }
+}
+
+fn proj_render(p: &Params) -> String {
+    let (w, h) = (560.0, 340.0);
+    let mut g = G::new(w, h, p.b("mirror"));
+    let col = p.b("color");
+    let cliff = p.s("from") == "A cliff";
+    let PG { th, vx, vy, r, ground, lx, ly, s, t_land, .. } = proj_geo(p, w);
     let pos = |t: f64| (lx + s * vx * t, ly - s * (vy * t - 0.5 * t * t));
     // ground and cliff
     g.hatch(10.0, w - 10.0, ground, true);
@@ -667,7 +692,7 @@ fn proj_render(p: &Params) -> String {
         let x = apex.0 + 28.0;
         g.dim_arrow(x, apex.1, x, ly, INK, 1.4);
         g.dash(apex.0, apex.1, apex.0, ly, GREY, 1.0);
-        g.tex(x + 8.0, (apex.1 + ly) / 2.0 + 6.0, 20.0, "start", "H", ITALIC);
+        g.tex(x + 8.0, (apex.1 + ly) / 2.0 + 6.0, 20.0, "start", p.s("h_lab"), ITALIC);
     }
     if p.b("mark_r") {
         let (a, b) = (lx, end.0);
@@ -675,7 +700,7 @@ fn proj_render(p: &Params) -> String {
         g.line(a, ground + 2.0, a, y + 6.0, INK, 1.0);
         g.line(b, ground + 2.0, b, y + 6.0, INK, 1.0);
         g.dim_arrow(a, y, b, y, INK, 1.4);
-        g.tex((a + b) / 2.0, y - 6.0, 20.0, "middle", "R", ITALIC);
+        g.tex((a + b) / 2.0, y - 6.0, 20.0, "middle", p.s("r_lab"), ITALIC);
     }
     g.finish()
 }

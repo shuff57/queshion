@@ -7,10 +7,71 @@ use super::*;
 
 const SETUPS: [&str; 5] = ["Use the lanes text", "Crime scene", "Paternity test", "Restriction digest", "PCR products"];
 
+/// Geometry of the last render.
+#[derive(Clone, Debug, Default)]
+pub struct Layout { pub w: f64, pub gx: f64, pub gy: f64, pub well_y: f64, pub run: f64, pub lane_w: f64, pub agar: String, pub lanes: Vec<LaneInfo> }
+#[derive(Clone, Debug, Default)]
+pub struct LaneInfo { pub ladder: bool, pub bands: Vec<(f64, f64)> }
+
+thread_local! {
+    static LAST: std::cell::RefCell<Layout> = std::cell::RefCell::new(Layout::default());
+}
+
+pub fn layout_of(p: &Params) -> Layout {
+    LAST.with(|l| *l.borrow_mut() = Layout::default());
+    let _ = render(p);
+    LAST.with(|l| l.borrow().clone())
+}
+
+pub fn lane_x(l: &Layout, i: usize) -> f64 { l.gx + 12.0 + l.lane_w * (i as f64 + 0.5) }
+pub fn band_y(l: &Layout, bp: f64) -> f64 { l.well_y + 8.0 + run_frac(bp, &l.agar) * l.run }
+
+/// Fragment size whose band sits at screen y (inverse of `band_y`).
+pub fn bp_at(l: &Layout, y: f64) -> f64 {
+    let (lo, hi): (f64, f64) = match l.agar.as_str() { "0.8%" => (800.0, 15000.0), "1.5%" => (300.0, 5000.0), "2%" => (100.0, 2500.0), _ => (500.0, 10000.0) };
+    let frac = ((y - l.well_y - 8.0) / l.run).clamp(0.05, 0.95);
+    let t = (frac - 0.12) / (0.76 - 0.12);
+    10f64.powf(hi.log10() - t * (hi.log10() - lo.log10()))
+}
+
+/// The lanes text actually drawn (a classic setup overrides the typed text).
+fn active_text(p: &Params) -> String {
+    setup_text(p.s("setup")).unwrap_or(p.s("lanes")).to_string()
+}
+
+/// Edit band `band` (index among parsed bands) of sample lane `lane` (index among drawn lanes).
+/// `f` gets (bp, amount) and returns the new pair; the text is only rewritten when it really
+/// changed (>0.3% in size or a different amount), so a no-op drag leaves the params untouched.
+pub fn edit_band(p: &mut Params, lane: usize, band: usize, f: impl Fn(f64, f64) -> (f64, f64)) {
+    let text = active_text(p);
+    let mut raw: Vec<String> = Vec::new();
+    let mut drawn = Vec::new(); // raw index per drawn lane
+    for (i, l) in text.split(['|', '\n']).enumerate() {
+        raw.push(l.trim().to_string());
+        if !l.trim().is_empty() { drawn.push(i); }
+    }
+    let Some(&ri) = drawn.get(lane) else { return };
+    let line = raw[ri].clone();
+    let Some((label, rest)) = line.split_once(':') else { return };
+    let mut toks: Vec<String> = rest.split(',').map(|t| t.trim().to_string()).collect();
+    let parsed: Vec<usize> = (0..toks.len()).filter(|i| parse_band(&toks[*i]).is_some()).collect();
+    let Some(&ti) = parsed.get(band) else { return };
+    let (bp, amt) = parse_band(&toks[ti]).unwrap();
+    let (nbp, namt) = f(bp, amt);
+    let namt = namt.clamp(0.1, 4.0);
+    if ((nbp - bp).abs() / bp.max(1.0) < 0.003) && (namt - amt).abs() < 1e-6 { return; }
+    let nbp = if nbp >= 1000.0 { (nbp / 10.0).round() * 10.0 } else { (nbp / 5.0).round() * 5.0 }.max(10.0);
+    toks[ti] = if (namt - 1.0).abs() < 1e-6 { format!("{}", nbp as i64) } else { format!("{} x{}", nbp as i64, fnum(namt)) };
+    raw[ri] = format!("{}: {}", label.trim(), toks.join(", "));
+    let joined = raw.iter().filter(|r| !r.is_empty()).cloned().collect::<Vec<_>>().join(" | ");
+    p.set_s("lanes", &joined);
+    p.set_s("setup", SETUPS[0]);
+}
+
 pub fn params() -> Vec<ParamDef> {
     vec![
         ParamDef::choice("setup", "Classic setup (overrides lanes text)", &SETUPS, SETUPS[0]),
-        ParamDef::text("lanes", "Lanes: Label: bands | Label: ladder 1kb | ...", CRIME),
+        ParamDef::long("lanes", "Lanes: Label: bands | Label: ladder 1kb | ...", CRIME),
         ParamDef::choice("agarose", "Agarose", &["0.8%", "1%", "1.5%", "2%"], "1%"),
         ParamDef::choice("look", "Look", &["Printable", "Blue stain", "Glowing"], "Printable"),
         ParamDef::bool("ruler", "Ruler for measuring how far each band ran", false),
@@ -19,6 +80,8 @@ pub fn params() -> Vec<ParamDef> {
         ParamDef::bool("electrodes", "Electrode signs", true),
         ParamDef::bool("answer", "Answer key (matching lanes)", false),
         ParamDef::text("title", "Chart title (blank = none)", ""),
+        ParamDef::float("band_height", "Band thickness", 0.5, 2.5, 0.1, 1.0),
+        ParamDef::float("run_length", "Gel length (px of run)", 250.0, 520.0, 10.0, 400.0),
     ]
 }
 
@@ -111,7 +174,7 @@ pub fn render(p: &Params) -> String {
     let left = if p.b("sizes") || p.b("electrodes") { 112.0 } else { 40.0 };
     let right = if p.b("ruler") { 70.0 } else { 36.0 };
     let gel_w = n as f64 * lane_w + 24.0;
-    let run = 400.0;
+    let run = p.f("run_length").clamp(250.0, 520.0);
     let gel_h = run + 40.0;
     let top = 20.0 + if title.is_empty() { 0.0 } else { 36.0 } + name_h;
     let w = (left + gel_w + right).max(420.0);
@@ -132,6 +195,10 @@ pub fn render(p: &Params) -> String {
         v
     } else { vec![] };
     let h = gy + gel_h + 30.0 + if answer_lines.is_empty() { 0.0 } else { 14.0 + answer_lines.len() as f64 * 22.0 };
+    LAST.with(|l| *l.borrow_mut() = Layout {
+        w, gx, gy, well_y, run, lane_w, agar: agar.clone(),
+        lanes: lanes.iter().map(|l| LaneInfo { ladder: l.ladder.is_some(), bands: l.bands.clone() }).collect(),
+    });
     let mut d = Doc::new(w, h);
     if glow {
         d.raw(r#"<defs><filter id="glow" x="-50%" y="-200%" width="200%" height="500%"><feGaussianBlur stdDeviation="3"/></filter></defs>"#);
@@ -149,7 +216,7 @@ pub fn render(p: &Params) -> String {
         }
         for (bp, amt) in &l.bands {
             let y = well_y + 8.0 + run_frac(*bp, &agar) * run;
-            let th = 3.2 + 1.6 * amt.min(3.0);
+            let th = (3.2 + 1.6 * amt.min(3.0)) * p.f("band_height").clamp(0.5, 2.5);
             let op = (0.4 + 0.55 * amt).min(1.0);
             if glow {
                 d.raw(&format!(r#"<rect x="{:.1}" y="{:.1}" width="38" height="{:.1}" fill="{band}" opacity="0.8" filter="url(#glow)"/>"#, cx - 19.0, y - th / 2.0, th + 1.0));

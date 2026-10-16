@@ -314,6 +314,13 @@ fn start_next_ai(app: &mut crate::App, st: &mut State, ctx: &egui::Context) {
         st.ai_all = false;
         return;
     };
+    let cfg = crate::ai::AiCfg::from(&app.settings);
+    if !cfg.has_key_or_needs_none() {
+        st.ai_all = false;
+        app.toast_err("Add your API key in Settings, then AI, before converting.");
+        app.screen = crate::Screen::Settings;
+        return;
+    }
     s.status = Status::Converting;
     app.import_file = s.image.clone();
     app.import_name = s.name.clone();

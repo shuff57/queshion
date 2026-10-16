@@ -6,7 +6,7 @@ use std::f64::consts::PI;
 // ---------------------------------------------------------------- motion graphs
 
 const KINDS: [&str; 5] = ["At rest", "Constant velocity forward", "Constant velocity back", "Speeding up", "Slowing down"];
-const SK: [[&str; 8]; 5] = [
+pub(super) const SK: [[&str; 8]; 5] = [
     ["s1_kind", "Segment 1 motion", "s1_v", "Segment 1 speed (m/s)", "s1_t", "Segment 1 lasts (s)", "s1_dir", "Segment 1 direction"],
     ["s2_kind", "Segment 2 motion", "s2_v", "Segment 2 speed (m/s)", "s2_t", "Segment 2 lasts (s)", "s2_dir", "Segment 2 direction"],
     ["s3_kind", "Segment 3 motion", "s3_v", "Segment 3 speed (m/s)", "s3_t", "Segment 3 lasts (s)", "s3_dir", "Segment 3 direction"],
@@ -47,13 +47,13 @@ fn motion_params() -> Vec<ParamDef> {
 }
 
 #[derive(Clone, Copy)]
-struct Seg { t0: f64, t1: f64, v0: f64, v1: f64, x0: f64 }
+pub(super) struct Seg { pub t0: f64, pub t1: f64, pub v0: f64, pub v1: f64, pub x0: f64 }
 impl Seg {
-    fn a(&self) -> f64 { (self.v1 - self.v0) / (self.t1 - self.t0) }
-    fn x(&self, t: f64) -> f64 { let d = t - self.t0; self.x0 + self.v0 * d + 0.5 * self.a() * d * d }
+    pub(super) fn a(&self) -> f64 { (self.v1 - self.v0) / (self.t1 - self.t0) }
+    pub(super) fn x(&self, t: f64) -> f64 { let d = t - self.t0; self.x0 + self.v0 * d + 0.5 * self.a() * d * d }
 }
 
-fn build_segs(p: &Params) -> Vec<Seg> {
+pub(super) fn build_segs(p: &Params) -> Vec<Seg> {
     let mut out: Vec<Seg> = Vec::new();
     let (mut t, mut v, mut x) = (0.0, 0.0, p.f("x0"));
     for k in SK.iter().take(p.i("n").clamp(1, 5) as usize) {
@@ -83,11 +83,15 @@ fn build_segs(p: &Params) -> Vec<Seg> {
 
 const DASHES: [&str; 4] = ["none", "9 5", "2 5", "10 4 2 4"];
 
-fn motion_panel(g: &mut G, p: &Params, segs: &[Seg], which: u8, (ox, oy, w, h): (f64, f64, f64, f64), xlabel: &str) {
+/// Value of series `which` (0 position, 1 velocity, 2 acceleration) of segment `s` at time `t`.
+pub(super) fn series(s: &Seg, which: u8, t: f64) -> f64 {
+    match which { 0 => s.x(t), 1 => s.v0 + s.a() * (t - s.t0), _ => s.a() }
+}
+
+/// Axes (and tick steps) of one motion panel placed at (ox, oy, w, h).
+pub(super) fn motion_axes(segs: &[Seg], which: u8, (ox, oy, w, h): (f64, f64, f64, f64)) -> (Axes, f64, f64) {
     let tmax = segs.last().map(|s| s.t1).unwrap_or(1.0);
-    let ser = |s: &Seg, t: f64| -> f64 {
-        match which { 0 => s.x(t), 1 => s.v0 + s.a() * (t - s.t0), _ => s.a() }
-    };
+    let ser = |s: &Seg, t: f64| series(s, which, t);
     let (mut lo, mut hi) = (0.0f64, 0.0f64);
     for s in segs {
         for t in [s.t0, (s.t0 + s.t1) / 2.0, s.t1] { let y = ser(s, t); lo = lo.min(y); hi = hi.max(y); }
@@ -98,7 +102,26 @@ fn motion_panel(g: &mut G, p: &Params, segs: &[Seg], which: u8, (ox, oy, w, h): 
     if which == 2 { ymin -= ystep; ymax += ystep; }
     let xstep = nice_step(tmax, 10.0);
     let xmax = (tmax / xstep).ceil() * xstep;
-    let ax = Axes { x0: ox, y0: oy, w, h, xmin: 0.0, xmax, ymin, ymax };
+    (Axes { x0: ox, y0: oy, w, h, xmin: 0.0, xmax, ymin, ymax }, xstep, ystep)
+}
+
+/// Canvas size and the panels (which series, rect, is-last) drawn for the current params.
+pub(super) fn motion_layout(p: &Params) -> ((f64, f64), Vec<(u8, (f64, f64, f64, f64))>, f64) {
+    let stacked = p.s("show") == "All three, stacked";
+    let (w, h) = (580.0, if stacked { 780.0 } else { 420.0 });
+    let top = if p.s("title").trim().is_empty() { 28.0 } else { 52.0 };
+    if stacked {
+        let ph = (h - top - 30.0 - 3.0 * 62.0) / 3.0;
+        ((w, h), (0..3).map(|i| (i as u8, (100.0, top + i as f64 * (ph + 62.0), 440.0, ph))).collect(), top)
+    } else {
+        let which = match p.s("show") { "Velocity-time" => 1, "Acceleration-time" => 2, _ => 0 };
+        ((w, h), vec![(which, (100.0, top, 440.0, h - top - 90.0))], top)
+    }
+}
+
+fn motion_panel(g: &mut G, p: &Params, segs: &[Seg], which: u8, (ox, oy, w, h): (f64, f64, f64, f64), xlabel: &str) {
+    let (ax, xstep, ystep) = motion_axes(segs, which, (ox, oy, w, h));
+    let ser = |s: &Seg, t: f64| series(s, which, t);
     let yl = match which { 0 => p.s("yt_pos"), 1 => p.s("yt_vel"), _ => p.s("yt_acc") };
     ax.draw(g, xstep, ystep, p.b("grid"), p.b("numbers"), &supers(xlabel), &supers(yl), 13.0);
     let col = p.b("color");

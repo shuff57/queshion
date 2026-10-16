@@ -10,6 +10,59 @@
 use super::*;
 use std::collections::BTreeMap;
 
+/// Grid geometry of the last render (for interaction handles).
+#[derive(Clone, Debug, Default)]
+pub struct Layout { pub w: f64, pub gx: f64, pub p1_y: f64, pub gy: f64, pub cell: f64, pub nc: usize, pub nr: usize, pub gsz: f64, pub ox: f64, pub pb_y: f64 }
+
+thread_local! {
+    static LAST: std::cell::RefCell<Option<Layout>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Renders and returns the layout (None when the parents cannot be read).
+pub fn layout_of(p: &Params) -> Option<Layout> {
+    LAST.with(|l| *l.borrow_mut() = None);
+    let _ = render(p);
+    LAST.with(|l| l.borrow().clone())
+}
+
+pub const SHADES: [&str; 6] = ["#bfdbfe", "#fde68a", "#bbf7d0", "#fecaca", "#e9d5ff", "#fed7aa"];
+
+/// Cross kind as an index: 0 mono, 1 di, 2 x-linked.
+pub fn cross_of(p: &Params) -> u8 { match p.s("cross") { "Dihybrid" => 1, "X-linked" => 2, _ => 0 } }
+
+/// Toggle the case of one allele (`which` 0/1) of gene `gene` in parent `parent` (0 = top, 1 = side)
+/// and write the parents string back. Genotype cycle per click: AA -> Aa -> aa -> AA.
+pub fn cycle_gene(p: &mut Params, parent: usize, gene: usize) {
+    let cross = match p.s("cross") { "Dihybrid" => Cross::Di, "X-linked" => Cross::XLinked, _ => Cross::Mono };
+    let Some((a, b)) = split_parents(p.s("parents")) else { return };
+    let (Ok(mut pa), Ok(mut pb)) = (parse_parent(&a, cross), parse_parent(&b, cross)) else { return };
+    let tgt = if parent == 0 { &mut pa } else { &mut pb };
+    let Some(g) = tgt.get_mut(gene) else { return };
+    let flip = |c: char| if c.is_uppercase() { c.to_lowercase().next().unwrap() } else { c.to_uppercase().next().unwrap() };
+    if g[1] == 'Y' {
+        g[0] = flip(g[0]);
+    } else {
+        let up = g.iter().filter(|c| c.is_uppercase()).count();
+        match up {
+            2 => g[1] = flip(g[1]),
+            1 => { if g[0].is_uppercase() { g[0] = flip(g[0]); } else { g[1] = flip(g[1]); } if g.iter().filter(|c| c.is_uppercase()).count() == 1 { g.swap(0, 1); } }
+            _ => { g[0] = flip(g[0]); g[1] = flip(g[1]); }
+        }
+        // keep the dominant allele first for readability
+        if g[1].is_uppercase() && !g[0].is_uppercase() { g.swap(0, 1); }
+    }
+    let fmt = |v: &[Pair]| -> String {
+        if cross == Cross::XLinked {
+            let g = v[0];
+            if g[1] == 'Y' { format!("X{}Y", g[0]) } else { format!("X{}X{}", g[0], g[1]) }
+        } else {
+            v.iter().map(|g| format!("{}{}", g[0], g[1])).collect()
+        }
+    };
+    let s = format!("{} x {}", fmt(&pa), fmt(&pb));
+    p.set_s("parents", &s);
+}
+
 pub fn params() -> Vec<ParamDef> {
     vec![
         ParamDef::choice("cross", "Cross", &["Monohybrid", "Dihybrid", "X-linked"], "Monohybrid"),
@@ -22,6 +75,8 @@ pub fn params() -> Vec<ParamDef> {
         ParamDef::bool("pheno_ratio", "Show phenotype ratio", true),
         ParamDef::text("title", "Chart title (blank = none)", ""),
         ParamDef::text("question", "Question (blank = none)", ""),
+        ParamDef::color("shade_color", "Shade colour (first / last phenotype only)", &SHADES, SHADES[0]),
+        ParamDef::bool("outline_heavy", "Heavy outer border", true),
     ]
 }
 
@@ -229,11 +284,12 @@ pub fn render(p: &Params) -> String {
         classes.iter().position(|k| k.0 == idx && k.1 == c.male && k.2 == nm).unwrap_or(0)
     };
     let shade_mode = p.s("shading").to_string();
+    let shade_col: &str = SHADES.iter().copied().find(|c| c.eq_ignore_ascii_case(p.s("shade_color"))).unwrap_or(SHADES[0]);
     let shaded = |ci: usize| -> Option<&'static str> {
         match shade_mode.as_str() {
             s if s.starts_with("Each") => Some(FILLS[ci % FILLS.len()]),
-            s if s.starts_with("First") => (ci == 0).then_some(FILLS[0]),
-            s if s.starts_with("Last") => (ci + 1 == classes.len()).then_some(FILLS[0]),
+            s if s.starts_with("First") => (ci == 0).then_some(shade_col),
+            s if s.starts_with("Last") => (ci + 1 == classes.len()).then_some(shade_col),
             _ => None,
         }
     };
@@ -299,7 +355,8 @@ pub fn render(p: &Params) -> String {
             }
         }
     }
-    d.rect(gx, gy, cell * nc as f64, grid_h, "none", INK, 3.0);
+    d.rect(gx, gy, cell * nc as f64, grid_h, "none", INK, if p.b("outline_heavy") { 3.0 } else { 1.6 });
+    LAST.with(|l| *l.borrow_mut() = Some(Layout { w, gx, p1_y, gy, cell, nc, nr, gsz, ox, pb_y: gy + grid_h / 2.0 }));
     for i in 1..nc { d.line(gx + cell * i as f64, gy, gx + cell * i as f64, gy + grid_h, INK, 1.6); }
     for j in 1..nr { d.line(gx, gy + cell * j as f64, gx + cell * nc as f64, gy + cell * j as f64, INK, 1.6); }
 
