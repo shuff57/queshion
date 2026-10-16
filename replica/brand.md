@@ -75,6 +75,8 @@ Screening only, not legal clearance; a lawyer search before selling anything.
 Offered as follow-up (skill steps 3–6) — the app currently uses the Test Parrot house palette; a rebrand pass would shift the accent hue family and sweep all strings. Ask when wanted.
 ## Decision (2026-10-15)
 
-User picked **queShion** — not from the SH families; the "sh" sound carried by `-tion/​-sion`.
+User picked **queShion** — over the screening's top pick Chalkshed, and over the other SH
+families (Shufflery, Freshsheet, etc.). queShion wasn't from those rounds: the "sh" sound is
+carried by `-tion` (ques**tion**), not by the literal letters S–H.
 Renamed 2026-10-15: crate `queshion`, app title "queShion", store dir `~/.local/share/queshion/`,
 env vars `QUESHION_*`; repo dir stays `~/testparrot`. GitHub repo: `queshion` (public).
