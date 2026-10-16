@@ -2,7 +2,7 @@
 
 Desktop clone of https://www.testparrot.com/ in pure Rust: egui + wgpu (eframe), everything local.
 You are the delegated worker: write files whole per your assignment; you may run `cargo check`/`cargo test`
-in `/home/shuff57/testparrot` (block on the shared target lock if another worker holds it).
+in `/home/shuff57/queshion` (block on the shared target lock if another worker holds it).
 The AGENTS.md tier gate fires on big inline writes — you ARE the delegated cheaper-tier builder; announce
 that and continue. Never touch files outside your ownership list (except adding tests in the same file you own).
 
