@@ -15,6 +15,7 @@ pub mod math;
 pub mod math_geo;
 pub mod math_plot;
 pub mod physics;
+pub mod sections;
 pub mod svg;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -154,6 +155,71 @@ pub fn registry() -> Vec<FigureDef> {
     v.extend(chemistry::defs());
     v.extend(math::defs());
     v
+}
+
+/// One row of a figure's "Measures" card (the reference's way of entering a shape): a name, the
+/// value (typed = given, empty = computed from the others and shown grey), and a label popover
+/// (Measure / Text / None, plus optional congruence ticks or arcs). All keys name params the
+/// figure declares; the card replaces their generic controls.
+#[derive(Clone, Debug)]
+pub struct MeasureRow {
+    /// Row name shown on the left ("AB", "Radius", "∠").
+    pub name: &'static str,
+    /// Editable name param (the vertex letter of an angle row), if any.
+    pub name_key: Option<&'static str>,
+    /// Param holding the value: a Text param ("" = computed) or a Float/Int param (always given).
+    pub value_key: &'static str,
+    pub unit: &'static str,
+    /// Choice param Measure | Text | None, and the Text param used when it is "Text".
+    pub label_key: &'static str,
+    pub text_key: &'static str,
+    /// Choice param for congruence ticks / angle arcs ("None", "1", "2", "3"), if any.
+    pub tick_key: Option<&'static str>,
+    /// A linked row ("CD = AB"): no value box, the figure derives it.
+    pub equals: Option<&'static str>,
+}
+
+#[derive(Clone, Debug)]
+pub struct MeasureGroup {
+    pub title: &'static str,
+    pub rows: Vec<MeasureRow>,
+}
+
+#[derive(Clone, Debug)]
+pub struct MeasureCard {
+    pub title: &'static str,
+    pub help: &'static str,
+    pub groups: Vec<MeasureGroup>,
+}
+
+impl MeasureCard {
+    /// Every param key the card takes over.
+    pub fn keys(&self) -> Vec<&'static str> {
+        let mut k = Vec::new();
+        for r in self.groups.iter().flat_map(|g| g.rows.iter()) {
+            k.extend([r.value_key, r.label_key, r.text_key]);
+            k.extend(r.name_key);
+            k.extend(r.tick_key);
+        }
+        k
+    }
+}
+
+/// The Measures card of a figure, if it has one (math shapes and solids contribute).
+pub fn measures_for(id: &str) -> Option<MeasureCard> {
+    math::measures(id)
+}
+
+/// Values worked out from the typed ones, as (value_key, text) pairs shown grey in empty boxes
+/// and on "Measure" label buttons.
+pub fn computed_for(id: &str, p: &Params) -> Vec<(&'static str, String)> {
+    math::computed(id, p)
+}
+
+/// Upgrades a saved spec made before a figure's inputs were reworked: reads the old keys from
+/// `spec` and writes the new ones into `p` (called after the defaults + spec are applied).
+pub fn migrate(id: &str, spec: &crate::model::FigureSpec, p: &mut Params) {
+    math::migrate(id, spec, p)
 }
 
 /// A named starting point for a figure ("Start from an example"): parameter overrides on top of

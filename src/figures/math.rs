@@ -8,7 +8,6 @@ const INK: &str = "#111";
 const GREY: &str = "#6b6b6b";
 const TINT: &str = "#e9f1fb";
 const BLUE: &str = "#1f5fbf";
-const FONT: f64 = 15.0;
 
 type Pt = (f64, f64);
 
@@ -95,16 +94,6 @@ impl Map {
         m
     }
     pub(super) fn p(&self, q: Pt) -> Pt { (self.ox + q.0 * self.s, self.oy - q.1 * self.s) }
-}
-
-/// Text next to segment a-b (screen coords), on the side facing away from `center`.
-fn label_beside(doc: &mut Doc, a: Pt, b: Pt, t: f64, center: Pt, text: &str, gap: f64) {
-    let m = (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t);
-    let u = unit_v(a, b);
-    let mut n = (-u.1, u.0);
-    if n.0 * (m.0 - center.0) + n.1 * (m.1 - center.1) < 0.0 { n = (-n.0, -n.1); }
-    let off = gap + 0.5 * (tw(text, FONT) * n.0.abs() + FONT * 0.9 * n.1.abs());
-    put(doc, m.0 + n.0 * off, m.1 + n.1 * off, text, FONT);
 }
 
 /// Right-angle square at vertex v (screen), arms toward da and db.
@@ -207,14 +196,6 @@ fn vnames(p: &Params, n: usize) -> Vec<String> {
     (0..n).map(|i| custom.get(i).cloned().unwrap_or_else(|| ((b'A' + i as u8) as char).to_string())).collect()
 }
 
-/// Label for a segment named `key` (a diagonal like AC): custom text, x, its measure, or none.
-fn key_label(p: &Params, key: &str) -> Option<String> {
-    if let Some(t) = text_for(&text_map(p.s("side_text")), key) { return Some(t); }
-    if listed(&tokens(p.s("unknown")), key) { return Some("x".into()); }
-    if listed(&tokens(p.s("sides")), key) { return Some("=".into()); }
-    None
-}
-
 #[derive(Clone, Default)]
 struct Extra { a: Pt, b: Pt, label: Option<String>, t: f64, dash: &'static str, raw: bool }
 type Mark = (Pt, Pt, Pt);
@@ -284,34 +265,6 @@ fn height_from(v: Pt, p: Pt, q: Pt, label: (Option<String>, bool), dash: &'stati
 }
 
 fn height_label(p: &Params) -> (Option<String>, bool) { named_label(p.s("height_label"), p.s("height_text"), "h") }
-
-/// Diagonals AC and BD of a quadrilateral from the `diagonals` choice, labelled through the
-/// side lists (or forced to their measure by "Drawn and labelled"), with a right-angle mark
-/// where they cross at 90°.
-fn quad_diagonals(p: &Params, pts: &[Pt], ex: &mut Vec<Extra>, mk: &mut Vec<Mark>) {
-    let sel = p.s("diagonals");
-    let (ac, bd) = match sel { "" | "None" => (false, false), "AC only" => (true, false), "BD only" => (false, true), _ => (true, true) };
-    let forced = sel.contains("labelled");
-    let names = vnames(p, 4);
-    let dash = dash_of(p);
-    // labels sit at different points along the two diagonals so they never meet at the crossing
-    for (on, i, j, t) in [(ac, 0usize, 2usize, 0.3), (bd, 1, 3, 0.72)] {
-        if !on { continue; }
-        let key = format!("{}{}", names[i], names[j]);
-        let label = if forced { Some("=".to_string()) } else { key_label(p, &key) };
-        ex.push(Extra { a: pts[i], b: pts[j], label, t, dash, raw: true });
-    }
-    if ac && bd {
-        let (u, w) = (unit_v(pts[0], pts[2]), unit_v(pts[1], pts[3]));
-        if (u.0 * w.0 + u.1 * w.1).abs() < 0.005 {
-            // intersection of A + s u with B + t w
-            let den = u.0 * w.1 - u.1 * w.0;
-            let s = ((pts[1].0 - pts[0].0) * w.1 - (pts[1].1 - pts[0].1) * w.0) / den;
-            let x = (pts[0].0 + u.0 * s, pts[0].1 + u.1 * s);
-            mk.push((x, pts[2], pts[1]));
-        }
-    }
-}
 
 /// Renders a polygon spec: flip, side-at-bottom and turn, then marks and math-typeset labels.
 fn draw_poly(s: PolySpec, dec: i64, unit: &str) -> String {
@@ -510,62 +463,6 @@ fn bottom_side(p: &Params, n: usize) -> Option<usize> {
     })
 }
 
-/// Shared builder for polygon-type figures from parameters + geometry.
-fn poly_from_params(p: &Params, pts: Vec<Pt>, arrows: Vec<u8>, extras: Vec<Extra>, marks: Vec<Mark>, dots: Vec<Pt>, notes: Vec<(Pt, Pt, String)>) -> String {
-    let n = pts.len();
-    let names = vnames(p, n);
-    let (dec, unit) = (p.i("dec"), p.s("unit").to_string());
-    let show = tokens(p.s("sides"));
-    let unk = tokens(p.s("unknown"));
-    let angs = tokens(p.s("angles"));
-    let tmap = text_map(p.s("side_text"));
-    let lens: Vec<f64> = (0..n).map(|i| dist(pts[i], pts[(i + 1) % n])).collect();
-    let angv = poly_angles(&pts);
-    let side_txt = (0..n).map(|i| {
-        let nm = format!("{}{}", names[i], names[(i + 1) % n]);
-        if let Some(t) = text_for(&tmap, &nm) { Some(t) }
-        else if listed(&unk, &nm) { Some("x".into()) }
-        else if listed(&show, &nm) { Some(fmtu(lens[i], dec, &unit)) } else { None }
-    }).collect();
-    let ang_txt = (0..n).map(|i| {
-        if let Some(t) = text_for(&tmap, &names[i]) { Some(t) }
-        else if unk.contains(&names[i]) { Some("x".to_string()) }
-        else if angs.contains(&names[i]) { Some(format!("{}\u{b0}", fmt(angv[i], dec))) } else { None }
-    }).collect();
-    let ticks = parse_counts(p.s("marks"), &names, true).unwrap_or_else(|| if p.b("ticks") { auto_ticks(&lens) } else { vec![0; n] });
-    let arrows = parse_counts(p.s("arrow_marks"), &names, true).unwrap_or(arrows);
-    let arcs = parse_counts(p.s("arcs"), &names, false).unwrap_or_else(|| vec![0; n]);
-    draw_poly(PolySpec {
-        pts, names, side_txt, ang_txt, ticks, arrows, arcs, right_marks: p.b("right"), vlabels: p.b("vertices"),
-        extras, marks, dots, notes, rot: p.f("rotate"), flip: p.b("flip"), bottom: bottom_side(p, n),
-        fill: if p.s("fill").starts_with('#') { p.s("fill").to_string() } else { TINT.to_string() },
-        fs: fscale(p),
-    }, dec, &unit)
-}
-
-fn common(sides: &str, angles: &str, unknown: &str) -> Vec<ParamDef> {
-    vec![
-        ParamDef::text("sides", "Sides to label (e.g. AB, BC)", sides),
-        ParamDef::text("angles", "Angles to label (vertex letters, e.g. A, C)", angles),
-        ParamDef::text("unknown", "Show as x (sides like BC, angles like B)", unknown),
-        ParamDef::bool("right", "Right-angle squares", true),
-        ParamDef::bool("ticks", "Equal-side tick marks", true),
-        ParamDef::bool("vertices", "Vertex letters", true),
-        ParamDef::text("unit", "Unit (e.g. cm)", ""),
-        ParamDef::int("dec", "Decimal places", 0, 3, 1),
-        ParamDef::float("rotate", "Turn (degrees)", -180.0, 180.0, 1.0, 0.0),
-        ParamDef::text("vnames", "Vertex letters in order (e.g. P, Q, R; blank = A, B, C)", ""),
-        ParamDef::color("fill", "Fill colour", &["#e9f1fb", "#fdf0d5", "#e3f4e1", "#fbe3e3", "#efe5f7", "#ffffff"], "#e9f1fb"),
-        ParamDef::long("side_text", "Text labels instead of measures, e.g. BC = 2x + 3; A = y; AC = d", ""),
-        ParamDef::list("marks", "Congruence ticks per side, e.g. AB 1, CD 1, BC 2 (or all 1, none; blank = automatic)", ""),
-        ParamDef::list("arcs", "Congruence arcs per angle, e.g. A 1, C 1 (or all 1)", ""),
-        ParamDef::list("arrow_marks", "Parallel arrows per side, e.g. AB 1, CD 1 (or none; blank = the figure's default)", ""),
-        ParamDef::bool("flip", "Flip (mirror left to right)", false),
-        ParamDef::choice("label_size", "Label size", &["Large", "Medium", "Small"], "Medium"),
-        ParamDef::choice("line_style", "Construction lines (diagonals, heights)", &["Solid", "Dashed", "Dotted"], "Dashed"),
-    ]
-}
-
 /// Height label params for figures that draw heights.
 fn height_common() -> Vec<ParamDef> {
     vec![
@@ -574,144 +471,803 @@ fn height_common() -> Vec<ParamDef> {
     ]
 }
 
-const QUAD_BOTTOM: [&str; 5] = ["AB, as it stands", "AB", "BC", "CD", "DA"];
-
 fn msg(text: &str) -> String {
     let mut d = new_doc(480.0, 120.0);
     put(&mut d, 240.0, 60.0, text, 16.0);
     d.finish()
 }
 
-// ───────────────────────── triangle ─────────────────────────
+// ───────────────────────── flat shapes: the Measures model (meas-a) ─────────────────────────
+//
+// Triangle, rectangle, parallelogram, trapezoid, kite and regular polygon are entered the way the
+// reference does it: one row per side / angle. A typed value is "given"; an empty box is worked out
+// from the others (`computed`). Each row has a label mode ("" = automatic: the measure when given,
+// nothing when worked out; or Measure / Text / None), a label text and congruence ticks or arcs.
+// Angles and parallel lines use a rays / lines card instead. The solvers report what is wrong in
+// the reference's words when the givens are too few, too many or inconsistent.
 
-fn triangle_params() -> Vec<ParamDef> {
+mod flat {
+use super::*;
+
+pub(crate) const TICKS: [&str; 4] = ["None", "1", "2", "3"];
+pub(crate) const STYLES: [&str; 3] = ["Solid", "Dashed", "Dotted"];
+pub(crate) const NAME_K: [&str; 4] = ["name_a", "name_b", "name_c", "name_d"];
+const BAD_NUM: &str = "Type a number, like 12, 2.5, 5/2 or 3\u{221a}2.";
+
+// ----- typed values -----
+
+/// A typed measure: its value, how it prints (as typed, with √ and π) and how far a worked-out
+/// value may differ from it before the two disagree (half a unit in its last typed place).
+#[derive(Clone, Debug)]
+pub(crate) struct Typed { pub v: f64, pub show: String, pub tol: f64 }
+
+/// `5sqrt2` -> 5√2, `sqrt(x+1)` -> √(x+1), `pi` -> π, `*` -> ·, `-` -> −.
+pub(crate) fn pretty(t: &str) -> String {
+    let s = t.trim().replace('\u{221a}', "sqrt");
+    let cs: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < cs.len() {
+        if cs[i..].starts_with(&['s', 'q', 'r', 't']) {
+            i += 4;
+            if i < cs.len() && cs[i] == '(' {
+                let st = i;
+                let mut depth = 0;
+                while i < cs.len() {
+                    if cs[i] == '(' { depth += 1; } else if cs[i] == ')' { depth -= 1; if depth == 0 { break; } }
+                    i += 1;
+                }
+                let inner: String = cs[st + 1..i.min(cs.len())].iter().collect();
+                i += 1;
+                let inner = pretty(&inner);
+                if inner.chars().all(|c| c.is_ascii_digit() || c == '.') { out.push('\u{221a}'); out.push_str(&inner); } else { out.push_str(&format!("\u{221a}({inner})")); }
+            } else {
+                out.push('\u{221a}');
+            }
+            continue;
+        }
+        if cs[i..].starts_with(&['p', 'i']) { out.push('\u{3c0}'); i += 2; continue; }
+        match cs[i] { '*' => out.push('\u{b7}'), '-' => out.push('\u{2212}'), c => out.push(c) }
+        i += 1;
+    }
+    out
+}
+
+/// Value of a typed measure: numbers, fractions, sqrt / √, pi / π and + − × ÷. Letters are refused.
+pub(crate) fn eval_typed(t: &str) -> Option<f64> {
+    let s = t.trim().replace('\u{221a}', "sqrt").replace('\u{3c0}', "pi").replace('\u{2212}', "-").replace('\u{b7}', "*").replace('\u{d7}', "*").replace('\u{f7}', "/").to_lowercase();
+    let cs: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < cs.len() {
+        if cs[i..].starts_with(&['s', 'q', 'r', 't']) {
+            out.push_str("sqrt");
+            i += 4;
+            if i < cs.len() && (cs[i].is_ascii_digit() || cs[i] == '.') {
+                out.push('(');
+                while i < cs.len() && (cs[i].is_ascii_digit() || cs[i] == '.') { out.push(cs[i]); i += 1; }
+                out.push(')');
+            }
+            continue;
+        }
+        out.push(cs[i]);
+        i += 1;
+    }
+    if out.replace("sqrt", "").replace("pi", "").chars().any(|c| c.is_alphabetic()) { return None; }
+    eval(&out, 0.0).filter(|v| v.is_finite())
+}
+
+/// "" -> Ok(None); a number or expression -> Ok(Some); anything else -> Err.
+pub(crate) fn parse_typed(s: &str) -> Result<Option<Typed>, ()> {
+    let t = s.trim();
+    if t.is_empty() { return Ok(None); }
+    let v = eval_typed(t).ok_or(())?;
+    let plain = t.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '-' || c == '\u{2212}');
+    let tol = if plain {
+        let d = t.split_once('.').map(|(_, f)| f.len()).unwrap_or(0) as i32;
+        0.5 * 10f64.powi(-d) + 1e-9
+    } else {
+        0.005 + 1e-9 * v.abs()
+    };
+    Ok(Some(Typed { v, show: pretty(t), tol }))
+}
+
+fn typed_of(p: &Params, key: &str) -> Result<Option<Typed>, String> {
+    if key.is_empty() { return Ok(None); }
+    parse_typed(p.s(key)).map_err(|_| BAD_NUM.to_string())
+}
+
+/// Plain ASCII number for writing back into a value box (drag handles, migration).
+pub(crate) fn num_str(v: f64, dec: usize) -> String {
+    let s = format!("{:.*}", dec, v);
+    let s = if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s };
+    if s == "-0" { "0".into() } else { s }
+}
+
+/// Corner names from the per-corner boxes (blank = A, B, C, ...).
+pub(crate) fn corner_names(p: &Params, n: usize) -> Vec<String> {
+    (0..n).map(|i| {
+        let v = NAME_K.get(i).map(|k| p.s(k).trim().to_string()).unwrap_or_default();
+        if v.is_empty() { ((b'A' + i as u8) as char).to_string() } else { v }
+    }).collect()
+}
+
+/// What prints for one measure: label mode ("" = automatic), text, typed value, worked-out value.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn lab_text(p: &Params, lab: &str, txt: &str, typed: Option<&Typed>, val: Option<f64>, linked: bool, angle: bool, dec: i64, unit: &str) -> Option<String> {
+    let mode = p.s(lab);
+    let mode = if mode.is_empty() { if typed.is_some() && !linked { "Measure" } else { "None" } } else { mode };
+    match mode {
+        "None" => None,
+        "Text" => {
+            let t = p.s(txt).trim();
+            Some(if t.is_empty() { "x".to_string() } else { t.to_string() })
+        }
+        _ => {
+            let n = match (typed, val) {
+                (Some(t), _) if !linked => t.show.clone(),
+                (_, Some(v)) => fmt(v, dec),
+                _ => "?".to_string(),
+            };
+            Some(if angle { format!("{n}\u{b0}") } else if unit.trim().is_empty() { n } else { format!("{n} {}", unit.trim()) })
+        }
+    }
+}
+
+fn tick_n(p: &Params, key: &str) -> u8 { p.s(key).parse::<u8>().unwrap_or(0).min(3) }
+
+/// A message in place of the figure (what the reference shows in the card when the measures fail).
+pub(crate) fn note_fig(text: &str) -> String {
+    let mut d = new_doc(480.0, 360.0);
+    let mut lines: Vec<String> = vec![String::new()];
+    for w in text.split(' ') {
+        let cur = lines.last_mut().unwrap();
+        if !cur.is_empty() && cur.chars().count() + w.chars().count() > 44 { lines.push(w.to_string()); } else { if !cur.is_empty() { cur.push(' '); } cur.push_str(w); }
+    }
+    let y0 = 180.0 - (lines.len() as f64 - 1.0) * 12.0;
+    for (i, l) in lines.iter().enumerate() { put(&mut d, 240.0, y0 + 24.0 * i as f64, l, 16.0); }
+    d.finish()
+}
+
+fn few(n: usize, what: &str) -> String {
+    if n == 1 { format!("Give one more measure to draw the {what}.") } else { format!("Give {n} more measures to draw the {what}.") }
+}
+
+fn mismatch(name: &str, would: f64, t: &Typed, angle: bool) -> String {
+    let d = if angle { "\u{b0}" } else { "" };
+    format!("With the other measures, {name} would be {}{d}, not {}{d}.", fmt(would, 2), t.show)
+}
+
+fn range_check(name: &str, t: &Option<Typed>, angle: bool) -> Result<(), String> {
+    if let Some(t) = t {
+        if angle && (t.v <= 0.0 || t.v >= 180.0) { return Err(format!("{name} has to be between 0\u{b0} and 180\u{b0}.")); }
+        if !angle && t.v <= 0.0 { return Err(format!("{name} has to be longer than 0.")); }
+    }
+    Ok(())
+}
+
+// ----- triangle solver -----
+
+/// Why three-of-six measures fail (indices: 0-2 angles A B C, 3 AB, 4 BC, 5 CA).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum TriErr { Few(usize), Sum2(usize, usize, f64), Sum3(f64), Ineq(usize), Obtuse(usize, bool), Short(usize, f64), Mismatch(usize, f64) }
+
+#[derive(Debug, Clone)]
+pub(crate) struct TriOut {
+    pub ang: [f64; 3],
+    pub side: Option<[f64; 3]>,
+    /// The measures make two triangles (SSA); `other` picks the second.
+    #[allow(dead_code)]
+    pub two: bool,
+}
+
+/// Side opposite each angle (A -> BC, B -> CA, C -> AB) and angle opposite each side.
+const OPP_SIDE: [usize; 3] = [4, 5, 3];
+const OPP_ANG: [usize; 3] = [2, 0, 1];
+
+/// Solves a triangle from any measures (value, tolerance) that fix it. Two or more angles: the
+/// third follows, and the first given side (AB, BC, CA) scales it. Else three sides (SSS), else two
+/// sides and an angle: between them (SAS) or not (SSA, acute solution unless `other`). Every given
+/// measure the solution did not use is checked against it.
+pub(crate) fn tri_core(g: &[Option<(f64, f64)>; 6], other: bool) -> Result<TriOut, TriErr> {
+    let v = |i: usize| g[i].map(|x| x.0).unwrap_or(0.0);
+    let angs: Vec<usize> = (0..3).filter(|i| g[*i].is_some()).collect();
+    let sides: Vec<usize> = (3..6).filter(|i| g[*i].is_some()).collect();
+    if angs.len() >= 2 {
+        let s2 = v(angs[0]) + v(angs[1]);
+        if s2 >= 180.0 - 1e-9 { return Err(TriErr::Sum2(angs[0], angs[1], s2)); }
+    }
+    if angs.len() == 3 {
+        let s: f64 = (0..3).map(v).sum();
+        let tol: f64 = (0..3).map(|i| g[i].map(|x| x.1).unwrap_or(0.0)).sum();
+        if (s - 180.0).abs() > tol { return Err(TriErr::Sum3(s)); }
+    }
+    let n = angs.len() + sides.len();
+    if n < 3 { return Err(TriErr::Few(3 - n)); }
+    let (sd, cd) = (|d: f64| d.to_radians().sin(), |d: f64| d.to_radians().cos());
+    let acosd = |x: f64| x.clamp(-1.0, 1.0).acos().to_degrees();
+    let mut used = [false; 6];
+    let mut two = false;
+    let (ang, side): ([f64; 3], Option<[f64; 3]>) = if angs.len() >= 2 {
+        let (i, j) = (angs[0], angs[1]);
+        let k = 3 - i - j;
+        let mut a = [0.0; 3];
+        a[i] = v(i);
+        a[j] = v(j);
+        a[k] = 180.0 - a[i] - a[j];
+        for &x in &angs { used[x] = true; }
+        let side = sides.first().map(|&s| {
+            used[s] = true;
+            let kk = v(s) / sd(a[OPP_ANG[s - 3]]);
+            [kk * sd(a[2]), kk * sd(a[0]), kk * sd(a[1])]
+        });
+        (a, side)
+    } else if sides.len() == 3 {
+        let (c, a, b) = (v(3), v(4), v(5));
+        let arr = [(3usize, c), (4, a), (5, b)];
+        let (li, lv) = arr.iter().copied().fold((3usize, f64::MIN), |m, x| if x.1 > m.1 { x } else { m });
+        let rest: f64 = arr.iter().filter(|x| x.0 != li).map(|x| x.1).sum();
+        if lv >= rest - 1e-12 { return Err(TriErr::Ineq(li)); }
+        for i in 3..6 { used[i] = true; }
+        let aa = acosd((b * b + c * c - a * a) / (2.0 * b * c));
+        let bb = acosd((a * a + c * c - b * b) / (2.0 * a * c));
+        ([aa, bb, 180.0 - aa - bb], Some([c, a, b]))
+    } else {
+        // one angle, two sides
+        let x = angs[0];
+        let xs = OPP_SIDE[x];
+        used[x] = true;
+        for &s in &sides { used[s] = true; }
+        let mut s3 = [0.0f64; 3]; // AB, BC, CA
+        for &s in &sides { s3[s - 3] = v(s); }
+        if g[xs].is_none() {
+            // SAS: the angle lies between the two given sides
+            let (p, q): (f64, f64) = { let o: Vec<f64> = sides.iter().map(|&s| v(s)).collect(); (o[0], o[1]) };
+            let opp = (p * p + q * q - 2.0 * p * q * cd(v(x))).max(0.0).sqrt();
+            s3[xs - 3] = opp;
+            let (c, a, b) = (s3[0], s3[1], s3[2]);
+            let aa = acosd((b * b + c * c - a * a) / (2.0 * b * c));
+            let bb = acosd((a * a + c * c - b * b) / (2.0 * a * c));
+            ([aa, bb, 180.0 - aa - bb], Some(s3))
+        } else {
+            let y = *sides.iter().find(|&&s| s != xs).unwrap();
+            let (xa, xv, yv) = (v(x), v(xs), v(y));
+            let ya = OPP_ANG[y - 3];
+            let yang = if xa >= 90.0 - 1e-9 {
+                if xv <= yv + 1e-9 { return Err(TriErr::Obtuse(x, (xa - 90.0).abs() < 1e-9)); }
+                (yv * sd(xa) / xv).clamp(-1.0, 1.0).asin().to_degrees()
+            } else {
+                let h = yv * sd(xa);
+                if xv < h - 1e-9 { return Err(TriErr::Short(x, h)); }
+                let y1 = (h / xv).clamp(-1.0, 1.0).asin().to_degrees();
+                if xv >= yv - 1e-9 || (xv - h).abs() < 1e-9 { y1 } else { two = true; if other { 180.0 - y1 } else { y1 } }
+            };
+            let mut a = [0.0; 3];
+            a[x] = xa;
+            a[ya] = yang;
+            let za = 3 - x - ya;
+            a[za] = 180.0 - xa - yang;
+            let kk = xv / sd(xa);
+            (a, Some([kk * sd(a[2]), kk * sd(a[0]), kk * sd(a[1])]))
+        }
+    };
+    for i in 0..6 {
+        let Some((gv, tol)) = g[i] else { continue };
+        if used[i] { continue; }
+        let c = if i < 3 { Some(ang[i]) } else { side.map(|s| s[i - 3]) };
+        if let Some(c) = c { if (c - gv).abs() > tol { return Err(TriErr::Mismatch(i, c)); } }
+    }
+    Ok(TriOut { ang, side, two })
+}
+
+pub(crate) const TRI_V: [&str; 6] = ["m_a", "m_b", "m_c", "m_ab", "m_bc", "m_ca"];
+pub(crate) const TRI_LAB: [&str; 6] = ["a_lab", "b_lab", "c_lab", "ab_lab", "bc_lab", "ca_lab"];
+pub(crate) const TRI_TXT: [&str; 6] = ["a_label", "b_label", "c_label", "ab_label", "bc_label", "ca_label"];
+pub(crate) const TRI_MARK: [&str; 6] = ["a_arcs", "b_arcs", "c_arcs", "ab_ticks", "bc_ticks", "ca_ticks"];
+
+#[derive(Debug)]
+pub(crate) struct TriSolved { pub typed: Vec<Option<Typed>>, pub out: TriOut, pub pts: [Pt; 3] }
+
+fn tri_names(p: &Params) -> [String; 6] {
+    let n = corner_names(p, 3);
+    [format!("\u{2220}{}", n[0]), format!("\u{2220}{}", n[1]), format!("\u{2220}{}", n[2]), format!("{}{}", n[0], n[1]), format!("{}{}", n[1], n[2]), format!("{}{}", n[2], n[0])]
+}
+
+pub(crate) fn tri_solve(p: &Params) -> Result<TriSolved, String> {
+    let names = tri_names(p);
+    let mut typed = Vec::new();
+    for k in TRI_V { typed.push(typed_of(p, k)?); }
+    for i in 0..6 { range_check(&names[i], &typed[i], i < 3)?; }
+    let g: [Option<(f64, f64)>; 6] = std::array::from_fn(|i| typed[i].as_ref().map(|t| (t.v, t.tol)));
+    let out = tri_core(&g, p.b("other")).map_err(|e| match e {
+        TriErr::Few(n) => few(n, "triangle"),
+        TriErr::Sum2(i, j, s) => format!("{} + {} is already {}\u{b0}, and a triangle's angles add up to 180\u{b0}.", names[i], names[j], fmt(s, 2)),
+        TriErr::Sum3(s) => format!("{} + {} + {} is {}\u{b0}, not 180\u{b0}.", names[0], names[1], names[2], fmt(s, 2)),
+        TriErr::Ineq(l) => {
+            let o: Vec<&String> = (3..6).filter(|i| *i != l).map(|i| &names[i]).collect();
+            format!("These sides can't make a triangle: {} + {} has to be longer than {}.", o[0], o[1], names[l])
+        }
+        TriErr::Obtuse(x, right) => format!("{} has to be the longest side, since {} is {}.", names[OPP_SIDE[x]], names[x], if right { "a right angle" } else { "obtuse" }),
+        TriErr::Short(x, m) => format!("{} is too short to close the triangle: with these measures it has to be at least {}.", names[OPP_SIDE[x]], fmt(m, 2)),
+        TriErr::Mismatch(i, c) => mismatch(&names[i], c, typed[i].as_ref().unwrap(), i < 3),
+    })?;
+    let c = out.side.map(|s| s[0]).unwrap_or(10.0);
+    let (a, b, cc) = (out.ang[0].to_radians(), out.ang[1].to_radians(), out.ang[2].to_radians());
+    let ca = c * b.sin() / cc.sin();
+    let pts = [(0.0, 0.0), (c, 0.0), (ca * a.cos(), ca * a.sin())];
+    Ok(TriSolved { typed, out, pts })
+}
+
+/// Worked-out value of each triangle row (angles, then AB, BC, CA; sides unknown for three angles).
+pub(crate) fn tri_values(s: &TriSolved) -> [Option<f64>; 6] {
+    let sd = s.out.side;
+    [Some(s.out.ang[0]), Some(s.out.ang[1]), Some(s.out.ang[2]), sd.map(|x| x[0]), sd.map(|x| x[1]), sd.map(|x| x[2])]
+}
+
+fn shared_tail(v: &mut Vec<ParamDef>, right_default: bool, vertices: bool) {
+    v.extend([
+        ParamDef::bool("right", "Right-angle squares at 90\u{b0} angles and where heights meet a side", right_default),
+        ParamDef::bool("vertices", "Corner letters", vertices),
+        ParamDef::text("unit", "Unit (e.g. cm)", ""),
+        ParamDef::int("dec", "Round to (decimal places)", 0, 3, 1),
+        ParamDef::float("rotate", "Turn (degrees)", -180.0, 180.0, 1.0, 0.0),
+        ParamDef::color("fill", "Fill colour", &["#e9f1fb", "#fdf0d5", "#e3f4e1", "#fbe3e3", "#efe5f7", "#ffffff"], "#e9f1fb"),
+        ParamDef::bool("flip", "Flip (mirror left to right)", false),
+        ParamDef::choice("label_size", "Label size", &["Large", "Medium", "Small"], "Medium"),
+        ParamDef::choice("line_style", "Construction lines (diagonals, heights)", &["Solid", "Dashed", "Dotted"], "Dashed"),
+    ]);
+}
+
+fn label_params(v: &mut Vec<ParamDef>, labs: &[&'static str], txts: &[&'static str], marks: &[&'static str], n_angles_first: bool, angle_count: usize) {
+    for i in 0..labs.len() {
+        let angle = if n_angles_first { i < angle_count } else { i >= labs.len() - angle_count };
+        v.push(ParamDef::choice(labs[i], "Label", &LAB_OPTS, "None"));
+        v.push(ParamDef::text(txts[i], "Label text", "x"));
+        v.push(ParamDef::choice(marks[i], if angle { "Congruence arcs" } else { "Congruence ticks" }, &TICKS, "None"));
+    }
+}
+
+pub(crate) fn triangle_params() -> Vec<ParamDef> {
     let mut v = vec![
-        ParamDef::choice("mode", "Triangle given by", &["Three sides (SSS)", "Two sides and the angle between (SAS)", "Two angles and the side between (ASA)", "Right triangle (legs AB, BC)", "Isosceles (base AB, legs BC = CA)", "Equilateral (side AB)", "Two angles and a side not between (AAS: A, B and BC)", "Two sides and an angle not between (SSA: AB, BC and A)"], "Right triangle (legs AB, BC)"),
-        ParamDef::float("ab", "Side AB", 0.5, 100.0, 0.5, 12.0),
-        ParamDef::float("bc", "Side BC", 0.5, 100.0, 0.5, 5.0),
-        ParamDef::float("ca", "Side CA", 0.5, 100.0, 0.5, 13.0),
-        ParamDef::float("ang_a", "Angle A (degrees)", 1.0, 178.0, 1.0, 60.0),
-        ParamDef::float("ang_b", "Angle B (degrees)", 1.0, 178.0, 1.0, 60.0),
-        ParamDef::choice("height", "Height", &["None", "From A", "From B", "From C", "From A and B", "From A and C", "From B and C", "From all three"], "None"),
-        ParamDef::bool("other", "Show the other triangle (SSA ambiguous case)", false),
-        ParamDef::choice("bottom", "Side at the bottom", &["AB", "BC", "CA"], "AB"),
+        ParamDef::text("name_a", "Name of corner A", "A"),
+        ParamDef::text("name_b", "Name of corner B", "B"),
+        ParamDef::text("name_c", "Name of corner C", "C"),
+        ParamDef::text("m_a", "Angle A (blank = worked out)", "24"),
+        ParamDef::text("m_b", "Angle B (blank = worked out)", "90"),
+        ParamDef::text("m_c", "Angle C (blank = worked out)", ""),
+        ParamDef::text("m_ab", "Side AB (blank = worked out)", "12"),
+        ParamDef::text("m_bc", "Side BC (blank = worked out)", ""),
+        ParamDef::text("m_ca", "Side CA (blank = worked out)", ""),
     ];
-    v.extend(common("AB, BC, CA", "A", "BC"));
+    label_params(&mut v, &TRI_LAB, &TRI_TXT, &TRI_MARK, true, 3);
+    for d in v.iter_mut() {
+        match d.key { "a_lab" | "b_lab" | "ab_lab" => d.default = Value::S("Measure".into()), "bc_lab" => d.default = Value::S("Text".into()), _ => {} }
+    }
+    v.extend([
+        ParamDef::bool("other", "Show the other triangle (when the measures make two)", false),
+        ParamDef::choice("height", "Height", &["None", "From A", "From B", "From C", "From A and B", "From A and C", "From B and C", "From all three"], "None"),
+        ParamDef::choice("bottom", "Side at the bottom", &["AB", "BC", "CA"], "AB"),
+    ]);
+    shared_tail(&mut v, true, true);
     v.extend(height_common());
     v
 }
 
-/// Triangle vertices A, B, C (A at the origin, B on the +x axis) from the measures, or why not.
-pub(super) fn triangle_pts(p: &Params) -> Result<[Pt; 3], &'static str> {
-    let (ab, bc, ca) = (p.f("ab"), p.f("bc"), p.f("ca"));
-    let (aa, ab_ang) = (p.f("ang_a").to_radians(), p.f("ang_b").to_radians());
-    let a = (0.0, 0.0);
-    let m = p.s("mode");
-    let (b, c) = if m.starts_with("Three") {
-        let cx = (ca * ca + ab * ab - bc * bc) / (2.0 * ab);
-        let h2 = ca * ca - cx * cx;
-        if h2 <= 1e-9 { return Err("These side lengths do not make a triangle"); }
-        ((ab, 0.0), (cx, h2.sqrt()))
-    } else if m.starts_with("Two sides and an angle not") {
-        // SSA: AB, BC and angle A (BC opposite A)
-        let sc = ab * aa.sin() / bc;
-        if sc > 1.0 + 1e-12 { return Err("BC is too short to reach the other side of angle A"); }
-        let c1 = sc.min(1.0).asin();
-        let c2 = PI - c1;
-        let gc = if p.b("other") && aa + c2 < PI - 1e-9 && (c2 - c1).abs() > 1e-9 { c2 } else { c1 };
-        let gb = PI - aa - gc;
-        if gb <= 1e-9 { return Err("These measures do not make a triangle"); }
-        let cal = bc * gb.sin() / aa.sin();
-        ((ab, 0.0), (cal * aa.cos(), cal * aa.sin()))
-    } else if m.starts_with("Two sides") {
-        ((ab, 0.0), (ca * aa.cos(), ca * aa.sin()))
-    } else if m.starts_with("Two angles and a side not") {
-        // AAS: angles A, B and side BC (opposite A)
-        let gc = PI - aa - ab_ang;
-        if gc <= 1e-6 { return Err("The two angles add up to 180\u{b0} or more"); }
-        let abl = bc * gc.sin() / aa.sin();
-        let cal = bc * ab_ang.sin() / aa.sin();
-        ((abl, 0.0), (cal * aa.cos(), cal * aa.sin()))
-    } else if m.starts_with("Two angles") {
-        let gc = PI - aa - ab_ang;
-        if gc <= 1e-6 { return Err("The two angles add up to 180\u{b0} or more"); }
-        let bl = ab * ab_ang.sin() / gc.sin();
-        ((ab, 0.0), (bl * aa.cos(), bl * aa.sin()))
-    } else if m.starts_with("Right") {
-        ((ab, 0.0), (ab, bc))
-    } else if m.starts_with("Isosceles") {
-        let h2 = bc * bc - ab * ab / 4.0;
-        if h2 <= 1e-9 { return Err("The legs are too short to reach"); }
-        ((ab, 0.0), (ab / 2.0, h2.sqrt()))
-    } else {
-        ((ab, 0.0), (ab / 2.0, ab * 3f64.sqrt() / 2.0))
-    };
-    Ok([a, b, c])
-}
+fn fill_of(p: &Params) -> String { if p.s("fill").starts_with('#') { p.s("fill").to_string() } else { TINT.to_string() } }
 
-fn triangle_render(p: &Params) -> String {
-    let [a, b, c] = match triangle_pts(p) { Ok(v) => v, Err(e) => return msg(e) };
-    let pts = vec![a, b, c];
+pub(crate) fn triangle_render(p: &Params) -> String {
+    let s = match tri_solve(p) { Ok(s) => s, Err(e) => return note_fig(&e) };
+    let [a, b, c] = s.pts;
+    let (dec, unit) = (p.i("dec"), p.s("unit").to_string());
+    let vals = tri_values(&s);
+    let lab = |i: usize| lab_text(p, TRI_LAB[i], TRI_TXT[i], s.typed[i].as_ref(), vals[i], false, i < 3, dec, &unit);
     let (mut ex, mut mk) = (vec![], vec![]);
     let hs = p.s("height");
     let has = |v: &str| hs == "From all three" || hs.split(|ch: char| !ch.is_alphanumeric()).any(|t| t == v);
     for (on, v, q1, q2) in [(has("A"), a, b, c), (has("B"), b, c, a), (has("C"), c, a, b)] {
         if !on { continue; }
         let (e, m, _) = height_from(v, q1, q2, height_label(p), dash_of(p));
-        ex.extend(e); mk.extend(m);
+        ex.extend(e);
+        mk.extend(m);
     }
-    poly_from_params(p, pts, vec![0; 3], ex, mk, vec![], vec![])
+    draw_poly(PolySpec {
+        pts: vec![a, b, c],
+        names: corner_names(p, 3),
+        side_txt: (3..6).map(lab).collect(),
+        ang_txt: (0..3).map(lab).collect(),
+        ticks: (3..6).map(|i| tick_n(p, TRI_MARK[i])).collect(),
+        arrows: vec![0; 3],
+        arcs: (0..3).map(|i| tick_n(p, TRI_MARK[i])).collect(),
+        right_marks: p.b("right"),
+        vlabels: p.b("vertices"),
+        extras: ex, marks: mk, dots: vec![], notes: vec![],
+        rot: p.f("rotate"), flip: p.b("flip"), bottom: bottom_side(p, 3), fill: fill_of(p), fs: fscale(p),
+    }, dec, &unit)
 }
 
-// ───────────────────────── rectangle ─────────────────────────
+// ----- quadrilaterals -----
 
-fn rectangle_params() -> Vec<ParamDef> {
+pub(crate) const Q_V: [&str; 8] = ["m_ab", "m_bc", "m_cd", "m_da", "m_a", "m_b", "m_c", "m_d"];
+pub(crate) const Q_LAB: [&str; 8] = ["ab_lab", "bc_lab", "cd_lab", "da_lab", "a_lab", "b_lab", "c_lab", "d_lab"];
+pub(crate) const Q_TXT: [&str; 8] = ["ab_label", "bc_label", "cd_label", "da_label", "a_label", "b_label", "c_label", "d_label"];
+pub(crate) const Q_MARK: [&str; 8] = ["ab_ticks", "bc_ticks", "cd_ticks", "da_ticks", "a_arcs", "b_arcs", "c_arcs", "d_arcs"];
+
+/// Which of the eight rows (AB BC CD DA ∠A ∠B ∠C ∠D) have a value box in each quadrilateral;
+/// the others are linked ("CD = AB") or fixed (a rectangle's 90°).
+pub(crate) fn q_inputs(id: &str) -> [bool; 8] {
+    match id {
+        "rectangle" => [true, true, false, false, false, false, false, false],
+        "parallelogram" => [true, false, false, true, true, true, false, false],
+        "kite" => [true, false, false, true, true, true, false, true],
+        _ => [true; 8],
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct QSol { pub pts: [Pt; 4], pub vals: [Option<f64>; 8], pub h: Option<f64>, pub typed: Vec<Option<Typed>> }
+
+fn q_names(p: &Params) -> [String; 8] {
+    let n = corner_names(p, 4);
+    std::array::from_fn(|i| if i < 4 { format!("{}{}", n[i], n[(i + 1) % 4]) } else { format!("\u{2220}{}", n[i - 4]) })
+}
+
+fn q_typed(p: &Params, id: &str) -> Result<Vec<Option<Typed>>, String> {
+    let inp = q_inputs(id);
+    let names = q_names(p);
+    let mut t = Vec::new();
+    for i in 0..8 {
+        let v = if inp[i] { typed_of(p, Q_V[i])? } else { None };
+        range_check(&names[i], &v, i >= 4)?;
+        t.push(v);
+    }
+    Ok(t)
+}
+
+/// Checks every given row against the solution.
+fn q_check(names: &[String; 8], typed: &[Option<Typed>], vals: &[Option<f64>; 8]) -> Result<(), String> {
+    for i in 0..8 {
+        if let (Some(t), Some(v)) = (&typed[i], vals[i]) {
+            if (t.v - v).abs() > t.tol { return Err(mismatch(&names[i], v, t, i >= 4)); }
+        }
+    }
+    Ok(())
+}
+
+fn quad_vals(pts: &[Pt; 4]) -> [Option<f64>; 8] {
+    let ang = poly_angles(pts);
+    std::array::from_fn(|i| Some(if i < 4 { dist(pts[i], pts[(i + 1) % 4]) } else { ang[i - 4] }))
+}
+
+pub(crate) fn rect_solve(p: &Params) -> Result<QSol, String> {
+    let names = q_names(p);
+    let typed = q_typed(p, "rectangle")?;
+    let sq = p.s("kind") == "Square";
+    let w = match (&typed[0], &typed[1]) {
+        (Some(a), _) => a.v,
+        (None, Some(b)) if sq => b.v,
+        _ => return Err(format!("Give {} a length.", names[0])),
+    };
+    let h = if sq { w } else { typed[1].as_ref().map(|t| t.v).ok_or(format!("Give {} a length.", names[1]))? };
+    let pts = [(0.0, 0.0), (w, 0.0), (w, h), (0.0, h)];
+    let vals = quad_vals(&pts);
+    q_check(&names, &typed, &vals)?;
+    Ok(QSol { pts, vals, h: None, typed })
+}
+
+pub(crate) fn para_solve(p: &Params) -> Result<QSol, String> {
+    let names = q_names(p);
+    let typed = q_typed(p, "parallelogram")?;
+    let rh = p.s("kind") == "Rhombus";
+    let ab = match (&typed[0], &typed[3]) {
+        (Some(a), _) => a.v,
+        (None, Some(d)) if rh => d.v,
+        _ => return Err(format!("Give {} a length.", names[0])),
+    };
+    let da = if rh { ab } else { typed[3].as_ref().map(|t| t.v).ok_or(format!("Give {} a length.", names[3]))? };
+    let a = match (&typed[4], &typed[5]) {
+        (Some(a), _) => a.v,
+        (None, Some(b)) => 180.0 - b.v,
+        _ => return Err(format!("Give {} in degrees.", names[4])),
+    };
+    let t = a.to_radians();
+    let d = (da * t.cos(), da * t.sin());
+    let pts = [(0.0, 0.0), (ab, 0.0), (ab + d.0, d.1), d];
+    let vals = quad_vals(&pts);
+    q_check(&names, &typed, &vals)?;
+    Ok(QSol { pts, vals, h: None, typed })
+}
+
+/// Kite ABCD standing on its axis BD: triangle ABD has ∠A, ½∠B, ½∠D and sides AB, DA, so any
+/// three of AB, DA, ∠A, ∠B, ∠D that fix that triangle fix the kite.
+pub(crate) fn kite_solve(p: &Params) -> Result<QSol, String> {
+    let names = q_names(p);
+    let typed = q_typed(p, "kite")?;
+    let gv = |i: usize, half: bool| typed[i].as_ref().map(|t| if half { (t.v / 2.0, t.tol / 2.0) } else { (t.v, t.tol) });
+    let g = [gv(4, false), gv(5, true), gv(7, true), gv(0, false), None, gv(3, false)];
+    let out = tri_core(&g, false).map_err(|e| match e {
+        TriErr::Few(n) => few(n, "kite"),
+        TriErr::Sum2(..) | TriErr::Sum3(_) => format!("These angles can't make a kite: {} + \u{bd}{} + \u{bd}{} has to be 180\u{b0}.", names[4], names[5], names[7]),
+        TriErr::Short(x, m) => format!("{} is too short to reach: with these measures it has to be longer than {}.", if x == 1 { &names[3] } else { &names[0] }, fmt(m, 2)),
+        TriErr::Obtuse(..) | TriErr::Ineq(_) => "These measures don't make a kite.".to_string(),
+        TriErr::Mismatch(i, c) => {
+            let (row, v) = match i { 0 => (4, c), 1 => (5, 2.0 * c), 2 => (7, 2.0 * c), 3 => (0, c), _ => (3, c) };
+            mismatch(&names[row], v, typed[row].as_ref().unwrap(), row >= 4)
+        }
+    })?;
+    let (ab, bd) = match out.side { Some(s) => (s[0], s[1]), None => {
+        // three angles only: shape without size
+        let ab = 5.0;
+        let half_d = out.ang[2].to_radians();
+        (ab, ab * out.ang[0].to_radians().sin() / half_d.sin())
+    } };
+    let hb = out.ang[1].to_radians();
+    let (b, d) = ((0.0, 0.0), (0.0, -bd));
+    let a = (-ab * hb.sin(), -ab * hb.cos());
+    let c = (-a.0, a.1);
+    let pts = [a, b, c, d];
+    let mut vals = quad_vals(&pts);
+    if out.side.is_none() { for v in vals.iter_mut().take(4) { *v = None; } }
+    Ok(QSol { pts, vals, h: None, typed })
+}
+
+/// Base-angle right triangle (height h, run along the base, slanted leg, angle at the base): any
+/// two fix the rest. Err when the leg is shorter than the height or the run.
+fn rt(h: &mut Option<f64>, run: &mut Option<f64>, leg: &mut Option<f64>, ang: &mut Option<f64>) -> Result<(), ()> {
+    let n = [h.is_some(), run.is_some(), leg.is_some(), ang.is_some()].iter().filter(|x| **x).count();
+    if !(2..4).contains(&n) { return Ok(()); }
+    let (sd, cd) = (|d: f64| d.to_radians().sin(), |d: f64| d.to_radians().cos());
+    if let (Some(a), Some(l)) = (*ang, *leg) {
+        h.get_or_insert(l * sd(a));
+        run.get_or_insert(l * cd(a));
+    } else if let (Some(a), Some(hh)) = (*ang, *h) {
+        leg.get_or_insert(hh / sd(a));
+        run.get_or_insert(hh * cd(a) / sd(a));
+    } else if let (Some(a), Some(r)) = (*ang, *run) {
+        if cd(a).abs() < 1e-9 { return Ok(()); }
+        leg.get_or_insert(r / cd(a));
+        h.get_or_insert(r * sd(a) / cd(a));
+    } else if let (Some(hh), Some(l)) = (*h, *leg) {
+        if l < hh - 1e-9 { return Err(()); }
+        let r = (l * l - hh * hh).max(0.0).sqrt();
+        run.get_or_insert(r);
+        ang.get_or_insert(hh.atan2(r).to_degrees());
+    } else if let (Some(hh), Some(r)) = (*h, *run) {
+        leg.get_or_insert(hh.hypot(r));
+        ang.get_or_insert(hh.atan2(r).to_degrees());
+    } else if let (Some(r), Some(l)) = (*run, *leg) {
+        if l < r.abs() - 1e-9 { return Err(()); }
+        let hh = (l * l - r * r).max(0.0).sqrt();
+        h.get_or_insert(hh);
+        ang.get_or_insert(hh.atan2(r).to_degrees());
+    }
+    Ok(())
+}
+
+/// Trapezoid with AB ∥ CD (AB at the bottom). Kinds: plain (needs four measures, e.g. AB, CD, ∠A
+/// and h), isosceles (three: legs and base angles equal) and right (three: DA at right angles to
+/// both bases). The left leg makes the triangle (h, offset of D, DA, ∠A), the right leg (h, run
+/// of C, BC, ∠B), and AB = CD + offset + run.
+pub(crate) fn trap_solve(p: &Params) -> Result<QSol, String> {
+    let names = q_names(p);
+    let typed = q_typed(p, "trapezoid")?;
+    let ht = typed_of(p, "m_h")?;
+    range_check("h", &ht, false)?;
+    let kind = match p.s("kind") { "Isosceles trapezoid" => 1, "Right trapezoid" => 2, _ => 0 };
+    let tv = |i: usize| typed[i].as_ref().map(|t| t.v);
+    // ∠D = 180° − ∠A and ∠C = 180° − ∠B (the bases are parallel)
+    let mut aa = tv(4).or(tv(7).map(|d| 180.0 - d));
+    let mut bb = tv(5).or(tv(6).map(|c| 180.0 - c));
+    let (mut ab, mut cd, mut h, mut da, mut bc) = (tv(0), tv(2), ht.as_ref().map(|t| t.v), tv(3), tv(1));
+    let (mut off, mut run): (Option<f64>, Option<f64>) = (None, None);
+    let count = [ab.is_some(), cd.is_some(), h.is_some(), da.is_some(), bc.is_some(), aa.is_some(), bb.is_some()].iter().filter(|x| **x).count();
+    let need = if kind == 0 { 4 } else { 3 };
+    if kind == 2 {
+        if let Some(t) = typed[4].as_ref().or(typed[7].as_ref()) { if (t.v - 90.0).abs() > t.tol { return Err(mismatch(if typed[4].is_some() { &names[4] } else { &names[7] }, 90.0, t, true)); } }
+        off = Some(0.0);
+        aa = Some(90.0);
+    }
+    let effective = if kind == 2 { count - usize::from(tv(4).is_some() || tv(7).is_some()) } else { count };
+    if effective < need { return Err(few(need - effective, "trapezoid")); }
+    let short = |leg: &str| format!("{leg} is too short to reach between the bases.");
+    for _ in 0..12 {
+        rt(&mut h, &mut off, &mut da, &mut aa).map_err(|_| short(&names[3]))?;
+        rt(&mut h, &mut run, &mut bc, &mut bb).map_err(|_| short(&names[1]))?;
+        if kind == 1 {
+            if off.is_none() { off = run; } else if run.is_none() { run = off; }
+            if da.is_none() { da = bc; } else if bc.is_none() { bc = da; }
+            if aa.is_none() { aa = bb; } else if bb.is_none() { bb = aa; }
+            if let (Some(a), Some(c), None) = (ab, cd, off) { off = Some((a - c) / 2.0); run = off; }
+            if let (Some(o), None, Some(c)) = (off, ab, cd) { ab = Some(c + 2.0 * o); }
+            if let (Some(o), Some(a), None) = (off, ab, cd) { cd = Some(a - 2.0 * o); }
+        }
+        match (ab, cd, off, run) {
+            (None, Some(c), Some(o), Some(r)) => ab = Some(c + o + r),
+            (Some(a), None, Some(o), Some(r)) => cd = Some(a - o - r),
+            (Some(a), Some(c), None, Some(r)) => off = Some(a - c - r),
+            (Some(a), Some(c), Some(o), None) => run = Some(a - c - o),
+            _ => {}
+        }
+    }
+    // plain trapezoid with AB, CD and one measure on each leg: find h numerically
+    if h.is_none() && kind == 0 {
+        if let (Some(a), Some(c)) = (ab, cd) {
+            let side = |hh: f64, aa: Option<f64>, leg: Option<f64>| -> Option<f64> {
+                if let Some(t) = aa { return Some(hh / t.to_radians().tan()); }
+                leg.filter(|l| *l >= hh).map(|l| (l * l - hh * hh).sqrt())
+            };
+            let f = |hh: f64| Some(side(hh, aa, da)? + side(hh, bb, bc)? - (a - c));
+            let hmax = [da, bc].iter().flatten().fold(10.0 * (a + c).abs().max(1.0), |m, x| m.min(*x));
+            let mut lo = None;
+            let steps = 400;
+            let mut prev: Option<(f64, f64)> = None;
+            for k in 1..=steps {
+                let x = hmax * k as f64 / steps as f64;
+                if let Some(fx) = f(x) {
+                    if let Some((px, pf)) = prev { if pf.signum() != fx.signum() || fx == 0.0 { lo = Some((px, x)); break; } }
+                    prev = Some((x, fx));
+                }
+            }
+            if let Some((mut l, mut r)) = lo {
+                for _ in 0..80 {
+                    let m = (l + r) / 2.0;
+                    match (f(l), f(m)) { (Some(fl), Some(fm)) if fl.signum() == fm.signum() => l = m, _ => r = m }
+                }
+                h = Some((l + r) / 2.0);
+                for _ in 0..3 {
+                    rt(&mut h, &mut off, &mut da, &mut aa).map_err(|_| short(&names[3]))?;
+                    rt(&mut h, &mut run, &mut bc, &mut bb).map_err(|_| short(&names[1]))?;
+                }
+            }
+        }
+    }
+    let (Some(ab), Some(cd), Some(h), Some(off)) = (ab, cd, h, off) else { return Err("These measures don't fix the trapezoid.".to_string()) };
+    if cd <= 1e-9 { return Err(format!("{} has to be longer than 0: these measures leave no room for it.", names[2])); }
+    if ab <= 1e-9 { return Err(format!("{} has to be longer than 0: these measures leave no room for it.", names[0])); }
+    let pts = [(0.0, 0.0), (ab, 0.0), (off + cd, h), (off, h)];
+    let vals = quad_vals(&pts);
+    q_check(&names, &typed, &vals)?;
+    if let Some(t) = &ht { if (t.v - h).abs() > t.tol { return Err(mismatch("h", h, t, false)); } }
+    Ok(QSol { pts, vals, h: Some(h), typed })
+}
+
+pub(crate) fn quad_solve(id: &str, p: &Params) -> Result<QSol, String> {
+    match id {
+        "rectangle" => rect_solve(p),
+        "parallelogram" => para_solve(p),
+        "kite" => kite_solve(p),
+        _ => trap_solve(p),
+    }
+}
+
+/// Rows of each quadrilateral that are linked to another row (no value box, never "given").
+fn q_linked(id: &str) -> [bool; 8] {
+    let inp = q_inputs(id);
+    std::array::from_fn(|i| !inp[i])
+}
+
+fn quad_params(id: &str, vals: &[(&'static str, &'static str)]) -> Vec<ParamDef> {
     let mut v = vec![
-        ParamDef::choice("kind", "Kind", &["Rectangle", "Square"], "Rectangle"),
-        ParamDef::float("ab", "Side AB (width)", 0.5, 100.0, 0.5, 10.0),
-        ParamDef::float("bc", "Side BC (height; ignored for a square)", 0.5, 100.0, 0.5, 6.0),
-        ParamDef::choice("diagonals", "Diagonals", &["None", "Drawn", "Drawn and labelled", "AC only", "BD only"], "None"),
-        ParamDef::choice("bottom", "Side at the bottom", &QUAD_BOTTOM, "AB, as it stands"),
+        ParamDef::text("name_a", "Name of corner A", "A"),
+        ParamDef::text("name_b", "Name of corner B", "B"),
+        ParamDef::text("name_c", "Name of corner C", "C"),
+        ParamDef::text("name_d", "Name of corner D", "D"),
     ];
-    v.extend(common("AB, BC", "", ""));
+    let inp = q_inputs(id);
+    for (i, &k) in Q_V.iter().enumerate() {
+        if !inp[i] { continue; }
+        let d = vals.iter().find(|x| x.0 == k).map(|x| x.1).unwrap_or("");
+        let label = ["Side AB", "Side BC", "Side CD", "Side DA", "Angle A", "Angle B", "Angle C", "Angle D"][i];
+        v.push(ParamDef { key: k, label, kind: Kind::Text, default: Value::S(d.into()) });
+    }
+    label_params(&mut v, &Q_LAB, &Q_TXT, &Q_MARK, false, 4);
+    for (k, d) in vals {
+        if let Some(pd) = v.iter_mut().find(|pd| pd.key == *k) { pd.default = Value::S(d.to_string()); }
+    }
     v
 }
 
-fn rectangle_render(p: &Params) -> String {
-    let w = p.f("ab");
-    let h = if p.s("kind") == "Square" { w } else { p.f("bc") };
-    let pts = vec![(0.0, 0.0), (w, 0.0), (w, h), (0.0, h)];
-    let (mut ex, mut mk) = (vec![], vec![]);
-    quad_diagonals(p, &pts, &mut ex, &mut mk);
-    poly_from_params(p, pts, vec![0; 4], ex, mk, vec![], vec![])
+fn diag_params() -> Vec<ParamDef> {
+    vec![
+        ParamDef::choice("diagonals", "Diagonals", &["None", "Drawn", "Drawn and labelled", "AC only", "BD only"], "None"),
+        ParamDef::choice("ac_lab", "Diagonal AC label", &LAB_OPTS, "None"),
+        ParamDef::text("ac_label", "Diagonal AC label text", "d"),
+        ParamDef::choice("bd_lab", "Diagonal BD label", &LAB_OPTS, "None"),
+        ParamDef::text("bd_label", "Diagonal BD label text", "e"),
+        ParamDef::list("arrow_marks", "Parallel arrows per side, e.g. AB 1, CD 1 (or none; blank = the figure's default)", ""),
+    ]
 }
 
-// ───────────────────────── parallelogram ─────────────────────────
+/// Diagonals AC / BD with their own label settings ("Drawn and labelled" forces the measure) and a
+/// right-angle mark where they cross at 90°.
+fn diagonals(p: &Params, pts: &[Pt], ex: &mut Vec<Extra>, mk: &mut Vec<Mark>) {
+    let sel = p.s("diagonals");
+    let (ac, bd) = match sel { "" | "None" => (false, false), "AC only" => (true, false), "BD only" => (false, true), _ => (true, true) };
+    let forced = sel.contains("labelled");
+    let dash = dash_of(p);
+    for (on, i, j, t, lab, txt) in [(ac, 0usize, 2usize, 0.3, "ac_lab", "ac_label"), (bd, 1, 3, 0.72, "bd_lab", "bd_label")] {
+        if !on { continue; }
+        let label = if forced { Some("=".to_string()) } else {
+            match p.s(lab) {
+                "Measure" => Some("=".to_string()),
+                "Text" => Some({ let t = p.s(txt).trim(); if t.is_empty() { "x".to_string() } else { t.to_string() } }),
+                _ => None,
+            }
+        };
+        ex.push(Extra { a: pts[i], b: pts[j], label, t, dash, raw: true });
+    }
+    if ac && bd {
+        let (u, w) = (unit_v(pts[0], pts[2]), unit_v(pts[1], pts[3]));
+        if (u.0 * w.0 + u.1 * w.1).abs() < 0.005 {
+            let den = u.0 * w.1 - u.1 * w.0;
+            let s = ((pts[1].0 - pts[0].0) * w.1 - (pts[1].1 - pts[0].1) * w.0) / den;
+            let x = (pts[0].0 + u.0 * s, pts[0].1 + u.1 * s);
+            mk.push((x, pts[2], pts[1]));
+        }
+    }
+}
 
-fn parallelogram_params() -> Vec<ParamDef> {
-    let mut v = vec![
-        ParamDef::choice("kind", "Kind", &["Parallelogram", "Rhombus"], "Parallelogram"),
-        ParamDef::float("ab", "Side AB", 0.5, 100.0, 0.5, 10.0),
-        ParamDef::float("da", "Side DA (ignored for a rhombus)", 0.5, 100.0, 0.5, 6.0),
-        ParamDef::float("ang_a", "Angle A (degrees)", 10.0, 170.0, 1.0, 60.0),
-        ParamDef::choice("height", "Height", &["None", "Onto AB (from D)", "Onto AD (from B)", "Onto AB (from C)", "Onto AB (from D and C)"], "None"),
-        ParamDef::choice("diagonals", "Diagonals", &["None", "Drawn", "Drawn and labelled", "AC only", "BD only"], "None"),
-        ParamDef::choice("bottom", "Side at the bottom", &QUAD_BOTTOM, "AB, as it stands"),
-    ];
-    v.extend(common("AB, DA", "A", ""));
+fn quad_draw(id: &str, p: &Params, s: &QSol, default_arrows: Vec<u8>, mut ex: Vec<Extra>, mut mk: Vec<Mark>) -> String {
+    let (dec, unit) = (p.i("dec"), p.s("unit").to_string());
+    let linked = q_linked(id);
+    let lab = |i: usize| lab_text(p, Q_LAB[i], Q_TXT[i], s.typed[i].as_ref(), s.vals[i], linked[i], i >= 4, dec, &unit);
+    let pts = s.pts.to_vec();
+    diagonals(p, &pts, &mut ex, &mut mk);
+    let names = corner_names(p, 4);
+    let arrows = parse_counts(p.s("arrow_marks"), &names, true).unwrap_or(default_arrows);
+    draw_poly(PolySpec {
+        pts,
+        names,
+        side_txt: (0..4).map(lab).collect(),
+        ang_txt: (4..8).map(lab).collect(),
+        ticks: (0..4).map(|i| tick_n(p, Q_MARK[i])).collect(),
+        arrows,
+        arcs: (4..8).map(|i| tick_n(p, Q_MARK[i])).collect(),
+        right_marks: p.b("right"),
+        vlabels: p.b("vertices"),
+        extras: ex, marks: mk, dots: vec![], notes: vec![],
+        rot: p.f("rotate"), flip: p.b("flip"), bottom: bottom_side(p, 4), fill: fill_of(p), fs: fscale(p),
+    }, dec, &unit)
+}
+
+const QUAD_BOTTOM2: [&str; 5] = ["AB, as it stands", "AB", "BC", "CD", "DA"];
+
+pub(crate) fn rectangle_params() -> Vec<ParamDef> {
+    let mut v = vec![ParamDef::choice("kind", "Kind", &["Rectangle", "Square"], "Rectangle")];
+    v.extend(quad_params("rectangle", &[("m_ab", "10"), ("m_bc", "6"), ("ab_lab", "Measure"), ("bc_lab", "Measure")]));
+    v.extend(diag_params());
+    v.push(ParamDef::choice("bottom", "Side at the bottom", &QUAD_BOTTOM2, "AB, as it stands"));
+    shared_tail(&mut v, true, true);
+    v
+}
+
+pub(crate) fn rectangle_render(p: &Params) -> String {
+    match rect_solve(p) { Ok(s) => quad_draw("rectangle", p, &s, vec![0; 4], vec![], vec![]), Err(e) => note_fig(&e) }
+}
+
+fn heights_of(p: &Params, list: Vec<(Pt, Pt, Pt)>) -> (Vec<Extra>, Vec<Mark>) {
+    let (mut ex, mut mk) = (vec![], vec![]);
+    for (v, q1, q2) in list {
+        let (e, m, _) = height_from(v, q1, q2, height_label(p), dash_of(p));
+        ex.extend(e);
+        mk.extend(m);
+    }
+    (ex, mk)
+}
+
+pub(crate) fn parallelogram_params() -> Vec<ParamDef> {
+    let mut v = vec![ParamDef::choice("kind", "Kind", &["Parallelogram", "Rhombus"], "Parallelogram")];
+    v.extend(quad_params("parallelogram", &[("m_ab", "10"), ("m_da", "6"), ("m_a", "60"), ("ab_lab", "Measure"), ("da_lab", "Measure"), ("a_lab", "Measure")]));
+    v.push(ParamDef::choice("height", "Height", &["None", "Onto AB (from D)", "Onto AD (from B)", "Onto AB (from C)", "Onto AB (from D and C)"], "None"));
+    v.extend(diag_params());
+    v.push(ParamDef::choice("bottom", "Side at the bottom", &QUAD_BOTTOM2, "AB, as it stands"));
+    shared_tail(&mut v, true, true);
     v.extend(height_common());
     v
 }
 
-fn parallelogram_render(p: &Params) -> String {
-    let ab = p.f("ab");
-    let da = if p.s("kind") == "Rhombus" { ab } else { p.f("da") };
-    let t = p.f("ang_a").to_radians();
-    let d = (da * t.cos(), da * t.sin());
-    let (a, b) = ((0.0, 0.0), (ab, 0.0));
-    let c = (b.0 + d.0, d.1);
-    let pts = vec![a, b, c, d];
-    let (mut ex, mut mk) = (vec![], vec![]);
+pub(crate) fn parallelogram_render(p: &Params) -> String {
+    let s = match para_solve(p) { Ok(s) => s, Err(e) => return note_fig(&e) };
+    let [a, b, c, d] = s.pts;
     let hs: Vec<(Pt, Pt, Pt)> = match p.s("height") {
         "Onto AB (from D)" => vec![(d, a, b)],
         "Onto AD (from B)" => vec![(b, a, d)],
@@ -719,37 +1275,31 @@ fn parallelogram_render(p: &Params) -> String {
         "Onto AB (from D and C)" => vec![(d, a, b), (c, a, b)],
         _ => vec![],
     };
-    for (v, q1, q2) in hs {
-        let (e, m, _) = height_from(v, q1, q2, height_label(p), dash_of(p));
-        ex.extend(e); mk.extend(m);
-    }
-    quad_diagonals(p, &pts, &mut ex, &mut mk);
-    poly_from_params(p, pts, vec![1, 2, 1, 2], ex, mk, vec![], vec![])
+    let (ex, mk) = heights_of(p, hs);
+    quad_draw("parallelogram", p, &s, vec![1, 2, 1, 2], ex, mk)
 }
 
-// ───────────────────────── trapezoid ─────────────────────────
-
-fn trapezoid_params() -> Vec<ParamDef> {
-    let mut v = vec![
-        ParamDef::choice("kind", "Kind", &["Trapezoid", "Isosceles trapezoid", "Right trapezoid"], "Right trapezoid"),
-        ParamDef::float("ab", "Base AB (bottom)", 0.5, 100.0, 0.5, 12.0),
-        ParamDef::float("cd", "Base CD (top)", 0.5, 100.0, 0.5, 7.0),
-        ParamDef::float("height", "Height", 0.5, 100.0, 0.5, 5.0),
-        ParamDef::float("offset", "Slant of top (plain trapezoid only; DA leans by this)", -50.0, 50.0, 0.5, 2.0),
+pub(crate) fn trapezoid_params() -> Vec<ParamDef> {
+    let mut v = vec![ParamDef::choice("kind", "Kind", &["Trapezoid", "Isosceles trapezoid", "Right trapezoid"], "Right trapezoid")];
+    v.extend(quad_params("trapezoid", &[("m_ab", "12"), ("m_cd", "7"), ("m_da", "5"), ("ab_lab", "Measure"), ("cd_lab", "Measure"), ("da_lab", "Measure"), ("bc_lab", "Text")]));
+    v.push(ParamDef::text("m_h", "Height between the bases (blank = worked out)", ""));
+    v.extend([
         ParamDef::bool("show_height", "Draw the height", false),
         ParamDef::choice("hfrom", "Height drawn from", &["D", "C", "D and C"], "D"),
-        ParamDef::choice("diagonals", "Diagonals", &["None", "Drawn", "Drawn and labelled", "AC only", "BD only"], "None"),
-        ParamDef::choice("bottom", "Side at the bottom", &QUAD_BOTTOM, "AB, as it stands"),
-    ];
-    v.extend(common("AB, CD, DA", "", "BC"));
+    ]);
+    v.extend(diag_params());
+    v.push(ParamDef::choice("bottom", "Side at the bottom", &QUAD_BOTTOM2, "AB, as it stands"));
+    shared_tail(&mut v, true, true);
     v.extend(height_common());
     v
 }
 
-fn trapezoid_render(p: &Params) -> String {
-    let (ab, cd, h) = (p.f("ab"), p.f("cd"), p.f("height"));
-    let off = match p.s("kind") { "Isosceles trapezoid" => (ab - cd) / 2.0, "Right trapezoid" => 0.0, _ => p.f("offset") };
-    let (a, b, c, d) = ((0.0, 0.0), (ab, 0.0), (off + cd, h), (off, h));
+pub(crate) fn trapezoid_render(p: &Params) -> String {
+    let s = match trap_solve(p) { Ok(s) => s, Err(e) => return note_fig(&e) };
+    let [a, b, c, d] = s.pts;
+    let h = s.h.unwrap_or(d.1);
+    let ab = b.0;
+    let off = d.0;
     let (mut ex, mut mk) = (vec![], vec![]);
     if p.b("show_height") {
         let hf = p.s("hfrom");
@@ -757,103 +1307,135 @@ fn trapezoid_render(p: &Params) -> String {
         let (lab, dash) = (height_label(p), dash_of(p));
         if from_d && off.abs() > 1e-9 {
             let (e, m, _) = height_from(d, a, b, lab.clone(), dash);
-            ex.extend(e); mk.extend(m);
+            ex.extend(e);
+            mk.extend(m);
         } else if from_d {
-            // D sits over A, so the height would lie on DA: draw it across the middle instead
             ex.push(Extra { a: (ab / 2.0, 0.0), b: (ab / 2.0, h), label: lab.0.clone(), t: 0.5, dash, raw: lab.1 });
             mk.push(((ab / 2.0, 0.0), (ab / 2.0, h), (ab, 0.0)));
         }
-        if from_c && (off + cd - ab).abs() > 1e-9 {
+        if from_c && (c.0 - ab).abs() > 1e-9 {
             let (e, m, _) = height_from(c, a, b, lab, dash);
-            ex.extend(e); mk.extend(m);
+            ex.extend(e);
+            mk.extend(m);
         }
     }
-    let pts = vec![a, b, c, d];
-    quad_diagonals(p, &pts, &mut ex, &mut mk);
-    poly_from_params(p, pts, vec![1, 0, 1, 0], ex, mk, vec![], vec![])
+    quad_draw("trapezoid", p, &s, vec![1, 0, 1, 0], ex, mk)
 }
 
-// ───────────────────────── kite ─────────────────────────
-
-fn kite_params() -> Vec<ParamDef> {
-    let mut v = vec![
-        ParamDef::float("ab", "Short sides AB = BC", 0.5, 100.0, 0.5, 5.0),
-        ParamDef::float("da", "Long sides CD = DA", 0.5, 100.0, 0.5, 9.0),
-        ParamDef::float("ang_b", "Angle B between the short sides (degrees)", 20.0, 170.0, 1.0, 100.0),
-        ParamDef::choice("diagonals", "Diagonals", &["None", "Drawn", "Drawn and labelled", "AC only", "BD only"], "None"),
-        ParamDef::choice("height", "Height", &["None", "From D to AB", "From C to AB", "From D and C to AB"], "None"),
-        ParamDef::choice("bottom", "Side at the bottom", &["None (standing upright)", "AB", "BC", "CD", "DA"], "None (standing upright)"),
-    ];
-    v.extend(common("AB, DA", "B", ""));
+pub(crate) fn kite_params() -> Vec<ParamDef> {
+    let mut v = quad_params("kite", &[("m_ab", "5"), ("m_da", "9"), ("m_b", "100"), ("ab_lab", "Measure"), ("da_lab", "Measure"), ("b_lab", "Measure"), ("ab_ticks", "1"), ("bc_ticks", "1"), ("cd_ticks", "2"), ("da_ticks", "2")]);
+    v.push(ParamDef::choice("height", "Height", &["None", "From D to AB", "From C to AB", "From D and C to AB"], "None"));
+    v.extend(diag_params());
+    v.push(ParamDef::choice("bottom", "Side at the bottom", &["None (standing upright)", "AB", "BC", "CD", "DA"], "None (standing upright)"));
+    shared_tail(&mut v, true, true);
     v.extend(height_common());
     v
 }
 
-fn kite_render(p: &Params) -> String {
-    let (a_len, d_len) = (p.f("ab"), p.f("da"));
-    let half = p.f("ang_b").to_radians() / 2.0;
-    let w = a_len * half.sin();
-    let ay = -a_len * half.cos();
-    let dlen = d_len.max(w * 1.02);
-    let dy = ay - (dlen * dlen - w * w).sqrt();
-    let (a, b, c, d) = ((-w, ay), (0.0, 0.0), (w, ay), (0.0, dy));
-    let (mut ex, mut mk) = (vec![], vec![]);
-    let hs: Vec<Pt> = match p.s("height") { "From D to AB" => vec![d], "From C to AB" => vec![c], "From D and C to AB" => vec![d, c], _ => vec![] };
-    for v in hs {
-        let (e, m, _) = height_from(v, a, b, height_label(p), dash_of(p));
-        ex.extend(e); mk.extend(m);
-    }
-    let pts = vec![a, b, c, d];
-    quad_diagonals(p, &pts, &mut ex, &mut mk);
-    poly_from_params(p, pts, vec![0; 4], ex, mk, vec![], vec![])
+pub(crate) fn kite_render(p: &Params) -> String {
+    let s = match kite_solve(p) { Ok(s) => s, Err(e) => return note_fig(&e) };
+    let [a, b, c, d] = s.pts;
+    let hs: Vec<(Pt, Pt, Pt)> = match p.s("height") { "From D to AB" => vec![(d, a, b)], "From C to AB" => vec![(c, a, b)], "From D and C to AB" => vec![(d, a, b), (c, a, b)], _ => vec![] };
+    let (ex, mk) = heights_of(p, hs);
+    quad_draw("kite", p, &s, vec![0; 4], ex, mk)
 }
 
-// ───────────────────────── regular polygon ─────────────────────────
+/// (value_key, text) for every row of a quadrilateral that is worked out or linked.
+pub(crate) fn quad_computed(id: &str, p: &Params) -> Vec<(&'static str, String)> {
+    let Ok(s) = quad_solve(id, p) else { return vec![] };
+    let dec = p.i("dec");
+    let mut out: Vec<(&'static str, String)> = Vec::new();
+    let inp = q_inputs(id);
+    for i in 0..8 {
+        let Some(v) = s.vals[i] else { continue };
+        if inp[i] && s.typed[i].is_some() { continue; }
+        out.push((Q_V[i], fmt(v, dec)));
+    }
+    if id == "trapezoid" { if let Some(h) = s.h { out.push(("m_h", fmt(h, dec))); } }
+    out
+}
 
-fn regular_polygon_params() -> Vec<ParamDef> {
-    let mut v = vec![
-        ParamDef::int("n", "Number of sides", 3, 20, 6),
-        ParamDef::choice("from", "Size given as", &["Side", "Radius", "Apothem"], "Side"),
-        ParamDef::float("value", "Size value", 0.5, 100.0, 0.5, 8.0),
-        ParamDef::bool("radius", "Draw radius (center to A)", true),
-        ParamDef::bool("apothem", "Draw apothem (center to side AB)", false),
-        ParamDef::bool("all_radii", "All the radii (center to every corner)", false),
+/// Writes worked-out measures from dragged geometry back into the rows that are given.
+pub(crate) fn write_givens(p: &mut Params, keys: &[&str], vals: &[Option<f64>]) {
+    for (k, v) in keys.iter().zip(vals) {
+        if k.is_empty() || p.s(k).trim().is_empty() { continue; }
+        if let Some(v) = v { if v.is_finite() && *v > 0.0 { p.set_s(k, &num_str(*v, 2)); } }
+    }
+}
+
+pub(crate) fn quad_vals_of(pts: &[Pt; 4]) -> [Option<f64>; 8] { quad_vals(pts) }
+
+// ----- regular polygon -----
+
+pub(crate) fn regular_polygon_params() -> Vec<ParamDef> {
+    vec![
+        ParamDef::int("n", "Sides", 3, 20, 6),
+        ParamDef::choice("from", "Size from", &["Side", "Radius", "Apothem"], "Side"),
+        ParamDef::float("value", "Size", 0.5, 100.0, 0.5, 8.0),
+        ParamDef::choice("side_lab", "Side label", &LAB_OPTS, "Measure"),
+        ParamDef::text("side_label", "Side label text", "s"),
+        ParamDef::choice("side_ticks", "Congruence ticks (every side)", &TICKS, "None"),
+        ParamDef::choice("ang_lab", "Angle label", &LAB_OPTS, "None"),
+        ParamDef::text("ang_label", "Angle label text", "x"),
+        ParamDef::choice("ang_arcs", "Congruence arcs (every angle)", &TICKS, "None"),
         ParamDef::bool("center_dot", "Center dot", true),
         ParamDef::text("center_name", "Name the center (e.g. O)", ""),
-        ParamDef::choice("apothem_label", "Apothem label", &["a = measure", "Measure", "Text", "None"], "a = measure"),
+        ParamDef::bool("apothem", "Apothem (center to the middle of the bottom side)", true),
+        ParamDef::choice("apothem_label", "Apothem label", &["a = measure", "Measure", "Text", "None"], "Text"),
         ParamDef::text("apothem_text", "Apothem name / text", "a"),
-        ParamDef::choice("radius_label", "Radius label", &["r = measure", "Measure", "Text", "None"], "r = measure"),
+        ParamDef::bool("radius", "Radius (center to the bottom right corner)", false),
+        ParamDef::choice("radius_label", "Radius label", &["r = measure", "Measure", "Text", "None"], "Text"),
         ParamDef::text("radius_text", "Radius name / text", "r"),
-    ];
-    v.extend(common("AB", "", ""));
-    v
+        ParamDef::bool("all_radii", "All the radii (center to every corner)", false),
+        ParamDef::bool("vertices", "Letter the corners A, B, C... from the bottom left", false),
+        ParamDef::text("vnames", "Corner letters in order (e.g. P, Q, R; blank = A, B, C)", ""),
+        ParamDef::text("unit", "Unit (e.g. cm)", ""),
+        ParamDef::int("dec", "Round to (decimal places)", 0, 3, 1),
+        ParamDef::bool("right", "Right-angle squares where the apothem meets its side", true),
+        ParamDef::float("rotate", "Turn (degrees)", -180.0, 180.0, 1.0, 0.0),
+        ParamDef::color("fill", "Fill colour", &["#e9f1fb", "#fdf0d5", "#e3f4e1", "#fbe3e3", "#efe5f7", "#ffffff"], "#e9f1fb"),
+        ParamDef::bool("flip", "Flip (mirror left to right)", false),
+        ParamDef::choice("label_size", "Label size", &["Large", "Medium", "Small"], "Medium"),
+        ParamDef::choice("line_style", "Construction lines (radius, apothem)", &["Solid", "Dashed", "Dotted"], "Dashed"),
+    ]
 }
 
-pub(super) fn regular_polygon_pts(p: &Params) -> Vec<Pt> {
-    let n = p.i("n").clamp(3, 20) as usize;
+/// (side, radius, apothem, interior angle, central angle) of the regular polygon.
+pub(crate) fn rp_measures(p: &Params) -> (f64, f64, f64, f64, f64) {
+    let n = p.i("n").clamp(3, 20) as f64;
     let v = p.f("value");
-    let half = PI / n as f64;
+    let half = PI / n;
     let r = match p.s("from") { "Radius" => v, "Apothem" => v / half.cos(), _ => v / (2.0 * half.sin()) };
+    (2.0 * r * half.sin(), r, r * half.cos(), (n - 2.0) * 180.0 / n, 360.0 / n)
+}
+
+pub(crate) fn regular_polygon_pts(p: &Params) -> Vec<Pt> {
+    let n = p.i("n").clamp(3, 20) as usize;
+    let (_, r, _, _, _) = rp_measures(p);
+    let half = PI / n as f64;
     let phi0 = -PI / 2.0 - half;
     (0..n).map(|k| { let t = phi0 + 2.0 * PI * k as f64 / n as f64; (r * t.cos(), r * t.sin()) }).collect()
 }
 
-fn regular_polygon_render(p: &Params) -> String {
+pub(crate) fn regular_polygon_render(p: &Params) -> String {
     let pts = regular_polygon_pts(p);
     let n = pts.len();
     let o = (0.0, 0.0);
     let dash = dash_of(p);
+    let (dec, unit) = (p.i("dec"), p.s("unit").to_string());
+    let (side, _, _, ang, _) = rp_measures(p);
     let (mut ex, mut mk, mut dots, mut notes) = (vec![], vec![], vec![], vec![]);
     if p.b("center_dot") { dots.push(o); }
+    let rad_at = 1usize.min(n - 1); // bottom right corner
     if p.b("all_radii") {
         for (k, q) in pts.iter().enumerate() {
-            if k == 0 && p.b("radius") { continue; }
+            if k == rad_at && p.b("radius") { continue; }
             ex.push(Extra { a: o, b: *q, t: 0.5, dash, ..Default::default() });
         }
     }
     if p.b("radius") {
         let (label, raw) = named_label(p.s("radius_label"), p.s("radius_text"), "r");
-        ex.push(Extra { a: o, b: pts[0], label, t: 0.5, dash, raw });
+        ex.push(Extra { a: o, b: pts[rad_at], label, t: 0.5, dash, raw });
     }
     if p.b("apothem") {
         let mid = ((pts[0].0 + pts[1].0) / 2.0, (pts[0].1 + pts[1].1) / 2.0);
@@ -863,13 +1445,823 @@ fn regular_polygon_render(p: &Params) -> String {
     }
     let cname = p.s("center_name").trim();
     if !cname.is_empty() {
-        // between two radii, roughly opposite the apothem
         let k = (n / 2) as f64;
         let t = -PI / 2.0 + 2.0 * PI * k / n as f64;
         notes.push((o, (t.cos(), t.sin()), cname.to_string()));
     }
-    poly_from_params(p, pts, vec![0; n], ex, mk, dots, notes)
+    let given_side = p.s("from") == "Side";
+    let side_mode = if p.s("side_lab").is_empty() { if given_side { "Measure" } else { "None" } } else { p.s("side_lab") };
+    let side_txt = match side_mode {
+        "None" => None,
+        "Text" => Some({ let t = p.s("side_label").trim(); if t.is_empty() { "s".to_string() } else { t.to_string() } }),
+        _ => Some(fmtu(side, dec, &unit)),
+    };
+    let ang_txt = match if p.s("ang_lab").is_empty() { "None" } else { p.s("ang_lab") } {
+        "None" => None,
+        "Text" => Some({ let t = p.s("ang_label").trim(); if t.is_empty() { "x".to_string() } else { t.to_string() } }),
+        _ => Some(format!("{}\u{b0}", fmt(ang, dec))),
+    };
+    let names = vnames(p, n);
+    let st = tick_n(p, "side_ticks");
+    let sa = tick_n(p, "ang_arcs");
+    draw_poly(PolySpec {
+        pts, names,
+        side_txt: (0..n).map(|i| if i == 0 { side_txt.clone() } else { None }).collect(),
+        ang_txt: (0..n).map(|i| if i == 0 { ang_txt.clone() } else { None }).collect(),
+        ticks: vec![st; n], arrows: vec![0; n], arcs: vec![sa; n],
+        right_marks: p.b("right"), vlabels: p.b("vertices"),
+        extras: ex, marks: mk, dots, notes,
+        rot: p.f("rotate"), flip: p.b("flip"), bottom: None, fill: fill_of(p), fs: fscale(p),
+    }, dec, &unit)
 }
+
+pub(crate) fn rp_computed(p: &Params) -> Vec<(&'static str, String)> {
+    let dec = p.i("dec");
+    let (side, r, a, ang, _) = rp_measures(p);
+    vec![("m_side", fmt(side, dec)), ("m_angle", format!("{}\u{b0}", fmt(ang, dec))), ("m_apothem", fmt(a, dec)), ("m_radius", fmt(r, dec))]
+}
+
+// ----- angles (rays card) -----
+
+pub(crate) const RAY_V: [&str; 6] = ["ray1", "ray2", "ray3", "ray4", "ray5", "ray6"];
+pub(crate) const RAY_STYLE: [&str; 6] = ["ray1_style", "ray2_style", "ray3_style", "ray4_style", "ray5_style", "ray6_style"];
+pub(crate) const RAY_LINE: [&str; 6] = ["ray1_line", "ray2_line", "ray3_line", "ray4_line", "ray5_line", "ray6_line"];
+
+pub(crate) fn angles_params() -> Vec<ParamDef> {
+    let mut v = vec![];
+    for (i, &k) in RAY_V.iter().enumerate().skip(1) {
+        v.push(ParamDef { key: k, label: ["", "Ray 2 direction", "Ray 3 direction", "Ray 4 direction", "Ray 5 direction", "Ray 6 direction"][i], kind: Kind::Text, default: Value::S(if i == 1 { "60".into() } else { String::new() }) });
+    }
+    for i in 0..6 {
+        v.push(ParamDef::choice(RAY_STYLE[i], "Line", &STYLES, "Solid"));
+        v.push(ParamDef::choice(RAY_LINE[i], "Drawn as", &["Ray", "Line"], "Ray"));
+    }
+    v.extend([
+        ParamDef::bool("around", "Angle back around to the baseline (angles around a point)", false),
+        ParamDef::list("unknown", "Sector numbers shown as x (counterclockwise from baseline, e.g. 2)", ""),
+        ParamDef::list("hide", "Sector numbers left unlabelled", ""),
+        ParamDef::long("sector_text", "Text labels for sectors, e.g. 1 = 2x + 10; 3 = y", ""),
+        ParamDef::bool("right", "Right-angle squares", true),
+        ParamDef::bool("letters", "Point letters on the rays", true),
+        ParamDef::int("dec", "Round measures to (decimal places)", 0, 3, 1),
+        ParamDef::float("turn", "Turn the figure (degrees)", -180.0, 180.0, 1.0, 0.0),
+        ParamDef::choice("ray_ends", "Ray ends", &["Arrows", "Plain", "Points"], "Arrows"),
+        ParamDef::bool("shade", "Shade the angles", true),
+        ParamDef::choice("label_size", "Label size", &["Large", "Medium", "Small"], "Medium"),
+    ]);
+    v
+}
+
+/// Ray directions in degrees ccw from the baseline, sorted: (direction, source row 0-5, is the
+/// back half of a ray drawn as a line), and whether the last sector wraps back to the baseline.
+pub(crate) fn angle_dirs(p: &Params) -> (Vec<(f64, usize, bool)>, bool) {
+    let mut d: Vec<(f64, usize, bool)> = vec![(0.0, 0, false)];
+    for i in 1..6 {
+        if let Ok(Some(t)) = parse_typed(p.s(RAY_V[i])) { d.push((t.v.rem_euclid(360.0), i, false)); }
+    }
+    let mut lines = false;
+    for k in 0..d.len() {
+        let (a, i, _) = d[k];
+        if p.s(RAY_LINE[i]) == "Line" { d.push(((a + 180.0).rem_euclid(360.0), i, true)); lines = true; }
+    }
+    d.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal));
+    d.dedup_by(|x, y| (x.0 - y.0).abs() < 1e-6);
+    (d, lines || p.b("around"))
+}
+
+fn style_dash(s: &str) -> &'static str { match s { "Dashed" => "8 5", "Dotted" => "0.1 5", _ => "none" } }
+
+pub(crate) fn angles_render(p: &Params) -> String {
+    let (dirs, wrap) = angle_dirs(p);
+    if dirs.len() < 2 { return note_fig("Give ray 2 a direction in degrees."); }
+    let rays: Vec<f64> = dirs.iter().map(|d| d.0).collect();
+    let turn = p.f("turn");
+    let fs = fscale(p);
+    let (w, h) = (480.0, 360.0);
+    let c = (w / 2.0, h / 2.0);
+    let len = 140.0;
+    let unk: Vec<usize> = nums(p.s("unknown")).iter().map(|v| *v as usize).collect();
+    let hide: Vec<usize> = nums(p.s("hide")).iter().map(|v| *v as usize).collect();
+    let texts = num_text_map(p.s("sector_text"));
+    let mut d = new_doc(w, h);
+    let mut secs: Vec<(f64, f64)> = rays.windows(2).map(|w| (w[0], w[1])).collect();
+    if wrap { secs.push((*rays.last().unwrap(), rays[0] + 360.0)); }
+    if p.b("shade") {
+        for (a0, a1) in &secs {
+            let n = 24;
+            let mut pts = vec![c];
+            for i in 0..=n { let t = (turn + a0 + (a1 - a0) * i as f64 / n as f64).to_radians(); pts.push((c.0 + 42.0 * t.cos(), c.1 - 42.0 * t.sin())); }
+            d.poly(&pts, "#eef4fb", "none", 0.0);
+        }
+    }
+    for (i, (r, src, _)) in dirs.iter().enumerate() {
+        let t = (r + turn).to_radians();
+        let e = (c.0 + len * t.cos(), c.1 - len * t.sin());
+        let dash = style_dash(p.s(RAY_STYLE[*src]));
+        dline(&mut d, c, e, INK, 2.0, dash);
+        match p.s("ray_ends") {
+            "Plain" => {}
+            "Points" => { d.circle(e.0, e.1, 3.4, INK, INK, 1.0); }
+            _ => {
+                let u = unit_v(c, e);
+                let nn = (-u.1, u.0);
+                let back = (e.0 - u.0 * 12.0, e.1 - u.1 * 12.0);
+                d.poly(&[e, (back.0 + nn.0 * 5.0, back.1 + nn.1 * 5.0), (back.0 - nn.0 * 5.0, back.1 - nn.1 * 5.0)], INK, INK, 1.0);
+            }
+        }
+        if p.b("letters") {
+            let name = ((b'B' + i as u8) as char).to_string();
+            mlabel(&mut d, c.0 + (len + 16.0) * t.cos(), c.1 - (len + 16.0) * t.sin(), 17.0 * fs, &name, "");
+        }
+    }
+    d.circle(c.0, c.1, 3.0, INK, INK, 1.0);
+    if p.b("letters") && !wrap {
+        let back = ((rays[0] + rays[rays.len() - 1]) / 2.0 + 180.0 + turn).to_radians();
+        mlabel(&mut d, c.0 + 18.0 * back.cos(), c.1 - 18.0 * back.sin(), 17.0 * fs, "A", "");
+    }
+    for (i, (a0, a1)) in secs.iter().enumerate() {
+        let idx = i + 1;
+        let span = a1 - a0;
+        let txt = if hide.contains(&idx) { String::new() }
+            else if let Some((_, t)) = texts.iter().find(|(k, _)| *k == idx) { t.clone() }
+            else if unk.contains(&idx) { "x".into() } else { format!("{}\u{b0}", fmt(span, p.i("dec"))) };
+        let rad = if span < 28.0 { 48.0 + (i % 2) as f64 * 10.0 } else { 36.0 + (i % 2) as f64 * 6.0 };
+        sector(&mut d, c, turn + a0, turn + a1, rad, &txt, p.b("right"), 15.0 * fs);
+    }
+    d.finish()
+}
+
+pub(crate) fn angles_computed(p: &Params) -> Vec<(&'static str, String)> {
+    let _ = p;
+    vec![("ray1", "0".to_string())]
+}
+
+// ----- parallel lines (lines card) -----
+
+pub(crate) const PL_NAMES: [&str; 5] = ["name_m", "name_n", "name_p", "name_t", "name_u"];
+pub(crate) const PL_STYLE: [&str; 5] = ["m_style", "n_style", "p_style", "t_style", "u_style"];
+pub(crate) const PL_ARROWS: [&str; 5] = ["m_arrows", "n_arrows", "p_arrows", "t_arrows", "u_arrows"];
+
+pub(crate) fn parallel_lines_params() -> Vec<ParamDef> {
+    let mut v = vec![
+        ParamDef::int("lines", "Parallel lines", 2, 3, 2),
+        ParamDef::int("transversals", "Transversals", 1, 2, 1),
+        ParamDef::text("name_m", "Name of the first line", "m"),
+        ParamDef::text("name_n", "Name of the second line", "n"),
+        ParamDef::text("name_p", "Name of the third line", "p"),
+        ParamDef::text("name_t", "Name of the transversal", "t"),
+        ParamDef::text("name_u", "Name of the second transversal", "u"),
+        ParamDef::float("angle", "Angle above m, right of the transversal (degrees)", 10.0, 170.0, 1.0, 65.0),
+        ParamDef::float("angle_b", "Second transversal angle (degrees; its angles number on after the first's)", 10.0, 170.0, 1.0, 115.0),
+    ];
+    for i in 0..5 {
+        v.push(ParamDef::choice(PL_STYLE[i], "Line", &STYLES, "Solid"));
+        v.push(ParamDef::choice(PL_ARROWS[i], "Parallel arrows", &TICKS, if i < 3 { "1" } else { "None" }));
+    }
+    v.extend([
+        ParamDef::float("gap", "Gap between lines", 0.5, 3.0, 0.1, 1.0),
+        ParamDef::choice("labels", "Label style", &["Degrees", "Numbers"], "Degrees"),
+        ParamDef::list("marked", "Angles to label (1-8 at the first two crossings, 5-8 at m and n, 9-12 at the third line), e.g. 2, 6", "2, 6"),
+        ParamDef::list("unknown", "Marked angles shown as x", "6"),
+        ParamDef::long("angle_text", "Text labels for marked angles, e.g. 2 = 3x + 5; 6 = y", ""),
+        ParamDef::bool("names", "Line names (m, n, t)", true),
+        ParamDef::int("dec", "Round measures to (decimal places)", 0, 3, 1),
+        ParamDef::float("turn", "Turn the figure (degrees)", -180.0, 180.0, 1.0, 0.0),
+        ParamDef::choice("line_ends", "Line ends", &["Arrowheads", "Plain"], "Arrowheads"),
+        ParamDef::choice("label_size", "Label size", &["Large", "Medium", "Small"], "Medium"),
+    ]);
+    v
+}
+
+/// `k` parallel-arrow chevrons centred at c pointing along unit u.
+fn chevrons(d: &mut Doc, c: Pt, u: Pt, k: u8) {
+    let nn = (-u.1, u.0);
+    for j in 0..k {
+        let o = (j as f64 - (k as f64 - 1.0) / 2.0) * 8.0;
+        let m = (c.0 + u.0 * o, c.1 + u.1 * o);
+        let tip = (m.0 + u.0 * 3.0, m.1 + u.1 * 3.0);
+        let back = (m.0 - u.0 * 3.0, m.1 - u.1 * 3.0);
+        d.polyline(&[(back.0 + nn.0 * 5.0, back.1 + nn.1 * 5.0), tip, (back.0 - nn.0 * 5.0, back.1 - nn.1 * 5.0)], INK, 1.6);
+    }
+}
+
+pub(crate) fn parallel_lines_render(p: &Params) -> String {
+    let (w, h, ys) = pl_layout(p);
+    let nl = ys.len();
+    let turn = p.f("turn");
+    let fs = fscale(p);
+    let cc = (w / 2.0, h / 2.0);
+    let t = |q: Pt| turn_scr(q, cc, turn);
+    let mut d = new_doc(w, h);
+    let unk = nums(p.s("unknown")).iter().map(|v| *v as usize).collect::<Vec<_>>();
+    let marked = nums(p.s("marked")).iter().map(|v| *v as usize).collect::<Vec<_>>();
+    let texts = num_text_map(p.s("angle_text"));
+    let nm = |k: &str, dflt: &str| { let v = p.s(k).trim(); if v.is_empty() { dflt.to_string() } else { v.to_string() } };
+    let names = [nm("name_m", "m"), nm("name_n", "n"), nm("name_p", "p")];
+    let ends = p.s("line_ends") != "Plain";
+    let (x0, x1) = (30.0, w - 30.0);
+    for (i, y) in ys.iter().enumerate() {
+        let (a, b) = (t((x0, *y)), t((x1, *y)));
+        dline(&mut d, a, b, INK, 2.0, style_dash(p.s(PL_STYLE[i])));
+        if ends { line_heads(&mut d, a, b); }
+        let k = tick_n(p, PL_ARROWS[i]);
+        if k > 0 { chevrons(&mut d, t((w - 80.0, *y)), unit_v(a, b), k); }
+        if p.b("names") { let q = t((50.0, *y - 15.0)); mlabel(&mut d, q.0, q.1, 18.0 * fs, &names[i], ""); }
+    }
+    let nt = p.i("transversals").clamp(1, 2) as usize;
+    let rad = 26.0;
+    let lsz = 15.0 * fs;
+    for ti in 0..nt {
+        let th = if ti == 0 { p.f("angle").clamp(10.0, 170.0) } else { p.f("angle_b").clamp(10.0, 170.0) };
+        let cx0 = if nt == 1 { w / 2.0 } else if ti == 0 { w / 2.0 - 70.0 } else { w / 2.0 + 70.0 };
+        let tr = th.to_radians();
+        let slope = (tr.cos(), -tr.sin());
+        let cross: Vec<Pt> = ys.iter().map(|y| { let s = (*y - ys[0]) / slope.1; (cx0 + slope.0 * s, *y) }).collect();
+        let tl = 70.0 / slope.1.abs().max(0.2);
+        let a = (cross[0].0 + slope.0 * tl, cross[0].1 + slope.1 * tl);
+        let last = cross[nl - 1];
+        let b = (last.0 - slope.0 * tl, last.1 - slope.1 * tl);
+        let (ta, tb) = (t(a), t(b));
+        dline(&mut d, ta, tb, INK, 2.0, style_dash(p.s(PL_STYLE[3 + ti])));
+        if ends { line_heads(&mut d, ta, tb); }
+        let k = tick_n(p, PL_ARROWS[3 + ti]);
+        if k > 0 {
+            let m = t((a.0 * 0.45 + cross[0].0 * 0.55, a.1 * 0.45 + cross[0].1 * 0.55));
+            chevrons(&mut d, m, unit_v(tb, ta), k);
+        }
+        if p.b("names") {
+            let tn = if ti == 0 { nm("name_t", "t") } else { nm("name_u", "u") };
+            let q = t((a.0 + slope.0 * 18.0, a.1 + slope.1 * 18.0));
+            mlabel(&mut d, q.0, q.1, 18.0 * fs, &tn, "");
+        }
+        for (i, c) in cross.iter().enumerate() {
+            let secs = [(th, 180.0, 1usize), (0.0, th, 2), (180.0 + th, 360.0, 3), (180.0, 180.0 + th, 4)];
+            let c = t(*c);
+            for (a0, a1, k) in secs {
+                let num = ti * 4 * nl + i * 4 + k;
+                let (a0t, a1t) = (a0 + turn, a1 + turn);
+                if !marked.contains(&num) {
+                    if p.s("labels") == "Numbers" { sector(&mut d, c, a0t, a1t, rad, &num.to_string(), false, lsz); }
+                    continue;
+                }
+                let span = a1 - a0;
+                let txt = if p.s("labels") == "Numbers" { num.to_string() }
+                    else if let Some((_, s)) = texts.iter().find(|(k, _)| *k == num) { s.clone() }
+                    else if unk.contains(&num) { "x".to_string() } else { format!("{}\u{b0}", fmt(span, p.i("dec"))) };
+                let r = if span < 50.0 { rad + 8.0 } else { rad };
+                sector(&mut d, c, a0t, a1t, r, &txt, true, lsz);
+            }
+        }
+    }
+    d.finish()
+}
+
+pub(crate) fn pl_computed(p: &Params) -> Vec<(&'static str, String)> {
+    let keys = ["m_line", "n_line", "p_line"];
+    (0..3).map(|i| {
+        let k = tick_n(p, PL_ARROWS[i]);
+        let arrows = "\u{203a}".repeat(k as usize);
+        (keys[i], format!("{} {arrows}", p.s(PL_STYLE[i])).trim().to_string())
+    }).collect()
+}
+
+// ----- Measures cards -----
+
+pub(crate) fn card(id: &str) -> Option<MeasureCard> {
+    let row = |name: &'static str, value_key: &'static str, unit: &'static str, label_key: &'static str, text_key: &'static str, tick_key: Option<&'static str>| MeasureRow { name, name_key: None, value_key, unit, label_key, text_key, tick_key, equals: None };
+    let side_names = ["AB", "BC", "CD", "DA"];
+    let quad_rows = |id: &str| -> Vec<MeasureGroup> {
+        let inp = q_inputs(id);
+        let links: [Option<&'static str>; 8] = match id {
+            "rectangle" => [None, None, Some("AB"), Some("BC"), Some("90\u{b0}"), Some("90\u{b0}"), Some("90\u{b0}"), Some("90\u{b0}")],
+            "parallelogram" => [None, Some("DA"), Some("AB"), None, None, None, Some("\u{2220}A"), Some("\u{2220}B")],
+            "kite" => [None, Some("AB"), Some("DA"), None, None, None, Some("\u{2220}A"), None],
+            _ => [None; 8],
+        };
+        let mut sides = Vec::new();
+        let mut angs = Vec::new();
+        for i in 0..8 {
+            let mut r = row(if i < 4 { side_names[i] } else { "\u{2220}" }, Q_V[i], if i < 4 { "$unit" } else { "\u{b0}" }, Q_LAB[i], Q_TXT[i], Some(Q_MARK[i]));
+            if !inp[i] { r.equals = links[i]; }
+            if i >= 4 { r.name_key = Some(NAME_K[i - 4]); }
+            if i < 4 { sides.push(r); } else { angs.push(r); }
+        }
+        if id == "trapezoid" { sides.push(row("h", "m_h", "$unit", "height_label", "height_text", None)); }
+        vec![MeasureGroup { title: "Sides", rows: sides }, MeasureGroup { title: "Angles", rows: angs }]
+    };
+    let help_quad = "Fill in the kind's measures; the rest are worked out and shown faintly. Type sqrt for \u{221a}, / for a fraction and pi for \u{3c0}. Rename a corner in the box before its angle. The button after each measure sets its label and congruence marks.";
+    Some(match id {
+        "triangle" => {
+            let mut angs = Vec::new();
+            for i in 0..3 {
+                let mut r = row("\u{2220}", TRI_V[i], "\u{b0}", TRI_LAB[i], TRI_TXT[i], Some(TRI_MARK[i]));
+                r.name_key = Some(NAME_K[i]);
+                angs.push(r);
+            }
+            let sides = (3..6).map(|i| row(["AB", "BC", "CA"][i - 3], TRI_V[i], "$unit", TRI_LAB[i], TRI_TXT[i], Some(TRI_MARK[i]))).collect();
+            MeasureCard {
+                title: "Measures",
+                help: "Fill in any three: two angles and a side, two sides and an angle, or three sides. The rest are worked out and shown faintly. Type sqrt for \u{221a}, / for a fraction and pi for \u{3c0}. Rename a corner in the box before its angle.",
+                groups: vec![MeasureGroup { title: "Angles", rows: angs }, MeasureGroup { title: "Sides", rows: sides }],
+            }
+        }
+        "rectangle" | "parallelogram" | "trapezoid" | "kite" => MeasureCard { title: "Measures", help: help_quad, groups: quad_rows(id) },
+        "regular-polygon" => {
+            let rows = vec![
+                row("Sides", "n", "", "", "", None),
+                row("Size", "value", "$unit", "", "", None),
+            ];
+            let mut side = row("Side", "m_side", "$unit", "side_lab", "side_label", Some("side_ticks"));
+            side.equals = Some("worked out");
+            let mut ang = row("Angle", "m_angle", "", "ang_lab", "ang_label", Some("ang_arcs"));
+            ang.equals = Some("(n \u{2212} 2)\u{b7}180\u{b0}/n");
+            let mut apo = row("Apothem", "m_apothem", "$unit", "apothem_label", "apothem_text", None);
+            apo.equals = Some("worked out");
+            let mut rad = row("Radius", "m_radius", "$unit", "radius_label", "radius_text", None);
+            rad.equals = Some("worked out");
+            MeasureCard {
+                title: "Polygon",
+                help: "Pick the number of sides, then give one measure: the side, the radius (center to a corner) or the apothem (center to the middle of a side) under Size from. The rest are worked out. The side's label goes on the bottom side and the angle's in the bottom left corner; their marks go on every side or angle.",
+                groups: vec![MeasureGroup { title: "", rows }, MeasureGroup { title: "Measures", rows: vec![side, ang, apo, rad] }],
+            }
+        }
+        "angles" => {
+            let mut base = row("Baseline", "ray1", "\u{b0}", RAY_STYLE[0], "", Some(RAY_LINE[0]));
+            base.equals = Some("0\u{b0}");
+            let mut rows = vec![base];
+            for i in 1..6 { rows.push(row(["", "Ray 2", "Ray 3", "Ray 4", "Ray 5", "Ray 6"][i], RAY_V[i], "\u{b0}", RAY_STYLE[i], "", Some(RAY_LINE[i]))); }
+            MeasureCard {
+                title: "Rays",
+                help: "Every ray starts at the vertex. The baseline points right, and each other ray's direction is its angle from the baseline, counterclockwise, as a protractor reads it: 90\u{b0} points straight up. Leave a direction blank for no ray. The button after a ray sets its line style and whether it runs through the vertex as a line. Click an angle on the figure to label it.",
+                groups: vec![MeasureGroup { title: "", rows }],
+            }
+        }
+        "parallel-lines" => {
+            let line_keys = ["m_line", "n_line", "p_line"];
+            let lines = (0..3).map(|i| {
+                let mut r = row(["Line 1", "Line 2", "Line 3"][i], line_keys[i], "", PL_STYLE[i], "", Some(PL_ARROWS[i]));
+                r.name_key = Some(PL_NAMES[i]);
+                r.equals = Some("\u{2225}");
+                r
+            }).collect();
+            let trans = (0..2).map(|i| {
+                let mut r = row(["Transversal 1", "Transversal 2"][i], ["angle", "angle_b"][i], "\u{b0}", PL_STYLE[3 + i], "", Some(PL_ARROWS[3 + i]));
+                r.name_key = Some(PL_NAMES[3 + i]);
+                r
+            }).collect();
+            MeasureCard {
+                title: "Parallel lines",
+                help: "The parallel lines run across the page, evenly spaced. Each transversal crosses them at the angle you give: the angle above the top line, to the right of the transversal. The button after a line sets its style and parallel arrows. Click an angle on the figure to label it.",
+                groups: vec![MeasureGroup { title: "Parallel lines", rows: lines }, MeasureGroup { title: "Transversals", rows: trans }],
+            }
+        }
+        _ => return None,
+    })
+}
+
+pub(crate) fn computed(id: &str, p: &Params) -> Option<Vec<(&'static str, String)>> {
+    Some(match id {
+        "triangle" => {
+            let s = match tri_solve(p) {
+                Ok(s) => s,
+                // The card shows this line under the rows ("__msg" is not a row).
+                Err(e) => return Some(vec![("__msg", e.to_string())]),
+            };
+            let vals = tri_values(&s);
+            let dec = p.i("dec");
+            (0..6).filter(|i| s.typed[*i].is_none()).filter_map(|i| vals[i].map(|v| (TRI_V[i], fmt(v, dec)))).collect()
+        }
+        "rectangle" | "parallelogram" | "trapezoid" | "kite" => quad_computed(id, p),
+        "regular-polygon" => rp_computed(p),
+        "angles" => angles_computed(p),
+        "parallel-lines" => pl_computed(p),
+        _ => return None,
+    })
+}
+
+// ----- legacy specs -----
+
+type Spec = crate::model::FigureSpec;
+fn js(spec: &Spec, k: &str) -> Option<String> { spec.params.get(k).and_then(|v| v.as_str()).map(|s| s.to_string()) }
+fn jf(spec: &Spec, k: &str) -> Option<f64> { spec.params.get(k).and_then(|v| v.as_f64()) }
+fn jb(spec: &Spec, k: &str) -> Option<bool> { spec.params.get(k).and_then(|v| v.as_bool()) }
+fn has(spec: &Spec, k: &str) -> bool { spec.params.contains_key(k) }
+
+/// Old label lists (`sides`, `angles`, `unknown`, `side_text`) -> one row's mode and text.
+fn old_label(name: &str, angle: bool, show: &[String], unk: &[String], tmap: &[(String, String)]) -> (&'static str, String) {
+    if let Some(t) = text_for(tmap, name) { return ("Text", t); }
+    let up = name.to_uppercase();
+    let hit = |l: &[String]| if angle { l.contains(&up) } else { listed(l, &up) };
+    if hit(unk) { ("Text", "x".into()) } else if hit(show) { ("Measure", String::new()) } else { ("None", String::new()) }
+}
+
+fn set_label(p: &mut Params, lab: &str, txt: &str, v: (&'static str, String)) {
+    p.set_s(lab, v.0);
+    if v.0 == "Text" { p.set_s(txt, &v.1); }
+}
+
+/// Shared part of the polygon migrations: corner names, label modes from the old lists, ticks
+/// (explicit `marks`, or the old automatic equal-side ticks) and arcs.
+fn migrate_labels(spec: &Spec, p: &mut Params, n: usize, rows: &[(usize, bool, &str, &str, &str)], d_sides: &str, d_angles: &str, d_unknown: &str, lens: &[f64]) {
+    let custom: Vec<String> = js(spec, "vnames").unwrap_or_default().split(|c: char| c == ',' || c.is_whitespace()).map(|t| t.trim().to_uppercase()).filter(|t| !t.is_empty()).collect();
+    let names: Vec<String> = (0..n).map(|i| custom.get(i).cloned().unwrap_or_else(|| ((b'A' + i as u8) as char).to_string())).collect();
+    for i in 0..n { p.set_s(NAME_K[i], &names[i]); }
+    let show = tokens(&js(spec, "sides").unwrap_or_else(|| d_sides.into()));
+    let angs = tokens(&js(spec, "angles").unwrap_or_else(|| d_angles.into()));
+    let unk = tokens(&js(spec, "unknown").unwrap_or_else(|| d_unknown.into()));
+    let tmap = text_map(&js(spec, "side_text").unwrap_or_default());
+    let ticks = parse_counts(&js(spec, "marks").unwrap_or_default(), &names, true)
+        .unwrap_or_else(|| if jb(spec, "ticks").unwrap_or(true) { auto_ticks(lens) } else { vec![0; n] });
+    let arcs = parse_counts(&js(spec, "arcs").unwrap_or_default(), &names, false).unwrap_or_else(|| vec![0; n]);
+    for &(i, angle, lab, txt, mark) in rows {
+        let name = if angle { names[i].clone() } else { format!("{}{}", names[i], names[(i + 1) % n]) };
+        set_label(p, lab, txt, old_label(&name, angle, if angle { &angs } else { &show }, &unk, &tmap));
+        let k = if angle { arcs[i] } else { ticks[i] };
+        p.set_s(mark, if k == 0 { "None" } else { TICKS[k as usize] });
+    }
+    // diagonals: the old lists also labelled AC / BD
+    for (dk, lab, txt) in [("AC", "ac_lab", "ac_label"), ("BD", "bd_lab", "bd_label")] {
+        if n == 4 && p.0.contains_key(lab) {
+            let dn = if dk == "AC" { format!("{}{}", names[0], names[2]) } else { format!("{}{}", names[1], names[3]) };
+            set_label(p, lab, txt, old_label(&dn, false, &show, &unk, &tmap));
+        }
+    }
+}
+
+fn ns(v: f64) -> String { num_str(v, 4) }
+
+pub(crate) fn migrate(id: &str, spec: &Spec, p: &mut Params) {
+    match id {
+        "triangle" => {
+            if has(spec, "m_ab") || !(has(spec, "mode") || has(spec, "ab")) { return; }
+            let mode = js(spec, "mode").unwrap_or_else(|| "Right triangle (legs AB, BC)".into());
+            let (ab, bc, ca) = (jf(spec, "ab").unwrap_or(12.0), jf(spec, "bc").unwrap_or(5.0), jf(spec, "ca").unwrap_or(13.0));
+            let (aa, bb) = (jf(spec, "ang_a").unwrap_or(60.0), jf(spec, "ang_b").unwrap_or(60.0));
+            for k in TRI_V { p.set_s(k, ""); }
+            let set: Vec<(&str, f64)> = if mode.starts_with("Three") { vec![("m_ab", ab), ("m_bc", bc), ("m_ca", ca)] }
+                else if mode.starts_with("Two sides and an angle not") { vec![("m_ab", ab), ("m_bc", bc), ("m_a", aa)] }
+                else if mode.starts_with("Two sides") { vec![("m_ab", ab), ("m_ca", ca), ("m_a", aa)] }
+                else if mode.starts_with("Two angles and a side not") { vec![("m_a", aa), ("m_b", bb), ("m_bc", bc)] }
+                else if mode.starts_with("Two angles") { vec![("m_a", aa), ("m_b", bb), ("m_ab", ab)] }
+                else if mode.starts_with("Isosceles") { vec![("m_ab", ab), ("m_bc", bc), ("m_ca", bc)] }
+                else if mode.starts_with("Equilateral") { vec![("m_ab", ab), ("m_bc", ab), ("m_ca", ab)] }
+                else { vec![("m_ab", ab), ("m_bc", bc), ("m_b", 90.0)] };
+            for (k, v) in set { p.set_s(k, &ns(v)); }
+            let lens: Vec<f64> = tri_solve(p).ok().and_then(|s| s.out.side.map(|x| x.to_vec())).unwrap_or_else(|| vec![1.0, 2.0, 3.0]);
+            let rows: Vec<(usize, bool, &str, &str, &str)> = (0..3).map(|i| (i, true, TRI_LAB[i], TRI_TXT[i], TRI_MARK[i])).chain((0..3).map(|i| (i, false, TRI_LAB[i + 3], TRI_TXT[i + 3], TRI_MARK[i + 3]))).collect();
+            migrate_labels(spec, p, 3, &rows, "AB, BC, CA", "A", "BC", &lens);
+        }
+        "rectangle" | "parallelogram" | "trapezoid" | "kite" => {
+            if has(spec, "m_ab") || !has(spec, "ab") { return; }
+            for k in Q_V { if p.0.contains_key(k) { p.set_s(k, ""); } }
+            let f = |k: &str, d: f64| jf(spec, k).unwrap_or(d);
+            let kind = js(spec, "kind").unwrap_or_default();
+            let (d_sides, d_angles, d_unknown) = match id {
+                "rectangle" => {
+                    p.set_s("m_ab", &ns(f("ab", 10.0)));
+                    if kind != "Square" { p.set_s("m_bc", &ns(f("bc", 6.0))); }
+                    ("AB, BC", "", "")
+                }
+                "parallelogram" => {
+                    p.set_s("m_ab", &ns(f("ab", 10.0)));
+                    if kind != "Rhombus" { p.set_s("m_da", &ns(f("da", 6.0))); }
+                    p.set_s("m_a", &ns(f("ang_a", 60.0)));
+                    ("AB, DA", "A", "")
+                }
+                "kite" => {
+                    let (a_len, d_len, b) = (f("ab", 5.0), f("da", 9.0), f("ang_b", 100.0));
+                    // the old kite stretched DA to at least just past the half-width
+                    let w = a_len * (b.to_radians() / 2.0).sin();
+                    p.set_s("m_ab", &ns(a_len));
+                    p.set_s("m_da", &ns(d_len.max(w * 1.02)));
+                    p.set_s("m_b", &ns(b));
+                    ("AB, DA", "B", "")
+                }
+                _ => {
+                    let (ab, cd, h) = (f("ab", 12.0), f("cd", 7.0), f("height", 5.0));
+                    p.set_s("m_ab", &ns(ab));
+                    p.set_s("m_cd", &ns(cd));
+                    match kind.as_str() {
+                        "Isosceles trapezoid" => p.set_s("m_h", &ns(h)),
+                        "Trapezoid" => {
+                            let off = f("offset", 2.0);
+                            p.set_s("m_h", &ns(h));
+                            p.set_s("m_a", &ns(h.atan2(off).to_degrees()));
+                        }
+                        _ => p.set_s("m_da", &ns(h)),
+                    }
+                    // the old height choice was a number; the drawn-height label stays
+                    ("AB, CD, DA", "", "BC")
+                }
+            };
+            let lens: Vec<f64> = quad_solve(id, p).ok().map(|s| (0..4).map(|i| s.vals[i].unwrap_or(0.0)).collect()).unwrap_or_else(|| vec![1.0, 2.0, 3.0, 4.0]);
+            let rows: Vec<(usize, bool, &str, &str, &str)> = (0..4).map(|i| (i, false, Q_LAB[i], Q_TXT[i], Q_MARK[i])).chain((0..4).map(|i| (i, true, Q_LAB[i + 4], Q_TXT[i + 4], Q_MARK[i + 4]))).collect();
+            migrate_labels(spec, p, 4, &rows, d_sides, d_angles, d_unknown, &lens);
+        }
+        "regular-polygon" => {
+            if has(spec, "side_lab") || !has(spec, "n") { return; }
+            let n = jf(spec, "n").unwrap_or(6.0).clamp(3.0, 20.0) as usize;
+            let custom: Vec<String> = js(spec, "vnames").unwrap_or_default().split(|c: char| c == ',' || c.is_whitespace()).map(|t| t.trim().to_uppercase()).filter(|t| !t.is_empty()).collect();
+            let names: Vec<String> = (0..n).map(|i| custom.get(i).cloned().unwrap_or_else(|| ((b'A' + i as u8) as char).to_string())).collect();
+            let show = tokens(&js(spec, "sides").unwrap_or_else(|| "AB".into()));
+            let angs = tokens(&js(spec, "angles").unwrap_or_default());
+            let unk = tokens(&js(spec, "unknown").unwrap_or_default());
+            let tmap = text_map(&js(spec, "side_text").unwrap_or_default());
+            let s0 = format!("{}{}", names[0], names[1 % n]);
+            set_label(p, "side_lab", "side_label", old_label(&s0, false, &show, &unk, &tmap));
+            set_label(p, "ang_lab", "ang_label", old_label(&names[0], true, &angs, &unk, &tmap));
+            let ticks = parse_counts(&js(spec, "marks").unwrap_or_default(), &names, true)
+                .unwrap_or_else(|| if jb(spec, "ticks").unwrap_or(true) { vec![1; n] } else { vec![0; n] });
+            let arcs = parse_counts(&js(spec, "arcs").unwrap_or_default(), &names, false).unwrap_or_else(|| vec![0; n]);
+            let t0 = ticks.iter().copied().max().unwrap_or(0);
+            let a0 = arcs.iter().copied().max().unwrap_or(0);
+            p.set_s("side_ticks", TICKS[t0.min(3) as usize]);
+            p.set_s("ang_arcs", TICKS[a0.min(3) as usize]);
+            // the old figure drew the radius to A (bottom left) by default and lettered the corners
+            p.set_b("radius", jb(spec, "radius").unwrap_or(true));
+            p.set_b("apothem", jb(spec, "apothem").unwrap_or(false));
+            p.set_b("vertices", jb(spec, "vertices").unwrap_or(true));
+            if !has(spec, "apothem_label") { p.set_s("apothem_label", "a = measure"); }
+            if !has(spec, "radius_label") { p.set_s("radius_label", "r = measure"); }
+        }
+        "angles" => {
+            if has(spec, "ray2") || !(has(spec, "mode") || has(spec, "angle")) { return; }
+            let mode = js(spec, "mode").unwrap_or_else(|| "Angles on a straight line".into());
+            let (a, a2) = (jf(spec, "angle").unwrap_or(60.0), jf(spec, "angle2").unwrap_or(110.0));
+            for k in &RAY_V[1..] { p.set_s(k, ""); }
+            let mut turn = jf(spec, "turn").unwrap_or(0.0);
+            match mode.as_str() {
+                "Single angle" => p.set_s("ray2", &ns(a)),
+                "Angles around a point" => { p.set_s("ray2", &ns(a)); p.set_s("ray3", &ns((a + a2).min(358.0))); p.set_b("around", true); }
+                "Vertical angles" => { p.set_s("ray2", &ns(a)); p.set_s("ray1_line", "Line"); p.set_s("ray2_line", "Line"); }
+                "Custom rays" => {
+                    let mut r: Vec<f64> = nums(&js(spec, "rays").unwrap_or_else(|| "0, 50, 130, 250".into())).iter().map(|x| x.rem_euclid(360.0)).collect();
+                    r.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
+                    r.dedup();
+                    if r.len() >= 2 {
+                        let wrap = r.len() > 2 && r[r.len() - 1] - r[0] < 340.0;
+                        let base = r[0];
+                        turn = (turn + base + 180.0).rem_euclid(360.0) - 180.0;
+                        for (i, x) in r.iter().skip(1).take(5).enumerate() { p.set_s(RAY_V[i + 1], &ns(x - base)); }
+                        p.set_b("around", wrap);
+                    }
+                }
+                _ => { p.set_s("ray2", &ns(a)); p.set_s("ray3", "180"); }
+            }
+            p.set_f("turn", turn);
+        }
+        "parallel-lines" => {
+            if has(spec, "m_arrows") || !has(spec, "angle") { return; }
+            // the old figure drew double chevrons on every parallel line when `arrows` was on
+            let k = if jb(spec, "arrows").unwrap_or(true) { "2" } else { "None" };
+            for key in &PL_ARROWS[..3] { p.set_s(key, k); }
+        }
+        _ => {}
+    }
+}
+
+// ----- examples (mirror the reference's "Start from an example") -----
+
+pub(crate) fn examples(id: &str) -> Option<Vec<super::super::Example>> {
+    use Value::{B, F, I, S};
+    let s = |v: &str| S(v.to_string());
+    let ex = |name: &'static str, params: Vec<(&'static str, Value)>| super::super::Example { name, params };
+    let tri = |m: [&str; 6]| -> Vec<(&'static str, Value)> { (0..6).map(|i| (TRI_V[i], s(m[i]))).collect() };
+    let with = |mut a: Vec<(&'static str, Value)>, b: Vec<(&'static str, Value)>| { a.extend(b); a };
+    let v = match id {
+        "triangle" => vec![
+            ex("Right triangle with legs 3 and 4: find the hypotenuse", with(tri(["", "90", "", "4", "3", ""]), vec![("a_lab", s("None")), ("b_lab", s("None")), ("bc_lab", s("Measure")), ("ca_lab", s("Text")), ("ca_label", s("x"))])),
+            ex("30-60-90 triangle with hypotenuse 10", with(tri(["30", "90", "", "", "5", ""]), vec![("b_lab", s("None")), ("c_lab", s("Measure")), ("ab_lab", s("Text")), ("ab_label", s("y")), ("bc_lab", s("Text")), ("bc_label", s("x")), ("ca_lab", s("Measure"))])),
+            ex("SOHCAHTOA: find the side opposite a 35\u{b0} angle", with(tri(["35", "90", "", "10", "", ""]), vec![("b_lab", s("None")), ("bc_lab", s("Text")), ("bc_label", s("x"))])),
+            ex("Law of cosines: two sides and the angle between them", with(tri(["50", "", "", "9", "", "7"]), vec![("b_lab", s("None")), ("ca_lab", s("Measure")), ("bc_lab", s("Text")), ("bc_label", s("x"))])),
+            ex("Isosceles triangle with its height drawn, for area", with(tri(["", "", "", "10", "13", "13"]), vec![("height", s("From C")), ("a_lab", s("None")), ("b_lab", s("None")), ("bc_lab", s("None")), ("ca_lab", s("None")), ("bc_ticks", s("1")), ("ca_ticks", s("1"))])),
+            ex("Ambiguous case: two sides and an angle not between them", with(tri(["40", "", "", "10", "7", ""]), vec![("b_lab", s("None")), ("bc_lab", s("Measure")), ("other", B(true))])),
+        ],
+        "rectangle" => vec![
+            ex("Rectangle 12 cm by 5 cm for area and perimeter", vec![("m_ab", s("12")), ("m_bc", s("5")), ("unit", s("cm"))]),
+            ex("Rectangle with a diagonal labeled x", vec![("m_ab", s("8")), ("m_bc", s("6")), ("diagonals", s("AC only")), ("ac_lab", s("Text")), ("ac_label", s("x"))]),
+            ex("Rectangle with sides labeled 2x + 3 and x", vec![("m_ab", s("10")), ("m_bc", s("4")), ("ab_lab", s("Text")), ("ab_label", s("2x + 3")), ("bc_lab", s("Text")), ("bc_label", s("x"))]),
+            ex("Square with its diagonals drawn", vec![("kind", s("Square")), ("m_ab", s("6")), ("m_bc", s("")), ("bc_lab", s("None")), ("diagonals", s("Drawn")), ("ab_ticks", s("1")), ("bc_ticks", s("1")), ("cd_ticks", s("1")), ("da_ticks", s("1"))]),
+        ],
+        "parallelogram" => vec![
+            ex("Parallelogram with base and height for area", vec![("m_ab", s("10")), ("m_da", s("6")), ("m_a", s("60")), ("height", s("Onto AB (from D)")), ("da_lab", s("None")), ("a_lab", s("None"))]),
+            ex("Parallelogram: find the missing angles", vec![("m_a", s("65")), ("ab_lab", s("None")), ("da_lab", s("None")), ("b_lab", s("Text")), ("b_label", s("x")), ("c_lab", s("Text")), ("c_label", s("y")), ("d_lab", s("Text")), ("d_label", s("z"))]),
+            ex("Rhombus with its diagonals drawn", vec![("kind", s("Rhombus")), ("m_ab", s("5")), ("m_da", s("")), ("m_a", s("70")), ("diagonals", s("Drawn")), ("a_lab", s("None")), ("da_lab", s("None")), ("ab_ticks", s("1")), ("bc_ticks", s("1")), ("cd_ticks", s("1")), ("da_ticks", s("1")), ("arrow_marks", s("none"))]),
+        ],
+        "trapezoid" => vec![
+            ex("Isosceles trapezoid with bases and height for area", vec![("kind", s("Isosceles trapezoid")), ("m_ab", s("12")), ("m_cd", s("6")), ("m_da", s("")), ("m_h", s("4")), ("show_height", B(true)), ("height_label", s("Measure")), ("da_lab", s("None")), ("bc_lab", s("None"))]),
+            ex("Right trapezoid: find the slanted side", vec![("kind", s("Right trapezoid")), ("m_ab", s("12")), ("m_cd", s("7")), ("m_da", s("5")), ("bc_lab", s("Text")), ("bc_label", s("x"))]),
+            ex("Trapezoid with an angle and its height", vec![("kind", s("Trapezoid")), ("m_ab", s("11")), ("m_cd", s("6")), ("m_da", s("")), ("m_a", s("53")), ("m_h", s("4")), ("show_height", B(true)), ("da_lab", s("None")), ("bc_lab", s("None"))]),
+            ex("Isosceles trapezoid with its diagonals drawn", vec![("kind", s("Isosceles trapezoid")), ("m_ab", s("12")), ("m_cd", s("6")), ("m_da", s("")), ("m_h", s("5")), ("diagonals", s("Drawn")), ("da_lab", s("None")), ("bc_lab", s("None")), ("bc_ticks", s("1")), ("da_ticks", s("1"))]),
+        ],
+        "kite" => vec![
+            ex("Kite with diagonals 6 and 12 for area", vec![("m_ab", s("3sqrt2")), ("m_da", s("3sqrt10")), ("m_b", s("90")), ("diagonals", s("Drawn and labelled")), ("ab_lab", s("None")), ("da_lab", s("None")), ("b_lab", s("None")), ("dec", I(0))]),
+            ex("Kite: find the missing angle", vec![("m_b", s("110")), ("d_lab", s("Measure")), ("a_lab", s("Text")), ("a_label", s("x")), ("ab_lab", s("None")), ("da_lab", s("None"))]),
+            ex("Kite with its line of symmetry", vec![("diagonals", s("BD only")), ("b_lab", s("None"))]),
+        ],
+        "regular-polygon" => vec![
+            ex("Regular hexagon with its apothem, for area", vec![("n", I(6)), ("value", F(8.0)), ("apothem", B(true)), ("apothem_label", s("Measure")), ("radius", B(false))]),
+            ex("Regular pentagon: find the interior angle", vec![("n", I(5)), ("apothem", B(false)), ("center_dot", B(false)), ("side_lab", s("None")), ("ang_lab", s("Text")), ("ang_label", s("x")), ("ang_arcs", s("1")), ("side_ticks", s("1"))]),
+            ex("Regular octagon split into triangles by its radii", vec![("n", I(8)), ("all_radii", B(true)), ("apothem", B(false)), ("side_lab", s("None"))]),
+            ex("Regular decagon with congruence marks", vec![("n", I(10)), ("apothem", B(false)), ("center_dot", B(false)), ("side_ticks", s("1")), ("ang_arcs", s("1")), ("side_lab", s("None"))]),
+        ],
+        "angles" => vec![
+            ex("Single angle of 60\u{b0}", vec![("ray2", s("60"))]),
+            ex("Angles on a straight line: find x", vec![("ray2", s("125")), ("ray3", s("180")), ("unknown", s("2"))]),
+            ex("Vertical angles", vec![("ray2", s("50")), ("ray1_line", s("Line")), ("ray2_line", s("Line")), ("unknown", s("3")), ("hide", s("2, 4"))]),
+            ex("Angles around a point with expressions", vec![("ray2", s("100")), ("ray3", s("220")), ("around", B(true)), ("sector_text", s("3 = 2x + 20"))]),
+            ex("Complementary angles", vec![("ray2", s("35")), ("ray3", s("90")), ("unknown", s("2"))]),
+        ],
+        _ => return None,
+    };
+    Some(v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn g(v: &[(usize, f64)]) -> [Option<(f64, f64)>; 6] {
+        let mut a = [None; 6];
+        for (i, x) in v { a[*i] = Some((*x, 0.005)); }
+        a
+    }
+    fn near(a: f64, b: f64) -> bool { (a - b).abs() < 0.05 }
+
+    #[test]
+    fn triangle_solver_matches_reference() {
+        // reference default: A 24, B 90, AB 12 -> BC 5.3, CA 13.1, C 66
+        let o = tri_core(&g(&[(0, 24.0), (1, 90.0), (3, 12.0)]), false).unwrap();
+        let s = o.side.unwrap();
+        assert!(near(s[1], 5.34) && near(s[2], 13.14) && near(o.ang[2], 66.0));
+        // SSS 3-4-5
+        let o = tri_core(&g(&[(3, 3.0), (4, 4.0), (5, 5.0)]), false).unwrap();
+        assert!(near(o.ang[0], 53.13) && near(o.ang[1], 90.0));
+        // SSA two triangles: A 40, AB 10, BC 7 -> B 73.3 C 66.7 CA 10.4; other: C 113.3
+        let o = tri_core(&g(&[(0, 40.0), (3, 10.0), (4, 7.0)]), false).unwrap();
+        assert!(o.two && near(o.ang[1], 73.3) && near(o.ang[2], 66.7) && near(o.side.unwrap()[2], 10.43));
+        let o2 = tri_core(&g(&[(0, 40.0), (3, 10.0), (4, 7.0)]), true).unwrap();
+        assert!(near(o2.ang[2], 113.3));
+        // SSA one triangle, and too short
+        assert!(!tri_core(&g(&[(0, 40.0), (3, 10.0), (4, 12.0)]), false).unwrap().two);
+        assert!(matches!(tri_core(&g(&[(0, 40.0), (3, 10.0), (4, 5.0)]), false), Err(TriErr::Short(0, m)) if near(m, 6.43)));
+        assert!(matches!(tri_core(&g(&[(0, 100.0), (3, 10.0), (4, 8.0)]), false), Err(TriErr::Obtuse(0, false))));
+        // AAS: A 40, B 60, BC 10 -> AB 15.3, CA 13.5
+        let s = tri_core(&g(&[(0, 40.0), (1, 60.0), (4, 10.0)]), false).unwrap().side.unwrap();
+        assert!(near(s[0], 15.32) && near(s[2], 13.47));
+        // too few, sums, inequality
+        assert_eq!(tri_core(&g(&[(3, 10.0)]), false).unwrap_err(), TriErr::Few(2));
+        assert!(matches!(tri_core(&g(&[(0, 40.0), (1, 150.0), (4, 10.0)]), false), Err(TriErr::Sum2(0, 1, _))));
+        assert!(matches!(tri_core(&g(&[(0, 30.0), (1, 60.0), (2, 91.0)]), false), Err(TriErr::Sum3(_))));
+        assert_eq!(tri_core(&g(&[(3, 3.0), (4, 4.0), (5, 8.0)]), false).unwrap_err(), TriErr::Ineq(5));
+        // three angles: shape only
+        assert!(tri_core(&g(&[(0, 40.0), (1, 60.0), (2, 80.0)]), false).unwrap().side.is_none());
+        // over-determined: angles + AB win, BC is checked (reference: "BC would be 6.53, not 7")
+        assert!(matches!(tri_core(&g(&[(0, 40.0), (1, 60.0), (3, 10.0), (4, 7.0)]), false), Err(TriErr::Mismatch(4, c)) if near(c, 6.53)));
+        // SSS + one angle: the sides win, the angle is checked
+        assert!(matches!(tri_core(&g(&[(0, 40.0), (3, 10.0), (4, 7.0), (5, 12.0)]), false), Err(TriErr::Mismatch(0, c)) if near(c, 35.66)));
+    }
+
+    #[test]
+    fn typed_values() {
+        assert!((eval_typed("5sqrt2").unwrap() - 7.0711).abs() < 1e-3);
+        assert!((eval_typed("7/2").unwrap() - 3.5).abs() < 1e-9);
+        assert!((eval_typed("\u{221a}3").unwrap() - 1.732).abs() < 1e-3);
+        assert!((eval_typed("2pi").unwrap() - 6.2832).abs() < 1e-3);
+        assert!(eval_typed("x").is_none() && eval_typed("abc").is_none());
+        assert_eq!(pretty("5sqrt2"), "5\u{221a}2");
+        assert_eq!(pretty("sqrt(10)"), "\u{221a}10");
+        assert_eq!(parse_typed("37").unwrap().unwrap().tol, 0.5 + 1e-9);
+        // 37 accepted against 36.87 (reference), 40 refused against 40.54
+        assert!((parse_typed("37").unwrap().unwrap().v - 36.87).abs() <= 0.5);
+    }
+
+    /// Old spec (keys as saved before the Measures rework) -> params the way figuresui loads it.
+    fn load_old(id: &str, old: serde_json::Value) -> Params {
+        let d = super::super::defs().into_iter().find(|d| d.id == id).unwrap();
+        let spec = crate::model::FigureSpec { id: id.into(), params: old.as_object().unwrap().clone().into_iter().collect() };
+        let defs = (d.params)();
+        let mut p = Params::defaults(&defs);
+        for pd in &defs {
+            if let Some(j) = spec.params.get(pd.key) {
+                let v = match &pd.default {
+                    Value::F(_) => j.as_f64().map(Value::F),
+                    Value::I(_) => j.as_i64().map(Value::I),
+                    Value::B(_) => j.as_bool().map(Value::B),
+                    Value::S(_) => j.as_str().map(|x| Value::S(x.into())),
+                };
+                if let Some(v) = v { p.0.insert(pd.key.into(), v); }
+            }
+        }
+        super::super::migrate(id, &spec, &mut p);
+        p.normalize(&defs, false);
+        p
+    }
+
+    #[test]
+    fn migrate_triangle() {
+        let p = load_old("triangle", serde_json::json!({"mode": "Two angles and a side not between (AAS: A, B and BC)", "ab": 12.0, "bc": 5.0, "ca": 13.0, "ang_a": 30.0, "ang_b": 90.0,
+            "sides": "RP", "angles": "P, R", "unknown": "QR", "side_text": "PQ = y", "ticks": true, "marks": "", "arcs": "Q 2", "vnames": "P, Q, R", "dec": 1}));
+        assert_eq!((p.s("m_a"), p.s("m_b"), p.s("m_bc"), p.s("m_ab"), p.s("m_ca")), ("30", "90", "5", "", ""));
+        assert_eq!((p.s("ca_lab"), p.s("bc_lab"), p.s("bc_label"), p.s("ab_lab"), p.s("ab_label")), ("Measure", "Text", "x", "Text", "y"));
+        assert_eq!((p.s("a_lab"), p.s("b_lab"), p.s("c_lab"), p.s("b_arcs")), ("Measure", "None", "Measure", "2"));
+        assert_eq!((p.s("name_a"), p.s("name_b"), p.s("name_c")), ("P", "Q", "R"));
+        let s = tri_solve(&p).unwrap();
+        assert!((s.out.side.unwrap()[2] - 10.0).abs() < 1e-6);
+        // right triangle mode (the old default) -> AB, BC and B = 90
+        let p = load_old("triangle", serde_json::json!({"mode": "Right triangle (legs AB, BC)", "ab": 4.0, "bc": 3.0}));
+        assert_eq!((p.s("m_ab"), p.s("m_bc"), p.s("m_b")), ("4", "3", "90"));
+        assert!((tri_solve(&p).unwrap().out.side.unwrap()[2] - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn migrate_quads() {
+        let p = load_old("rectangle", serde_json::json!({"kind": "Rectangle", "ab": 8.0, "bc": 6.0, "sides": "AB, BC", "unknown": "AC", "diagonals": "AC only", "ticks": true}));
+        assert_eq!((p.s("m_ab"), p.s("m_bc"), p.s("ab_lab"), p.s("cd_lab"), p.s("ac_lab"), p.s("ac_label")), ("8", "6", "Measure", "None", "Text", "x"));
+        assert_eq!((p.s("ab_ticks"), p.s("bc_ticks"), p.s("cd_ticks"), p.s("da_ticks")), ("1", "2", "1", "2"));
+        let p = load_old("parallelogram", serde_json::json!({"kind": "Rhombus", "ab": 5.0, "da": 9.0, "ang_a": 70.0, "sides": "AB", "angles": "A"}));
+        assert_eq!((p.s("m_ab"), p.s("m_da"), p.s("m_a"), p.s("a_lab")), ("5", "", "70", "Measure"));
+        let s = para_solve(&p).unwrap();
+        assert!((s.vals[3].unwrap() - 5.0).abs() < 1e-9);
+        let p = load_old("trapezoid", serde_json::json!({"kind": "Trapezoid", "ab": 11.0, "cd": 6.0, "height": 4.0, "offset": 3.0, "sides": "AB, CD", "unknown": ""}));
+        let s = trap_solve(&p).unwrap();
+        assert!((s.pts[3].0 - 3.0).abs() < 1e-3 && (s.pts[3].1 - 4.0).abs() < 1e-3 && (s.pts[2].0 - 9.0).abs() < 1e-3);
+        let p = load_old("trapezoid", serde_json::json!({"kind": "Isosceles trapezoid", "ab": 12.0, "cd": 6.0, "height": 4.0}));
+        let s = trap_solve(&p).unwrap();
+        assert!((s.pts[3].0 - 3.0).abs() < 1e-9 && (s.pts[3].1 - 4.0).abs() < 1e-9);
+        let p = load_old("trapezoid", serde_json::json!({"kind": "Right trapezoid", "ab": 12.0, "cd": 7.0, "height": 5.0, "unknown": "BC"}));
+        let s = trap_solve(&p).unwrap();
+        assert!((s.vals[1].unwrap() - 50f64.sqrt()).abs() < 1e-9 && p.s("bc_lab") == "Text");
+        let p = load_old("kite", serde_json::json!({"ab": 5.0, "da": 9.0, "ang_b": 100.0, "sides": "AB, DA", "angles": "B"}));
+        let s = kite_solve(&p).unwrap();
+        assert!((s.vals[4].unwrap() - 104.8).abs() < 0.05 && (s.vals[7].unwrap() - 50.4).abs() < 0.05);
+        assert_eq!((p.s("ab_ticks"), p.s("bc_ticks"), p.s("cd_ticks"), p.s("da_ticks")), ("1", "1", "2", "2"));
+    }
+
+    #[test]
+    fn migrate_poly_angles_lines() {
+        let p = load_old("regular-polygon", serde_json::json!({"n": 5, "from": "Side", "value": 8.0, "sides": "", "side_text": "A = x", "arcs": "all 1", "ticks": true, "radius": true}));
+        assert_eq!((p.s("side_lab"), p.s("ang_lab"), p.s("ang_label"), p.s("ang_arcs"), p.s("side_ticks")), ("None", "Text", "x", "1", "1"));
+        assert!(p.b("radius") && !p.b("apothem") && p.b("vertices"));
+        let p = load_old("angles", serde_json::json!({"mode": "Vertical angles", "angle": 50.0, "unknown": "3", "hide": "2, 4"}));
+        let (d, wrap) = angle_dirs(&p);
+        assert!(wrap && d.iter().map(|x| x.0).collect::<Vec<_>>() == vec![0.0, 50.0, 180.0, 230.0]);
+        let p = load_old("angles", serde_json::json!({"mode": "Custom rays", "rays": "30, 100, 200", "turn": 0.0}));
+        let (d, wrap) = angle_dirs(&p);
+        assert!(wrap && (p.f("turn") - 30.0).abs() < 1e-9 && d.iter().map(|x| x.0).collect::<Vec<_>>() == vec![0.0, 70.0, 170.0]);
+        let p = load_old("angles", serde_json::json!({"mode": "Angles on a straight line", "angle": 125.0}));
+        assert_eq!((p.s("ray2"), p.s("ray3")), ("125", "180"));
+        assert!(!angle_dirs(&p).1);
+        let p = load_old("parallel-lines", serde_json::json!({"angle": 65.0, "arrows": false}));
+        assert_eq!(p.s("m_arrows"), "None");
+        let p = load_old("parallel-lines", serde_json::json!({"angle": 65.0, "arrows": true}));
+        assert_eq!(p.s("n_arrows"), "2");
+    }
+
+    #[test]
+    fn quad_solvers() {
+        let mut p = Params::defaults(&trapezoid_params());
+        // reference: right trapezoid 12, 7, DA 5 -> BC 7.1, B 45, C 135
+        let s = trap_solve(&p).unwrap();
+        assert!((s.vals[1].unwrap() - 7.07).abs() < 0.01 && (s.vals[5].unwrap() - 45.0).abs() < 1e-6);
+        // plain: AB 12, CD 7, A 65, h 5 -> DA 5.5, BC 5.7, B 61.9 (reference)
+        for (k, v) in [("kind", "Trapezoid"), ("m_da", ""), ("m_a", "65"), ("m_h", "5")] { p.set_s(k, v); }
+        let s = trap_solve(&p).unwrap();
+        assert!((s.vals[3].unwrap() - 5.52).abs() < 0.01 && (s.vals[1].unwrap() - 5.67).abs() < 0.01 && (s.vals[5].unwrap() - 61.9).abs() < 0.05);
+        // plain with one measure on each leg, h found numerically
+        for (k, v) in [("m_a", "60"), ("m_b", "45"), ("m_h", "")] { p.set_s(k, v); }
+        let s = trap_solve(&p).unwrap();
+        let h = s.h.unwrap();
+        assert!((h / 60f64.to_radians().tan() + h - 5.0).abs() < 1e-6);
+        // isosceles: AB 12, CD 6, h 5 -> A 59 (reference)
+        for (k, v) in [("kind", "Isosceles trapezoid"), ("m_a", ""), ("m_b", ""), ("m_cd", "6"), ("m_h", "5")] { p.set_s(k, v); }
+        let s = trap_solve(&p).unwrap();
+        assert!((s.vals[4].unwrap() - 59.04).abs() < 0.01);
+        // too few / mismatch
+        p.set_s("m_h", "");
+        assert!(trap_solve(&p).unwrap_err().contains("one more"));
+        for (k, v) in [("m_h", "5"), ("m_bc", "9")] { p.set_s(k, v); }
+        assert!(trap_solve(&p).unwrap_err().contains("would be"));
+        // kite: reference DA 3 too short, DA 4.5 -> A 71.7, D 116.7
+        let mut k = Params::defaults(&kite_params());
+        k.set_s("m_da", "3");
+        assert!(kite_solve(&k).unwrap_err().contains("3.83"));
+        k.set_s("m_da", "4.5");
+        let s = kite_solve(&k).unwrap();
+        assert!((s.vals[4].unwrap() - 71.7).abs() < 0.05 && (s.vals[7].unwrap() - 116.7).abs() < 0.05);
+        // parallelogram from angle B
+        let mut q = Params::defaults(&parallelogram_params());
+        q.set_s("m_a", "");
+        q.set_s("m_b", "120");
+        assert!((para_solve(&q).unwrap().vals[4].unwrap() - 60.0).abs() < 1e-9);
+        q.set_s("m_a", "70");
+        assert!(para_solve(&q).unwrap_err().contains("would be"));
+    }
+}
+}
+
+pub(super) use flat::{angle_dirs, quad_solve, quad_vals_of, regular_polygon_pts, tri_solve, write_givens, RAY_V, TRI_V, Q_V};
+use flat::{angles_params, angles_render, kite_params, kite_render, parallel_lines_params, parallel_lines_render, parallelogram_params, parallelogram_render, rectangle_params, rectangle_render, regular_polygon_params, regular_polygon_render, trapezoid_params, trapezoid_render, triangle_params, triangle_render};
 
 // ───────────────────────── coordinate grid ─────────────────────────
 
@@ -1592,116 +2984,6 @@ fn sector(d: &mut Doc, c: Pt, a0: f64, a1: f64, r: f64, text: &str, right: bool,
     }
 }
 
-fn angles_params() -> Vec<ParamDef> {
-    vec![
-        ParamDef::choice("mode", "Diagram", &["Single angle", "Angles on a straight line", "Angles around a point", "Vertical angles", "Custom rays"], "Angles on a straight line"),
-        ParamDef::float("angle", "Angle (degrees)", 5.0, 175.0, 1.0, 60.0),
-        ParamDef::float("angle2", "Second angle (around a point)", 5.0, 175.0, 1.0, 110.0),
-        ParamDef::list("rays", "Custom rays: directions in degrees counterclockwise from the baseline, e.g. 0, 50, 130, 250", "0, 50, 130, 250"),
-        ParamDef::list("unknown", "Sector numbers shown as x (counterclockwise from baseline, e.g. 2)", "2"),
-        ParamDef::list("hide", "Sector numbers left unlabelled", ""),
-        ParamDef::bool("right", "Right-angle squares", true),
-        ParamDef::bool("letters", "Point letters on the rays", true),
-        ParamDef::int("dec", "Decimal places", 0, 3, 1),
-        ParamDef::float("turn", "Turn the figure (degrees)", -180.0, 180.0, 1.0, 0.0),
-        ParamDef::long("sector_text", "Text labels for sectors, e.g. 1 = 2x + 10; 3 = y", ""),
-        ParamDef::choice("ray_ends", "Ray ends", &["Arrows", "Plain", "Points"], "Arrows"),
-        ParamDef::bool("shade", "Shade the angles", true),
-        ParamDef::choice("label_size", "Label size", &["Large", "Medium", "Small"], "Medium"),
-    ]
-}
-
-fn angles_render(p: &Params) -> String {
-    let (a, a2) = (p.f("angle"), p.f("angle2"));
-    // (ray directions, wraps around)
-    let (rays, wrap): (Vec<f64>, bool) = match p.s("mode") {
-        "Single angle" => (vec![0.0, a], false),
-        "Angles on a straight line" => (vec![0.0, a, 180.0], false),
-        "Angles around a point" => (vec![0.0, a, (a + a2).min(358.0)], true),
-        "Vertical angles" => (vec![0.0, a, 180.0, 180.0 + a], true),
-        _ => {
-            let mut r = nums(p.s("rays")); r.iter_mut().for_each(|x| *x = x.rem_euclid(360.0));
-            r.sort_by(|x, y| x.partial_cmp(y).unwrap()); r.dedup();
-            let wr = r.len() > 2 && r.last().copied().unwrap_or(0.0) - r[0] < 340.0 && p.s("mode") == "Custom rays";
-            (r, wr)
-        }
-    };
-    if rays.len() < 2 { return msg("Give at least two ray directions"); }
-    let turn = p.f("turn");
-    let fs = fscale(p);
-    let (w, h) = (480.0, 360.0);
-    let c = (w / 2.0, h / 2.0);
-    let len = 140.0;
-    let unk: Vec<usize> = nums(p.s("unknown")).iter().map(|v| *v as usize).collect();
-    let hide: Vec<usize> = nums(p.s("hide")).iter().map(|v| *v as usize).collect();
-    let texts = num_text_map(p.s("sector_text"));
-    let mut d = new_doc(w, h);
-    let mut secs: Vec<(f64, f64)> = rays.windows(2).map(|w| (w[0], w[1])).collect();
-    if wrap { secs.push((*rays.last().unwrap(), rays[0] + 360.0)); }
-    if p.b("shade") {
-        for (a0, a1) in &secs {
-            let n = 24;
-            let mut pts = vec![c];
-            for i in 0..=n { let t = (turn + a0 + (a1 - a0) * i as f64 / n as f64).to_radians(); pts.push((c.0 + 42.0 * t.cos(), c.1 - 42.0 * t.sin())); }
-            d.poly(&pts, "#eef4fb", "none", 0.0);
-        }
-    }
-    for (i, r) in rays.iter().enumerate() {
-        let t = (r + turn).to_radians();
-        let e = (c.0 + len * t.cos(), c.1 - len * t.sin());
-        match p.s("ray_ends") {
-            "Plain" => { d.line(c.0, c.1, e.0, e.1, INK, 2.0); }
-            "Points" => { d.line(c.0, c.1, e.0, e.1, INK, 2.0); d.circle(e.0, e.1, 3.4, INK, INK, 1.0); }
-            _ => { d.arrow(c.0, c.1, e.0, e.1, INK, 2.0); }
-        }
-        if p.b("letters") {
-            let name = ((b'B' + i as u8) as char).to_string();
-            mlabel(&mut d, c.0 + (len + 16.0) * t.cos(), c.1 - (len + 16.0) * t.sin(), 17.0 * fs, &name, "");
-        }
-    }
-    d.circle(c.0, c.1, 3.0, INK, INK, 1.0);
-    if p.b("letters") && !wrap {
-        // vertex letter on the open side, opposite the middle of the whole fan
-        let back = ((rays[0] + rays[rays.len() - 1]) / 2.0 + 180.0 + turn).to_radians();
-        mlabel(&mut d, c.0 + 18.0 * back.cos(), c.1 - 18.0 * back.sin(), 17.0 * fs, "A", "");
-    }
-    for (i, (a0, a1)) in secs.iter().enumerate() {
-        let idx = i + 1;
-        let span = a1 - a0;
-        let txt = if hide.contains(&idx) { String::new() }
-            else if let Some((_, t)) = texts.iter().find(|(k, _)| *k == idx) { t.clone() }
-            else if unk.contains(&idx) { "x".into() } else { format!("{}\u{b0}", fmt(span, p.i("dec"))) };
-        let rad = if span < 28.0 { 48.0 + (i % 2) as f64 * 10.0 } else { 36.0 + (i % 2) as f64 * 6.0 };
-        sector(&mut d, c, turn + a0, turn + a1, rad, &txt, p.b("right"), 15.0 * fs);
-    }
-    d.finish()
-}
-
-fn parallel_lines_params() -> Vec<ParamDef> {
-    vec![
-        ParamDef::int("lines", "Parallel lines", 2, 3, 2),
-        ParamDef::float("angle", "Angle 2: above m, right of the transversal (degrees)", 15.0, 165.0, 1.0, 65.0),
-        ParamDef::float("gap", "Gap between lines", 0.5, 3.0, 0.1, 1.0),
-        ParamDef::choice("labels", "Label style", &["Degrees", "Numbers"], "Degrees"),
-        ParamDef::list("marked", "Angles to label (1-8 at the first two crossings, 5-8 at m and n, 9-12 at the third line), e.g. 2, 6", "2, 6"),
-        ParamDef::list("unknown", "Marked angles shown as x", "6"),
-        ParamDef::bool("arrows", "Parallel arrows on the lines", true),
-        ParamDef::bool("names", "Line names (m, n, t)", true),
-        ParamDef::int("dec", "Decimal places", 0, 3, 1),
-        ParamDef::float("turn", "Turn the figure (degrees)", -180.0, 180.0, 1.0, 0.0),
-        ParamDef::text("name_m", "Name of the first line", "m"),
-        ParamDef::text("name_n", "Name of the second line", "n"),
-        ParamDef::text("name_p", "Name of the third line", "p"),
-        ParamDef::text("name_t", "Name of the transversal", "t"),
-        ParamDef::int("transversals", "Transversals", 1, 2, 1),
-        ParamDef::float("angle_b", "Second transversal angle (degrees; its angles number on after the first's)", 15.0, 165.0, 1.0, 115.0),
-        ParamDef::text("name_u", "Name of the second transversal", "u"),
-        ParamDef::long("angle_text", "Text labels for marked angles, e.g. 2 = 3x + 5; 6 = y", ""),
-        ParamDef::choice("line_ends", "Line ends", &["Arrowheads", "Plain"], "Arrowheads"),
-        ParamDef::choice("label_size", "Label size", &["Large", "Medium", "Small"], "Medium"),
-    ]
-}
-
 /// Canvas size and parallel-line rows (screen y) for the parallel-lines figure.
 pub(super) fn pl_layout(p: &Params) -> (f64, f64, Vec<f64>) {
     let nl = p.i("lines").clamp(2, 3) as usize;
@@ -1719,75 +3001,6 @@ fn line_heads(d: &mut Doc, a: Pt, b: Pt) {
         let back = (to.0 - u.0 * 12.0, to.1 - u.1 * 12.0);
         d.poly(&[to, (back.0 + nn.0 * 5.0, back.1 + nn.1 * 5.0), (back.0 - nn.0 * 5.0, back.1 - nn.1 * 5.0)], INK, INK, 1.0);
     }
-}
-
-fn parallel_lines_render(p: &Params) -> String {
-    let (w, h, ys) = pl_layout(p);
-    let nl = ys.len();
-    let turn = p.f("turn");
-    let fs = fscale(p);
-    let cc = (w / 2.0, h / 2.0);
-    let t = |q: Pt| turn_scr(q, cc, turn);
-    let mut d = new_doc(w, h);
-    let unk = nums(p.s("unknown")).iter().map(|v| *v as usize).collect::<Vec<_>>();
-    let marked = nums(p.s("marked")).iter().map(|v| *v as usize).collect::<Vec<_>>();
-    let texts = num_text_map(p.s("angle_text"));
-    let nm = |k: &str, dflt: &str| { let v = p.s(k).trim(); if v.is_empty() { dflt.to_string() } else { v.to_string() } };
-    let names = [nm("name_m", "m"), nm("name_n", "n"), nm("name_p", "p")];
-    let ends = p.s("line_ends") != "Plain";
-    let (x0, x1) = (30.0, w - 30.0);
-    for (i, y) in ys.iter().enumerate() {
-        let (a, b) = (t((x0, *y)), t((x1, *y)));
-        d.line(a.0, a.1, b.0, b.1, INK, 2.0);
-        if ends { line_heads(&mut d, a, b); }
-        if p.b("arrows") {
-            let c = (w - 80.0, *y);
-            for dx in [0.0, 8.0] { d.polyline(&[t((c.0 + dx - 5.0, c.1 - 5.0)), t((c.0 + dx, c.1)), t((c.0 + dx - 5.0, c.1 + 5.0))], INK, 1.6); }
-        }
-        if p.b("names") { let q = t((50.0, *y - 15.0)); mlabel(&mut d, q.0, q.1, 18.0 * fs, &names[i], ""); }
-    }
-    let nt = p.i("transversals").clamp(1, 2) as usize;
-    let rad = 26.0;
-    let lsz = 15.0 * fs;
-    for ti in 0..nt {
-        let th = if ti == 0 { p.f("angle") } else { p.f("angle_b").clamp(15.0, 165.0) };
-        let cx0 = if nt == 1 { w / 2.0 } else if ti == 0 { w / 2.0 - 70.0 } else { w / 2.0 + 70.0 };
-        let tr = th.to_radians();
-        let slope = (tr.cos(), -tr.sin()); // screen direction up-right
-        let cross: Vec<Pt> = ys.iter().map(|y| { let s = (*y - ys[0]) / slope.1; (cx0 + slope.0 * s, *y) }).collect();
-        let tl = 70.0 / slope.1.abs().max(0.2);
-        let a = (cross[0].0 + slope.0 * tl, cross[0].1 + slope.1 * tl);
-        let last = cross[nl - 1];
-        let b = (last.0 - slope.0 * tl, last.1 - slope.1 * tl);
-        let (ta, tb) = (t(a), t(b));
-        d.line(ta.0, ta.1, tb.0, tb.1, INK, 2.0);
-        if ends { line_heads(&mut d, ta, tb); }
-        if p.b("names") {
-            let tn = if ti == 0 { nm("name_t", "t") } else { nm("name_u", "u") };
-            let q = t((a.0 + slope.0 * 18.0, a.1 + slope.1 * 18.0));
-            mlabel(&mut d, q.0, q.1, 18.0 * fs, &tn, "");
-        }
-        for (i, c) in cross.iter().enumerate() {
-            // sectors: 1 top-left, 2 top-right, 3 bottom-right, 4 bottom-left
-            let secs = [(th, 180.0, 1usize), (0.0, th, 2), (180.0 + th, 360.0, 3), (180.0, 180.0 + th, 4)];
-            let c = t(*c);
-            for (a0, a1, k) in secs {
-                let num = ti * 4 * nl + i * 4 + k;
-                let (a0t, a1t) = (a0 + turn, a1 + turn);
-                if !marked.contains(&num) {
-                    if p.s("labels") == "Numbers" { sector(&mut d, c, a0t, a1t, rad, &num.to_string(), false, lsz); }
-                    continue;
-                }
-                let span = a1 - a0;
-                let txt = if p.s("labels") == "Numbers" { num.to_string() }
-                    else if let Some((_, s)) = texts.iter().find(|(k, _)| *k == num) { s.clone() }
-                    else if unk.contains(&num) { "x".to_string() } else { format!("{}\u{b0}", fmt(span, p.i("dec"))) };
-                let r = if span < 50.0 { rad + 8.0 } else { rad };
-                sector(&mut d, c, a0t, a1t, r, &txt, true, lsz);
-            }
-        }
-    }
-    d.finish()
 }
 
 // ───────────────────────── 3D solids ─────────────────────────
@@ -1934,8 +3147,169 @@ fn solid_common(unit: &str) -> Vec<ParamDef> {
         ParamDef::bool("right", "Right-angle squares", true),
         ParamDef::text("unit", "Unit", unit),
         ParamDef::int("dec", "Decimal places", 0, 3, 1),
-        ParamDef::text("hide", "Dimensions to hide (length, width, height, side, slant, radius)", ""),
     ]
+}
+
+// ----- solids' Measures card: typed (given) vs worked-out values -----
+
+/// A solid's optional measure kept as text ("" = worked out from the others): the typed value
+/// when it is a positive number or expression (sqrt, pi, fractions), else None.
+pub(super) fn typed(p: &Params, k: &str) -> Option<f64> {
+    let t = p.s(k).trim();
+    if t.is_empty() { return None; }
+    eval(&t.replace('\u{221a}', "sqrt").replace('\u{3c0}', "pi"), 0.0).filter(|v| v.is_finite() && *v > 0.0)
+}
+/// Label for a measure whose value box is text (`vk`): Measure prints what was typed ("as you
+/// typed it") or the worked-out value rounded; Text and None as usual.
+fn tlabel(p: &Params, key: &str, vk: &str, def: &str, v: f64) -> Option<String> {
+    let mode = match p.s(&format!("{key}_lab")) { "" => def, m => m };
+    if mode == "Measure" && typed(p, vk).is_some() {
+        let t = p.s(vk).trim().replace("sqrt", "\u{221a}").replace("pi", "\u{3c0}");
+        let u = p.s("unit").trim();
+        return Some(if u.is_empty() { t } else { format!("{t} {u}") });
+    }
+    mtext(p, key, def, v, false)
+}
+/// Height of an oblique prism/cylinder: typed, or worked out from a typed slanted edge and the
+/// lean (any two of height, lean and slanted edge, as the reference allows).
+pub(super) fn edge_height(p: &Params, oblique: bool) -> f64 {
+    if oblique && let Some(e) = typed(p, "edge") {
+        let l = p.f("lean");
+        if e > l.abs() + 1e-6 { return (e * e - l * l).sqrt(); }
+    }
+    p.f("height")
+}
+/// Worked-out text of a measure (number rounded to the figure's decimals, no unit).
+fn ctext(p: &Params, v: f64) -> String { fmt(v, p.i("dec")) }
+/// Diameter row of the round solids: a linked row (= 2 x radius) with its own label.
+fn diameter_params() -> [ParamDef; 2] {
+    [
+        ParamDef::choice("d_lab", "Diameter label (drawn right across the circle)", &LAB_OPTS, "None"),
+        ParamDef::text("d_label", "Diameter label text", "d"),
+    ]
+}
+/// The reference's SHAPE/Measures card of each solid. The card is static, so rows that only apply
+/// to one base or to oblique solids are grouped and say so.
+fn measures_solid(id: &str) -> Option<super::MeasureCard> {
+    use super::{MeasureCard, MeasureGroup, MeasureRow};
+    let row = |name, value_key, label_key, text_key| MeasureRow { name, name_key: None, value_key, unit: "$unit", label_key, text_key, tick_key: None, equals: None };
+    let link = |name, value_key, label_key, text_key, eq| MeasureRow { equals: Some(eq), ..row(name, value_key, label_key, text_key) };
+    let g = |title, rows| MeasureGroup { title, rows };
+    let radius = || vec![row("Radius", "radius", "r_lab", "r_label"), link("Diameter", "diameter", "d_lab", "d_label", "2 \u{d7} radius")];
+    let (help, groups) = match id {
+        "sphere" => ("Give the radius. The diameter is worked out; its label button draws it right across the circle.", vec![g("", radius())]),
+        "cylinder" => (
+            "Give every measure. Worked-out measures are shown faintly. Oblique: give the slanted edge to have the height worked out from it and the lean. Type sqrt for \u{221a}, / for a fraction and pi for \u{3c0}.",
+            vec![g("", { let mut r = radius(); r.push(row("Height", "height", "h_lab", "h_label")); r }), g("Oblique", vec![row("Lean", "lean", "lean_lab", "lean_label"), row("Slanted edge", "edge", "edge_lab", "edge_label")])],
+        ),
+        "cone" => (
+            "Give the radius and the height, or type the slant height to have the height worked out. Worked-out measures are shown faintly. Type sqrt for \u{221a}, / for a fraction and pi for \u{3c0}.",
+            vec![
+                g("", { let mut r = radius(); r.extend([row("Height", "height", "h_lab", "h_label"), row("Slant height", "slant", "l_lab", "l_label")]); r }),
+                g("Oblique", vec![row("Lean", "lean", "lean_lab", "lean_label")]),
+            ],
+        ),
+        "pyramid" => (
+            "Give every measure. Type the slant height to have the height worked out. Worked-out measures are shown faintly. Type sqrt for \u{221a}, / for a fraction and pi for \u{3c0}.",
+            vec![
+                g("Rectangle base", vec![row("Length", "length", "length_lab", "length_label"), row("Width", "width", "width_lab", "width_label")]),
+                g("Regular polygon base", vec![row("Side", "side", "side_lab", "side_label"), link("Apothem", "apothem", "apothem_lab", "apothem_label", "worked out")]),
+                g("", vec![row("Height", "height", "height_lab", "height_label"), row("Slant height", "slant", "slant_lab", "slant_label")]),
+                g("Oblique", vec![row("Lean", "lean", "lean_lab", "lean_label")]),
+            ],
+        ),
+        "prism" => (
+            "Give every measure. For a triangle base, Length is the triangle's base and Width the triangle's height; when the prism lies on its side, Height is its length. Oblique: give the slanted edge to have the height worked out. Type sqrt for \u{221a}, / for a fraction and pi for \u{3c0}.",
+            vec![
+                g("Rectangle or triangle base", vec![
+                    row("Length", "length", "length_lab", "length_label"),
+                    row("Width", "width", "width_lab", "width_label"),
+                    link("Slanted side", "hyp", "hyp_lab", "hyp_label", "worked out"),
+                ]),
+                g("Regular polygon base", vec![row("Side", "side", "side_lab", "side_label"), link("Apothem", "apothem", "apothem_lab", "apothem_label", "worked out")]),
+                g("", vec![row("Height", "height", "height_lab", "height_label")]),
+                g("Oblique", vec![row("Lean", "lean", "lean_lab", "lean_label"), row("Slanted edge", "edge", "edge_lab", "edge_label")]),
+            ],
+        ),
+        _ => return None,
+    };
+    Some(MeasureCard { title: "Shape", help, groups })
+}
+
+/// Worked-out values of the solids (the grey text in empty boxes and on linked rows).
+fn computed_solid(id: &str, p: &Params) -> Vec<(&'static str, String)> {
+    let mut out = Vec::new();
+    let c = |v: f64| ctext(p, v);
+    if matches!(id, "sphere" | "cylinder" | "cone") { out.push(("diameter", c(2.0 * p.f("radius")))); }
+    let oblique = p.s("stands") == "Oblique";
+    match id {
+        "cylinder" => {
+            let h = edge_height(p, oblique);
+            if typed(p, "edge").is_none() { out.push(("edge", c((h * h + p.f("lean").powi(2)).sqrt()))); } else { out.push(("height", c(h))); }
+        }
+        "cone" => {
+            let (r, h) = (p.f("radius"), cone_height(p));
+            let lean = if oblique { p.f("lean") } else { 0.0 };
+            if typed(p, "slant").is_none() { out.push(("slant", c(((r - lean).powi(2) + h * h).sqrt()))); } else { out.push(("height", c(h))); }
+        }
+        "pyramid" => {
+            let a = pyramid_apothem(p);
+            let h = pyramid_height(p);
+            let poly = poly_base(p.s("base"), p.f("length"), p.f("width"), p.i("n").clamp(3, 12) as usize, p.f("side"));
+            out.push(("apothem", c(dist3(mid3(poly[0], poly[1]), centroid3(&poly)))));
+            let lean = if oblique { p.f("lean") } else { 0.0 };
+            if typed(p, "slant").is_none() { out.push(("slant", c((a * a + h * h + lean * lean).sqrt()))); } else { out.push(("height", c(h))); }
+        }
+        "prism" => {
+            let (l, w) = (p.f("length"), p.f("width"));
+            let hyp = if p.s("base") == "Isosceles triangle" { ((l / 2.0).powi(2) + w * w).sqrt() } else { (l * l + w * w).sqrt() };
+            out.push(("hyp", c(hyp)));
+            let poly = poly_base("Regular polygon", l, w, p.i("n").clamp(3, 12) as usize, p.f("side"));
+            out.push(("apothem", c(dist3(mid3(poly[0], poly[1]), centroid3(&poly)))));
+            let h = edge_height(p, oblique);
+            if typed(p, "edge").is_none() { out.push(("edge", c((h * h + p.f("lean").powi(2)).sqrt()))); } else { out.push(("height", c(h))); }
+        }
+        _ => {}
+    }
+    out
+}
+
+/// Old specs: the `hide` list and `measure` choice become per-measure label modes.
+fn migrate_solid(id: &str, spec: &crate::model::FigureSpec, p: &mut Params) {
+    let old = |k: &str| spec.params.get(k);
+    let olds = |k: &str| old(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let oldb = |k: &str| old(k).and_then(|v| v.as_bool());
+    let oldf = |k: &str| old(k).and_then(|v| v.as_f64());
+    // hide list -> label None
+    for t in tokens(&olds("hide")) {
+        let key = match t.to_lowercase().as_str() {
+            "length" => "length_lab", "width" => "width_lab", "height" => if matches!(id, "cylinder" | "cone") { "h_lab" } else { "height_lab" },
+            "side" => "side_lab", "slant" => if id == "cone" { "l_lab" } else { "slant_lab" }, "radius" => "r_lab",
+            "hypotenuse" | "slanted" => "hyp_lab", "apothem" => "apothem_lab", "lean" => "lean_lab", "edge" => "edge_lab",
+            _ => continue,
+        };
+        p.set_s(key, "None");
+    }
+    // radius / diameter
+    if olds("measure") == "Diameter" {
+        let (m, t) = (p.s("r_lab").to_string(), p.s("r_label").to_string());
+        p.set_s("d_lab", &m);
+        p.set_s("d_label", &t);
+        p.set_s("r_lab", "None");
+    }
+    // the slant height was given instead of the height
+    if matches!(id, "cone" | "pyramid") {
+        let given = olds("given") == "Slant height";
+        let sl = oldf("slant");
+        if old("given").is_some() || sl.is_some() {
+            p.set_s("slant", &if given { sl.map(|v| fmt(v, 3)).unwrap_or_default() } else { String::new() });
+        }
+        let lab = if id == "cone" { "l_lab" } else { "slant_lab" };
+        if oldb("show_slant") == Some(false) { p.set_s(lab, "None"); }
+        if id == "cone" && oldb("show_slant") == Some(true) && old("l_lab").is_none() { p.set_s(lab, "Measure"); }
+    }
+    // lean labels did not exist / defaulted to None before the rework
+    if old("stands").is_some() && old("lean_lab").is_none() && id != "sphere" { p.set_s("lean_lab", "None"); }
 }
 
 /// Prism vertices: (base ring then top ring, ring size, lying on its side, lean actually used).
@@ -1944,9 +3318,10 @@ pub(super) fn prism_geom(p: &Params) -> (Vec<P3>, usize, bool, f64) {
     let kind = p.s("base");
     let base = poly_base(kind, p.f("length"), p.f("width"), p.i("n").clamp(3, 12) as usize, p.f("side"));
     let k = base.len();
-    let hh = p.f("height");
     let lying = kind != "Rectangle" && p.s("sits") == "Lying on its side";
-    let lean = if !lying && p.s("stands") == "Oblique" { p.f("lean") } else { 0.0 };
+    let oblique = !lying && p.s("stands") == "Oblique";
+    let hh = edge_height(p, oblique);
+    let lean = if oblique { p.f("lean") } else { 0.0 };
     let mut v: Vec<P3>;
     if lying {
         let vmin = base.iter().map(|q| q.1).fold(f64::MAX, f64::min);
@@ -1992,19 +3367,21 @@ fn prism_params() -> Vec<ParamDef> {
         ParamDef::text("hyp_label", "Hypotenuse label text", "x"),
         ParamDef::choice("apothem_lab", "Apothem label (worked out)", &LAB_OPTS, "None"),
         ParamDef::text("apothem_label", "Apothem label text", "a"),
-        ParamDef::choice("lean_lab", "Lean label (oblique)", &LAB_OPTS, "None"),
+        ParamDef::choice("lean_lab", "Lean label (oblique)", &LAB_OPTS, "Measure"),
         ParamDef::text("lean_label", "Lean label text", "d"),
-        ParamDef::choice("edge_lab", "Slanted edge label (oblique, worked out)", &LAB_OPTS, "None"),
+        ParamDef::text("edge", "Slanted edge (oblique; empty = worked out, typed = the height is worked out)", ""),
+        ParamDef::choice("edge_lab", "Slanted edge label (oblique)", &LAB_OPTS, "None"),
         ParamDef::text("edge_label", "Slanted edge label text", "e"),
     ]);
     v
 }
 
 fn prism_render(p: &Params) -> String {
-    let (l, wd, hh) = (p.f("length"), p.f("width"), p.f("height"));
+    let (l, wd) = (p.f("length"), p.f("width"));
     let kind = p.s("base");
     let sx = depth_sx(p);
     let (v, k, lying, lean) = prism_geom(p);
+    let hh = edge_height(p, !lying && p.s("stands") == "Oblique");
     let mut faces = vec![(0..k).collect::<Vec<_>>(), (k..2 * k).collect()];
     for i in 0..k { faces.push(vec![i, (i + 1) % k, k + (i + 1) % k, k + i]); }
     let solid = Solid { v, faces };
@@ -2082,7 +3459,7 @@ fn prism_render(p: &Params) -> String {
         if let Some(s) = htxt { sbeside(&mut d, m.p(proj(foot)), m.p(proj(top)), 0.7, mc, &s, fs); }
         lab(&mut d, e, foot, mtext(p, "lean", "None", lean.abs(), hid("lean")));
         let et = (e.0 + lean, e.1, hh);
-        if let Some(s) = mtext(p, "edge", "None", dist3(e, et), hid("edge")) { sbeside(&mut d, m.p(proj(e)), m.p(proj(et)), 0.3, mc, &s, fs); }
+        if let Some(s) = tlabel(p, "edge", "edge", "None", dist3(e, et)) { sbeside(&mut d, m.p(proj(e)), m.p(proj(et)), 0.3, mc, &s, fs); }
     }
     if p.b("names") {
         let fsn = fs * 0.95;
@@ -2097,13 +3474,17 @@ fn centroid3(v: &[P3]) -> P3 {
 
 /// Pyramid height actually drawn: the typed height, or worked out from the slant height.
 pub(super) fn pyramid_height(p: &Params) -> f64 {
-    if p.s("given") == "Slant height" && p.s("stands") != "Oblique" {
-        let b = poly_base(p.s("base"), p.f("length"), p.f("width"), p.i("n").clamp(3, 12) as usize, p.f("side"));
-        let a = dist3(mid3(b[0], b[1]), centroid3(&b));
-        let s = p.f("slant");
+    if p.s("stands") != "Oblique" && let Some(s) = typed(p, "slant") {
+        let a = pyramid_apothem(p);
         if s > a + 1e-6 { return (s * s - a * a).sqrt(); }
     }
     p.f("height")
+}
+/// Distance from the base's centre to the middle of the front base edge (where the slant height
+/// meets the base): half the width for a rectangle, the apothem for a regular polygon.
+pub(super) fn pyramid_apothem(p: &Params) -> f64 {
+    let b = poly_base(p.s("base"), p.f("length"), p.f("width"), p.i("n").clamp(3, 12) as usize, p.f("side"));
+    dist3(mid3(b[0], b[1]), centroid3(&b))
 }
 
 fn pyramid_params() -> Vec<ParamDef> {
@@ -2117,12 +3498,10 @@ fn pyramid_params() -> Vec<ParamDef> {
         ParamDef::float("side", "Side of regular-polygon base", 0.5, 50.0, 0.5, 4.0),
         ParamDef::float("height", "Height", 0.5, 50.0, 0.5, 4.0),
         ParamDef::bool("show_height", "Draw the height", true),
-        ParamDef::bool("show_slant", "Draw the slant height (apex to the middle of the front base edge)", false),
     ];
     v.extend(solid_common("cm"));
     v.extend([
-        ParamDef::choice("given", "Give the", &["Height", "Slant height"], "Height"),
-        ParamDef::float("slant", "Slant height (when given instead of the height)", 0.5, 60.0, 0.5, 5.0),
+        ParamDef::text("slant", "Slant height (empty = worked out; typed = the height is worked out)", ""),
         ParamDef::choice("depth", "Position: depth goes back to the", &["Right", "Left"], "Right"),
         ParamDef::bool("names", "Name the corners around the base, then the tip", false),
         label_size_param(),
@@ -2134,10 +3513,12 @@ fn pyramid_params() -> Vec<ParamDef> {
         ParamDef::text("side_label", "Polygon side label text", "s"),
         ParamDef::choice("height_lab", "Height label", &LAB_OPTS, "Measure"),
         ParamDef::text("height_label", "Height label text", "h"),
-        ParamDef::choice("slant_lab", "Slant height label", &LAB_OPTS, "Measure"),
+        ParamDef::choice("slant_lab", "Slant height label (drawn apex to the middle of the front edge)", &LAB_OPTS, "None"),
         ParamDef::text("slant_label", "Slant height label text", "l"),
         ParamDef::choice("apothem_lab", "Apothem label (worked out)", &LAB_OPTS, "None"),
         ParamDef::text("apothem_label", "Apothem label text", "a"),
+        ParamDef::choice("lean_lab", "Lean label (oblique)", &LAB_OPTS, "Measure"),
+        ParamDef::text("lean_label", "Lean label text", "d"),
     ]);
     v
 }
@@ -2178,12 +3559,15 @@ fn pyramid_render(p: &Params) -> String {
         if right { rmark3(&mut d, &m, &proj, hfoot, (-sx, 0.0, 0.0), (0.0, 0.0, 1.0)); }
     }
     let mid = mid3(base[0], base[1]);
-    if p.b("show_slant") {
+    if let Some(s) = tlabel(p, "slant", "slant", "None", dist3(mid, apex)).filter(|_| !hid("slant")) {
         dline(&mut d, m.p(proj(mid)), m.p(proj(apex)), "#444", 1.5, "6 4");
-        let sl = dist3(mid, apex);
         let (pa, pm) = (m.p(proj(apex)), m.p(proj(mid)));
-        if let Some(s) = mtext(p, "slant", "Measure", sl, hid("slant")) { sbeside(&mut d, pm, pa, 0.3, mc, &s, fs); }
+        sbeside(&mut d, pm, pa, 0.3, mc, &s, fs);
         if right && lean.abs() < 1e-9 { rmark3(&mut d, &m, &proj, mid, sub3(base[1], mid), sub3(apex, mid)); }
+    }
+    if lean.abs() > 1e-9 && let Some(s) = mtext(p, "lean", "Measure", lean.abs(), false) {
+        // lean: from the base centre to the foot of the height, along the base
+        lab(&mut d, foot, hfoot, Some(s));
     }
     if let Some(s) = mtext(p, "apothem", "None", dist3(mid, foot), hid("apothem")) {
         dline(&mut d, m.p(proj(foot)), m.p(proj(mid)), "#444", 1.4, "6 4");
@@ -2214,20 +3598,24 @@ fn mpts(m: &Map, pts: &[Pt]) -> Vec<Pt> { pts.iter().map(|q| m.p(*q)).collect() 
 fn round_common() -> Vec<ParamDef> {
     vec![
         ParamDef::float("view", "View elevation (degrees above the horizon)", 8.0, 60.0, 1.0, 22.0),
-        ParamDef::choice("measure", "Measure across the base", &["Radius", "Diameter"], "Radius"),
         ParamDef::bool("hidden", "Show hidden edges (dashed)", true),
         ParamDef::bool("right", "Right-angle squares", true),
         ParamDef::text("unit", "Unit", "cm"),
         ParamDef::int("dec", "Decimal places", 0, 3, 1),
     ]
 }
-fn round_label_params() -> [ParamDef; 3] {
+fn round_label_params() -> [ParamDef; 5] {
+    let [d0, d1] = diameter_params();
     [
         label_size_param(),
-        ParamDef::choice("r_lab", "Radius / diameter label", &LAB_OPTS, "Measure"),
-        ParamDef::text("r_label", "Radius / diameter label text", "r"),
+        ParamDef::choice("r_lab", "Radius label", &LAB_OPTS, "Measure"),
+        ParamDef::text("r_label", "Radius label text", "r"),
+        d0,
+        d1,
     ]
 }
+/// The diameter line is drawn (its label is shown) instead of / as well as the radius.
+fn diam_shown(p: &Params) -> bool { mtext(p, "d", "None", 1.0, false).is_some() }
 
 /// Radius (or diameter) across the circle centred at model point o. `solid`: drawn as a solid
 /// line (sphere); otherwise dashed. `above`: label above the line.
@@ -2235,15 +3623,22 @@ fn base_measure(d: &mut Doc, m: &Map, o: Pt, r: f64, p: &Params, solid: bool, ab
     let fs = lsz(p);
     let c = m.p(o);
     let dash = if solid { "none" } else { "6 4" };
-    let diam = p.s("measure") == "Diameter";
-    let (a, b) = if diam { (m.p((o.0 - r, o.1)), m.p((o.0 + r, o.1))) } else { (c, m.p((o.0 + r, o.1))) };
+    let rt = mtext(p, "r", "Measure", r, false);
+    let dt = mtext(p, "d", "None", 2.0 * r, false);
+    // nothing is drawn across the circle when neither label prints (as the reference)
+    if rt.is_none() && dt.is_none() { return; }
+    let diam = dt.is_some();
+    let rb = m.p((o.0 + r, o.1));
+    let (a, b) = if diam { (m.p((o.0 - r, o.1)), rb) } else { (c, rb) };
     if solid { d.line(a.0, a.1, b.0, b.1, INK, 2.0); } else { dline(d, a, b, "#444", 1.5, dash); }
-    let v = if diam { 2.0 * r } else { r };
-    if let Some(s) = mtext(p, "r", "Measure", v, false) {
-        let y = if above { c.1 - fs * 0.85 } else { c.1 + fs * 0.85 };
-        sput(d, (a.0 + b.0) / 2.0, y, &s, fs);
+    let off = if above { -fs * 0.85 } else { fs * 0.85 };
+    if let Some(s) = dt { sput(d, (a.0 + b.0) / 2.0, c.1 + off, &s, fs); }
+    if let Some(s) = rt {
+        // with the diameter also labelled, the radius sits on the other side of the line
+        let y = if diam { c.1 - off } else { c.1 + off };
+        sput(d, (c.0 + rb.0) / 2.0, y, &s, fs);
+        d.circle(c.0, c.1, 2.8, INK, INK, 1.0);
     }
-    if !diam { d.circle(c.0, c.1, 2.8, INK, INK, 1.0); }
 }
 
 fn cylinder_params() -> Vec<ParamDef> {
@@ -2259,18 +3654,20 @@ fn cylinder_params() -> Vec<ParamDef> {
     v.extend([
         ParamDef::choice("h_lab", "Height label", &LAB_OPTS, "Measure"),
         ParamDef::text("h_label", "Height label text", "h"),
-        ParamDef::choice("lean_lab", "Lean label (oblique)", &LAB_OPTS, "None"),
+        ParamDef::choice("lean_lab", "Lean label (oblique)", &LAB_OPTS, "Measure"),
         ParamDef::text("lean_label", "Lean label text", "d"),
-        ParamDef::choice("edge_lab", "Slanted edge label (oblique, worked out)", &LAB_OPTS, "None"),
+        ParamDef::text("edge", "Slanted edge (oblique; empty = worked out, typed = the height is worked out)", ""),
+        ParamDef::choice("edge_lab", "Slanted edge label (oblique)", &LAB_OPTS, "None"),
         ParamDef::text("edge_label", "Slanted edge label text", "e"),
     ]);
     v
 }
 
 fn cylinder_render(p: &Params) -> String {
-    let (r, h) = (p.f("radius"), p.f("height"));
+    let oblique = p.s("stands") == "Oblique";
+    let (r, h) = (p.f("radius"), edge_height(p, oblique));
     let (s, c) = (p.f("view").to_radians().sin(), p.f("view").to_radians().cos());
-    let lean = if p.s("stands") == "Oblique" { p.f("lean") } else { 0.0 };
+    let lean = if oblique { p.f("lean") } else { 0.0 };
     let ht = h * c;
     let mut all = ell(0.0, 0.0, r, r * s, 0.0, 360.0);
     all.extend(ell(lean, ht, r, r * s, 0.0, 360.0));
@@ -2295,7 +3692,7 @@ fn cylinder_render(p: &Params) -> String {
         d.circle(t.0, t.1, 2.8, INK, INK, 1.0);
         if let Some(txt) = htxt { sput(&mut d, t.0 - 10.0 - stw(&txt, fs) / 2.0, (t.1 + b.1) / 2.0, &txt, fs); }
         if lean.abs() > 1e-9 { dline(&mut d, m.p((0.0, 0.0)), b, "#444", 1.5, "6 4"); }
-        if p.b("right") && p.s("measure") == "Radius" { square_mark(&mut d, b, (b.0, b.1 - 10.0), (b.0 + 10.0, b.1), 10.0); }
+        if p.b("right") && !diam_shown(p) { square_mark(&mut d, b, (b.0, b.1 - 10.0), (b.0 + 10.0, b.1), 10.0); }
     } else if let Some(txt) = htxt {
         sbeside(&mut d, r0, r1, 0.5, center, &txt, fs);
     }
@@ -2305,15 +3702,15 @@ fn cylinder_render(p: &Params) -> String {
             sput(&mut d, (a.0 + b.0) / 2.0, a.1 - fs * 0.85, &txt, fs);
         }
         let side = if lean > 0.0 { (r0, r1) } else { (l0, l1) };
-        if let Some(txt) = mtext(p, "edge", "None", (h * h + lean * lean).sqrt(), false) { sbeside(&mut d, side.0, side.1, 0.5, center, &txt, fs); }
+        if let Some(txt) = tlabel(p, "edge", "edge", "None", (h * h + lean * lean).sqrt()) { sbeside(&mut d, side.0, side.1, 0.5, center, &txt, fs); }
     }
     d.finish()
 }
 
 /// Cone height actually drawn: typed, or worked out from a given slant height (right cones).
 pub(super) fn cone_height(p: &Params) -> f64 {
-    if p.s("given") == "Slant height" && p.s("stands") != "Oblique" {
-        let (r, s) = (p.f("radius"), p.f("slant"));
+    if p.s("stands") != "Oblique" && let Some(s) = typed(p, "slant") {
+        let r = p.f("radius");
         if s > r + 1e-6 { return (s * s - r * r).sqrt(); }
     }
     p.f("height")
@@ -2326,18 +3723,16 @@ fn cone_params() -> Vec<ParamDef> {
         ParamDef::float("radius", "Radius", 0.5, 50.0, 0.5, 3.0),
         ParamDef::float("height", "Height", 0.5, 50.0, 0.5, 4.0),
         ParamDef::bool("show_height", "Draw the height", true),
-        ParamDef::bool("show_slant", "Label the slant height", true),
     ];
     v.extend(round_common());
     v.extend(round_label_params());
     v.extend([
-        ParamDef::choice("given", "Give the", &["Height", "Slant height"], "Height"),
-        ParamDef::float("slant", "Slant height (when given instead of the height)", 0.5, 60.0, 0.5, 5.0),
+        ParamDef::text("slant", "Slant height (empty = worked out; typed = the height is worked out)", ""),
         ParamDef::choice("h_lab", "Height label", &LAB_OPTS, "Measure"),
         ParamDef::text("h_label", "Height label text", "h"),
-        ParamDef::choice("l_lab", "Slant height label", &LAB_OPTS, "Measure"),
+        ParamDef::choice("l_lab", "Slant height label", &LAB_OPTS, "None"),
         ParamDef::text("l_label", "Slant height label text", "l"),
-        ParamDef::choice("lean_lab", "Lean label (oblique)", &LAB_OPTS, "None"),
+        ParamDef::choice("lean_lab", "Lean label (oblique)", &LAB_OPTS, "Measure"),
         ParamDef::text("lean_label", "Lean label text", "d"),
     ]);
     v
@@ -2383,7 +3778,7 @@ fn cone_render(p: &Params) -> String {
         dline(&mut d, t, b, "#444", 1.5, "6 4");
         if let Some(txt) = mtext(p, "h", "Measure", h, false) { sput(&mut d, t.0 - 10.0 - stw(&txt, fs) / 2.0, (t.1 + b.1) / 2.0 - 8.0, &txt, fs); }
         if lean.abs() > 1e-9 { dline(&mut d, m.p((0.0, 0.0)), b, "#444", 1.5, "6 4"); }
-        if p.b("right") && p.s("measure") == "Radius" && lean.abs() < 1e-9 { square_mark(&mut d, b, (b.0, b.1 - 10.0), (b.0 + 10.0, b.1), 10.0); }
+        if p.b("right") && !diam_shown(p) && lean.abs() < 1e-9 { square_mark(&mut d, b, (b.0, b.1 - 10.0), (b.0 + 10.0, b.1), 10.0); }
         if lean.abs() > 1e-9 {
             if p.b("right") { square_mark(&mut d, b, (b.0, b.1 - 10.0), (b.0 - lean.signum() * 10.0, b.1), 10.0); }
             if let Some(txt) = mtext(p, "lean", "None", lean.abs(), false) {
@@ -2392,12 +3787,12 @@ fn cone_render(p: &Params) -> String {
             }
         }
     }
-    if p.b("show_slant") {
-        let sl = ((r - lean).powi(2) + h * h).sqrt();
-        if let Some(txt) = mtext(p, "l", "Measure", sl, false) {
-            let (a, b) = (m.p(apex), m.p(pr));
-            sbeside(&mut d, a, b, 0.5, m.p((lean * 0.5, h * c * 0.4)), &txt, fs);
-        }
+    let sl = ((r - lean).powi(2) + h * h).sqrt();
+    // an oblique cone has no slant height to give (its slant edge is always worked out)
+    let ltxt = if lean.abs() > 1e-9 { mtext(p, "l", "None", sl, false) } else { tlabel(p, "l", "slant", "None", sl) };
+    if let Some(txt) = ltxt {
+        let (a, b) = (m.p(apex), m.p(pr));
+        sbeside(&mut d, a, b, 0.5, m.p((lean * 0.5, h * c * 0.4)), &txt, fs);
     }
     d.finish()
 }
@@ -2457,36 +3852,36 @@ fn examples_b(id: &str) -> Option<Vec<super::Example>> {
     let v = match id {
         "sphere" => vec![
             ex("Sphere with radius 6 cm", vec![("radius", F(6.0))]),
-            ex("Sphere with diameter 14 inches", vec![("radius", F(7.0)), ("measure", s("Diameter")), ("unit", s("in"))]),
+            ex("Sphere with diameter 14 inches", vec![("radius", F(7.0)), ("r_lab", s("None")), ("d_lab", s("Measure")), ("unit", s("in"))]),
             ex("Hemisphere with radius 5 m", vec![("draw", s("A hemisphere")), ("radius", F(5.0)), ("unit", s("m"))]),
             ex("Hemisphere bowl with radius 8 cm", vec![("draw", s("A hemisphere")), ("face", s("Up, like a bowl")), ("radius", F(8.0))]),
             ex("Sphere with radius r", vec![("unit", s("")), ("r_lab", s("Text")), ("r_label", s("r"))]),
         ],
         "cylinder" => vec![
             ex("Cylinder with radius 4 cm and height 10 cm", vec![("radius", F(4.0)), ("height", F(10.0))]),
-            ex("Cylinder with diameter 12 inches and height 9 inches", vec![("radius", F(6.0)), ("height", F(9.0)), ("measure", s("Diameter")), ("unit", s("in"))]),
-            ex("Oblique cylinder with its height and lean", vec![("stands", s("Oblique")), ("lean", F(3.0)), ("radius", F(3.0)), ("height", F(6.0)), ("lean_lab", s("Measure"))]),
+            ex("Cylinder with diameter 12 inches and height 9 inches", vec![("radius", F(6.0)), ("height", F(9.0)), ("r_lab", s("None")), ("d_lab", s("Measure")), ("unit", s("in"))]),
+            ex("Oblique cylinder with its height and lean", vec![("stands", s("Oblique")), ("lean", F(4.0)), ("radius", F(3.0)), ("height", F(8.0))]),
             ex("Cylinder with radius r and height h", vec![("unit", s("")), ("r_lab", s("Text")), ("r_label", s("r")), ("h_lab", s("Text")), ("h_label", s("h"))]),
         ],
         "cone" => vec![
-            ex("Cone with radius 4 cm and height 9 cm", vec![("radius", F(4.0)), ("height", F(9.0)), ("show_slant", B(false))]),
-            ex("Cone with the slant height labeled x", vec![("radius", F(3.0)), ("height", F(4.0)), ("l_lab", s("Text")), ("l_label", s("x"))]),
-            ex("Cone with diameter 10 cm and slant height 13 cm", vec![("radius", F(5.0)), ("measure", s("Diameter")), ("given", s("Slant height")), ("slant", F(13.0)), ("show_height", B(false))]),
-            ex("Cone with radius r and height h", vec![("unit", s("")), ("r_lab", s("Text")), ("r_label", s("r")), ("h_lab", s("Text")), ("h_label", s("h")), ("show_slant", B(false))]),
-            ex("Oblique cone with its height and lean", vec![("stands", s("Oblique")), ("lean", F(2.5)), ("show_slant", B(false)), ("lean_lab", s("Measure"))]),
+            ex("Cone with radius 4 cm and height 9 cm", vec![("radius", F(4.0)), ("height", F(9.0))]),
+            ex("Cone with the slant height labeled x", vec![("radius", F(6.0)), ("height", F(8.0)), ("l_lab", s("Text")), ("l_label", s("x"))]),
+            ex("Cone with diameter 10 cm and slant height 13 cm", vec![("radius", F(5.0)), ("r_lab", s("None")), ("d_lab", s("Measure")), ("slant", s("13")), ("l_lab", s("Measure")), ("h_lab", s("None"))]),
+            ex("Cone with radius r and height h", vec![("unit", s("")), ("r_lab", s("Text")), ("r_label", s("r")), ("h_lab", s("Text")), ("h_label", s("h"))]),
+            ex("Oblique cone with its height and lean", vec![("stands", s("Oblique")), ("lean", F(2.5))]),
         ],
         "prism" => vec![
             ex("Rectangular prism 8 cm by 3 cm by 5 cm", vec![("length", F(8.0)), ("width", F(3.0)), ("height", F(5.0))]),
             ex("Cube with 6-inch edges", vec![("length", F(6.0)), ("width", F(6.0)), ("height", F(6.0)), ("unit", s("in"))]),
-            ex("Triangular prism with a right triangle base", vec![("base", s("Right triangle")), ("sits", s("Lying on its side")), ("length", F(6.0)), ("width", F(4.0)), ("height", F(4.0))]),
-            ex("Hexagonal prism with its apothem", vec![("base", s("Regular polygon")), ("n", I(6)), ("side", F(4.0)), ("height", F(4.0)), ("apothem_lab", s("Measure"))]),
-            ex("Rectangular prism with a missing height x", vec![("height_lab", s("Text")), ("height_label", s("x"))]),
-            ex("Oblique prism with its lean", vec![("stands", s("Oblique")), ("lean", F(2.0)), ("lean_lab", s("Measure"))]),
+            ex("Triangular prism with a right triangle base", vec![("base", s("Right triangle")), ("sits", s("Lying on its side")), ("length", F(6.0)), ("width", F(8.0)), ("height", F(12.0)), ("hyp_lab", s("Measure"))]),
+            ex("Hexagonal prism with its apothem", vec![("base", s("Regular polygon")), ("n", I(6)), ("side", F(4.0)), ("height", F(10.0)), ("apothem_lab", s("Measure"))]),
+            ex("Rectangular prism with a missing height x", vec![("length", F(12.0)), ("width", F(4.0)), ("height", F(5.0)), ("height_lab", s("Text")), ("height_label", s("x")), ("unit", s("ft"))]),
+            ex("Oblique prism with its lean", vec![("stands", s("Oblique")), ("lean", F(2.0))]),
         ],
         "pyramid" => vec![
-            ex("Square pyramid with slant height 10 cm", vec![("length", F(12.0)), ("width", F(12.0)), ("given", s("Slant height")), ("slant", F(10.0)), ("show_slant", B(true)), ("height_lab", s("None"))]),
+            ex("Square pyramid with slant height 10 cm", vec![("length", F(12.0)), ("width", F(12.0)), ("slant", s("10")), ("slant_lab", s("Measure")), ("height_lab", s("None")), ("show_height", B(false))]),
             ex("Rectangular pyramid 8 cm by 6 cm with height 9 cm", vec![("length", F(8.0)), ("width", F(6.0)), ("height", F(9.0))]),
-            ex("Hexagonal pyramid with its apothem and height", vec![("base", s("Regular polygon")), ("n", I(6)), ("side", F(4.0)), ("height", F(7.0)), ("apothem_lab", s("Measure"))]),
+            ex("Hexagonal pyramid with its apothem and height", vec![("base", s("Regular polygon")), ("n", I(6)), ("side", F(4.0)), ("height", F(9.0)), ("apothem_lab", s("Measure")), ("depth", s("Left")), ("hidden", B(false))]),
             ex("Pyramid with named corners", vec![("names", B(true))]),
         ],
         _ => return examples_b_plots(id),
@@ -2516,6 +3911,115 @@ mod examples_b_tests {
                 super::super::to_png(&svg, 0.3).unwrap_or_else(|er| panic!("{id}/{}: {er}", e.name));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod solids_measures_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn def(id: &str) -> FigureDef { defs().into_iter().find(|d| d.id == id).unwrap() }
+    fn with(id: &str, set: &[(&str, Value)]) -> Params {
+        let mut p = Params::defaults(&(def(id).params)());
+        for (k, v) in set { p.0.insert(k.to_string(), v.clone()); }
+        p
+    }
+    fn comp(id: &str, p: &Params, key: &str) -> String {
+        computed(id, p).into_iter().find(|(k, _)| *k == key).map(|(_, v)| v).unwrap_or_else(|| panic!("{id}: no computed {key}"))
+    }
+    /// An old saved spec loaded through the real load path (defaults + spec + migrate).
+    fn load(id: &str, old: serde_json::Value) -> Params {
+        let spec = crate::model::FigureSpec { id: id.into(), params: old.as_object().unwrap().clone().into_iter().collect() };
+        crate::figuresui::params_from_spec(&def(id), &spec)
+    }
+    fn svg_has(id: &str, p: &Params, text: &str) -> bool { (def(id).render)(p).contains(text) }
+    fn s(v: &str) -> Value { Value::S(v.into()) }
+
+    #[test]
+    fn solvers_match_the_reference() {
+        assert_eq!(comp("sphere", &with("sphere", &[]), "diameter"), "6");
+        // cylinder: slanted edge worked out (4.5), or given -> height worked out (sqrt 21 = 4.6)
+        let p = with("cylinder", &[("stands", s("Oblique")), ("lean", Value::F(2.0))]);
+        assert_eq!(comp("cylinder", &p, "edge"), "4.5");
+        let p = with("cylinder", &[("stands", s("Oblique")), ("lean", Value::F(2.0)), ("edge", s("5"))]);
+        assert_eq!(comp("cylinder", &p, "height"), "4.6");
+        assert!((edge_height(&p, true) - 21f64.sqrt()).abs() < 1e-9);
+        assert!(svg_has("cylinder", &with("cylinder", &[("stands", s("Oblique")), ("lean", Value::F(2.0)), ("edge", s("5")), ("edge_lab", s("Measure"))]), "5 cm"));
+        // cone: slant 5 worked out; slant 6 given -> height 5.2; diameter 10 + slant 13 -> height 12
+        assert_eq!(comp("cone", &with("cone", &[]), "slant"), "5");
+        assert_eq!(comp("cone", &with("cone", &[("slant", s("6"))]), "height"), "5.2");
+        let p = with("cone", &[("radius", Value::F(5.0)), ("slant", s("13"))]);
+        assert!((cone_height(&p) - 12.0).abs() < 1e-9);
+        // a slant height no longer than the radius cannot be used: the typed height stays
+        assert_eq!(cone_height(&with("cone", &[("slant", s("2"))])), 4.0);
+        // pyramid: 6x6 h4 -> slant 5; width 8 + slant 5 -> height 3; hexagon side 4 h4 -> 5.3, apothem 3.5
+        assert_eq!(comp("pyramid", &with("pyramid", &[]), "slant"), "5");
+        assert!((pyramid_height(&with("pyramid", &[("width", Value::F(8.0)), ("slant", s("5"))])) - 3.0).abs() < 1e-9);
+        let hex = with("pyramid", &[("base", s("Regular polygon")), ("n", Value::I(6))]);
+        assert_eq!(comp("pyramid", &hex, "slant"), "5.3");
+        assert_eq!(comp("pyramid", &hex, "apothem"), "3.5");
+        // expressions are accepted as typed values
+        assert!((pyramid_height(&with("pyramid", &[("slant", s("sqrt(25)"))])) - 4.0).abs() < 1e-9);
+        // prism: right triangle 6 x 4 -> hypotenuse 7.2, isosceles -> slanted side 5, hexagon apothem 3.5
+        assert_eq!(comp("prism", &with("prism", &[("base", s("Right triangle")), ("length", Value::F(6.0)), ("width", Value::F(4.0))]), "hyp"), "7.2");
+        assert_eq!(comp("prism", &with("prism", &[("base", s("Isosceles triangle")), ("length", Value::F(6.0)), ("width", Value::F(4.0))]), "hyp"), "5");
+        assert_eq!(comp("prism", &with("prism", &[("base", s("Regular polygon")), ("n", Value::I(6)), ("side", Value::F(4.0))]), "apothem"), "3.5");
+        assert_eq!(comp("prism", &with("prism", &[("stands", s("Oblique")), ("lean", Value::F(2.0))]), "edge"), "4.5");
+    }
+
+    #[test]
+    fn cards_name_real_params() {
+        for id in ["cylinder", "cone", "sphere", "pyramid", "prism"] {
+            let card = measures(id).unwrap_or_else(|| panic!("{id}: no card"));
+            let pdefs = (def(id).params)();
+            let has = |k: &str| pdefs.iter().any(|d| d.key == k);
+            let comp: Vec<&str> = computed(id, &Params::defaults(&pdefs)).into_iter().map(|(k, _)| k).collect();
+            for r in card.groups.iter().flat_map(|g| g.rows.iter()) {
+                assert!(has(r.label_key) && has(r.text_key), "{id}/{}: label keys", r.name);
+                if r.equals.is_some() { assert!(comp.contains(&r.value_key), "{id}/{}: linked row not computed", r.name); } else { assert!(has(r.value_key), "{id}/{}: value key", r.name); }
+            }
+        }
+    }
+
+    #[test]
+    fn new_specs_round_trip_unchanged() {
+        for id in ["cylinder", "cone", "sphere", "pyramid", "prism"] {
+            let p = with(id, &[("stands", s("Oblique")), ("slant", s("7")), ("edge", s("6")), ("d_lab", s("Text"))]);
+            let p2 = crate::figuresui::params_from_spec(&def(id), &crate::figuresui::spec_for(id, &p));
+            for (k, v) in &p.0 { if (def(id).params)().iter().any(|d| d.key == k) { assert_eq!(p2.0.get(k), Some(v), "{id}: {k}"); } }
+        }
+    }
+
+    #[test]
+    fn old_specs_migrate() {
+        // cone: diameter + slant height given instead of the height
+        let p = load("cone", json!({"radius": 5.0, "height": 4.0, "measure": "Diameter", "given": "Slant height", "slant": 13.0, "show_slant": true, "r_lab": "Measure", "l_lab": "Measure", "show_height": false, "stands": "Right", "lean_lab": "None"}));
+        assert_eq!((p.s("slant"), p.s("d_lab"), p.s("r_lab"), p.s("l_lab")), ("13", "Measure", "None", "Measure"));
+        assert!((cone_height(&p) - 12.0).abs() < 1e-9);
+        assert!(svg_has("cone", &p, "10 cm") && svg_has("cone", &p, "13 cm"));
+        // cone: height given, slant label switched off
+        let p = load("cone", json!({"given": "Height", "slant": 5.0, "show_slant": false, "l_lab": "Measure", "stands": "Right"}));
+        assert_eq!((p.s("slant"), p.s("l_lab")), ("", "None"));
+        // cylinder: diameter 12 in
+        let p = load("cylinder", json!({"radius": 6.0, "measure": "Diameter", "r_lab": "Measure", "unit": "in", "stands": "Right", "lean_lab": "None"}));
+        assert_eq!((p.s("d_lab"), p.s("r_lab")), ("Measure", "None"));
+        assert!(svg_has("cylinder", &p, "12 in") && !svg_has("cylinder", &p, ">6 in"));
+        // sphere: diameter with a text label
+        let p = load("sphere", json!({"measure": "Diameter", "r_lab": "Text", "r_label": "d"}));
+        assert_eq!((p.s("d_lab"), p.s("d_label"), p.s("r_lab")), ("Text", "d", "None"));
+        // pyramid: slant height given, hide list
+        let p = load("pyramid", json!({"length": 12.0, "width": 12.0, "given": "Slant height", "slant": 10.0, "show_slant": true, "slant_lab": "Measure", "height_lab": "None", "hide": "width", "stands": "Right"}));
+        assert_eq!((p.s("slant"), p.s("slant_lab"), p.s("width_lab"), p.s("lean_lab")), ("10", "Measure", "None", "None"));
+        assert!((pyramid_height(&p) - 8.0).abs() < 1e-9);
+        assert!(svg_has("pyramid", &p, "10 cm"));
+        // pyramid made before the slant height could be given: no slant line
+        let p = load("pyramid", json!({"show_slant": false, "slant_lab": "Measure", "stands": "Right", "lean_lab": "Measure"}));
+        assert_eq!((p.s("slant"), p.s("slant_lab"), p.s("lean_lab")), ("", "None", "Measure"));
+        // prism: hide list + oblique without a lean label (pre-label spec)
+        let p = load("prism", json!({"hide": "height, hypotenuse", "stands": "Oblique", "lean": 2.0}));
+        assert_eq!((p.s("height_lab"), p.s("hyp_lab"), p.s("lean_lab")), ("None", "None", "None"));
+        assert!(!svg_has("prism", &p, ">4 cm<"));
     }
 }
 
@@ -3283,52 +4787,10 @@ fn composite_render(p: &Params) -> String {
 
 /// "Start from an example" entries for math-a's flat-shape figures (mirrors mathfigures.com).
 fn examples_a(id: &str) -> Option<Vec<super::Example>> {
-    use Value::{B, F, I, S};
+    use Value::{I, S};
     let s = |v: &str| S(v.to_string());
     let ex = |name: &'static str, params: Vec<(&'static str, Value)>| super::Example { name, params };
     let v = match id {
-        "triangle" => vec![
-            ex("Right triangle with legs 3 and 4: find the hypotenuse", vec![("mode", s("Right triangle (legs AB, BC)")), ("ab", F(4.0)), ("bc", F(3.0)), ("sides", s("AB, BC")), ("angles", s("")), ("unknown", s("CA"))]),
-            ex("30-60-90 triangle with hypotenuse 10", vec![("mode", s("Two angles and a side not between (AAS: A, B and BC)")), ("ang_a", F(30.0)), ("ang_b", F(90.0)), ("bc", F(5.0)), ("sides", s("CA")), ("angles", s("A, C")), ("unknown", s("BC")), ("side_text", s("AB = y"))]),
-            ex("SOHCAHTOA: find the side opposite a 35\u{b0} angle", vec![("mode", s("Two angles and the side between (ASA)")), ("ab", F(10.0)), ("ang_a", F(35.0)), ("ang_b", F(90.0)), ("sides", s("AB")), ("angles", s("A")), ("unknown", s("BC"))]),
-            ex("Law of cosines: two sides and the angle between them", vec![("mode", s("Two sides and the angle between (SAS)")), ("ab", F(9.0)), ("ca", F(7.0)), ("ang_a", F(50.0)), ("sides", s("AB, CA")), ("angles", s("A")), ("unknown", s("BC"))]),
-            ex("Isosceles triangle with its height drawn, for area", vec![("mode", s("Isosceles (base AB, legs BC = CA)")), ("ab", F(10.0)), ("bc", F(13.0)), ("height", s("From C")), ("sides", s("AB")), ("angles", s("")), ("unknown", s(""))]),
-        ],
-        "rectangle" => vec![
-            ex("Rectangle 12 cm by 5 cm for area and perimeter", vec![("ab", F(12.0)), ("bc", F(5.0)), ("unit", s("cm"))]),
-            ex("Rectangle with a diagonal labeled x", vec![("ab", F(8.0)), ("bc", F(6.0)), ("diagonals", s("AC only")), ("unknown", s("AC"))]),
-            ex("Rectangle with sides labeled 2x + 3 and x", vec![("ab", F(10.0)), ("bc", F(4.0)), ("side_text", s("AB = 2x + 3; BC = x"))]),
-            ex("Square with its diagonals drawn", vec![("kind", s("Square")), ("ab", F(6.0)), ("diagonals", s("Drawn")), ("sides", s("AB")), ("marks", s("all 1"))]),
-        ],
-        "parallelogram" => vec![
-            ex("Parallelogram with base and height for area", vec![("ab", F(10.0)), ("da", F(6.0)), ("ang_a", F(60.0)), ("height", s("Onto AB (from D)")), ("sides", s("AB")), ("angles", s(""))]),
-            ex("Parallelogram: find the missing angles", vec![("ang_a", F(65.0)), ("sides", s("")), ("angles", s("A")), ("side_text", s("B = x; C = y; D = z"))]),
-            ex("Rhombus with its diagonals drawn", vec![("kind", s("Rhombus")), ("ab", F(5.0)), ("ang_a", F(70.0)), ("diagonals", s("Drawn")), ("sides", s("AB")), ("angles", s("")), ("marks", s("all 1"))]),
-        ],
-        "trapezoid" => vec![
-            ex("Isosceles trapezoid with bases and height for area", vec![("kind", s("Isosceles trapezoid")), ("ab", F(12.0)), ("cd", F(6.0)), ("height", F(4.0)), ("show_height", B(true)), ("height_label", s("Measure")), ("sides", s("AB, CD")), ("unknown", s(""))]),
-            ex("Right trapezoid: find the slanted side", vec![("kind", s("Right trapezoid")), ("ab", F(12.0)), ("cd", F(7.0)), ("height", F(5.0)), ("sides", s("AB, CD, DA")), ("unknown", s("BC"))]),
-            ex("Trapezoid with an angle and its height", vec![("kind", s("Trapezoid")), ("ab", F(11.0)), ("cd", F(6.0)), ("height", F(4.0)), ("offset", F(3.0)), ("show_height", B(true)), ("angles", s("A")), ("sides", s("AB, CD")), ("unknown", s(""))]),
-            ex("Isosceles trapezoid with its diagonals drawn", vec![("kind", s("Isosceles trapezoid")), ("ab", F(12.0)), ("cd", F(6.0)), ("height", F(5.0)), ("diagonals", s("Drawn")), ("sides", s("AB, CD")), ("unknown", s("")), ("marks", s("BC 1, DA 1"))]),
-        ],
-        "kite" => vec![
-            ex("Kite with diagonals 6 and 12 for area", vec![("ab", F(4.2426)), ("da", F(9.4868)), ("ang_b", F(90.0)), ("diagonals", s("Drawn and labelled")), ("sides", s("")), ("angles", s("")), ("dec", I(0))]),
-            ex("Kite: find the missing angle", vec![("ang_b", F(110.0)), ("angles", s("B, D")), ("sides", s("")), ("side_text", s("A = x"))]),
-            ex("Kite with its line of symmetry", vec![("diagonals", s("BD only")), ("sides", s("AB, DA")), ("marks", s("AB 1, BC 1, CD 2, DA 2"))]),
-        ],
-        "regular-polygon" => vec![
-            ex("Regular hexagon with its apothem, for area", vec![("n", I(6)), ("value", F(8.0)), ("radius", B(false)), ("apothem", B(true)), ("vertices", B(false)), ("ticks", B(false))]),
-            ex("Regular pentagon: find the interior angle", vec![("n", I(5)), ("radius", B(false)), ("center_dot", B(false)), ("sides", s("")), ("side_text", s("A = x")), ("arcs", s("all 1")), ("ticks", B(true))]),
-            ex("Regular octagon split into triangles by its radii", vec![("n", I(8)), ("all_radii", B(true)), ("radius", B(false)), ("sides", s(""))]),
-            ex("Regular decagon with congruence marks", vec![("n", I(10)), ("radius", B(false)), ("center_dot", B(false)), ("marks", s("all 1")), ("arcs", s("all 1")), ("sides", s(""))]),
-        ],
-        "angles" => vec![
-            ex("Single angle of 60\u{b0}", vec![("mode", s("Single angle")), ("angle", F(60.0)), ("unknown", s(""))]),
-            ex("Angles on a straight line: find x", vec![("mode", s("Angles on a straight line")), ("angle", F(125.0)), ("unknown", s("2"))]),
-            ex("Vertical angles", vec![("mode", s("Vertical angles")), ("angle", F(50.0)), ("unknown", s("3")), ("hide", s("2, 4"))]),
-            ex("Angles around a point with expressions", vec![("mode", s("Angles around a point")), ("angle", F(100.0)), ("angle2", F(120.0)), ("unknown", s("")), ("sector_text", s("3 = 2x + 20"))]),
-            ex("Complementary angles", vec![("mode", s("Custom rays")), ("rays", s("0, 35, 90")), ("unknown", s("2"))]),
-        ],
         "parallel-lines" => vec![
             ex("Corresponding angles", vec![("marked", s("2, 6")), ("unknown", s("6"))]),
             ex("Alternate interior angles", vec![("marked", s("4, 6")), ("unknown", s("6"))]),
@@ -3372,7 +4834,41 @@ pub(super) fn render_for(id: &str) -> Option<fn(&Params) -> String> {
 /// "Start from an example" entries for this subject's figures. Solids and plots (math-b) live in
 /// `examples_b`; flat shapes (math-a) chain their own `examples_a` here with `.or_else`.
 pub fn examples(id: &str) -> Option<Vec<super::Example>> {
-    examples_a(id).or_else(|| examples_b(id))
+    flat::examples(id).or_else(|| examples_a(id)).or_else(|| examples_b(id))
+}
+
+/// The Measures card of the figure (none yet): rows for the shape's sides/angles/dimensions.
+pub fn measures(id: &str) -> Option<super::MeasureCard> {
+    use super::{MeasureCard, MeasureGroup, MeasureRow};
+    let row = |name, value_key, label_key, text_key| MeasureRow { name, name_key: None, value_key, unit: "$unit", label_key, text_key, tick_key: None, equals: None };
+    match id {
+        // solids (meas-b): Shape card rows
+        "cylinder" | "cone" | "sphere" | "pyramid" | "prism" => measures_solid(id),
+        // flat shapes, angles and parallel lines (meas-a)
+        "triangle" | "rectangle" | "parallelogram" | "trapezoid" | "kite" | "regular-polygon" | "angles" | "parallel-lines" => flat::card(id),
+        _ => {
+            let _ = (row, MeasureCard { title: "", help: "", groups: Vec::<MeasureGroup>::new() });
+            None
+        }
+    }
+}
+
+/// (value_key, text) for every measure the figure worked out from the typed ones.
+pub fn computed(id: &str, p: &Params) -> Vec<(&'static str, String)> {
+    match id {
+        "cylinder" | "cone" | "sphere" | "pyramid" | "prism" => computed_solid(id, p),
+        "triangle" | "rectangle" | "parallelogram" | "trapezoid" | "kite" | "regular-polygon" | "angles" | "parallel-lines" => flat::computed(id, p).unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+/// Maps a saved spec's legacy keys onto the reworked inputs.
+pub fn migrate(id: &str, spec: &crate::model::FigureSpec, p: &mut Params) {
+    match id {
+        "cylinder" | "cone" | "sphere" | "pyramid" | "prism" => migrate_solid(id, spec, p),
+        "triangle" | "rectangle" | "parallelogram" | "trapezoid" | "kite" | "regular-polygon" | "angles" | "parallel-lines" => flat::migrate(id, spec, p),
+        _ => {}
+    }
 }
 
 pub fn handles(id: &str, p: &Params, size: (f64, f64)) -> Option<Vec<interact::Handle>> {
@@ -3458,49 +4954,59 @@ mod tests {
     }
     #[test]
     fn polys() {
-        run("triangle", "sss", &[("mode", s("Three sides (SSS)")), ("ab", f(7.0)), ("bc", f(5.0)), ("ca", f(6.0)), ("height", s("From C")), ("angles", s("A, B, C")), ("unit", s("cm")), ("unknown", s(""))]);
-        run("triangle", "obtuse-h", &[("mode", s("Two sides and the angle between (SAS)")), ("ab", f(8.0)), ("ca", f(5.0)), ("ang_a", f(120.0)), ("height", s("From C")), ("rotate", f(20.0))]);
-        run("triangle", "asa", &[("mode", s("Two angles and the side between (ASA)")), ("ab", f(9.0)), ("ang_a", f(40.0)), ("ang_b", f(70.0)), ("angles", s("A,B,C"))]);
-        run("triangle", "iso", &[("mode", s("Isosceles (base AB, legs BC = CA)")), ("ab", f(6.0)), ("bc", f(5.0))]);
-        run("rectangle", "sq", &[("kind", s("Square")), ("ab", f(4.0)), ("diagonals", s("Drawn and labelled")), ("unit", s("m"))]);
-        run("parallelogram", "rh", &[("kind", s("Rhombus")), ("height", s("Onto AB (from D)")), ("ang_a", f(110.0)), ("diagonals", s("Drawn"))]);
-        run("parallelogram", "h", &[("height", s("Onto AB (from D)")), ("ang_a", f(125.0))]);
-        run("trapezoid", "iso", &[("kind", s("Isosceles trapezoid")), ("show_height", b(true)), ("angles", s("A,B"))]);
-        run("trapezoid", "plain", &[("kind", s("Trapezoid")), ("show_height", b(true)), ("offset", f(3.0))]);
-        run("kite", "diag", &[("diagonals", s("Drawn")), ("angles", s("A,B,C,D"))]);
+        run("triangle", "sss", &[("m_a", s("")), ("m_b", s("")), ("m_ab", s("7")), ("m_bc", s("5")), ("m_ca", s("6")), ("height", s("From C")), ("a_lab", s("Measure")), ("b_lab", s("Measure")), ("c_lab", s("Measure")), ("unit", s("cm")), ("bc_lab", s("Measure"))]);
+        run("triangle", "obtuse-h", &[("m_a", s("120")), ("m_b", s("")), ("m_ab", s("8")), ("m_ca", s("5")), ("height", s("From C")), ("rotate", f(20.0))]);
+        run("triangle", "asa", &[("m_a", s("40")), ("m_b", s("70")), ("m_ab", s("9")), ("c_lab", s("Measure"))]);
+        run("triangle", "iso", &[("m_a", s("")), ("m_b", s("")), ("m_ab", s("6")), ("m_bc", s("5")), ("m_ca", s("5")), ("bc_ticks", s("1")), ("ca_ticks", s("1"))]);
+        run("triangle", "sqrt", &[("m_a", s("")), ("m_b", s("90")), ("m_ab", s("5")), ("m_bc", s("5")), ("ca_lab", s("Measure"))]);
+        run("rectangle", "sq", &[("kind", s("Square")), ("m_ab", s("4")), ("diagonals", s("Drawn and labelled")), ("unit", s("m"))]);
+        run("parallelogram", "rh", &[("kind", s("Rhombus")), ("height", s("Onto AB (from D)")), ("m_a", s("110")), ("diagonals", s("Drawn"))]);
+        run("parallelogram", "h", &[("height", s("Onto AB (from D)")), ("m_a", s("")), ("m_b", s("55"))]);
+        run("trapezoid", "iso", &[("kind", s("Isosceles trapezoid")), ("m_da", s("")), ("m_h", s("5")), ("show_height", b(true)), ("a_lab", s("Measure")), ("b_lab", s("Measure"))]);
+        run("trapezoid", "plain", &[("kind", s("Trapezoid")), ("m_da", s("")), ("m_a", s("60")), ("m_h", s("5")), ("show_height", b(true))]);
+        run("kite", "diag", &[("diagonals", s("Drawn")), ("a_lab", s("Measure")), ("c_lab", s("Measure")), ("d_lab", s("Measure"))]);
         run("regular-polygon", "n8", &[("n", i(8)), ("apothem", b(true)), ("from", s("Radius")), ("value", f(5.0))]);
-        run("regular-polygon", "n3", &[("n", i(3)), ("sides", s("AB, BC, CA")), ("angles", s("A"))]);
+        run("regular-polygon", "n3", &[("n", i(3)), ("side_lab", s("Measure")), ("ang_lab", s("Measure"))]);
         run("regular-polygon", "n17", &[("n", i(17)), ("radius", b(false))]);
     }
     #[test]
     fn angle_figs() {
-        for m in ["Single angle", "Angles on a straight line", "Angles around a point", "Vertical angles", "Custom rays"] {
-            run("angles", &m.split(' ').next().unwrap().to_lowercase(), &[("mode", s(m)), ("angle", f(35.0)), ("unknown", s("2"))]);
-        }
-        run("angles", "right", &[("mode", s("Angles on a straight line")), ("angle", f(90.0))]);
+        run("angles", "single", &[("ray2", s("35"))]);
+        run("angles", "straight", &[("ray2", s("35")), ("ray3", s("180")), ("unknown", s("2"))]);
+        run("angles", "around", &[("ray2", s("35")), ("ray3", s("145")), ("around", b(true)), ("unknown", s("2"))]);
+        run("angles", "vertical", &[("ray2", s("35")), ("ray1_line", s("Line")), ("ray2_line", s("Line")), ("ray2_style", s("Dashed"))]);
+        run("angles", "custom", &[("ray2", s("50")), ("ray3", s("130")), ("ray4", s("250"))]);
+        run("angles", "right", &[("ray2", s("90")), ("ray3", s("180"))]);
         run("parallel-lines", "num", &[("labels", s("Numbers")), ("marked", s("1,2,3,4,5,6,7,8")), ("angle", f(55.0))]);
-        run("parallel-lines", "three", &[("lines", i(3)), ("angle", f(110.0)), ("marked", s("2, 6, 10")), ("unknown", s("10"))]);
+        run("parallel-lines", "three", &[("lines", i(3)), ("angle", f(110.0)), ("marked", s("2, 6, 10")), ("unknown", s("10")), ("t_arrows", s("2")), ("n_style", s("Dashed"))]);
     }
     #[test]
     fn flat_shapes_parity() {
-        run("triangle", "ssa", &[("mode", s("Two sides and an angle not between (SSA: AB, BC and A)")), ("ab", f(10.0)), ("bc", f(7.0)), ("ang_a", f(40.0)), ("other", b(true)), ("height", s("From all three")), ("bottom", s("BC")), ("flip", b(true))]);
-        run("triangle", "aas", &[("mode", s("Two angles and a side not between (AAS: A, B and BC)")), ("ang_a", f(35.0)), ("ang_b", f(95.0)), ("height_label", s("Text"))]);
-        run("triangle", "bad-ssa", &[("mode", s("Two sides and an angle not between (SSA: AB, BC and A)")), ("ab", f(10.0)), ("bc", f(2.0))]);
-        run("rectangle", "diag", &[("diagonals", s("AC only")), ("side_text", s("AC = x; AB = 2x + 3")), ("marks", s("all 1")), ("label_size", s("Large")), ("bottom", s("BC"))]);
+        run("triangle", "ssa", &[("m_a", s("40")), ("m_b", s("")), ("m_ab", s("10")), ("m_bc", s("7")), ("other", b(true)), ("height", s("From all three")), ("bottom", s("BC")), ("flip", b(true))]);
+        run("triangle", "aas", &[("m_a", s("35")), ("m_b", s("95")), ("m_ab", s("")), ("m_bc", s("5")), ("height", s("From A")), ("height_label", s("Text"))]);
+        run("triangle", "bad-ssa", &[("m_a", s("40")), ("m_b", s("")), ("m_ab", s("10")), ("m_bc", s("2"))]);
+        run("rectangle", "diag", &[("diagonals", s("AC only")), ("ac_lab", s("Text")), ("ac_label", s("x")), ("ab_lab", s("Text")), ("ab_label", s("2x + 3")), ("ab_ticks", s("1")), ("cd_ticks", s("1")), ("label_size", s("Large")), ("bottom", s("BC"))]);
         run("parallelogram", "h2", &[("height", s("Onto AB (from D and C)")), ("diagonals", s("BD only")), ("line_style", s("Dotted")), ("arrow_marks", s("none"))]);
-        run("trapezoid", "hc", &[("kind", s("Trapezoid")), ("show_height", b(true)), ("hfrom", s("D and C")), ("arcs", s("A 2, B 1"))]);
+        run("trapezoid", "hc", &[("kind", s("Trapezoid")), ("m_da", s("")), ("m_a", s("65")), ("m_h", s("5")), ("show_height", b(true)), ("hfrom", s("D and C")), ("a_arcs", s("2")), ("b_arcs", s("1"))]);
         run("kite", "h", &[("height", s("From D and C to AB")), ("diagonals", s("Drawn")), ("bottom", s("CD"))]);
         run("regular-polygon", "all", &[("n", i(9)), ("all_radii", b(true)), ("apothem", b(true)), ("center_name", s("O")), ("apothem_label", s("Text")), ("radius_label", s("None")), ("flip", b(true))]);
-        run("angles", "turn", &[("mode", s("Vertical angles")), ("turn", f(40.0)), ("ray_ends", s("Points")), ("sector_text", s("1 = 2x")), ("shade", b(false))]);
+        run("angles", "turn", &[("ray2", s("50")), ("ray1_line", s("Line")), ("ray2_line", s("Line")), ("turn", f(40.0)), ("ray_ends", s("Points")), ("sector_text", s("1 = 2x")), ("shade", b(false))]);
         run("parallel-lines", "two", &[("lines", i(3)), ("transversals", i(2)), ("turn", f(-20.0)), ("line_ends", s("Plain")), ("angle_text", s("14 = y")), ("marked", s("2, 14"))]);
         for pr in ["Rectangle", "Triangle", "Semicircle", "Circle"] { run("composite-shape", &pr.to_lowercase(), &[("preset", s(pr)), ("unit", s("m"))]); }
         for id in ["triangle", "rectangle", "parallelogram", "trapezoid", "kite", "regular-polygon", "angles", "parallel-lines", "composite-shape"] {
-            let exs = examples_a(id).expect(id);
+            let exs = examples(id).expect(id);
             assert!((3..=6).contains(&exs.len()), "{id}");
-            for e in exs { run(id, &format!("ex-{}", e.name.len()), &e.params); }
+            for e in exs {
+                run(id, &format!("ex-{}", e.name.len()), &e.params);
+                // every example solves (no message in place of the figure)
+                let d = defs().into_iter().find(|d| d.id == id).unwrap();
+                let mut p = Params::defaults(&(d.params)());
+                for (k, v) in &e.params { p.0.insert(k.to_string(), v.clone()); }
+                assert!(!(d.render)(&p).contains("Give ") && !(d.render)(&p).contains("would be"), "{id}: {}", e.name);
+            }
         }
         // handles still build for the new layouts
-        for (id, set) in [("triangle", vec![("flip", b(true))]), ("kite", vec![("bottom", s("AB"))]), ("parallel-lines", vec![("turn", f(30.0)), ("transversals", i(2))]), ("angles", vec![("turn", f(10.0))])] {
+        for (id, set) in [("triangle", vec![("flip", b(true))]), ("kite", vec![("bottom", s("AB"))]), ("parallel-lines", vec![("turn", f(30.0)), ("transversals", i(2))]), ("angles", vec![("turn", f(10.0))]), ("trapezoid", vec![]), ("rectangle", vec![]), ("parallelogram", vec![])] {
             let d = defs().into_iter().find(|d| d.id == id).unwrap();
             let mut p = Params::defaults(&(d.params)());
             for (k, v) in set { p.0.insert(k.to_string(), v); }
@@ -3513,11 +5019,11 @@ mod tests {
         run("prism", "iso", &[("base", s("Isosceles triangle"))]);
         run("prism", "hex", &[("base", s("Regular polygon")), ("n", i(6))]);
         run("prism", "oblique", &[("stands", s("Oblique"))]);
-        run("pyramid", "slant", &[("show_slant", b(true))]);
-        run("pyramid", "hex", &[("base", s("Regular polygon")), ("n", i(6)), ("stands", s("Oblique")), ("show_slant", b(true))]);
-        run("cylinder", "oblique", &[("stands", s("Oblique")), ("measure", s("Diameter"))]);
+        run("pyramid", "slant", &[("slant_lab", s("Measure"))]);
+        run("pyramid", "hex", &[("base", s("Regular polygon")), ("n", i(6)), ("stands", s("Oblique")), ("slant_lab", s("Measure"))]);
+        run("cylinder", "oblique", &[("stands", s("Oblique")), ("d_lab", s("Measure"))]);
         run("cone", "oblique", &[("stands", s("Oblique")), ("view", f(35.0))]);
-        run("sphere", "hemi", &[("draw", s("A hemisphere")), ("measure", s("Diameter"))]);
+        run("sphere", "hemi", &[("draw", s("A hemisphere")), ("d_lab", s("Measure")), ("r_lab", s("None"))]);
     }
     #[test]
     fn data_figs() {

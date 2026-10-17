@@ -101,6 +101,8 @@ pub struct App {
     pub figs: figuresui::FigUi,
     /// QA hook: scripted input (QUESHION_SCRIPT), see `raw_input_hook`.
     pub qa_steps: Vec<String>,
+    /// QA hook: QUESHION_SHOT=<file.png> saves a screenshot of this window's own contents and exits.
+    pub qa_shot: Option<(String, u32)>,
     pub qa_frame: u64,
 }
 
@@ -149,6 +151,7 @@ impl App {
             ai_hint: String::new(),
             import_name: String::new(),
             figs: Default::default(),
+            qa_shot: std::env::var("QUESHION_SHOT").ok().map(|p| (p, 0)),
             qa_steps: std::env::var("QUESHION_SCRIPT")
                 .map(|v| v.split(';').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect())
                 .unwrap_or_default(),
@@ -191,6 +194,17 @@ impl eframe::App for App {
     /// Test hook: QUESHION_SCRIPT="click:x,y;text:abc;key:Enter;wait" injects one input step
     /// every 10 frames after a 60 frame warm-up. Coordinates are egui points.
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        if let Some((path, _)) = &self.qa_shot {
+            for ev in &raw.events {
+                if let egui::Event::Screenshot { image, .. } = ev {
+                    let bytes: Vec<u8> = image.pixels.iter().flat_map(|c| c.to_array()).collect();
+                    if let Some(img) = image::RgbaImage::from_raw(image.width() as u32, image.height() as u32, bytes) {
+                        let _ = img.save(path);
+                    }
+                    std::process::exit(0);
+                }
+            }
+        }
         if self.qa_steps.is_empty() {
             return;
         }
@@ -259,6 +273,13 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         if !self.qa_steps.is_empty() {
             ctx.request_repaint_after(std::time::Duration::from_millis(16)); // keep the QUESHION_SCRIPT clock advancing
+        }
+        if let Some((_, frames)) = &mut self.qa_shot {
+            *frames += 1;
+            if *frames == 60 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+            }
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
         }
         // Sidebar + active screen + shell overlays (import dialog, help, toasts).
         self.draw_screen(&ctx);

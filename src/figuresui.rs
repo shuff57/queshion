@@ -118,6 +118,7 @@ pub fn params_from_spec(def: &FigureDef, spec: &FigureSpec) -> Params {
             p.0.insert(d.key.to_string(), v);
         }
     }
+    figures::migrate(def.id, spec, &mut p);
     p.normalize(&defs, false);
     p
 }
@@ -734,6 +735,21 @@ impl Workspace {
             if generated && self.sel.is_some() {
                 self.history_and_presets_ui(ui);
             }
+            if generated
+                && let Some(ls) = self.sel.and_then(|si| (reg()[si].params)().into_iter().find(|d| d.key == "label_size"))
+                && matches!(&ls.kind, Kind::Choice(o) if o.len() == 3)
+            {
+                let cur = self.params.s("label_size").to_string();
+                for (name, px) in [("Large", 16.0), ("Medium", 13.0), ("Small", 10.0)] {
+                    let sel = cur == name;
+                    let b = Button::new(RichText::new("A").size(px).color(if sel { theme::accent_col() } else { theme::muted_col() }))
+                        .fill(if sel { theme::accent_faded() } else { egui::Color32::TRANSPARENT })
+                        .stroke(Stroke::new(1.0, if sel { theme::accent_col() } else { theme::border() }));
+                    if ui.add(b).on_hover_text(format!("{name} labels")).clicked() {
+                        self.params.0.insert("label_size".to_string(), Value::S(name.to_string()));
+                    }
+                }
+            }
             if generated && chip_handles(ui, !self.hide_handles) {
                 self.hide_handles = !self.hide_handles;
             }
@@ -1012,30 +1028,184 @@ impl Workspace {
                 .show(ui, |ui| {
                     ui.spacing_mut().slider_width = 170.0;
                     let n_now = pdefs.iter().any(|d| d.key == "n").then(|| self.params.i("n"));
-                    for sec in figures::layout::sections(def.id, &pdefs, n_now) {
-                        ui.horizontal(|ui| {
-                            crate::kit::small_caps(ui, &sec.title);
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                let r = ui.add(Button::new(theme::muted("Reset").size(11.0)).frame(false));
-                                if r.on_hover_text("Reset this section to its defaults").clicked() {
-                                    for &i in &sec.items {
-                                        self.params.0.insert(pdefs[i].key.to_string(), pdefs[i].default.clone());
-                                    }
-                                }
-                            });
-                        });
-                        ui.add_space(2.0);
-                        for &i in &sec.items {
-                            param_control(ui, &pdefs[i], &mut self.params);
-                            ui.add_space(6.0);
+                    if let Some(card) = figures::measures_for(def.id) {
+                        self.measures_card(ui, def.id, &pdefs, &card);
+                    }
+                    let secs = figures::layout::sections(def.id, &pdefs, n_now);
+                    for (si_, sec) in secs.iter().enumerate() {
+                        let shown: Vec<usize> = sec.items.iter().copied().filter(|&i| !is_hidden(&pdefs, &self.params, &pdefs[i])).collect();
+                        if shown.is_empty() {
+                            continue;
                         }
-                        ui.add_space(8.0);
+                        let id = ui.make_persistent_id(("fig_sec", def.id, sec.title.as_str()));
+                        let summary = section_summary(&pdefs, &self.params, &sec.items);
+                        let mut reset = false;
+                        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, si_ < 2)
+                            .show_header(ui, |ui| {
+                                ui.vertical(|ui| {
+                                    ui.label(theme::strong(sec.title.as_str()).size(13.0));
+                                    if !summary.is_empty() {
+                                        ui.label(theme::muted(summary).size(11.0));
+                                    }
+                                });
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    let r = ui.add(Button::new(theme::muted("Reset").size(11.0)).frame(false));
+                                    reset = r.on_hover_text("Reset this section to its defaults").clicked();
+                                });
+                            })
+                            .body(|ui| {
+                                if !sec.help.is_empty() {
+                                    ui.label(theme::muted(sec.help.as_str()).size(11.0));
+                                    ui.add_space(4.0);
+                                }
+                                for &i in &shown {
+                                    param_control(ui, &pdefs[i], &mut self.params);
+                                    ui.add_space(6.0);
+                                }
+                                ui.add_space(4.0);
+                            });
+                        if reset {
+                            for &i in &sec.items {
+                                self.params.0.insert(pdefs[i].key.to_string(), pdefs[i].default.clone());
+                            }
+                        }
+                        ui.separator();
                     }
                 });
             ui.add_space(4.0);
             if ghost(ui, "Reset all").clicked() {
                 self.params = Params::defaults(&pdefs);
             }
+        });
+    }
+
+    /// The reference's "Measures" card: one row per side/angle/dimension with its value box and a
+    /// label popover. A typed value is "given"; an empty box shows the worked-out value in grey.
+    fn measures_card(&mut self, ui: &mut Ui, fig: &str, pdefs: &[ParamDef], card: &figures::MeasureCard) {
+        let computed: HashMap<&'static str, String> = figures::computed_for(fig, &self.params).into_iter().collect();
+        Frame::new()
+            .fill(theme::card())
+            .stroke(Stroke::new(1.0, theme::border()))
+            .corner_radius(CornerRadius::same(12))
+            .inner_margin(Margin::same(10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    crate::kit::small_caps(ui, card.title);
+                    if !card.help.is_empty() {
+                        ui.label(theme::muted("(?)").size(11.0)).on_hover_text(card.help);
+                    }
+                });
+                for g in &card.groups {
+                    if !g.title.is_empty() {
+                        ui.add_space(6.0);
+                        ui.label(theme::strong(g.title).size(11.0));
+                    }
+                    for r in &g.rows {
+                        self.measure_row(ui, pdefs, r, &computed);
+                        ui.add_space(2.0);
+                    }
+                }
+                // A solver message ("These measures don't fix the triangle.") from `computed`.
+                if let Some(msg) = computed.get("__msg") {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(msg.as_str()).color(theme::red()).size(11.5));
+                }
+            });
+        ui.add_space(8.0);
+    }
+
+    fn measure_row(&mut self, ui: &mut Ui, pdefs: &[ParamDef], r: &figures::MeasureRow, computed: &HashMap<&'static str, String>) {
+        let find = |k: &str| pdefs.iter().find(|d| d.key == k);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 5.0;
+            // Name: an editable vertex letter, or a fixed label.
+            if let Some(nk) = r.name_key {
+                let mut v = self.params.s(nk).to_string();
+                if ui.add(TextEdit::singleline(&mut v).desired_width(26.0)).changed() {
+                    self.params.0.insert(nk.to_string(), Value::S(v.chars().take(3).collect()));
+                }
+                ui.label(theme::muted(r.name).size(12.0));
+            } else {
+                // egui's bundled font has no "∠"; spell it out.
+                let nm = if r.name.trim() == "∠" { "angle" } else { r.name };
+                ui.add_sized([40.0, 20.0], egui::Label::new(RichText::new(nm).size(12.0).italics()));
+            }
+            // Value.
+            let unit_txt: String = if r.unit == "$unit" { self.params.s("unit").to_string() } else { r.unit.to_string() };
+            let mut shown = String::new();
+            if let Some(eq) = r.equals {
+                ui.add_sized([88.0, 20.0], egui::Label::new(theme::muted(format!("= {eq}")).size(12.0)));
+                shown = computed.get(r.value_key).cloned().unwrap_or_default();
+            } else {
+                match find(r.value_key).map(|d| &d.kind) {
+                    Some(Kind::Float { min, max, step }) => {
+                        let mut v = self.params.f(r.value_key);
+                        if ui.add(egui::DragValue::new(&mut v).speed(*step).range(*min..=*max).max_decimals(3)).changed() {
+                            self.params.set_f(r.value_key, v);
+                        }
+                        shown = fmt_measure(v);
+                    }
+                    Some(Kind::Int { min, max }) => {
+                        let mut v = self.params.i(r.value_key);
+                        if ui.add(egui::DragValue::new(&mut v).range(*min..=*max)).changed() {
+                            self.params.set_i(r.value_key, v);
+                        }
+                        shown = v.to_string();
+                    }
+                    _ => {
+                        let mut v = self.params.s(r.value_key).to_string();
+                        let hint = computed.get(r.value_key).cloned().unwrap_or_default();
+                        if ui.add(TextEdit::singleline(&mut v).hint_text(hint.clone()).desired_width(88.0)).changed() {
+                            self.params.0.insert(r.value_key.to_string(), Value::S(v.clone()));
+                        }
+                        shown = if v.trim().is_empty() { hint } else { v };
+                    }
+                }
+                if !unit_txt.is_empty() {
+                    ui.label(theme::muted(unit_txt.as_str()).size(11.0));
+                }
+            }
+            // Label button + popover (a row with no label key has none).
+            if r.label_key.is_empty() {
+                return;
+            }
+            let mode = self.params.s(r.label_key).to_string();
+            let txt = match mode.as_str() {
+                "Text" => self.params.s(r.text_key).to_string(),
+                "None" => "None".to_string(),
+                _ => format!("{shown}{}", if shown.is_empty() { String::new() } else { if unit_txt == "°" || unit_txt == "%" { unit_txt.clone() } else { format!(" {unit_txt}").trim_end().to_string() } }),
+            };
+            let btn = ui.add(Button::new(RichText::new(if txt.trim().is_empty() { "—".to_string() } else { txt }).size(12.0)).min_size(Vec2::new(78.0, 24.0)));
+            egui::Popup::menu(&btn).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+                ui.set_min_width(190.0);
+                ui.label(theme::strong(format!("Label at {}", r.name.trim())).size(12.0));
+                if let Some(Kind::Choice(opts)) = find(r.label_key).map(|d| &d.kind) {
+                    let mut cur = mode.clone();
+                    segmented(ui, opts, &mut cur);
+                    if cur != mode {
+                        self.params.0.insert(r.label_key.to_string(), Value::S(cur));
+                    }
+                }
+                if self.params.s(r.label_key) == "Text" {
+                    let mut t = self.params.s(r.text_key).to_string();
+                    if ui.add(TextEdit::singleline(&mut t).desired_width(170.0)).changed() {
+                        self.params.0.insert(r.text_key.to_string(), Value::S(t));
+                    }
+                }
+                if let Some(tk) = r.tick_key
+                    && let Some(Kind::Choice(opts)) = find(tk).map(|d| &d.kind)
+                {
+                    ui.add_space(4.0);
+                    ui.label(theme::strong(find(tk).map(|d| d.label).unwrap_or("Marks")).size(12.0));
+                    let before = self.params.s(tk).to_string();
+                    let mut cur = before.clone();
+                    segmented(ui, opts, &mut cur);
+                    if cur != before {
+                        self.params.0.insert(tk.to_string(), Value::S(cur));
+                    }
+                }
+            });
         });
     }
 
@@ -1165,6 +1335,83 @@ fn swatch(hex: &str) -> egui::Color32 {
 }
 
 /// Control auto-built from one ParamDef.
+/// Hides a text box whose Text / Blank line / None choice isn't on "Text" (the reference only
+/// shows the box when it is needed). Pairs: `k` with `k_mode`, `k_label` with `k_lab`, `k_text` with `k`.
+fn is_hidden(defs: &[ParamDef], p: &Params, pd: &ParamDef) -> bool {
+    if !matches!(pd.kind, Kind::Text | Kind::Long) {
+        return false;
+    }
+    let k = pd.key;
+    let mut cands: Vec<String> = vec![format!("{k}_mode")];
+    if let Some(b) = k.strip_suffix("_label") {
+        cands.push(format!("{b}_lab"));
+        cands.push(format!("{b}_mode"));
+    }
+    if let Some(b) = k.strip_suffix("_text") {
+        cands.push(b.to_string());
+        cands.push(format!("{b}_mode"));
+    }
+    cands.iter().any(|c| {
+        defs.iter().any(|d| d.key == c.as_str() && matches!(&d.kind, Kind::Choice(o) if o.contains(&"Text")) && p.s(d.key) != "Text")
+    })
+}
+
+/// A short live summary under a section header: the first few meaningful values.
+fn section_summary(defs: &[ParamDef], p: &Params, items: &[usize]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for &i in items {
+        let d = &defs[i];
+        if is_hidden(defs, p, d) {
+            continue;
+        }
+        let part = match (&d.kind, p.0.get(d.key)) {
+            (Kind::Choice(_), Some(Value::S(v))) if !v.is_empty() => Some(v.clone()),
+            (Kind::Text, Some(Value::S(v))) if !v.trim().is_empty() => Some(v.chars().take(18).collect()),
+            (Kind::Bool, Some(Value::B(true))) => Some(d.label.split(['(', ':']).next().unwrap_or(d.label).trim().to_lowercase()),
+            (Kind::Float { .. }, Some(Value::F(v))) => Some(format!("{} {}", short_label(d.label), (v * 100.0).round() / 100.0)),
+            (Kind::Int { .. }, Some(Value::I(v))) => Some(format!("{} {}", short_label(d.label), v)),
+            _ => None,
+        };
+        if let Some(t) = part {
+            parts.push(t);
+        }
+        if parts.len() >= 3 {
+            break;
+        }
+    }
+    parts.join(" · ")
+}
+
+fn fmt_measure(v: f64) -> String {
+    let s = format!("{:.3}", v);
+    s.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+/// "Vector 1 magnitude" -> "magnitude"; "Number of vectors (1-4)" -> "number of vectors".
+fn short_label(l: &str) -> String {
+    let base = l.split(['(', ':', ',']).next().unwrap_or(l).trim();
+    let words: Vec<&str> = base.split_whitespace().collect();
+    let keep = if words.len() > 3 { &words[words.len() - 2..] } else { &words[..] };
+    keep.join(" ").to_lowercase()
+}
+
+/// Short choices (<= 4 options, short labels) as one row of buttons, like the reference.
+fn segmented(ui: &mut Ui, opts: &[&'static str], cur: &mut String) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 3.0;
+        for o in opts {
+            let sel = cur == o;
+            let b = Button::new(RichText::new(*o).size(12.0).color(if sel { theme::accent_col() } else { theme::muted_col() }))
+                .fill(if sel { theme::accent_faded() } else { egui::Color32::TRANSPARENT })
+                .stroke(Stroke::new(1.0, if sel { theme::accent_col() } else { theme::border() }))
+                .corner_radius(CornerRadius::same(8));
+            if ui.add(b).clicked() {
+                *cur = o.to_string();
+            }
+        }
+    });
+}
+
 fn param_control(ui: &mut Ui, pd: &ParamDef, p: &mut Params) {
     match &pd.kind {
         Kind::Float { min, max, step } => {
@@ -1221,14 +1468,18 @@ fn param_control(ui: &mut Ui, pd: &ParamDef, p: &mut Params) {
         Kind::Choice(opts) => {
             ui.label(theme::muted(pd.label).size(11.0));
             let mut cur = p.s(pd.key).to_string();
-            ComboBox::from_id_salt(("fig_param", pd.key))
-                .selected_text(cur.clone())
-                .width(200.0)
-                .show_ui(ui, |ui| {
-                    for o in opts {
-                        ui.selectable_value(&mut cur, o.to_string(), *o);
-                    }
-                });
+            if opts.len() <= 4 && opts.iter().map(|o| o.chars().count()).sum::<usize>() <= 30 {
+                segmented(ui, opts, &mut cur);
+            } else {
+                ComboBox::from_id_salt(("fig_param", pd.key))
+                    .selected_text(cur.clone())
+                    .width(200.0)
+                    .show_ui(ui, |ui| {
+                        for o in opts {
+                            ui.selectable_value(&mut cur, o.to_string(), *o);
+                        }
+                    });
+            }
             if cur != p.s(pd.key) {
                 p.0.insert(pd.key.to_string(), Value::S(cur));
             }

@@ -69,133 +69,126 @@ pub fn handles(id: &str, p: &Params, size: (f64, f64)) -> Option<Vec<Handle>> {
 }
 
 // ---------- polygons ----------
+// The flat shapes are given by measures (text rows), so a drag works out the new shape and writes
+// the new values back into the rows that were given (computed rows stay blank).
+
+use super::math::{quad_vals_of, write_givens, Q_V, RAY_V, TRI_V};
+
+fn tri_measures(a: Pt, b: Pt, c: Pt) -> [Option<f64>; 6] {
+    let ang = |v: Pt, p: Pt, q: Pt| {
+        let (u, w) = ((p.0 - v.0, p.1 - v.1), (q.0 - v.0, q.1 - v.1));
+        ((u.0 * w.0 + u.1 * w.1) / (len(u) * len(w)).max(1e-12)).clamp(-1.0, 1.0).acos().to_degrees()
+    };
+    [Some(ang(a, b, c)), Some(ang(b, c, a)), Some(ang(c, a, b)), Some(d2(a, b)), Some(d2(b, c)), Some(d2(c, a))]
+}
 
 fn triangle(p: &Params) -> Option<Vec<Handle>> {
     let fm = Fm::of("triangle", p)?;
-    let mode = p.s("mode").to_string();
-    let [_, b, c] = super::math::triangle_pts(p).ok()?;
-    if mode.starts_with("Two angles and a side not") { return Some(vec![]); }
-    if mode.starts_with("Two sides and an angle not") {
-        return Some(poly_handles(fm, 0.0, vec![(b, "Drag to change side AB", rule(|p, m| p.set_f("ab", m.0)))]));
-    }
-    let mut items: Vec<(Pt, &str, Rule)> = vec![(b, "Drag to change side AB", rule(|p, m| p.set_f("ab", m.0)))];
-    let m2 = mode.clone();
-    let cr: Option<Rule> = if mode.starts_with("Three") {
-        Some(rule(|p, m| { let b = (p.f("ab"), 0.0); p.set_f("ca", len(m)); p.set_f("bc", d2(m, b)); }))
-    } else if mode.starts_with("Two sides") {
-        Some(rule(|p, m| { p.set_f("ca", len(m)); p.set_f("ang_a", deg(m.1.abs(), m.0)); }))
-    } else if mode.starts_with("Two angles") {
-        Some(rule(|p, m| { let ab = p.f("ab"); p.set_f("ang_a", deg(m.1.abs(), m.0)); p.set_f("ang_b", deg(m.1.abs(), ab - m.0)); }))
-    } else if mode.starts_with("Right") {
-        Some(rule(|p, m| { p.set_f("ab", m.0); p.set_f("bc", m.1); }))
-    } else if mode.starts_with("Isosceles") {
-        Some(rule(|p, m| { let b = (p.f("ab"), 0.0); p.set_f("bc", d2(m, b)); }))
-    } else {
-        None
-    };
-    let _ = m2;
-    if let Some(r) = cr { items.push((c, "Drag vertex C", r)); }
+    let s = super::math::tri_solve(p).ok()?;
+    let [_, b, c] = s.pts;
+    let items: Vec<(Pt, &str, Rule)> = vec![
+        (b, "Drag B along the base", rule(move |p, m| {
+            let Ok(s) = super::math::tri_solve(p) else { return };
+            let [a, _, c] = s.pts;
+            write_givens(p, &TRI_V, &tri_measures(a, (m.0.max(1e-3), 0.0), c));
+        })),
+        (c, "Drag vertex C", rule(move |p, m| {
+            let Ok(s) = super::math::tri_solve(p) else { return };
+            let [a, b, _] = s.pts;
+            if m.1.abs() < 1e-6 { return; }
+            write_givens(p, &TRI_V, &tri_measures(a, b, (m.0, m.1.abs())));
+        })),
+    ];
+    Some(poly_handles(fm, p.f("rotate"), items))
+}
+
+/// Handles for a quadrilateral: each moves one corner to wherever `shape` puts the four corners
+/// for the dragged point, then writes the given rows (and the trapezoid's h) from that shape.
+fn quad_handles(id: &'static str, p: &Params, corners: &[(usize, &'static str)], shape: fn(&Params, usize, Pt, [Pt; 4]) -> Option<[Pt; 4]>) -> Option<Vec<Handle>> {
+    let fm = Fm::of(id, p)?;
+    let s = super::math::quad_solve(id, p).ok()?;
+    let items: Vec<(Pt, &str, Rule)> = corners.iter().map(|&(k, tip)| {
+        let r = rule(move |p: &mut Params, m: Pt| {
+            let Ok(s) = super::math::quad_solve(id, p) else { return };
+            let Some(pts) = shape(p, k, m, s.pts) else { return };
+            write_givens(p, &Q_V, &quad_vals_of(&pts));
+            if id == "trapezoid" { write_givens(p, &["m_h"], &[Some(pts[3].1)]); }
+        });
+        (s.pts[k], tip, r)
+    }).collect();
     Some(poly_handles(fm, p.f("rotate"), items))
 }
 
 fn rectangle(p: &Params) -> Option<Vec<Handle>> {
-    let fm = Fm::of("rectangle", p)?;
-    let sq = p.s("kind") == "Square";
-    let (w, h) = (p.f("ab"), if sq { p.f("ab") } else { p.f("bc") });
-    let mut items: Vec<(Pt, &str, Rule)> = vec![
-        ((w, 0.0), "Drag to change the width", rule(|p, m| p.set_f("ab", m.0))),
-        ((w, h), "Drag the corner to resize", rule(move |p, m| {
-            if sq { p.set_f("ab", (m.0 + m.1) / 2.0) } else { p.set_f("ab", m.0); p.set_f("bc", m.1); }
-        })),
-    ];
-    if !sq { items.push(((0.0, h), "Drag to change the height", rule(|p, m| p.set_f("bc", m.1)))); }
-    Some(poly_handles(fm, p.f("rotate"), items))
+    fn shape(p: &Params, k: usize, m: Pt, q: [Pt; 4]) -> Option<[Pt; 4]> {
+        let sq = p.s("kind") == "Square";
+        let (w, h) = match k { 1 => (m.0, q[2].1), 2 => if sq { let v = (m.0 + m.1) / 2.0; (v, v) } else { (m.0, m.1) }, _ => (q[1].0, m.1) };
+        let h = if sq { w } else { h };
+        (w > 1e-3 && h > 1e-3).then_some([(0.0, 0.0), (w, 0.0), (w, h), (0.0, h)])
+    }
+    let mut c = vec![(1, "Drag to change the width"), (2, "Drag the corner to resize")];
+    if p.s("kind") != "Square" { c.push((3, "Drag to change the height")); }
+    quad_handles("rectangle", p, &c, shape)
 }
 
 fn parallelogram(p: &Params) -> Option<Vec<Handle>> {
-    let fm = Fm::of("parallelogram", p)?;
-    let rh = p.s("kind") == "Rhombus";
-    let ab = p.f("ab");
-    let da = if rh { ab } else { p.f("da") };
-    let t = p.f("ang_a").to_radians();
-    let items: Vec<(Pt, &str, Rule)> = vec![
-        ((ab, 0.0), "Drag to change side AB", rule(move |p, m| { p.set_f("ab", m.0); })),
-        ((da * t.cos(), da * t.sin()), "Drag D: side DA and angle A", rule(move |p, m| {
-            p.set_f(if rh { "ab" } else { "da" }, len(m));
-            p.set_f("ang_a", deg(m.1.abs(), m.0));
-        })),
-    ];
-    Some(poly_handles(fm, p.f("rotate"), items))
+    fn shape(p: &Params, k: usize, m: Pt, q: [Pt; 4]) -> Option<[Pt; 4]> {
+        let rh = p.s("kind") == "Rhombus";
+        let (ab, d) = if k == 1 {
+            let ab = m.0;
+            (ab, if rh { let t = q[3].1.atan2(q[3].0); (ab * t.cos(), ab * t.sin()) } else { q[3] })
+        } else {
+            let d = (m.0, m.1.abs());
+            (if rh { len(d) } else { q[1].0 }, d)
+        };
+        (ab > 1e-3 && d.1 > 1e-3).then_some([(0.0, 0.0), (ab, 0.0), (ab + d.0, d.1), d])
+    }
+    quad_handles("parallelogram", p, &[(1, "Drag to change side AB"), (3, "Drag D: side DA and angle A")], shape)
 }
 
 fn trapezoid(p: &Params) -> Option<Vec<Handle>> {
-    let fm = Fm::of("trapezoid", p)?;
-    let (ab, cd, h) = (p.f("ab"), p.f("cd"), p.f("height"));
-    let kind = p.s("kind").to_string();
-    let off = match kind.as_str() { "Isosceles trapezoid" => (ab - cd) / 2.0, "Right trapezoid" => 0.0, _ => p.f("offset") };
-    let (k1, k2, k3) = (kind.clone(), kind.clone(), kind.clone());
-    let items: Vec<(Pt, &str, Rule)> = vec![
-        ((ab, 0.0), "Drag to change base AB", rule(|p, m| p.set_f("ab", m.0))),
-        ((off, h), "Drag D: height and slant", rule(move |p, m| {
-            p.set_f("height", m.1);
-            match k1.as_str() {
-                "Isosceles trapezoid" => { let ab = p.f("ab"); p.set_f("cd", ab - 2.0 * m.0); }
-                "Right trapezoid" => {}
-                _ => p.set_f("offset", m.0),
-            }
-        })),
-        ((off + cd, h), "Drag C: top base CD and height", rule(move |p, m| {
-            p.set_f("height", m.1);
-            match k2.as_str() {
-                "Isosceles trapezoid" => { let ab = p.f("ab"); p.set_f("cd", 2.0 * m.0 - ab); }
-                "Right trapezoid" => p.set_f("cd", m.0),
-                _ => { let off = p.f("offset"); p.set_f("cd", m.0 - off); }
-            }
-        })),
-    ];
-    let _ = k3;
-    Some(poly_handles(fm, p.f("rotate"), items))
+    fn shape(p: &Params, k: usize, m: Pt, q: [Pt; 4]) -> Option<[Pt; 4]> {
+        let (ab, h, off, cd) = (q[1].0, q[3].1, q[3].0, q[2].0 - q[3].0);
+        let kind = p.s("kind");
+        let (ab, h, off, cd) = match (k, kind) {
+            (1, "Isosceles trapezoid") => { let ab2 = m.0; (ab2, h, (ab2 - cd) / 2.0, cd) }
+            (1, _) => (m.0, h, off, cd),
+            (3, "Isosceles trapezoid") => (ab, m.1, m.0, ab - 2.0 * m.0),
+            (3, "Right trapezoid") => (ab, m.1, 0.0, cd),
+            (3, _) => (ab, m.1, m.0, cd + off - m.0),
+            (_, "Isosceles trapezoid") => (ab, m.1, ab - m.0, 2.0 * m.0 - ab),
+            (_, "Right trapezoid") => (ab, m.1, 0.0, m.0),
+            _ => (ab, m.1, off, m.0 - off),
+        };
+        (ab > 1e-3 && h > 1e-3 && cd > 1e-3).then_some([(0.0, 0.0), (ab, 0.0), (off + cd, h), (off, h)])
+    }
+    quad_handles("trapezoid", p, &[(1, "Drag to change base AB"), (3, "Drag D: height and slant"), (2, "Drag C: top base CD and height")], shape)
 }
 
 fn kite(p: &Params) -> Option<Vec<Handle>> {
-    let fm = Fm::of("kite", p)?;
-    let (a_len, d_len) = (p.f("ab"), p.f("da"));
-    let half = p.f("ang_b").to_radians() / 2.0;
-    let w = a_len * half.sin();
-    let ay = -a_len * half.cos();
-    let dlen = d_len.max(w * 1.02);
-    let dy = ay - (dlen * dlen - w * w).sqrt();
-    let side: Rule = rule(|p, m| { p.set_f("ab", len(m)); p.set_f("ang_b", 2.0 * deg(m.0.abs(), -m.1)); });
-    let items: Vec<(Pt, &str, Rule)> = vec![
-        ((-w, ay), "Drag: short side AB and angle B", side.clone()),
-        ((w, ay), "Drag: short side and angle B", side),
-        ((0.0, dy), "Drag D: long sides", rule(|p, m| {
-            let half = p.f("ang_b").to_radians() / 2.0;
-            let a = (-p.f("ab") * half.sin(), -p.f("ab") * half.cos());
-            p.set_f("da", d2(m, a));
-        })),
-    ];
-    Some(poly_handles(fm, p.f("rotate"), items))
+    fn shape(_p: &Params, k: usize, m: Pt, q: [Pt; 4]) -> Option<[Pt; 4]> {
+        let (a, d) = if k == 3 { (q[0], (0.0, m.1.min(-1e-3))) } else { let x = -m.0.abs(); ((x, m.1.min(-1e-3)), q[3]) };
+        (d.1 < a.1 - 1e-3).then_some([a, (0.0, 0.0), (-a.0, a.1), d])
+    }
+    quad_handles("kite", p, &[(0, "Drag: short side AB and angle B"), (2, "Drag: short side and angle B"), (3, "Drag D: long sides")], shape)
 }
 
 fn regular_polygon(p: &Params) -> Option<Vec<Handle>> {
     let fm = Fm::of("regular-polygon", p)?;
-    let n = p.i("n").clamp(3, 20) as usize;
+    let pts = super::math::regular_polygon_pts(p);
+    let n = pts.len();
     let half = std::f64::consts::PI / n as f64;
     let from = p.s("from").to_string();
-    let v = p.f("value");
-    let r = match from.as_str() { "Radius" => v, "Apothem" => v / half.cos(), _ => v / (2.0 * half.sin()) };
     let rotd = p.f("rotate");
-    let phi0 = -90.0 - half.to_degrees();
     let mut out = Vec::new();
-    for k in 0..n {
-        let phi = phi0 + 360.0 * k as f64 / n as f64;
-        let model = (r * phi.to_radians().cos(), r * phi.to_radians().sin());
+    for (k, model) in pts.iter().enumerate() {
+        let phi = model.1.atan2(model.0).to_degrees();
         let (flip, _) = super::math::last_xf();
-        let fm_model = if flip { (-model.0, model.1) } else { model };
+        let fm_model = if flip { (-model.0, model.1) } else { *model };
         let pos = fm.scr(rot(fm_model, rotd));
         let from = from.clone();
         let phi_s = if flip { 180.0 - phi } else { phi };
+        let _ = k;
         out.push(Handle::knob(pos, "Drag a vertex: size and rotation", move |p, s| {
             let m = fm.mdl(s);
             let rr = len(m).max(1e-6);
@@ -227,53 +220,21 @@ fn toggle(p: &mut Params, key: &str, n: f64, on: bool) {
 }
 fn dirp(c: Pt, a: f64, r: f64) -> Pt { (c.0 + r * a.to_radians().cos(), c.1 - r * a.to_radians().sin()) }
 
-fn angle_rays(p: &Params) -> (Vec<f64>, bool) {
-    let (a, a2) = (p.f("angle"), p.f("angle2"));
-    match p.s("mode") {
-        "Single angle" => (vec![0.0, a], false),
-        "Angles on a straight line" => (vec![0.0, a, 180.0], false),
-        "Angles around a point" => (vec![0.0, a, (a + a2).min(358.0)], true),
-        "Vertical angles" => (vec![0.0, a, 180.0, 180.0 + a], true),
-        _ => {
-            let mut r = nums(p.s("rays"));
-            r.iter_mut().for_each(|x| *x = x.rem_euclid(360.0));
-            r.sort_by(|x, y| x.partial_cmp(y).unwrap());
-            r.dedup();
-            let wr = r.len() > 2 && r.last().copied().unwrap_or(0.0) - r[0] < 340.0;
-            (r, wr)
-        }
-    }
-}
-
 fn angles(p: &Params) -> Vec<Handle> {
-    let (rays, wrap) = angle_rays(p);
-    if rays.len() < 2 { return vec![]; }
-    let mode = p.s("mode").to_string();
+    let (dirs, wrap) = super::math::angle_dirs(p);
+    if dirs.len() < 2 { return vec![]; }
     let mut out = Vec::new();
-    for (i, r) in rays.iter().enumerate() {
-        let pos = dirp(AC, *r, ALEN);
-        let h = match (mode.as_str(), i) {
-            ("Single angle" | "Angles on a straight line" | "Vertical angles", 1) | ("Angles around a point", 1) => {
-                Some(Handle::knob(pos, "Drag the ray to set the angle", |p, s| p.set_f("angle", angle_deg(AC, s))))
-            }
-            ("Angles around a point", 2) => Some(Handle::knob(pos, "Drag to set the second angle", |p, s| {
-                let a = p.f("angle");
-                p.set_f("angle2", (angle_deg(AC, s) - a).rem_euclid(360.0));
-            })),
-            ("Custom rays", _) => Some(Handle::knob(pos, "Drag the ray (direction in degrees)", move |p, s| {
-                let (mut rs, _) = angle_rays(p);
-                if i < rs.len() {
-                    rs[i] = angle_deg(AC, s).round() % 360.0;
-                    rs.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                    rs.dedup();
-                    put_list(p, "rays", &rs);
-                }
-            })),
-            _ => None,
-        };
-        out.extend(h);
+    for (r, src, back) in &dirs {
+        if *src == 0 { continue; }
+        let key = RAY_V[*src];
+        let off = if *back { 180.0 } else { 0.0 };
+        out.push(Handle::knob(dirp(AC, *r, ALEN), "Drag the ray to change its direction", move |p, s| {
+            let a = (angle_deg(AC, s) - off).rem_euclid(360.0).round();
+            p.set_s(key, &format!("{}", a as i64));
+        }));
     }
     // Sector label zones: click cycles degrees -> x -> blank.
+    let rays: Vec<f64> = dirs.iter().map(|d| d.0).collect();
     let mut secs: Vec<(f64, f64)> = rays.windows(2).map(|w| (w[0], w[1])).collect();
     if wrap { secs.push((*rays.last().unwrap(), rays[0] + 360.0)); }
     for (i, (a0, a1)) in secs.iter().enumerate() {
@@ -355,7 +316,7 @@ fn turned(hs: Vec<Handle>, c: Pt, turn: f64) -> Vec<Handle> {
 
 // ---------- 3D solids ----------
 
-use super::math::{cone_height, depth_sx, oblp, prism_geom, pyramid_height};
+use super::math::{cone_height, depth_sx, edge_height, fmt, oblp, prism_geom, pyramid_height, typed};
 
 const KC: f64 = 0.5 * 0.766_044_443_118_978; // 0.5 cos 40
 const KS: f64 = 0.5 * 0.642_787_609_686_539_3; // 0.5 sin 40
@@ -415,8 +376,14 @@ fn prism(p: &Params) -> Option<Vec<Handle>> {
     base_handles(fm, p, &kind, &mut out);
     out.push(Handle::knob(fm.scr(proj(top, sx)), "Drag to change the height", move |p, s| {
         let m = fm.mdl(s);
-        p.set_f("height", m.1 - y0 * KS);
-        if p.s("stands") == "Oblique" { p.set_f("lean", m.0 - sx * y0 * KC - x0); }
+        let h = m.1 - y0 * KS;
+        let oblique = p.s("stands") == "Oblique";
+        if oblique { p.set_f("lean", m.0 - sx * y0 * KC - x0); }
+        if oblique && typed(p, "edge").is_some() {
+            p.set_s("edge", &fmt((h * h + p.f("lean").powi(2)).sqrt(), 2));
+        } else {
+            p.set_f("height", h);
+        }
     }));
     Some(out)
 }
@@ -438,10 +405,10 @@ fn pyramid(p: &Params) -> Option<Vec<Handle>> {
         let k = base.len() as f64;
         let c = (base.iter().map(|q| q.0).sum::<f64>() / k, base.iter().map(|q| q.1).sum::<f64>() / k);
         let h = m.1 - c.1 * KS;
-        if p.s("given") == "Slant height" && p.s("stands") != "Oblique" {
+        if typed(p, "slant").is_some() && p.s("stands") != "Oblique" {
             let mid = ((base[0].0 + base[1].0) / 2.0, (base[0].1 + base[1].1) / 2.0);
             let a2 = (mid.0 - c.0).powi(2) + (mid.1 - c.1).powi(2);
-            p.set_f("slant", (h.max(0.1).powi(2) + a2).sqrt());
+            p.set_s("slant", &fmt((h.max(0.1).powi(2) + a2).sqrt(), 2));
         } else {
             p.set_f("height", h);
         }
@@ -453,7 +420,7 @@ fn pyramid(p: &Params) -> Option<Vec<Handle>> {
 fn round_solid(id: &str, p: &Params, _cyl: bool) -> Option<Vec<Handle>> {
     let fm = Fm::of(id, p)?;
     let r = p.f("radius");
-    let h = if id == "cone" { cone_height(p) } else { p.f("height") };
+    let h = if id == "cone" { cone_height(p) } else { edge_height(p, p.s("stands") == "Oblique") };
     let c = p.f("view").to_radians().cos();
     let lean = if p.s("stands") == "Oblique" { p.f("lean") } else { 0.0 };
     let top = fm.scr((lean, h * c));
@@ -465,12 +432,15 @@ fn round_solid(id: &str, p: &Params, _cyl: bool) -> Option<Vec<Handle>> {
             let m = fm.mdl(s);
             let c = p.f("view").to_radians().cos().max(0.1);
             let h = m.1 / c;
-            if cone && p.s("given") == "Slant height" && p.s("stands") != "Oblique" {
-                p.set_f("slant", (h * h + p.f("radius").powi(2)).sqrt());
+            let oblique = p.s("stands") == "Oblique";
+            if oblique { p.set_f("lean", m.0); }
+            if cone && !oblique && typed(p, "slant").is_some() {
+                p.set_s("slant", &fmt((h * h + p.f("radius").powi(2)).sqrt(), 2));
+            } else if !cone && oblique && typed(p, "edge").is_some() {
+                p.set_s("edge", &fmt((h * h + p.f("lean").powi(2)).sqrt(), 2));
             } else {
                 p.set_f("height", h);
             }
-            if p.s("stands") == "Oblique" { p.set_f("lean", m.0); }
         }),
     ])
 }

@@ -5,6 +5,8 @@ use super::{Kind, ParamDef};
 pub struct Section {
     pub title: String,
     pub items: Vec<usize>,
+    /// One line of guidance under the header (from the reference generator), may be empty.
+    pub help: String,
 }
 
 /// `f1_ang` -> Some(("f", 1)). Per-item params are `<letters><digits>_<rest>`.
@@ -60,15 +62,89 @@ fn plain_section(pd: &ParamDef) -> &'static str {
     }
 }
 
+/// The side panel's sections for a figure: the reference layout when `sections::reference` has one
+/// (named sections in the reference's order, per-item sections where it puts them), else the
+/// keyword grouping below. Every param lands in exactly one section either way.
+pub fn sections(fig: &str, defs: &[ParamDef], n_now: Option<i64>) -> Vec<Section> {
+    // Params a Measures card owns are drawn there, not in a section.
+    let owned: Vec<&str> = super::measures_for(fig).map(|c| c.keys()).unwrap_or_default();
+    let mut out = sections_all(fig, defs, n_now);
+    for s in &mut out {
+        s.items.retain(|&i| !owned.contains(&defs[i].key));
+    }
+    out.retain(|s| !s.items.is_empty());
+    out
+}
+
+fn sections_all(fig: &str, defs: &[ParamDef], n_now: Option<i64>) -> Vec<Section> {
+    let Some(reference) = super::sections::reference(fig) else { return heuristic_sections(fig, defs, n_now) };
+    let in_item = |i: usize| item_of(defs[i].key).is_some();
+    let mut placed = vec![false; defs.len()];
+    let mut out: Vec<Section> = Vec::new();
+    for rs in reference {
+        if rs.item {
+            // One section per item number, params in declaration order.
+            let mut nums: Vec<usize> = defs.iter().filter_map(|d| item_of(d.key).map(|(_, n)| n)).collect();
+            nums.sort_unstable();
+            nums.dedup();
+            for n in nums {
+                if n_now.is_some_and(|c| n as i64 > c) {
+                    continue;
+                }
+                let idx: Vec<usize> = (0..defs.len()).filter(|&i| item_of(defs[i].key).is_some_and(|(_, k)| k == n) && !placed[i]).collect();
+                if idx.is_empty() {
+                    continue;
+                }
+                let letters = item_of(defs[idx[0]].key).map(|(l, _)| l).unwrap_or("");
+                let noun = if letters.is_empty() { rs.title } else { rs.title };
+                for &i in &idx {
+                    placed[i] = true;
+                }
+                out.push(Section { title: format!("{noun} {n}"), items: idx, help: String::new() });
+            }
+        } else {
+            let idx: Vec<usize> = (0..defs.len()).filter(|&i| !placed[i] && !in_item(i) && rs.keys.contains(&defs[i].key)).collect();
+            if idx.is_empty() {
+                continue;
+            }
+            for &i in &idx {
+                placed[i] = true;
+            }
+            out.push(Section { title: rs.title.to_string(), items: idx, help: rs.help.to_string() });
+        }
+    }
+    // Anything the table doesn't name (new params, other item families) goes to the end.
+    let rest: Vec<usize> = (0..defs.len()).filter(|&i| !placed[i]).collect();
+    for i in rest {
+        let pd = &defs[i];
+        if let Some((letters, n)) = item_of(pd.key) {
+            if n_now.is_some_and(|c| n as i64 > c) {
+                continue;
+            }
+            let title = format!("{} {}", item_noun(fig, letters), n);
+            match out.iter_mut().find(|s| s.title == title) {
+                Some(s) => s.items.push(i),
+                None => out.push(Section { title, items: vec![i], help: String::new() }),
+            }
+        } else {
+            match out.iter_mut().find(|s| s.title == "More options") {
+                Some(s) => s.items.push(i),
+                None => out.push(Section { title: "More options".into(), items: vec![i], help: String::new() }),
+            }
+        }
+    }
+    out
+}
+
 /// Builds sections in order of first appearance. If the figure has an integer count `n` the
 /// per-item params of items beyond `n` are skipped (`n_now`).
-pub fn sections(fig: &str, defs: &[ParamDef], n_now: Option<i64>) -> Vec<Section> {
+fn heuristic_sections(fig: &str, defs: &[ParamDef], n_now: Option<i64>) -> Vec<Section> {
     let mut out: Vec<Section> = Vec::new();
     let mut put = |title: String, i: usize| {
         if let Some(s) = out.iter_mut().find(|s| s.title == title) {
             s.items.push(i);
         } else {
-            out.push(Section { title, items: vec![i] });
+            out.push(Section { title, items: vec![i], help: String::new() });
         }
     };
     for (i, pd) in defs.iter().enumerate() {
@@ -116,6 +192,8 @@ mod tests {
             let defs = (d.params)();
             let secs = sections(d.id, &defs, None);
             let mut seen: Vec<usize> = secs.iter().flat_map(|s| s.items.clone()).collect();
+            let owned = super::super::measures_for(d.id).map(|c| c.keys()).unwrap_or_default();
+            seen.extend((0..defs.len()).filter(|&i| owned.contains(&defs[i].key)));
             seen.sort();
             assert_eq!(seen, (0..defs.len()).collect::<Vec<_>>(), "{}", d.id);
             assert!(secs.len() <= 12, "{} has {} sections", d.id, secs.len());
