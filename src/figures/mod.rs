@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 
 pub mod biology;
 pub mod chemistry;
+pub mod composite;
 pub mod interact;
 pub mod layout;
 pub mod math;
@@ -359,6 +360,19 @@ pub fn to_png(svg: &str, scale: f32) -> Result<Vec<u8>, String> {
     let mut pm = resvg::tiny_skia::Pixmap::new(w.max(1), h.max(1)).ok_or("bad size")?;
     resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(scale, scale), &mut pm.as_mut());
     pm.encode_png().map_err(|e| e.to_string())
+}
+
+/// Rasterize SVG to premultiplied RGBA at `scale`x (no PNG round trip; the canvas editor
+/// re-renders while panning and dragging). Returns (width, height, pixels).
+pub fn to_rgba(svg: &str, scale: f32) -> Result<(u32, u32, Vec<u8>), String> {
+    let mut opt = resvg::usvg::Options::default();
+    opt.fontdb = fontdb();
+    let tree = resvg::usvg::Tree::from_str(svg, &opt).map_err(|e| e.to_string())?;
+    let size = tree.size();
+    let (w, h) = ((size.width() * scale).ceil().max(1.0) as u32, (size.height() * scale).ceil().max(1.0) as u32);
+    let mut pm = resvg::tiny_skia::Pixmap::new(w, h).ok_or("bad size")?;
+    resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(scale, scale), &mut pm.as_mut());
+    Ok((w, h, pm.take()))
 }
 
 /// Import path for the hybrid mode: accept pasted/loaded SVG text from anywhere.

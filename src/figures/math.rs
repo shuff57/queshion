@@ -4852,18 +4852,13 @@ enum Piece { Poly(Vec<Pt>, Option<&'static str>) }
 /// The "Start with" chips (the reference's first screen): each loads the preset's pieces into the
 /// Pieces card, so they can be edited, dragged and added to.
 pub(super) const COMPOSITE_STARTS: [&str; 7] = ["Rectangle", "Triangle", "Semicircle", "Circle", "L-shape", "House", "Arch"];
-pub(super) const COMPOSITE_CUSTOM: &str = "Custom (use the text below)";
-const COMPOSITE_HELP: &str = "One piece or mark a row. Pieces: rect X Y W H | tri X1 Y1 X2 Y2 X3 Y3 | poly X Y X Y ... | circle CX CY R | semi CX CY R u/d/l/r (the way it bulges) | quarter CX CY R ne/nw/se/sw. End a piece with blue, red, green or yellow to shade it. Marks: dim X1 Y1 X2 Y2 TEXT (a dimension; no text = its length; drawn right of the direction of travel) | dash X1 Y1 X2 Y2 (a height or other line) | ticks X1 Y1 X2 Y2 N (congruence ticks) | arrows X1 Y1 X2 Y2 N (parallel arrows) | text X Y WORDS | ra X Y NE/NW/SE/SW (right angle). On the figure, drag a corner to resize, or click a \u{25c6} beside a side to add a rectangle there.";
+pub const COMPOSITE_CUSTOM: &str = "Custom (use the text below)";
+const COMPOSITE_HELP: &str = "One piece or mark a row. Pieces: rect X Y W H | tri X1 Y1 X2 Y2 X3 Y3 | poly X Y X Y ... | circle CX CY R | semi CX CY R u/d/l/r (the way it bulges) | quarter CX CY R ne/nw/se/sw. End a piece with blue, red, green or yellow to shade it, and with | TEXT to write a label inside it (rect 0 0 6 4 blue | A). Marks: dim X1 Y1 X2 Y2 TEXT (a dimension; no text = its length; drawn right of the direction of travel) | dash X1 Y1 X2 Y2 (a height or other line) | ticks X1 Y1 X2 Y2 N (congruence ticks) | arrows X1 Y1 X2 Y2 N (parallel arrows) | text X Y WORDS | ra X Y NE/NW/SE/SW (right angle). On the canvas: pick a tool to draw a piece, click a piece to select it, drag it to move, drag its handles to resize, click + beside a side to add a piece there; the Label tool labels sides and marks right angles.";
 
 /// Piece shading named at the end of a row (the reference's None / Blue / Red / Green / Yellow).
+#[cfg(test)]
 pub(super) fn shade_word(tk: &[&str]) -> Option<&'static str> {
-    tk.iter().skip(1).find_map(|t| match t.to_lowercase().as_str() {
-        "blue" => Some("#cfe1fa"),
-        "red" => Some("#fbd0d0"),
-        "green" => Some("#c8f2d8"),
-        "yellow" => Some("#fde8a0"),
-        _ => None,
-    })
+    tk.iter().skip(1).find_map(|t| super::composite::shade_hex(t))
 }
 
 /// Arc points of a quarter circle sector piece (`quarter CX CY R ne`), centre first.
@@ -4878,7 +4873,7 @@ fn composite_params() -> Vec<ParamDef> {
     vec![
         ParamDef::choice("preset", "Start from", &[COMPOSITE_CUSTOM, "L-shape", "House", "Arch", "T-shape", "Rectangle", "Triangle", "Semicircle", "Circle"], COMPOSITE_CUSTOM),
         ParamDef::long("spec",
-            "Pieces separated by ;  rect X Y W H | tri X1 Y1 X2 Y2 X3 Y3 | poly X Y X Y ... | circle CX CY R | semi CX CY R DIR(u/d/l/r bulge) | quarter CX CY R ne/nw/se/sw | dash X1 Y1 X2 Y2 | dim X1 Y1 X2 Y2 TEXT (label drawn to the right of travel, go counterclockwise) | ticks X1 Y1 X2 Y2 N | arrows X1 Y1 X2 Y2 N | text X Y WORDS | ra X Y NE/NW/SE/SW (right angle); end a piece with blue/red/green/yellow to shade it",
+            "Pieces separated by ;  rect X Y W H | tri X1 Y1 X2 Y2 X3 Y3 | poly X Y X Y ... | circle CX CY R | semi CX CY R DIR(u/d/l/r bulge) | quarter CX CY R ne/nw/se/sw | dash X1 Y1 X2 Y2 | dim X1 Y1 X2 Y2 TEXT (label drawn to the right of travel, go counterclockwise) | ticks X1 Y1 X2 Y2 N | arrows X1 Y1 X2 Y2 N | text X Y WORDS | ra X Y NE/NW/SE/SW (right angle); end a piece with blue/red/green/yellow to shade it and | TEXT to label it",
             "rect 0 0 6 4; semi 3 4 3 u; dash 3 4 6 4; text 4.5 4.6 r = 3; dim 0 0 6 0 6 cm; dim 6 0 6 4 4 cm; ra 0 0 NE; ra 6 0 NW"),
         ParamDef::bool("shade", "Shade the shape", true),
         ParamDef::color("fill_color", "Shade colour", &SWATCHES, "#e9f1fb"),
@@ -4903,45 +4898,59 @@ pub(super) fn preset_spec(name: &str) -> Option<&'static str> {
 }
 
 fn composite_render(p: &Params) -> String {
-    let spec = preset_spec(p.s("preset")).unwrap_or(p.s("spec")).to_string();
+    composite_svg(p, None)
+}
+
+/// An explicit model -> canvas mapping for the canvas editor: canvas size (w, h) and the map
+/// (scale, origin). The editor's render has no background and draws nothing when empty.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CompositeView { pub w: f64, pub h: f64, pub s: f64, pub ox: f64, pub oy: f64 }
+
+/// The composite shape drawn by the canvas editor at its own pan / zoom.
+pub fn composite_view_svg(p: &Params, v: CompositeView) -> String {
+    composite_svg(p, Some(v))
+}
+
+/// The spec the figure draws: a "Start from" preset's, or the typed `spec`.
+pub fn composite_spec(p: &Params) -> String {
+    preset_spec(p.s("preset")).unwrap_or(p.s("spec")).to_string()
+}
+
+fn composite_svg(p: &Params, view: Option<CompositeView>) -> String {
+    use super::composite::{self as cs, Shape};
+    let spec = composite_spec(p);
     let mut pieces: Vec<Piece> = vec![];
+    let mut labels: Vec<(Pt, String)> = vec![];
     let mut dashes: Vec<(Pt, Pt)> = vec![];
     let mut dims: Vec<(Pt, Pt, String)> = vec![];
     let mut texts: Vec<(Pt, String)> = vec![];
     let mut rights: Vec<(Pt, String)> = vec![];
     let mut marks: Vec<(Pt, Pt, u8, bool)> = vec![];
-    for cmd in spec.split(|c| c == ';' || c == '\n') {
-        let tk: Vec<&str> = cmd.split_whitespace().collect();
-        if tk.is_empty() { continue; }
-        let num = |i: usize| tk.get(i).and_then(|s| s.replace('\u{2212}', "-").parse::<f64>().ok());
-        let shade = shade_word(&tk);
-        match tk[0].to_lowercase().as_str() {
-            "rect" => if let (Some(x), Some(y), Some(w), Some(h)) = (num(1), num(2), num(3), num(4)) { pieces.push(Piece::Poly(vec![(x, y), (x + w, y), (x + w, y + h), (x, y + h)], shade)); },
-            "tri" => if let (Some(a), Some(b), Some(c), Some(d), Some(e), Some(f)) = (num(1), num(2), num(3), num(4), num(5), num(6)) { pieces.push(Piece::Poly(vec![(a, b), (c, d), (e, f)], shade)); },
-            "poly" => { let v: Vec<f64> = tk[1..].iter().filter_map(|s| s.parse().ok()).collect(); if v.len() >= 6 { pieces.push(Piece::Poly(v.chunks(2).filter(|c| c.len() == 2).map(|c| (c[0], c[1])).collect(), shade)); } }
-            "circle" => if let (Some(x), Some(y), Some(r)) = (num(1), num(2), num(3)) { pieces.push(Piece::Poly(ell(x, y, r, r, 0.0, 360.0), shade)); },
-            "semi" => if let (Some(x), Some(y), Some(r)) = (num(1), num(2), num(3)) {
-                let (a0, a1) = match tk.get(4).map(|s| s.to_lowercase()).as_deref() { Some("d") => (180.0, 360.0), Some("l") => (90.0, 270.0), Some("r") => (-90.0, 90.0), _ => (0.0, 180.0) };
-                pieces.push(Piece::Poly(ell(x, y, r, r, a0, a1), shade));
-            },
-            "quarter" => if let (Some(x), Some(y), Some(r)) = (num(1), num(2), num(3)) { pieces.push(Piece::Poly(quarter_pts(x, y, r, tk.get(4).copied().unwrap_or("ne")), shade)); },
-            "dash" => if let (Some(a), Some(b), Some(c), Some(e)) = (num(1), num(2), num(3), num(4)) { dashes.push(((a, b), (c, e))); },
-            "dim" => if let (Some(a), Some(b), Some(c), Some(e)) = (num(1), num(2), num(3), num(4)) { dims.push(((a, b), (c, e), tk[5..].join(" "))); },
-            "ticks" | "arrows" => if let (Some(a), Some(b), Some(c), Some(e)) = (num(1), num(2), num(3), num(4)) {
-                marks.push(((a, b), (c, e), num(5).unwrap_or(1.0).clamp(1.0, 3.0) as u8, tk[0].eq_ignore_ascii_case("arrows")));
-            },
-            "text" => if let (Some(a), Some(b)) = (num(1), num(2)) { texts.push(((a, b), tk[3..].join(" "))); },
-            "ra" => if let (Some(a), Some(b)) = (num(1), num(2)) { rights.push(((a, b), tk.get(3).unwrap_or(&"NE").to_uppercase())); },
-            _ => {}
+    for it in cs::parse(&spec) {
+        let Some(sh) = &it.shape else { continue };
+        match sh {
+            Shape::Dash(a, b) => dashes.push((*a, *b)),
+            Shape::Dim(a, b, t) => dims.push((*a, *b, t.clone())),
+            Shape::Ticks(a, b, k) => marks.push((*a, *b, *k, false)),
+            Shape::Arrows(a, b, k) => marks.push((*a, *b, *k, true)),
+            Shape::Text(a, t) => texts.push((*a, t.clone())),
+            Shape::Ra(a, d) => rights.push((*a, d.clone())),
+            _ => {
+                let v = cs::outline(sh);
+                if !it.label.trim().is_empty() { labels.push((cs::centroid(&v), it.label.clone())); }
+                pieces.push(Piece::Poly(v, it.shade.as_deref().and_then(cs::shade_hex)));
+            }
         }
     }
-    if pieces.is_empty() { return msg("No pieces: start the text with rect, tri, circle, semi or poly"); }
+    if pieces.is_empty() && view.is_none() { return msg("No pieces: start the text with rect, tri, circle, semi or poly"); }
     let mut all: Vec<Pt> = vec![];
     for Piece::Poly(v, _) in &pieces { all.extend(v.iter().copied()); }
     for (a, b) in &dashes { all.push(*a); all.push(*b); }
     for (a, b, _) in &dims { all.push(*a); all.push(*b); }
-    let (w, h) = (480.0, 360.0);
-    let m = Map::fit(&all, w, h, 70.0, 56.0);
+    let (w, h, m) = match view {
+        Some(v) => (v.w, v.h, Map { s: v.s, ox: v.ox, oy: v.oy }),
+        None => (480.0, 360.0, Map::fit(&all, 480.0, 360.0, 70.0, 56.0)),
+    };
     let mut d = new_doc(w, h);
     let fill_s = colp(p, "fill_color", TINT);
     let fill = if p.b("shade") { fill_s.as_str() } else { "#fff" };
@@ -4990,8 +4999,9 @@ fn composite_render(p: &Params) -> String {
         let o = 10.0 + 0.5 * (tw(&t, lsz) * 0.85 * right.0.abs() + lsz * right.1.abs());
         mlabel(&mut d, mid.0 + right.0 * o, mid.1 + right.1 * o, lsz, &t, &unit_of(&t));
     }
-    for (a, t) in &texts { let q = m.p(*a); mlabel(&mut d, q.0, q.1, lsz, t, &unit_of(t)); }
-    d.finish()
+    for (a, t) in texts.iter().chain(&labels) { let q = m.p(*a); mlabel(&mut d, q.0, q.1, lsz, t, &unit_of(t)); }
+    let svg = d.finish();
+    if view.is_some() { svg.replacen(r##"<rect width="100%" height="100%" fill="#fff"/>"##, "", 1) } else { svg }
 }
 
 /// "Start from an example" entries for math-a's flat-shape figures (mirrors mathfigures.com).

@@ -338,8 +338,20 @@ fn ruler(p: &Params) -> Vec<Handle> {
 
 // ───────────────────────── composite shape ─────────────────────────
 
+/// Rows as tokens; a piece's ` | LABEL` stays one token ("| LABEL") so it is never read as a
+/// number and is written back unchanged by `join(" ")`.
 fn cmds(spec: &str) -> Vec<Vec<String>> {
-    spec.split(|c| c == ';' || c == '\n').map(|c| c.split_whitespace().map(|s| s.to_string()).collect::<Vec<_>>()).filter(|t| !t.is_empty()).collect()
+    spec.split(|c| c == ';' || c == '\n')
+        .map(|c| {
+            let kw = c.split_whitespace().next().unwrap_or("").to_lowercase();
+            let piece = ["rect", "tri", "poly", "circle", "semi", "quarter"].contains(&kw.as_str());
+            let (h, l) = match c.split_once('|') { Some((h, l)) if piece => (h, Some(l.trim())), _ => (c, None) };
+            let mut v: Vec<String> = h.split_whitespace().map(|s| s.to_string()).collect();
+            if let Some(l) = l.filter(|l| !l.is_empty() && !v.is_empty()) { v.push(format!("| {l}")); }
+            v
+        })
+        .filter(|t| !t.is_empty())
+        .collect()
 }
 fn tn(tk: &[String], i: usize) -> Option<f64> { tk.get(i).and_then(|s| s.replace('\u{2212}', "-").parse::<f64>().ok()) }
 fn active_spec(p: &Params) -> String { preset_spec(p.s("preset")).unwrap_or(p.s("spec")).to_string() }

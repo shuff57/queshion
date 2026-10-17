@@ -18,6 +18,8 @@ use crate::figures::{self, FigureDef, Kind, ParamDef, Params, Subject, Value};
 use crate::model::{FigureSpec, Id, Question};
 use crate::theme;
 
+mod composite_canvas;
+
 const DEBOUNCE: Duration = Duration::from_millis(150);
 const CARD_W: f32 = 210.0;
 
@@ -245,6 +247,8 @@ pub struct Workspace {
     preset_name: String,
     spec_text: String,
     spec_err: Option<String>,
+    /// Canvas editor of the composite-shape figure.
+    comp: composite_canvas::Canvas,
 }
 
 /// A saved parameter set for one figure ("Save preset"), kept in `figure-presets.json`.
@@ -375,6 +379,7 @@ impl Workspace {
         self.reset_history();
         self.sel = Some(i);
         self.params = Params::defaults(&(reg()[i].params)());
+        self.comp = Default::default();
         self.editing = None;
         self.shown = None;
         self.pending = None;
@@ -409,6 +414,13 @@ impl Workspace {
                 && let Some((i, _)) = find_def(&id)
             {
                 self.select(i);
+                // QUESHION_FIG_PARAMS='{"spec":"rect 0 0 6 4"}' seeds its params (as QUESHION_RENDER_FIG does)
+                if let Ok(j) = std::env::var("QUESHION_FIG_PARAMS")
+                    && let Ok(over) = serde_json::from_str::<serde_json::Value>(&j)
+                {
+                    self.params = figures::params_from_json(&reg()[i], &over);
+                    self.reset_history();
+                }
             }
         }
         if self.sel.is_some() || self.imp.is_some() {
@@ -681,7 +693,9 @@ impl Workspace {
                     .show(ui, |ui| {
                         ui.set_width((w - 22.0).max(100.0));
                         ui.set_height((avail_h - 22.0).max(100.0));
-                        if generated && let Some(t) = &preview {
+                        if generated && !self.hide_handles && self.sel.is_some_and(|si| reg()[si].id == "composite-shape") {
+                            self.composite_canvas(ui);
+                        } else if generated && let Some(t) = &preview {
                             self.preview_interactive(ui, t);
                         } else if let Some(t) = &preview {
                             ui.centered_and_justified(|ui| {
@@ -858,6 +872,25 @@ impl Workspace {
                 ui.close();
             }
         });
+    }
+
+    /// The composite-shape canvas editor; a click-sized edit (add, delete, shade...) becomes its
+    /// own undo step, drags and typing settle through `track_history` like any other edit.
+    fn composite_canvas(&mut self, ui: &mut Ui) {
+        let before = self.params.clone();
+        // the preview frame lays out left to right; the canvas stacks its toolbar over the grid
+        let ch = ui.vertical(|ui| self.comp.show(ui, &mut self.params)).inner;
+        if let Some(si) = self.sel {
+            self.params.normalize(&(reg()[si].params)(), false);
+        }
+        match ch {
+            composite_canvas::Change::Step if format!("{:?}", before.0) != format!("{:?}", self.params.0) => {
+                let after = std::mem::replace(&mut self.params, before);
+                self.set_params_with_history(after);
+            }
+            composite_canvas::Change::Live => self.live = true,
+            _ => {}
+        }
     }
 
     /// The preview with its interaction layer: draws the texture fitted into the frame, then
@@ -2150,4 +2183,135 @@ mod tests {
         assert_eq!(q.i("n"), before + 1);
         assert_eq!(q.s(&format!("v{}_lab", before + 1)), ((b'A' + before as u8) as char).to_string());
     }
+
+    // ---------- composite-shape canvas (driven with synthetic pointer events) ----------
+
+    fn comp_ws(spec: &str) -> (egui::Context, Workspace) {
+        let ctx = egui::Context::default();
+        theme::setup(&ctx);
+        let mut ws = Workspace::new(false);
+        ws.select(find_def("composite-shape").unwrap().0);
+        ws.params.set_s("preset", figures::math::COMPOSITE_CUSTOM);
+        ws.params.set_s("spec", spec);
+        for _ in 0..3 {
+            comp_frame(&ctx, &mut ws, vec![]);
+        }
+        (ctx, ws)
+    }
+
+    fn comp_frame(ctx: &egui::Context, ws: &mut Workspace, events: Vec<egui::Event>) {
+        let raw = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1400.0, 900.0))), events, ..Default::default() };
+        let mut out = ctx.run_ui(raw, |ui| {
+            let _ = ws.show(ui);
+        });
+        out.textures_delta.clear();
+    }
+
+    fn btn(p: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
+        vec![egui::Event::PointerMoved(p), egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE }]
+    }
+
+    /// Press at model point `a`, move through to `b`, release there.
+    fn comp_drag(ctx: &egui::Context, ws: &mut Workspace, a: (f64, f64), b: (f64, f64)) {
+        let (pa, pb) = (ws.comp.to_screen(a), ws.comp.to_screen(b));
+        comp_frame(ctx, ws, btn(pa, true));
+        for k in 1..=4 {
+            comp_frame(ctx, ws, vec![egui::Event::PointerMoved(pa + (pb - pa) * (k as f32 / 4.0))]);
+        }
+        comp_frame(ctx, ws, btn(pb, false));
+        comp_frame(ctx, ws, vec![]);
+    }
+
+    fn comp_click(ctx: &egui::Context, ws: &mut Workspace, a: (f64, f64)) {
+        let p = ws.comp.to_screen(a);
+        let mut ev = btn(p, true);
+        ev.extend(btn(p, false));
+        comp_frame(ctx, ws, ev);
+        comp_frame(ctx, ws, vec![]);
+    }
+
+    #[test]
+    fn composite_canvas_moves_a_piece_and_undo_restores_it() {
+        let (ctx, mut ws) = comp_ws("rect 0 0 4 3; dim 0 0 4 0");
+        assert!(ws.comp.rect.width() > 300.0, "canvas laid out: {:?}", ws.comp.rect);
+        comp_drag(&ctx, &mut ws, (2.0, 1.5), (4.1, 1.4));
+        assert_eq!(ws.params.s("spec"), "rect 2 0 4 3; dim 2 0 6 0", "moved on the half-unit snap, dim along");
+        assert_eq!(ws.comp.sel, Some(0));
+        ws.step_history(true);
+        assert_eq!(ws.params.s("spec"), "rect 0 0 4 3; dim 0 0 4 0");
+        ws.step_history(false);
+        assert_eq!(ws.params.s("spec"), "rect 2 0 4 3; dim 2 0 6 0");
+    }
+
+    #[test]
+    fn composite_canvas_resizes_with_a_corner_grip() {
+        let (ctx, mut ws) = comp_ws("rect 0 0 4 3");
+        ws.comp.sel = Some(0);
+        comp_frame(&ctx, &mut ws, vec![]);
+        comp_drag(&ctx, &mut ws, (4.0, 3.0), (6.1, 5.2));
+        assert_eq!(ws.params.s("spec"), "rect 0 0 6 5");
+    }
+
+    #[test]
+    fn composite_canvas_draws_new_pieces_with_tools() {
+        let (ctx, mut ws) = comp_ws("rect 0 0 4 3");
+        ws.comp.tool = composite_canvas::Tool::Rect;
+        comp_drag(&ctx, &mut ws, (4.0, 0.0), (6.0, 2.0));
+        assert_eq!(ws.params.s("spec"), "rect 0 0 4 3; rect 4 0 2 2");
+        assert_eq!((ws.comp.sel, ws.comp.tool), (Some(1), composite_canvas::Tool::Select));
+        // a discrete add is its own undo step
+        ws.step_history(true);
+        assert_eq!(ws.params.s("spec"), "rect 0 0 4 3");
+        ws.step_history(false);
+        ws.comp.tool = composite_canvas::Tool::Circle;
+        comp_frame(&ctx, &mut ws, vec![]); // the selection's panel closes with the tool change
+        comp_drag(&ctx, &mut ws, (1.0, 1.5), (2.0, 1.5));
+        assert!(ws.params.s("spec").ends_with("; circle 1 1.5 1"), "{}", ws.params.s("spec"));
+        // free polygon: click the corners, then the first one again
+        ws.comp.tool = composite_canvas::Tool::Poly;
+        comp_frame(&ctx, &mut ws, vec![]);
+        for q in [(0.5, 0.5), (2.5, 0.5), (2.5, 2.5), (0.5, 0.5)] {
+            comp_click(&ctx, &mut ws, q);
+        }
+        assert!(ws.params.s("spec").ends_with("; tri 0.5 0.5 2.5 0.5 2.5 2.5"), "{}", ws.params.s("spec"));
+        assert!(ws.comp.poly.is_empty());
+        // the figure still renders for export
+        let out = ws.output().unwrap();
+        assert!(out.svg.unwrap().contains("<polygon"));
+    }
+
+    #[test]
+    fn composite_canvas_deletes_and_labels_corners() {
+        let (ctx, mut ws) = comp_ws("rect 0 0 4 3; rect 4 0 2 2");
+        ws.comp.tool = composite_canvas::Tool::Label;
+        comp_click(&ctx, &mut ws, (0.0, 0.0));
+        assert_eq!(ws.params.s("spec"), "rect 0 0 4 3; rect 4 0 2 2; ra 0 0 NE");
+        comp_click(&ctx, &mut ws, (0.0, 0.0));
+        assert_eq!(ws.params.s("spec"), "rect 0 0 4 3; rect 4 0 2 2");
+        ws.comp.tool = composite_canvas::Tool::Select;
+        comp_click(&ctx, &mut ws, (5.0, 1.0));
+        assert_eq!(ws.comp.sel, Some(1));
+        let key = |pressed| egui::Event::Key { key: egui::Key::Delete, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::NONE };
+        comp_frame(&ctx, &mut ws, vec![key(true), key(false)]);
+        assert_eq!(ws.params.s("spec"), "rect 0 0 4 3");
+        assert_eq!(ws.comp.sel, None);
+    }
+
+
+    #[test]
+    fn composite_canvas_pans_on_empty_space() {
+        let (ctx, mut ws) = comp_ws("rect 0 0 4 3");
+        let before = ws.comp.to_screen((0.0, 0.0));
+        let a = ws.comp.rect.left_top() + Vec2::new(40.0, 120.0);
+        let b = a + Vec2::new(60.0, -30.0);
+        comp_frame(&ctx, &mut ws, btn(a, true));
+        for k in 1..=3 {
+            comp_frame(&ctx, &mut ws, vec![egui::Event::PointerMoved(a + (b - a) * (k as f32 / 3.0))]);
+        }
+        comp_frame(&ctx, &mut ws, btn(b, false));
+        let moved = ws.comp.to_screen((0.0, 0.0)) - before;
+        assert!((moved - (b - a)).length() < 1.0, "the shape follows the pointer: {moved:?}");
+        assert_eq!(ws.params.s("spec"), "rect 0 0 4 3", "panning edits nothing");
+    }
+
 }
