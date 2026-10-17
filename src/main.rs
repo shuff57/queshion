@@ -181,6 +181,13 @@ impl App {
                     .first()
                     .map(|e| Screen::ExamEdit(e.id.clone()))
                     .unwrap_or(app.screen),
+                // "exam:N" opens the exam at index N of the store.
+                s if s.starts_with("exam:") => s[5..]
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|i| app.store.exams.get(i))
+                    .map(|e| Screen::ExamEdit(e.id.clone()))
+                    .unwrap_or(app.screen),
                 _ => app.screen,
             };
         }

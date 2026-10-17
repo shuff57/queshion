@@ -265,12 +265,12 @@ mod tests {
     }
 
     fn exam(id: &str, items: &[(&str, &str)]) -> Exam {
-        Exam {
+        Exam { paper_style: Default::default(), margins: None,
             id: id.to_string(),
             name: format!("Exam {id}"),
             header: String::new(),
             title: None,
-            items: items.iter().map(|(b, q)| ExamItem { bank_id: b.to_string(), question_id: q.to_string() }).collect(),
+            items: items.iter().map(|(b, q)| ExamItem::new(b.to_string(), q.to_string())).collect(),
             heading_pt: 16.0,
             body_pt: 11.0,
             margin_mm: 18.0,

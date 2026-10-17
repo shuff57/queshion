@@ -52,7 +52,6 @@ const SHELF_W: f32 = 340.0;
 const HEAD_PT: [f32; 3] = [15.0, 18.0, 21.0]; // prints at 12 / 14.4 / 16.8 px on screen
 const HEAD_LABELS: [&str; 3] = ["Small", "Medium", "Large"];
 const MARGIN_MM: [f32; 3] = [19.05, 25.4, 31.75];
-const MARGIN_LABELS: [&str; 3] = ["Narrow  0.75 in", "Normal  1 in", "Wide  1.25 in"];
 
 fn list_id() -> egui::Id { egui::Id::NULL.with("examui_list") }
 fn edit_id() -> egui::Id { egui::Id::NULL.with("examui_edit") }
@@ -65,14 +64,19 @@ fn now() -> i64 {
         .unwrap_or(0)
 }
 
-/// `model::ExamItem` doesn't derive PartialEq; equality of item lists is just
-/// pairwise id equality (a question may legally appear twice — this compares
-/// positions, as reorder semantics need).
+/// `model::ExamItem` doesn't derive PartialEq; equality of item lists is pairwise
+/// equality of every field (a question may legally appear twice — this compares
+/// positions, as reorder semantics need; section headings, work space and answer
+/// order count as changes too).
 fn same_items(a: &[ExamItem], b: &[ExamItem]) -> bool {
     a.len() == b.len()
-        && a.iter()
-            .zip(b.iter())
-            .all(|(x, y)| x.bank_id == y.bank_id && x.question_id == y.question_id)
+        && a.iter().zip(b.iter()).all(|(x, y)| {
+            x.bank_id == y.bank_id
+                && x.question_id == y.question_id
+                && x.section == y.section
+                && x.work_lines == y.work_lines
+                && x.answer_order == y.answer_order
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -106,7 +110,12 @@ struct EditUi {
     search: String,
     topics: Vec<String>,
     diff: u8, // 0 any, 1 low, 2 medium, 3 high
-    sort_newest: bool,
+    /// Shelf Question Type filter (empty = all types).
+    kinds: Vec<QKind>,
+    /// Shelf sort (index into `SORTS`).
+    sort: u8,
+    /// Banks open as shelf tabs (the selected one is `App.panel_bank`).
+    open_banks: Vec<Id>,
     drag: Option<DragState>,
     /// Screen-space rects of the page items as laid out this frame (drop slot
     /// space removed), for drop targeting.
@@ -119,8 +128,19 @@ struct EditUi {
     /// Page count measured on the last frame.
     pages: usize,
     confirm_delete: bool,
+    /// File > Discard changes confirmation open.
+    confirm_discard: bool,
     save_as_open: bool,
     save_as_name: String,
+    /// Margins dialog open (the page draws live guide lines at the margins).
+    margins_open: bool,
+    /// Margins dialog: editing each side separately.
+    margins_each: bool,
+    /// Last laid-out page geometry (ml, mr, mt, mb, content width) in px.
+    geo: Option<(f32, f32, f32, f32, f32)>,
+    /// Work-space handle being dragged: (item index, live line count, pointer y and line
+    /// count when the drag began).
+    ws_drag: Option<(usize, u8, f32, u8)>,
 }
 
 #[derive(Clone)]
@@ -211,22 +231,34 @@ fn own_part_label(stem: &str) -> Option<&str> {
 }
 
 /// A multipart part as printed: labelled once (its own label when the stem has one, else a., b., ...).
+#[cfg(test)]
 fn part_line(pi: usize, stem: &str) -> String {
+    part_line_styled(pi, stem, model::PaperStyle::Standard)
+}
+
+/// [`part_line`] in a paper style ("(a)" labels on Exam Board).
+fn part_line_styled(pi: usize, stem: &str, style: model::PaperStyle) -> String {
     if own_part_label(stem).is_some() {
         stem.trim_start().to_string()
     } else {
-        format!("{}. {}", letter(pi).to_lowercase(), stem)
+        format!("{} {}", style.part_label(pi), stem)
     }
 }
 
 /// A part split into its printed label ("a.") and the rest of its stem, for a hanging indent.
+#[cfg(test)]
 fn split_part_label(pi: usize, stem: &str) -> (String, String) {
+    split_part_label_styled(pi, stem, model::PaperStyle::Standard)
+}
+
+/// [`split_part_label`] in a paper style ("(a)" on Exam Board).
+fn split_part_label_styled(pi: usize, stem: &str, style: model::PaperStyle) -> (String, String) {
     let t = stem.trim_start();
     if own_part_label(t).is_some() {
         let end = t.find(['.', ')']).map_or(0, |i| i + 1);
         return (t[..end].to_string(), t[end..].trim_start().to_string());
     }
-    (format!("{}.", letter(pi).to_lowercase()), stem.to_string())
+    (style.part_label(pi), stem.to_string())
 }
 
 /// Ruled answer lines under a fill-in-the-blank item: one per `___` outside tables (a blank in a
@@ -356,7 +388,7 @@ fn paint_thumb(painter: &egui::Painter, c: Pos2, angle: f32, lines: usize) {
 
 fn new_exam(app: &mut crate::App) -> Id {
     let id = model::new_id();
-    let exam = model::Exam {
+    let exam = model::Exam { paper_style: Default::default(), margins: None,
         id: id.clone(),
         name: "Untitled Exam".to_string(),
         header: "Name: __________________ Class: ___________ Date: ___________"
@@ -799,6 +831,33 @@ impl crate::App {
             }
         }
 
+        // File-menu Discard changes (confirm) modal.
+        if st.confirm_discard {
+            let mut open = true;
+            egui::Window::new(theme::strong("Discard changes"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .default_width(420.0)
+                .show(ctx, |ui| {
+                    ui.add(egui::Label::new("Go back to this exam as it was at your last Save (or when you opened it)? Edits since then are thrown away.").wrap());
+                    ui.add_space(12.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if danger_button(ui, "Discard").clicked() {
+                            discard_changes(self, ctx, &exam_id);
+                            st.confirm_discard = false;
+                        }
+                        if kit::ghost_button(ui, "Cancel").clicked() {
+                            st.confirm_discard = false;
+                        }
+                    });
+                });
+            if !open {
+                st.confirm_discard = false;
+            }
+        }
+
         // File-menu Save As… modal.
         if st.save_as_open {
             let cur = self.exams_name(&exam_id).unwrap_or_default();
@@ -854,6 +913,9 @@ impl crate::App {
             }
         }
 
+        if st.margins_open {
+            draw_margins_dialog(self, ctx, &exam_id, &mut st);
+        }
         if self.export_open {
             self.draw_export_dialog(ctx, &exam_id);
         }
@@ -943,6 +1005,55 @@ fn icon_circle(ui: &mut egui::Ui, ico: Ico, enabled: bool) -> egui::Response {
     resp
 }
 
+// ----- working copy: Save / Discard changes ------------------------------------
+
+/// Every edit is written to disk at once (nothing is ever lost); on top of that the editor
+/// keeps Test Parrot's Working Copy checkpoint in memory: File > Save marks the current
+/// state, File > Discard changes goes back to it. The checkpoint starts as the exam when
+/// the editor opened (it does not survive an app restart).
+fn baseline_id(exam_id: &Id) -> egui::Id {
+    egui::Id::new(("qs_exam_baseline", exam_id))
+}
+
+/// Exam content for checkpoint comparison (the edit timestamp does not count).
+fn exam_sig(e: &model::Exam) -> String {
+    let mut e = e.clone();
+    e.modified = 0;
+    serde_json::to_string(&e).unwrap_or_default()
+}
+
+/// True when the exam differs from its Save checkpoint (creating the checkpoint if missing).
+fn working_copy_dirty(app: &crate::App, ctx: &egui::Context, exam_id: &Id) -> bool {
+    let Some(cur) = app.store.exam(exam_id) else { return false };
+    let id = baseline_id(exam_id);
+    match ctx.data(|d| d.get_temp::<model::Exam>(id)) {
+        Some(b) => exam_sig(&b) != exam_sig(cur),
+        None => {
+            ctx.data_mut(|d| d.insert_temp(id, cur.clone()));
+            false
+        }
+    }
+}
+
+fn save_checkpoint(app: &mut crate::App, ctx: &egui::Context, exam_id: &Id) {
+    if let Some(cur) = app.store.exam(exam_id).cloned() {
+        ctx.data_mut(|d| d.insert_temp(baseline_id(exam_id), cur));
+        screens::toast(app, "Saved", false);
+    }
+}
+
+fn discard_changes(app: &mut crate::App, ctx: &egui::Context, exam_id: &Id) {
+    let Some(b) = ctx.data(|d| d.get_temp::<model::Exam>(baseline_id(exam_id))) else { return };
+    if let Some(e) = app.store.exam_mut(exam_id) {
+        *e = b;
+        e.modified = now();
+    }
+    app.store.save_exams();
+    app.undo.clear();
+    app.redo.clear();
+    screens::toast(app, "Changes discarded", false);
+}
+
 fn draw_top_card(app: &mut crate::App, ui: &mut egui::Ui, exam_id: &Id, st: &mut EditUi) {
     kit::card()
         .corner_radius(CornerRadius::same(18))
@@ -980,14 +1091,28 @@ fn draw_top_card(app: &mut crate::App, ui: &mut egui::Ui, exam_id: &Id, st: &mut
                     app.store.save_exams();
                 }
 
-                // Saved indicator (every edit is written straight through).
-                let (sr, _) = ui.allocate_exact_size(Vec2::new(13.0, 16.0), Sense::hover());
+                // Saved indicator: every edit is written straight through; "Edited" means the
+                // exam differs from its File > Save checkpoint (Discard changes goes back).
+                let dirty = working_copy_dirty(app, ui.ctx(), exam_id);
+                let (sr, sresp) = ui.allocate_exact_size(Vec2::new(13.0, 16.0), Sense::hover());
                 let sc = sr.center();
-                let w = Stroke::new(1.8, theme::accent_col());
-                ui.painter().line_segment([sc + Vec2::new(-4.5, 0.5), sc + Vec2::new(-1.5, 3.5)], w);
-                ui.painter().line_segment([sc + Vec2::new(-1.5, 3.5), sc + Vec2::new(4.5, -3.5)], w);
+                if dirty {
+                    ui.painter().circle_stroke(sc, 4.5, Stroke::new(1.6, theme::accent_col()));
+                    ui.painter().circle_filled(sc, 1.6, theme::accent_col());
+                } else {
+                    let w = Stroke::new(1.8, theme::accent_col());
+                    ui.painter().line_segment([sc + Vec2::new(-4.5, 0.5), sc + Vec2::new(-1.5, 3.5)], w);
+                    ui.painter().line_segment([sc + Vec2::new(-1.5, 3.5), sc + Vec2::new(4.5, -3.5)], w);
+                }
+                let tip = if dirty {
+                    "Edited since your last Save. Every change is already on disk; File > Discard changes goes back to the last Save."
+                } else {
+                    "Everything in this working copy matches your last Save."
+                };
+                sresp.on_hover_text(tip);
                 if !compact {
-                    ui.label(RichText::new("Saved").family(theme::bold_family()).size(12.0).color(theme::accent_col()));
+                    ui.label(RichText::new(if dirty { "Edited" } else { "Saved" }).family(theme::bold_family()).size(12.0).color(theme::accent_col()))
+                        .on_hover_text(tip);
                 }
                 ui.add_space(4.0);
 
@@ -1000,6 +1125,15 @@ fn draw_top_card(app: &mut crate::App, ui: &mut egui::Ui, exam_id: &Id, st: &mut
                     }
                     if !compact && kit::ghost_button(ui, "Export history").clicked() {
                         app.history_open = true;
+                    }
+                    let dirty = working_copy_dirty(app, ui.ctx(), exam_id);
+                    if ui
+                        .add_enabled_ui(dirty, |ui| kit::ghost_button(ui, "Save"))
+                        .inner
+                        .on_hover_text("Save a checkpoint of this exam (File > Discard changes returns to it)")
+                        .clicked()
+                    {
+                        save_checkpoint(app, ui.ctx(), exam_id);
                     }
                     let redo = icon_circle(ui, Ico::Redo, !app.redo.is_empty()).on_hover_text("Redo (Ctrl+Shift+Z)");
                     if redo.clicked() && !app.redo.is_empty() {
@@ -1019,6 +1153,13 @@ fn draw_menus(app: &mut crate::App, ui: &mut egui::Ui, exam_id: &Id, st: &mut Ed
     ui.menu_button("File", |ui| {
         if ui.button("Open exam").clicked() {
             app.screen = crate::Screen::Exams;
+        }
+        let dirty = working_copy_dirty(app, ui.ctx(), exam_id);
+        if ui.add_enabled(dirty, egui::Button::new("Save")).clicked() {
+            save_checkpoint(app, ui.ctx(), exam_id);
+        }
+        if ui.add_enabled(dirty, egui::Button::new("Discard changes")).clicked() {
+            st.confirm_discard = true;
         }
         if ui.button("Save as…").clicked() {
             st.save_as_open = true;
@@ -1051,6 +1192,21 @@ fn draw_menus(app: &mut crate::App, ui: &mut egui::Ui, exam_id: &Id, st: &mut Ed
         {
             do_redo(app, exam_id);
         }
+        ui.separator();
+        ui.label(kit::small_caps_text("Vary"));
+        if ui.button("Shuffle question order").on_hover_text("Shuffles the questions within each section").clicked() {
+            let mut rnd = editor_rng();
+            apply_items_fn(app, exam_id, |it| with_all_sections_shuffled(it, &mut rnd));
+        }
+        if ui.button("Shuffle answer order").on_hover_text("Shuffles every multiple-choice question's answers on this exam").clicked() {
+            shuffle_all_answers(app, exam_id);
+        }
+        if ui.button("Restore bank answer order").clicked() {
+            apply_items_fn(app, exam_id, |mut it| {
+                it.iter_mut().for_each(|x| x.answer_order.clear());
+                it
+            });
+        }
     });
     ui.menu_button("Format", |ui| {
         ui.set_min_width(300.0);
@@ -1059,14 +1215,36 @@ fn draw_menus(app: &mut crate::App, ui: &mut egui::Ui, exam_id: &Id, st: &mut Ed
         let mut changed = false;
         if let Some(ex) = app.store.exam(exam_id) {
             let mut f = ex.clone();
-            for (label, which) in [("Heading", 0), ("Text size", 1), ("Margins", 2), ("Answer blanks", 3)] {
+            for (label, which) in [("Heading", 0), ("Text size", 1), ("Answer blanks", 3)] {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(label).family(theme::bold_family()).color(theme::text_col()));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        changed |= format_control(ui, which, &mut f, "menu");
+                        changed |= format_control(ui, which, &mut f, "menu", &mut st.margins_open);
                     });
                 });
                 ui.add_space(4.0);
+            }
+            ui.separator();
+            kit::small_caps(ui, "Paper style");
+            for ps in model::PaperStyle::ALL {
+                let on = f.paper_style == ps;
+                let r = ui.add(
+                    egui::Button::new(
+                        RichText::new(format!("{}\n{}", ps.label(), ps.blurb()))
+                            .size(12.0)
+                            .color(if on { theme::ink() } else { theme::text_col() }),
+                    )
+                    .selected(on)
+                    .min_size(Vec2::new(ui.available_width(), 0.0)),
+                );
+                if r.clicked() && !on {
+                    f.paper_style = ps;
+                    changed = true;
+                }
+            }
+            ui.separator();
+            if ui.button("Margins…").clicked() {
+                st.margins_open = true;
             }
             if changed {
                 write_format(app, exam_id, &f);
@@ -1077,12 +1255,111 @@ fn draw_menus(app: &mut crate::App, ui: &mut egui::Ui, exam_id: &Id, st: &mut Ed
 
 // ----- format bar -----------------------------------------------------------
 
-fn head_idx(pt: f32) -> usize {
-    if pt < 16.5 { 0 } else if pt < 19.5 { 1 } else { 2 }
+/// Inches with up to two decimals ("0.75", "1").
+fn fmt_inches(mm: f32) -> String {
+    let v = (mm / 25.4 * 100.0).round() / 100.0;
+    let s = format!("{v:.2}");
+    s.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
-fn margin_idx(mm: f32) -> usize {
-    if mm < 22.0 { 0 } else if mm < 28.5 { 1 } else { 2 }
+/// Shuffles every multiple-choice question's answers on this exam (one undo step).
+fn shuffle_all_answers(app: &mut crate::App, exam_id: &Id) {
+    let Some(ex) = app.store.exam(exam_id) else { return };
+    let mut rnd = editor_rng();
+    let orders: Vec<Option<Vec<usize>>> = ex
+        .items
+        .iter()
+        .map(|it| app.store.question(&it.bank_id, &it.question_id).and_then(|q| shuffled_answer_order(q, &it.answer_order, &mut rnd)))
+        .collect();
+    apply_items_fn(app, exam_id, |mut it| {
+        for (x, o) in it.iter_mut().zip(orders) {
+            if let Some(o) = o {
+                x.answer_order = o;
+            }
+        }
+        it
+    });
+}
+
+/// The Margins dialog (Format > Margins…): all sides, or each side, in inches; the page
+/// draws live guide lines while it is open.
+fn draw_margins_dialog(app: &mut crate::App, ctx: &egui::Context, exam_id: &Id, st: &mut EditUi) {
+    let Some(ex) = app.store.exam(exam_id) else { return };
+    let mut f = ex.clone();
+    let mut m = f.page_margins();
+    if !m.uniform() {
+        st.margins_each = true;
+    }
+    let mut open = true;
+    let mut changed = false;
+    let pos = egui::pos2(150.0, 160.0);
+    egui::Window::new(kit::small_caps_text("Margins"))
+        .id(egui::Id::new("qs_margins_dialog"))
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .default_pos(pos)
+        .default_width(250.0)
+        .show(ctx, |ui| {
+            let inch = |ui: &mut egui::Ui, label: &str, v: &mut f32| -> bool {
+                let mut i = *v / 25.4;
+                let mut ch = false;
+                ui.horizontal(|ui| {
+                    ui.add_sized([70.0, 20.0], egui::Label::new(label));
+                    let r = ui.add(egui::DragValue::new(&mut i).range(0.25..=2.5).speed(0.01).fixed_decimals(2).suffix(" in"));
+                    if r.changed() {
+                        *v = (i * 25.4 * 100.0).round() / 100.0;
+                        ch = true;
+                    }
+                });
+                ch
+            };
+            if st.margins_each {
+                changed |= inch(ui, "Top", &mut m.top);
+                changed |= inch(ui, "Right", &mut m.right);
+                changed |= inch(ui, "Bottom", &mut m.bottom);
+                changed |= inch(ui, "Left", &mut m.left);
+            } else {
+                let mut all = m.top;
+                if inch(ui, "All sides", &mut all) {
+                    m = model::Margins::all(all);
+                    changed = true;
+                }
+            }
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                for (lab, inch_v) in [("0.5", 0.5_f32), ("0.75", 0.75), ("1", 1.0), ("1.25", 1.25)] {
+                    let mm = inch_v * 25.4;
+                    if kit::chip_toggle(ui, lab, m.uniform() && (m.top - mm).abs() < 0.05).clicked() {
+                        m = model::Margins::all(mm);
+                        st.margins_each = false;
+                        changed = true;
+                    }
+                }
+            });
+            ui.add_space(4.0);
+            if ui.checkbox(&mut st.margins_each, "Set each side").changed() && !st.margins_each {
+                m = model::Margins::all(m.top);
+                changed = true;
+            }
+        });
+    if changed {
+        if m.uniform() {
+            f.margin_mm = m.top;
+            f.margins = None;
+        } else {
+            f.margins = Some(m);
+            f.margin_mm = m.top;
+        }
+        write_format(app, exam_id, &f);
+    }
+    if !open {
+        st.margins_open = false;
+    }
+}
+
+fn head_idx(pt: f32) -> usize {
+    if pt < 16.5 { 0 } else if pt < 19.5 { 1 } else { 2 }
 }
 
 fn write_format(app: &mut crate::App, exam_id: &Id, f: &model::Exam) {
@@ -1090,15 +1367,18 @@ fn write_format(app: &mut crate::App, exam_id: &Id, f: &model::Exam) {
         ex.heading_pt = f.heading_pt;
         ex.body_pt = f.body_pt;
         ex.margin_mm = f.margin_mm;
+        ex.margins = f.margins;
+        ex.paper_style = f.paper_style;
         ex.ruled_blanks = f.ruled_blanks;
         ex.modified = now();
     }
     app.store.save_exams();
 }
 
-/// One format control (0 heading, 1 text size, 2 margins, 3 answer blanks).
-/// Shared by the Format bar, the Format menu and the popover alternative.
-fn format_control(ui: &mut egui::Ui, which: u8, f: &mut model::Exam, salt: &str) -> bool {
+/// One format control (0 heading, 1 text size, 2 margins, 3 answer blanks, 4 paper style).
+/// Shared by the Format bar, the Format menu and the popover alternative. The margins
+/// control is a button that opens the Margins dialog (`margins_open`).
+fn format_control(ui: &mut egui::Ui, which: u8, f: &mut model::Exam, salt: &str, margins_open: &mut bool) -> bool {
     let mut changed = false;
     match which {
         0 => {
@@ -1153,18 +1433,26 @@ fn format_control(ui: &mut egui::Ui, which: u8, f: &mut model::Exam, salt: &str)
             }
         }
         2 => {
-            let cur = margin_idx(f.margin_mm);
+            let m = f.page_margins();
+            let label = if m.uniform() { format!("{} in", fmt_inches(m.top)) } else { "Each side".to_string() };
+            let r = ui.add(egui::Button::new(label).selected(*margins_open)).on_hover_text("Margins (all sides or each side)");
+            if r.clicked() {
+                *margins_open = !*margins_open;
+            }
+        }
+        4 => {
+            let cur = f.paper_style;
             let mut sel = cur;
-            egui::ComboBox::from_id_salt(("fmt_margin", salt))
-                .selected_text(MARGIN_LABELS[cur])
-                .width(130.0)
+            egui::ComboBox::from_id_salt(("fmt_style", salt))
+                .selected_text(cur.label())
+                .width(110.0)
                 .show_ui(ui, |ui| {
-                    for (i, l) in MARGIN_LABELS.iter().enumerate() {
-                        ui.selectable_value(&mut sel, i, *l);
+                    for ps in model::PaperStyle::ALL {
+                        ui.selectable_value(&mut sel, ps, ps.label()).on_hover_text(ps.blurb());
                     }
                 });
             if sel != cur {
-                f.margin_mm = MARGIN_MM[sel];
+                f.paper_style = sel;
                 changed = true;
             }
         }
@@ -1193,7 +1481,7 @@ fn format_control(ui: &mut egui::Ui, which: u8, f: &mut model::Exam, salt: &str)
     changed
 }
 
-fn draw_format_bar(app: &mut crate::App, ui: &mut egui::Ui, exam_id: &Id, st: &EditUi) {
+fn draw_format_bar(app: &mut crate::App, ui: &mut egui::Ui, exam_id: &Id, st: &mut EditUi) {
     let Some(ex) = app.store.exam(exam_id) else { return };
     let mut f = ex.clone();
     let n_q = f.items.len();
@@ -1217,22 +1505,22 @@ fn draw_format_bar(app: &mut crate::App, ui: &mut egui::Ui, exam_id: &Id, st: &E
                 fmt_number(pts)
             );
             // Wide: one row with the summary pushed right. Narrow: controls wrap, summary last.
-            let wide = ui.available_width() > 1000.0;
+            let wide = ui.available_width() > 1180.0;
             let mut body = |ui: &mut egui::Ui, range: std::ops::Range<usize>| {
                 ui.spacing_mut().item_spacing.x = 8.0;
-                for (label, which) in [("Heading", 0u8), ("Text size", 1), ("Margins", 2), ("Answer blanks", 3)]
+                for (label, which) in [("Paper", 4u8), ("Heading", 0), ("Text size", 1), ("Margins", 2), ("Answer blanks", 3)]
                     .into_iter()
                     .skip(range.start)
                     .take(range.len())
                 {
                     ui.label(muted(RichText::new(label).size(11.5)));
-                    changed |= format_control(ui, which, &mut f, "bar");
+                    changed |= format_control(ui, which, &mut f, "bar", &mut st.margins_open);
                     ui.add_space(10.0);
                 }
             };
             if wide {
                 ui.horizontal(|ui| {
-                    body(ui, 0..4);
+                    body(ui, 0..5);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(muted(RichText::new(&summary).size(12.0)));
                     });
@@ -1240,7 +1528,7 @@ fn draw_format_bar(app: &mut crate::App, ui: &mut egui::Ui, exam_id: &Id, st: &E
             } else {
                 ui.horizontal(|ui| body(ui, 0..3));
                 ui.horizontal(|ui| {
-                    body(ui, 3..4);
+                    body(ui, 3..5);
                     ui.label(muted(RichText::new(&summary).size(12.0)));
                 });
             }
@@ -1262,17 +1550,13 @@ pub(crate) fn ptext(s: impl Into<String>, px: f32, bold: bool) -> RichText {
         .line_height(Some(px * 1.45))
 }
 
-/// One printed-looking ruled line (1.7 em tall).
-fn ruled_line(ui: &mut egui::Ui, width: f32, bp: f32) {
+/// One printed-looking answer line (ruled, or dotted on Exam Board), one style pitch tall.
+fn ruled_line(ui: &mut egui::Ui, width: f32, bp: f32, style: model::PaperStyle) {
     let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(width.min(ui.available_width()), bp * 1.7),
+        egui::vec2(width.min(ui.available_width()), line_pitch_px(bp, style)),
         egui::Sense::hover(),
     );
-    let y = rect.bottom() - 2.0;
-    ui.painter().line_segment(
-        [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
-        egui::Stroke::new(0.9, PAPER_RULE),
-    );
+    answer_rule(ui.painter(), egui::pos2(rect.left(), rect.bottom() - 2.0), rect.right(), style);
 }
 
 /// True when a stem (or option) needs the structured renderer: markup (`crate::richtext`) or math.
@@ -1376,6 +1660,25 @@ fn render_stem_one(ui: &mut egui::Ui, stem: &str, points: Option<f64>, bp: f32) 
     ui.add(egui::Label::new(job).wrap());
 }
 
+/// Preview page geometry (paper top on screen, page height, top/bottom margins), shared with
+/// [`keep_on_page`] through temp memory while the page lays out.
+#[derive(Clone, Copy)]
+struct PageGeom {
+    p0: f32,
+    page_h: f32,
+    mt: f32,
+    mb: f32,
+}
+
+fn geom_id() -> egui::Id {
+    egui::Id::new("qs_paper_geom")
+}
+
+/// Preview size (px) of one ruled / work-space line in a style.
+fn line_pitch_px(bp: f32, style: model::PaperStyle) -> f32 {
+    bp * style.rule_pitch() * 0.85
+}
+
 fn draw_page(
     app: &mut crate::App,
     ui: &mut egui::Ui,
@@ -1385,16 +1688,27 @@ fn draw_page(
 ) {
     st.rows.clear();
     let Some(exam) = app.store.exam(exam_id).cloned() else { return };
+    let style = exam.paper_style;
+    let (pw, ph) = style.page_pt();
+    let (page_w, page_h) = (pw * PT, ph * PT);
+    let m = exam.page_margins();
+    let mm_px = |mm: f32| mm / 25.4 * 72.0 * PT;
+    let mut geo = (0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32); // ml, mr, mt, mb, cw
     egui::ScrollArea::vertical()
         .id_salt("page_scroll")
         .auto_shrink([false, false])
         .show(ui, |ui| {
             let aw = ui.available_width();
-            let paper_w = PAGE_W.min((aw - 40.0).max(260.0));
+            let paper_w = page_w.min((aw - 40.0).max(260.0));
             let inset = ((aw - paper_w) / 2.0).max(0.0);
             let bp = exam.body_pt * PT;
-            let side = (exam.margin_mm / 25.4 * 72.0 * PT).clamp(24.0, (paper_w - 180.0) / 2.0);
-            let cw = paper_w - side * 2.0;
+            let side_max = ((paper_w - 180.0) / 2.0).max(18.0);
+            let ml = mm_px(m.left).clamp(18.0, side_max);
+            let mr = mm_px(m.right).clamp(18.0, side_max);
+            let mt = mm_px(m.top).max(12.0);
+            let mb = mm_px(m.bottom).max(12.0);
+            let cw = paper_w - ml - mr;
+            geo = (ml, mr, mt, mb, cw);
 
             ui.add_space(22.0);
             let bg = ui.painter().add(Shape::Noop);
@@ -1405,21 +1719,20 @@ fn draw_page(
                 let r = ui.vertical(|ui| {
                     ui.set_width(paper_w);
                     let y0 = ui.cursor().top();
-                    // Paper top for the item loop's page-break avoidance (draw_page_article).
-                    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("qs_paper_top"), y0));
-                    ui.add_space(side * 1.05);
+                    ui.ctx().data_mut(|d| d.insert_temp(geom_id(), PageGeom { p0: y0, page_h, mt, mb }));
+                    ui.add_space(mt);
                     ui.horizontal_top(|ui| {
                         ui.spacing_mut().item_spacing = Vec2::ZERO;
-                        ui.add_space(side);
+                        ui.add_space(ml);
                         ui.vertical(|ui| {
                             ui.set_width(cw);
-                            draw_page_article(app, ui, ctx, exam_id, st, &exam, cw, bp, side);
+                            draw_page_article(app, ui, ctx, exam_id, st, &exam, cw, bp, ml, mr);
                         });
                     });
-                    ui.add_space(side * 0.8);
+                    ui.add_space(mb);
                     let used = ui.cursor().top() - y0;
-                    let pages = (used / PAGE_H).ceil().max(1.0);
-                    ui.allocate_space(Vec2::new(1.0, pages * PAGE_H - used));
+                    let pages = (used / page_h).ceil().max(1.0);
+                    ui.allocate_space(Vec2::new(1.0, pages * page_h - used));
                     st.pages = pages as usize;
                 });
                 paper_rect = r.response.rect;
@@ -1441,7 +1754,7 @@ fn draw_page(
                 StrokeKind::Inside,
             ));
             for k in 1..st.pages {
-                let y = paper_rect.top() + k as f32 * PAGE_H;
+                let y = paper_rect.top() + k as f32 * page_h;
                 shapes.extend(Shape::dashed_line(
                     &[Pos2::new(paper_rect.left(), y), Pos2::new(paper_rect.right(), y)],
                     Stroke::new(1.0, PAPER_RULE.gamma_multiply(0.7)),
@@ -1449,12 +1762,29 @@ fn draw_page(
                     4.0,
                 ));
             }
+            // Margins dialog open: live guide lines at the margins of every page.
+            if st.margins_open {
+                let red = Color32::from_rgb(0xc0, 0x40, 0x30).gamma_multiply(0.75);
+                for k in 0..st.pages {
+                    let top = paper_rect.top() + k as f32 * page_h;
+                    let g = Rect::from_min_max(
+                        Pos2::new(paper_rect.left() + ml, top + mt),
+                        Pos2::new(paper_rect.right() - mr, top + page_h - mb),
+                    );
+                    shapes.extend(Shape::dashed_line(
+                        &[g.left_top(), g.right_top(), g.right_bottom(), g.left_bottom(), g.left_top()],
+                        Stroke::new(1.0, red),
+                        4.0,
+                        3.0,
+                    ));
+                }
+            }
             ui.painter().set(bg, Shape::Vec(shapes));
             // The header line repeats at the top of every later page (print does the same).
             if !exam.header.trim().is_empty() {
-                let x = paper_rect.left() + side;
+                let x = paper_rect.left() + ml;
                 for k in 1..st.pages {
-                    let y = paper_rect.top() + k as f32 * PAGE_H + side * 1.05;
+                    let y = paper_rect.top() + k as f32 * page_h + mt;
                     ui.painter().text(
                         Pos2::new(x, y + bp * 0.72),
                         Align2::LEFT_CENTER,
@@ -1466,17 +1796,28 @@ fn draw_page(
                     ui.painter().line_segment([Pos2::new(x, ly), Pos2::new(x + cw, ly)], Stroke::new(1.0, PAPER_RULE));
                 }
             }
-            // Page numbers at the foot of each page.
+            // Page numbers at the foot of each page; Exam Board adds "Turn over".
             for k in 1..=st.pages {
+                let foot = paper_rect.top() + k as f32 * page_h;
                 ui.painter().text(
-                    Pos2::new(paper_rect.center().x, paper_rect.top() + k as f32 * PAGE_H - 12.0),
+                    Pos2::new(paper_rect.center().x, foot - 12.0),
                     Align2::CENTER_CENTER,
                     k.to_string(),
                     FontId::new(9.0, theme::serif_family()),
                     PAPER_SOFT.gamma_multiply(0.8),
                 );
+                if style == model::PaperStyle::ExamBoard && k < st.pages {
+                    ui.painter().text(
+                        Pos2::new(paper_rect.right() - mr, foot - mb * 0.55),
+                        Align2::RIGHT_CENTER,
+                        "Turn over",
+                        FontId::new(bp, theme::serif_bold_family()),
+                        PAPER_INK,
+                    );
+                }
             }
         });
+    st.geo = Some(geo);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1489,9 +1830,11 @@ fn draw_page_article(
     exam: &model::Exam,
     cw: f32,
     bp: f32,
-    side: f32,
+    ml: f32,
+    mr: f32,
 ) {
     let items = &exam.items;
+    let style = exam.paper_style;
     let title = exam.title.clone().unwrap_or_else(|| exam.name.clone());
     let head_px = exam.heading_pt * PT;
 
@@ -1541,7 +1884,7 @@ fn draw_page_article(
 
     // Extra ruled blank lines after the title area.
     for _ in 0..exam.ruled_blanks {
-        ruled_line(ui, cw, bp);
+        ruled_line(ui, cw, bp, style);
     }
     ui.add_space(10.0);
 
@@ -1549,7 +1892,7 @@ fn draw_page_article(
     let hdr_h = running_header_h(&exam.header, bp);
 
     // Numbers: matching consumes one number per left item; everything else one.
-    // Keeps the preview numbering identical to the printed exam.
+    // Keeps the preview numbering identical to the printed exam (it continues across sections).
     let mut numbers: Vec<u32> = Vec::with_capacity(items.len());
     let mut run = 1u32;
     for it in items {
@@ -1564,6 +1907,7 @@ fn draw_page_article(
         numbers.push(run);
         run += extra;
     }
+    let ranges = section_ranges(items);
 
     let shelf_drag = matches!(&st.drag, Some(DragState { src: DragSrc::Shelf { .. }, .. }));
     let slot_k = if shelf_drag { st.slot_k } else { None };
@@ -1591,18 +1935,23 @@ fn draw_page_article(
         if slot_k == Some(i) {
             slot_shift = draw_drop_slot(ui, cw, bp, slot_no(i)) + 8.0;
         }
-        let q = app.store.question(&item.bank_id, &item.question_id).cloned();
+        if let Some(sec) = &item.section {
+            let s_idx = ranges.iter().position(|r| r.start == i).unwrap_or(0);
+            keep_on_page(ui, bp * 6.0, hdr_h);
+            section_block(app, ui, exam_id, st, i, s_idx, ranges.len(), sec, cw, bp, ml);
+        }
+        let q = item_question(&app.store, item);
         let number = numbers.get(i).copied().unwrap_or(i as u32 + 1);
         // Keep a question off the dashed page-break line: when last frame's height says it
         // would cross the break, start it at the top of the next page (as the print does).
-        let h_id = egui::Id::new(("qs_item_h", &item.question_id));
+        let h_id = egui::Id::new(("qs_item_h", i, &item.question_id));
         if let Some(h) = ctx.data(|d| d.get_temp::<f32>(h_id)) {
-            keep_on_page(ui, h, side, hdr_h);
+            keep_on_page(ui, h, hdr_h);
         }
-        let rect = draw_item(app, ui, ctx, exam_id, st, i, number, q.as_ref(), cw, bp, side);
+        let rect = draw_item(app, ui, ctx, exam_id, st, i, number, q.as_ref(), cw, bp, ml, mr, style);
         ctx.data_mut(|d| d.insert_temp(h_id, rect.height()));
         st.rows.push((i, rect.translate(Vec2::new(0.0, -slot_shift))));
-        ui.add_space(bp * 1.0);
+        ui.add_space(bp * style.q_gap() * 1.6);
     }
     if !items.is_empty() && slot_k == Some(items.len()) {
         draw_drop_slot(ui, cw, bp, slot_no(items.len()));
@@ -1624,12 +1973,12 @@ fn draw_page_article(
         return;
     }
     ui.add_space(bp * 1.2);
-    keep_on_page(ui, bp * 1.6 + 6.0 + bp * 2.1, side, hdr_h);
+    keep_on_page(ui, bp * 1.6 + 6.0 + bp * 2.1, hdr_h);
     ui.add(egui::Label::new(ptext("Answer Section", bp + 1.0, true)).wrap());
     ui.add_space(6.0);
     let cell_w = (cw / 4.0).min(130.0);
     for chunk in cells.chunks(4) {
-        keep_on_page(ui, bp * 2.1, side, hdr_h);
+        keep_on_page(ui, bp * 2.1, hdr_h);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = Vec2::ZERO;
             for n in chunk {
@@ -1637,12 +1986,110 @@ fn draw_page_article(
                 ui.painter().text(
                     Pos2::new(rect.left(), rect.center().y),
                     Align2::LEFT_CENTER,
-                    format!("{n}. ______"),
+                    format!("{}  ______", style.number_label(*n)),
                     FontId::new(bp, theme::serif_family()),
                     PAPER_INK,
                 );
             }
         });
+    }
+}
+
+/// A section heading on the page: dashed divider, editable title and directions (written
+/// straight through, like the header), and a hover rail in the left margin: move section
+/// up / down, merge with the section above, delete the section with its questions.
+#[allow(clippy::too_many_arguments)]
+fn section_block(
+    app: &mut crate::App,
+    ui: &mut egui::Ui,
+    exam_id: &Id,
+    st: &mut EditUi,
+    i: usize,
+    s_idx: usize,
+    n_sections: usize,
+    sec: &model::ExamSection,
+    cw: f32,
+    bp: f32,
+    ml: f32,
+) {
+    let top = ui.cursor().top();
+    let x0 = ui.cursor().left();
+    ui.add_space(bp * 1.4);
+    let line_y = ui.cursor().top();
+    let p = ui.painter().clone();
+    p.extend(Shape::dashed_line(
+        &[Pos2::new(x0, line_y), Pos2::new(x0 + cw, line_y)],
+        Stroke::new(1.0, PAPER_RULE.gamma_multiply(0.8)),
+        4.0,
+        3.0,
+    ));
+    let label = if sec.is_blank() { format!("Untitled section {}", s_idx + 1) } else { format!("Section {}", s_idx + 1) };
+    p.text(
+        Pos2::new(x0 + cw, line_y - 2.0),
+        Align2::RIGHT_BOTTOM,
+        label,
+        FontId::new(9.5, theme::serif_family()),
+        PAPER_SOFT.gamma_multiply(0.85),
+    );
+    ui.add_space(bp * 0.45);
+    let mut title = sec.title.clone();
+    let mut dirs = sec.directions.clone();
+    ui.add(
+        egui::TextEdit::singleline(&mut title)
+            .id_salt(("sec_title", i))
+            .hint_text(RichText::new("Section title").font(FontId::new(bp * 1.1, theme::serif_bold_family())).color(PAPER_SOFT.gamma_multiply(0.6)))
+            .font(FontId::new(bp * 1.1, theme::serif_bold_family()))
+            .text_color(PAPER_INK)
+            .frame(egui::Frame::NONE)
+            .desired_width(cw),
+    );
+    ui.add(
+        egui::TextEdit::multiline(&mut dirs)
+            .id_salt(("sec_dirs", i))
+            .hint_text(RichText::new("Directions").font(FontId::new(bp, theme::serif_family())).color(PAPER_SOFT.gamma_multiply(0.6)))
+            .font(FontId::new(bp, theme::serif_family()))
+            .text_color(PAPER_SOFT)
+            .frame(egui::Frame::NONE)
+            .desired_rows(1)
+            .desired_width(cw),
+    );
+    ui.add_space(bp * 0.5);
+    if title != sec.title || dirs != sec.directions {
+        if let Some(it) = app.store.exam_mut(exam_id).and_then(|e| e.items.get_mut(i)) {
+            it.section = Some(model::ExamSection { title, directions: dirs });
+        }
+        if let Some(e) = app.store.exam_mut(exam_id) {
+            e.modified = now();
+        }
+        app.store.save_exams();
+    }
+
+    let rect = Rect::from_min_max(Pos2::new(x0, top), Pos2::new(x0 + cw, ui.cursor().top()));
+    let show = st.drag.is_none() && ui.rect_contains_pointer(rect.expand2(Vec2::new(ml - 2.0, 2.0)));
+    let gx = rect.left() - (ml * 0.5).min(24.0) - 2.0;
+    let y = rect.top() + bp * 1.4;
+    let mut act: Option<u8> = None;
+    // Only the actions that apply, stacked without gaps: up, down, merge up, delete.
+    let avail = [(1u8, 1u8, s_idx > 0), (2, 2, s_idx + 1 < n_sections), (3, 5, s_idx > 0), (4, 6, true)];
+    let mut k = 0.0;
+    for (a, kind, ok) in avail {
+        if !ok {
+            continue;
+        }
+        if margin_button(ui, ui.id().with(("sec_btn", i, a)), Pos2::new(gx, y + k * 20.0), kind, show) {
+            act = Some(a);
+        }
+        k += 1.0;
+    }
+    match act {
+        Some(1) => apply_items_fn(app, exam_id, |it| with_section_moved(it, s_idx, -1)),
+        Some(2) => apply_items_fn(app, exam_id, |it| with_section_moved(it, s_idx, 1)),
+        Some(3) => apply_items_fn(app, exam_id, |it| with_section_merged_up(it, s_idx)),
+        Some(4) => {
+            apply_items_fn(app, exam_id, |it| with_section_deleted(it, s_idx));
+            screens::toast(app, "Section deleted with its questions (Ctrl+Z undoes)", false);
+        }
+        _ => {}
     }
 }
 
@@ -1654,25 +2101,25 @@ fn running_header_h(header: &str, bp: f32) -> f32 {
 
 /// Where page `k` (0-based) of the preview starts its content, relative to the paper top:
 /// the top margin, plus the repeated header on pages after the first.
-fn page_content_top(k: f32, side: f32, hdr_h: f32) -> f32 {
-    k * PAGE_H + side * 1.05 + if k >= 1.0 { hdr_h } else { 0.0 }
+fn page_content_top(k: f32, page_h: f32, mt: f32, hdr_h: f32) -> f32 {
+    k * page_h + mt + if k >= 1.0 { hdr_h } else { 0.0 }
 }
 
 /// Keeps a block `h` tall off the dashed page-break line and out of the repeated header:
 /// when it would cross into the bottom margin it starts at the next page's content top
 /// (as the print does); when the cursor sits in a page's header band it moves below it.
-fn keep_on_page(ui: &mut egui::Ui, h: f32, side: f32, hdr_h: f32) {
-    let Some(p0) = ui.ctx().data(|d| d.get_temp::<f32>(egui::Id::new("qs_paper_top"))) else { return };
+fn keep_on_page(ui: &mut egui::Ui, h: f32, hdr_h: f32) {
+    let Some(g) = ui.ctx().data(|d| d.get_temp::<PageGeom>(geom_id())) else { return };
     let top = ui.cursor().top();
-    let page = ((top - p0) / PAGE_H).floor().max(0.0);
-    let start = p0 + page_content_top(page, side, hdr_h);
+    let page = ((top - g.p0) / g.page_h).floor().max(0.0);
+    let start = g.p0 + page_content_top(page, g.page_h, g.mt, hdr_h);
     if top < start {
         ui.add_space(start - top);
         return;
     }
-    let page_end = p0 + (page + 1.0) * PAGE_H - side * 0.8;
-    if top + h > page_end && h < PAGE_H - side * 1.85 - hdr_h {
-        ui.add_space(p0 + page_content_top(page + 1.0, side, hdr_h) - top);
+    let page_end = g.p0 + (page + 1.0) * g.page_h - g.mb;
+    if top + h > page_end && h < g.page_h - g.mt - g.mb - hdr_h {
+        ui.add_space(g.p0 + page_content_top(page + 1.0, g.page_h, g.mt, hdr_h) - top);
     }
 }
 
@@ -1700,51 +2147,78 @@ fn draw_drop_slot(ui: &mut egui::Ui, cw: f32, bp: f32, number: u32) -> f32 {
 }
 
 /// Small painted glyph buttons in the paper's margin.
+/// Kinds: 0 remove, 1 up, 2 down, 3 duplicate, 4 actions (three dots), 5 merge up, 6 delete section.
 fn margin_button(ui: &mut egui::Ui, id: egui::Id, center: Pos2, kind: u8, show: bool) -> bool {
-    let rect = Rect::from_center_size(center, Vec2::splat(18.0));
-    let resp = ui.interact(rect, id, Sense::click());
-    if show {
-        let p = ui.painter();
-        if resp.hovered() {
-            p.rect_filled(rect, CornerRadius::same(5), theme::accent_faded());
-        }
-        let col = if resp.hovered() { theme::accent_col() } else { PAPER_SOFT };
-        let s = Stroke::new(1.6, col);
-        let c = rect.center();
-        match kind {
-            0 => {
-                p.line_segment([c + Vec2::new(-3.5, -3.5), c + Vec2::new(3.5, 3.5)], s);
-                p.line_segment([c + Vec2::new(-3.5, 3.5), c + Vec2::new(3.5, -3.5)], s);
-            }
-            1 => {
-                p.line_segment([c + Vec2::new(-4.0, 1.5), c + Vec2::new(0.0, -2.5)], s);
-                p.line_segment([c + Vec2::new(0.0, -2.5), c + Vec2::new(4.0, 1.5)], s);
-            }
-            3 => {
-                // Duplicate: two overlapping sheets.
-                let back = Rect::from_center_size(c + Vec2::new(-1.6, -1.6), Vec2::new(7.0, 8.5));
-                let front = Rect::from_center_size(c + Vec2::new(1.6, 1.6), Vec2::new(7.0, 8.5));
-                p.rect_stroke(back, CornerRadius::same(1), Stroke::new(1.3, col), StrokeKind::Middle);
-                p.rect_filled(front, CornerRadius::same(1), theme::paper());
-                p.rect_stroke(front, CornerRadius::same(1), Stroke::new(1.3, col), StrokeKind::Middle);
-            }
-            _ => {
-                p.line_segment([c + Vec2::new(-4.0, -1.5), c + Vec2::new(0.0, 2.5)], s);
-                p.line_segment([c + Vec2::new(0.0, 2.5), c + Vec2::new(4.0, -1.5)], s);
-            }
-        }
-        let tip = match kind {
-            0 => "Remove from exam",
-            1 => "Move up",
-            3 => "Duplicate question",
-            _ => "Move down",
-        };
-        resp.clone().on_hover_text(tip);
-    }
-    show && resp.clicked()
+    margin_button_resp(ui, id, center, kind, show).is_some_and(|r| r.clicked())
 }
 
-/// One question on the page. Returns the item's screen rect (for drop targeting).
+/// [`margin_button`] returning its response (None while hidden).
+fn margin_button_resp(ui: &mut egui::Ui, id: egui::Id, center: Pos2, kind: u8, show: bool) -> Option<egui::Response> {
+    let rect = Rect::from_center_size(center, Vec2::splat(18.0));
+    let resp = ui.interact(rect, id, if show { Sense::click() } else { Sense::hover() });
+    if !show {
+        return None;
+    }
+    paint_margin_glyph(ui, rect, kind, resp.hovered());
+    let tip = match kind {
+        0 => "Remove from exam",
+        1 => "Move up",
+        3 => "Duplicate question",
+        4 => "Question actions",
+        5 => "Merge with section above",
+        6 => "Delete section and its questions",
+        _ => "Move down",
+    };
+    Some(resp.on_hover_text(tip))
+}
+
+/// Paints a margin button's glyph (see [`margin_button`] for the kinds).
+fn paint_margin_glyph(ui: &egui::Ui, rect: Rect, kind: u8, hovered: bool) {
+    let p = ui.painter();
+    if hovered {
+        p.rect_filled(rect, CornerRadius::same(5), theme::accent_faded());
+    }
+    let col = if hovered { theme::accent_col() } else { PAPER_SOFT };
+    let s = Stroke::new(1.6, col);
+    let c = rect.center();
+    match kind {
+        0 | 6 => {
+            p.line_segment([c + Vec2::new(-3.5, -3.5), c + Vec2::new(3.5, 3.5)], s);
+            p.line_segment([c + Vec2::new(-3.5, 3.5), c + Vec2::new(3.5, -3.5)], s);
+        }
+        1 => {
+            p.line_segment([c + Vec2::new(-4.0, 1.5), c + Vec2::new(0.0, -2.5)], s);
+            p.line_segment([c + Vec2::new(0.0, -2.5), c + Vec2::new(4.0, 1.5)], s);
+        }
+        3 => {
+            // Duplicate: two overlapping sheets.
+            let back = Rect::from_center_size(c + Vec2::new(-1.6, -1.6), Vec2::new(7.0, 8.5));
+            let front = Rect::from_center_size(c + Vec2::new(1.6, 1.6), Vec2::new(7.0, 8.5));
+            p.rect_stroke(back, CornerRadius::same(1), Stroke::new(1.3, col), StrokeKind::Middle);
+            p.rect_filled(front, CornerRadius::same(1), theme::paper());
+            p.rect_stroke(front, CornerRadius::same(1), Stroke::new(1.3, col), StrokeKind::Middle);
+        }
+        4 => {
+            for dx in [-4.5, 0.0, 4.5] {
+                p.circle_filled(c + Vec2::new(dx, 0.0), 1.5, col);
+            }
+        }
+        5 => {
+            // Merge up: arrow into a bar.
+            p.line_segment([c + Vec2::new(-4.5, -4.0), c + Vec2::new(4.5, -4.0)], s);
+            p.line_segment([c + Vec2::new(0.0, 4.5), c + Vec2::new(0.0, -1.5)], s);
+            p.line_segment([c + Vec2::new(-3.0, 1.0), c + Vec2::new(0.0, -1.5)], s);
+            p.line_segment([c + Vec2::new(3.0, 1.0), c + Vec2::new(0.0, -1.5)], s);
+        }
+        _ => {
+            p.line_segment([c + Vec2::new(-4.0, -1.5), c + Vec2::new(0.0, 2.5)], s);
+            p.line_segment([c + Vec2::new(0.0, 2.5), c + Vec2::new(4.0, -1.5)], s);
+        }
+    }
+}
+
+/// One question on the page, with its work space. Returns the item's screen rect (for drop
+/// targeting).
 #[allow(clippy::too_many_arguments)]
 fn draw_item(
     app: &mut crate::App,
@@ -1757,10 +2231,15 @@ fn draw_item(
     q: Option<&model::Question>,
     cw: f32,
     bp: f32,
-    side: f32,
+    ml: f32,
+    mr: f32,
+    style: model::PaperStyle,
 ) -> Rect {
     let wash = ui.painter().add(Shape::Noop);
-    let rect = paper_question(app, ui, ctx, q, number, cw, bp);
+    let qrect = paper_question(app, ui, ctx, q, number, cw, bp, style);
+    let work = app.store.exam(exam_id).and_then(|e| e.items.get(i)).map(|it| it.work_lines).unwrap_or(0);
+    let wrect = work_space_area(app, ui, exam_id, st, i, work, qrect, cw, bp, style);
+    let rect = qrect.union(wrect);
 
     // Highlighter wash for a just-added question.
     if let Some((idx, t0)) = st.just_added {
@@ -1768,7 +2247,7 @@ fn draw_item(
         if idx == i && age < 4.0 {
             let a = (1.0 - age / 4.0).clamp(0.0, 1.0) * 0.55;
             let hl = theme::highlighter().gamma_multiply(a);
-            let r = rect.expand2(Vec2::new(4.0, 3.0));
+            let r = qrect.expand2(Vec2::new(4.0, 3.0));
             let mut mesh = Mesh::default();
             mesh.colored_vertex(r.left_top(), hl);
             mesh.colored_vertex(r.right_top(), Color32::TRANSPARENT);
@@ -1787,13 +2266,15 @@ fn draw_item(
         }
     }
 
-    // Margin gutters: grip on the left, remove / move buttons on the right.
+    // Margin gutters: grip and the actions menu on the left, remove / move on the right.
     let dragging_this = matches!(&st.drag, Some(DragState { src: DragSrc::Page(f), .. }) if *f == i);
-    let any_drag = st.drag.is_some();
-    let hover = !any_drag && ui.rect_contains_pointer(rect.expand2(Vec2::new(side - 2.0, 4.0)));
-    let show = hover || dragging_this;
+    let any_drag = st.drag.is_some() || st.ws_drag.is_some();
+    let menu_id = ui.id().with(("it_menu", i));
+    let menu_open = egui::Popup::is_id_open(ctx, menu_id.with("popup"));
+    let hover = !any_drag && ui.rect_contains_pointer(rect.expand2(Vec2::new(ml.max(mr) - 2.0, 4.0)));
+    let show = hover || dragging_this || menu_open;
     if let Some(q) = q {
-        let gc = Pos2::new(rect.left() - (side * 0.5).min(24.0) - 2.0, rect.top() + bp * 0.75);
+        let gc = Pos2::new(rect.left() - (ml * 0.5).min(24.0) - 2.0, rect.top() + bp * 0.75);
         let grect = Rect::from_center_size(gc, Vec2::new(18.0, 24.0));
         let gresp = ui.interact(grect, ui.id().with(("it_grip", i)), Sense::click_and_drag());
         if show {
@@ -1812,7 +2293,7 @@ fn draw_item(
                 label: kind_pill(q.kind.qkind()),
             });
         }
-        let rx = rect.right() + (side * 0.5).min(24.0) + 2.0;
+        let rx = rect.right() + (mr * 0.5).min(24.0) + 2.0;
         let y0 = rect.top() + 9.0;
         if margin_button(ui, ui.id().with(("it_x", i)), Pos2::new(rx, y0), 0, show) {
             remove_item(app, exam_id, i);
@@ -1823,12 +2304,61 @@ fn draw_item(
         if margin_button(ui, ui.id().with(("it_dn", i)), Pos2::new(rx, y0 + 40.0), 2, show) {
             shift_item(app, exam_id, i, 1);
         }
-        // Duplicate sits in the left gutter under the grip, inside even a one-line
-        // question's height (the right rail is already three buttons tall).
-        if margin_button(ui, ui.id().with(("it_dup", i)), gc + Vec2::new(0.0, 24.0), 3, show) {
-            if let Some(at) = duplicate_item(app, exam_id, i) {
-                st.just_added = Some((at, ctx.input(|t| t.time)));
+        // The per-question actions menu sits in the left gutter under the grip, inside even a
+        // one-line question's height.
+        let mrect = Rect::from_center_size(gc + Vec2::new(0.0, 24.0), Vec2::splat(18.0));
+        let mresp = ui.interact(mrect, menu_id, Sense::click());
+        if show {
+            paint_margin_glyph(ui, mrect, 4, mresp.hovered() || menu_open);
+        }
+        let mresp = mresp.on_hover_text("Question actions");
+        let n_items = app.store.exam(exam_id).map(|e| e.items.len()).unwrap_or(0);
+        let next_starts = app.store.exam(exam_id).and_then(|e| e.items.get(i + 1)).is_some_and(|it| it.section.is_some());
+        let is_mc = matches!(q.kind, Kind::Mc { .. });
+        let mut act: Option<QAct> = None;
+        egui::Popup::menu(&mresp).id(menu_id.with("popup")).show(|ui| {
+            ui.set_min_width(220.0);
+            if ui.button("Edit question").clicked() {
+                act = Some(QAct::Edit);
             }
+            if ui.button("Duplicate").clicked() {
+                act = Some(QAct::Duplicate);
+            }
+            ui.separator();
+            let can_section = i + 1 < n_items && !next_starts;
+            if ui
+                .add_enabled(can_section, egui::Button::new("Insert new section below"))
+                .on_disabled_hover_text(if i + 1 >= n_items { "Add a question below this one first" } else { "A section already starts below" })
+                .clicked()
+            {
+                act = Some(QAct::SectionBelow);
+            }
+            if work == 0 {
+                if ui.button("Add work space").clicked() {
+                    act = Some(QAct::Work(3));
+                }
+            } else if ui.button("Remove work space").clicked() {
+                act = Some(QAct::Work(0));
+            }
+            ui.separator();
+            ui.label(kit::small_caps_text("Vary"));
+            if ui.button("Shuffle question order").on_hover_text("Shuffles the questions in this section").clicked() {
+                act = Some(QAct::ShuffleQ);
+            }
+            if ui
+                .add_enabled(is_mc, egui::Button::new("Shuffle answer order"))
+                .on_hover_text("Shuffles this question's answers on this exam (locked answers stay put)")
+                .clicked()
+            {
+                act = Some(QAct::ShuffleA);
+            }
+            ui.separator();
+            if ui.add(egui::Button::new(RichText::new("Remove").color(theme::bad()))).clicked() {
+                act = Some(QAct::Remove);
+            }
+        });
+        if let Some(a) = act {
+            question_action(app, ctx, exam_id, st, i, q, a);
         }
     }
     if dragging_this {
@@ -1836,6 +2366,162 @@ fn draw_item(
         ctx.request_repaint();
     }
     rect
+}
+
+/// The per-question menu's actions.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum QAct {
+    Edit,
+    Duplicate,
+    SectionBelow,
+    Work(u8),
+    ShuffleQ,
+    ShuffleA,
+    Remove,
+}
+
+fn question_action(app: &mut crate::App, ctx: &egui::Context, exam_id: &Id, st: &mut EditUi, i: usize, q: &model::Question, a: QAct) {
+    match a {
+        QAct::Edit => {
+            let Some(it) = app.store.exam(exam_id).and_then(|e| e.items.get(i)).cloned() else { return };
+            let Some(bq) = app.store.question(&it.bank_id, &it.question_id).cloned() else { return };
+            app.qedit = Some(crate::qedit::Draft::from_question(it.bank_id.clone(), &bq));
+            app.bank = Some(it.bank_id.clone());
+            app.screen = crate::Screen::BankEdit(it.bank_id.clone());
+        }
+        QAct::Duplicate => {
+            if let Some(at) = duplicate_item(app, exam_id, i) {
+                st.just_added = Some((at, ctx.input(|t| t.time)));
+            }
+        }
+        QAct::SectionBelow => apply_items_fn(app, exam_id, |it| with_section_below(it, i)),
+        QAct::Work(n) => apply_items_fn(app, exam_id, |mut it| {
+            if let Some(x) = it.get_mut(i) {
+                x.work_lines = n;
+            }
+            it
+        }),
+        QAct::ShuffleQ => {
+            let mut rnd = editor_rng();
+            apply_items_fn(app, exam_id, |it| with_section_shuffled(it, i, &mut rnd));
+        }
+        QAct::ShuffleA => {
+            let mut rnd = editor_rng();
+            let Some(bq) = app.store.exam(exam_id).and_then(|e| e.items.get(i)).and_then(|it| app.store.question(&it.bank_id, &it.question_id)).cloned() else { return };
+            let cur = app.store.exam(exam_id).and_then(|e| e.items.get(i)).map(|it| it.answer_order.clone()).unwrap_or_default();
+            let _ = q;
+            if let Some(order) = shuffled_answer_order(&bq, &cur, &mut rnd) {
+                apply_items_fn(app, exam_id, |mut it| {
+                    if let Some(x) = it.get_mut(i) {
+                        x.answer_order = order;
+                    }
+                    it
+                });
+            } else {
+                screens::toast(app, "Nothing to shuffle: fewer than two unlocked answers", true);
+            }
+        }
+        QAct::Remove => remove_item(app, exam_id, i),
+    }
+}
+
+/// The question's work space under it: `lines` printed lines (blank room, or ruled /
+/// dotted lines in the Classic / Exam Board styles) and a drag handle at its bottom edge
+/// that sets the line count (0..=23). Returns the area's rect.
+#[allow(clippy::too_many_arguments)]
+fn work_space_area(
+    app: &mut crate::App,
+    ui: &mut egui::Ui,
+    exam_id: &Id,
+    st: &mut EditUi,
+    i: usize,
+    lines: u8,
+    qrect: Rect,
+    cw: f32,
+    bp: f32,
+    style: model::PaperStyle,
+) -> Rect {
+    let pitch = line_pitch_px(bp, style);
+    // While dragging this handle the live count previews (written once on release).
+    let live = match st.ws_drag {
+        Some((k, n, _, _)) if k == i => n,
+        _ => lines,
+    };
+    let top = ui.cursor().top();
+    let x0 = qrect.left();
+    let num_w = (bp * 1.9).max(16.0);
+    if live > 0 {
+        if style.work_space_lined() {
+            for _ in 0..live {
+                let (r, _) = ui.allocate_exact_size(Vec2::new(cw, pitch), Sense::hover());
+                answer_rule(ui.painter(), Pos2::new(x0 + num_w, r.bottom() - 2.0), r.right(), style);
+            }
+        } else {
+            ui.allocate_exact_size(Vec2::new(cw, live as f32 * pitch), Sense::hover());
+        }
+    }
+    let area = Rect::from_min_max(Pos2::new(x0, top), Pos2::new(x0 + cw, ui.cursor().top()));
+    // Handle: a thin strip at the bottom edge of question + work space.
+    let hy = area.bottom().max(qrect.bottom()) + 1.0;
+    let hrect = Rect::from_center_size(Pos2::new(x0 + cw / 2.0, hy), Vec2::new(cw, 8.0));
+    let hid = ui.id().with(("ws_handle", i));
+    let resp = ui.interact(hrect, hid, Sense::drag());
+    let near = ui.rect_contains_pointer(hrect.expand2(Vec2::new(0.0, 3.0)));
+    let dragging = st.ws_drag.is_some_and(|(k, ..)| k == i);
+    if (near && st.drag.is_none()) || dragging {
+        let p = ui.painter();
+        if live > 0 || dragging {
+            p.rect_stroke(
+                Rect::from_min_max(Pos2::new(x0 + num_w, top), Pos2::new(x0 + cw, hy)),
+                CornerRadius::ZERO,
+                Stroke::new(1.0, Color32::from_rgb(0xb0, 0x3a, 0x2e).gamma_multiply(0.7)),
+                StrokeKind::Inside,
+            );
+        }
+        let c = Pos2::new(x0 + cw / 2.0, hy);
+        p.rect_filled(Rect::from_center_size(c, Vec2::new(36.0, 5.0)), CornerRadius::same(3), theme::accent_col().gamma_multiply(0.85));
+        let txt = if live == 1 { "1 line of work space".to_string() } else { format!("{live} lines of work space") };
+        p.text(c + Vec2::new(26.0, 0.0), Align2::LEFT_CENTER, txt, FontId::new(9.5, theme::bold_family()), theme::accent_col());
+        resp.clone().on_hover_cursor(egui::CursorIcon::ResizeVertical);
+    }
+    if resp.drag_started() {
+        let y0 = ui.ctx().pointer_interact_pos().map_or(hy, |p| p.y);
+        st.ws_drag = Some((i, lines, y0, lines));
+    }
+    if dragging {
+        if let Some(p) = ui.ctx().pointer_latest_pos() {
+            // Relative to where the drag began: the question may hop to the next page as it
+            // grows, so absolute positions are not stable.
+            if let Some((_, _, y0, n0)) = st.ws_drag {
+                let n = (n0 as f32 + ((p.y - y0) / pitch).round()).clamp(0.0, 23.0) as u8;
+                st.ws_drag = Some((i, n, y0, n0));
+            }
+        }
+        ui.ctx().request_repaint();
+    }
+    if resp.drag_stopped() || (dragging && !ui.ctx().input(|i| i.pointer.primary_down())) {
+        if let Some((k, n, _, _)) = st.ws_drag.take() {
+            if k == i && n != lines {
+                apply_items_fn(app, exam_id, |mut it| {
+                    if let Some(x) = it.get_mut(i) {
+                        x.work_lines = n;
+                    }
+                    it
+                });
+            }
+        }
+    }
+    area
+}
+
+/// One printed answer line from `a` to x `x1` (dotted on Exam Board).
+fn answer_rule(p: &egui::Painter, a: Pos2, x1: f32, style: model::PaperStyle) {
+    let s = egui::Stroke::new(0.9, PAPER_RULE);
+    if style.dotted() {
+        p.extend(Shape::dotted_line(&[a, Pos2::new(x1, a.y)], PAPER_RULE, 3.0, 0.7));
+    } else {
+        p.line_segment([a, Pos2::new(x1, a.y)], s);
+    }
 }
 
 /// One numbered question as it prints (number, stem with picture placeholders, answer
@@ -1849,16 +2535,24 @@ pub(crate) fn paper_question(
     number: u32,
     cw: f32,
     bp: f32,
+    style: model::PaperStyle,
 ) -> Rect {
-    let num_w = (bp * 1.9).max(16.0);
+    let objective = q.is_some_and(|q| matches!(q.kind, Kind::Mc { .. } | Kind::Tf { .. }));
+    let blank_w = if style.objective_blank() && objective { bp * 3.6 } else { 0.0 };
+    let num_w = (bp * 1.9).max(16.0) + blank_w;
     let body_w = cw - num_w;
+    let board_points = style == model::PaperStyle::ExamBoard;
     let inner = ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing = Vec2::ZERO;
         let (nr, _) = ui.allocate_exact_size(Vec2::new(num_w, bp * 1.45), Sense::hover());
+        if blank_w > 0.0 {
+            let y = nr.top() + bp * 1.15;
+            ui.painter().line_segment([Pos2::new(nr.left(), y), Pos2::new(nr.left() + blank_w - bp * 0.6, y)], Stroke::new(0.9, PAPER_INK));
+        }
         ui.painter().text(
-            nr.left_top(),
+            nr.left_top() + Vec2::new(blank_w, 0.0),
             Align2::LEFT_TOP,
-            format!("{number}."),
+            style.number_label(number),
             FontId::new(bp, theme::serif_bold_family()),
             PAPER_INK,
         );
@@ -1868,11 +2562,23 @@ pub(crate) fn paper_question(
                 ui.label(RichText::new("(question missing from its bank)").size(bp).color(PAPER_SOFT));
                 return;
             };
-            render_stem(ui, &q.stem, q.points, bp, q.image.is_some());
-            draw_item_body(app, ui, ctx, q, number, body_w, bp);
+            render_stem(ui, &q.stem, if board_points { None } else { q.points }, bp, q.image.is_some());
+            draw_item_body(app, ui, ctx, q, number, body_w, bp, style);
         });
     });
-    Rect::from_min_size(inner.response.rect.min, Vec2::new(cw, inner.response.rect.height().max(bp * 1.45)))
+    let r = Rect::from_min_size(inner.response.rect.min, Vec2::new(cw, inner.response.rect.height().max(bp * 1.45)));
+    if board_points {
+        if let Some(p) = q.and_then(|q| q.points) {
+            ui.painter().text(
+                Pos2::new(r.right(), r.bottom() - 2.0),
+                Align2::RIGHT_BOTTOM,
+                style.points_label(p),
+                FontId::new(bp, theme::serif_family()),
+                PAPER_INK,
+            );
+        }
+    }
+    r
 }
 
 /// One answer/option line on the paper: plain label, or the structured renderer when it holds
@@ -1898,6 +2604,12 @@ fn popt(ui: &mut egui::Ui, s: String, bp: f32) {
     }
 }
 
+/// Choice label as printed in `style` ("A. Ge", "a. Ge", "A Ge").
+fn styled_choice(style: model::PaperStyle, ci: usize, text: &str) -> String {
+    style.choice_label(&format!("{}. {}", letter(ci), text))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn draw_item_body(
     app: &mut crate::App,
     ui: &mut egui::Ui,
@@ -1906,21 +2618,35 @@ fn draw_item_body(
     number: u32,
     body_w: f32,
     bp: f32,
+    style: model::PaperStyle,
 ) {
     match &q.kind {
         Kind::Mc { answers } => {
             draw_image(app, ui, ctx, q.image.as_ref());
             ui.add_space(bp * 0.25);
-            let short = answers.iter().all(|a| a.text.chars().count() <= 26);
-            if short && answers.len() > 1 {
-                ui.columns(2, |cols| {
-                    for (ci, a) in answers.iter().enumerate() {
-                        popt(&mut cols[ci % 2], format!("{}. {}", letter(ci), a.text), bp);
-                    }
-                });
+            let labels: Vec<String> = answers.iter().enumerate().map(|(ci, a)| styled_choice(style, ci, &a.text)).collect();
+            // Condensed prints the choices across when every one fits its column.
+            let across = style.choices_across() && labels.len() > 1 && !labels.iter().any(|l| needs_rich(l) || l.contains("[picture"));
+            let cols = if across {
+                let widest = labels.iter().map(|l| l.chars().count()).max().unwrap_or(0) as f32 * bp * 0.5 + 12.0;
+                [labels.len(), 4, 3, 2].into_iter().filter(|&c| c >= 2 && c <= labels.len()).find(|&c| widest <= body_w / c as f32)
             } else {
-                for (ci, a) in answers.iter().enumerate() {
-                    popt(ui, format!("{}. {}", letter(ci), a.text), bp);
+                None
+            };
+            match cols {
+                Some(n) => {
+                    for row in labels.chunks(n) {
+                        ui.columns(n, |cs| {
+                            for (k, l) in row.iter().enumerate() {
+                                popt(&mut cs[k], l.clone(), bp);
+                            }
+                        });
+                    }
+                }
+                None => {
+                    for l in labels {
+                        popt(ui, l, bp);
+                    }
                 }
             }
         }
@@ -1945,23 +2671,23 @@ fn draw_item_body(
                 .collect();
             ui.columns(2, |cols| {
                 for (li, p) in pairs.iter().enumerate() {
-                    popt(&mut cols[0], format!("{}. {}", number + li as u32, p.left), bp);
+                    popt(&mut cols[0], format!("{} {}", style.number_label(number + li as u32), p.left), bp);
                 }
                 for (ri, r) in rights.iter().enumerate() {
-                    popt(&mut cols[1], format!("{}. {}", letter(ri), r), bp);
+                    popt(&mut cols[1], styled_choice(style, ri, r), bp);
                 }
             });
         }
         Kind::Blank { .. } => {
             draw_image(app, ui, ctx, q.image.as_ref());
             for _ in 0..ruled_blanks(&q.stem) {
-                ruled_line(ui, body_w, bp);
+                ruled_line(ui, body_w, bp, style);
             }
         }
         Kind::Short { .. } => {
             draw_image(app, ui, ctx, q.image.as_ref());
             for _ in 0..3 {
-                ruled_line(ui, body_w, bp);
+                ruled_line(ui, body_w, bp, style);
             }
         }
         Kind::Multipart { parts } => {
@@ -1969,10 +2695,10 @@ fn draw_item_body(
             let mut rules = 0u32;
             for (pi, part) in parts.iter().enumerate() {
                 ui.add_space(bp * 0.35);
-                let (label, rest) = split_part_label(pi, &part.stem);
+                let (label, rest) = split_part_label_styled(pi, &part.stem, style);
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing = Vec2::ZERO;
-                    let lw = bp * 1.6;
+                    let lw = bp * 1.9;
                     let (lr, _) = ui.allocate_exact_size(Vec2::new(lw, bp * 1.2), Sense::hover());
                     ui.painter().text(lr.left_top(), Align2::LEFT_TOP, &label, FontId::new(bp, theme::serif_family()), PAPER_INK);
                     ui.vertical(|ui| {
@@ -1981,7 +2707,7 @@ fn draw_item_body(
                             PartKind::Mc { answers } => {
                                 popt(ui, rest.clone(), bp);
                                 for (ci, a) in answers.iter().enumerate() {
-                                    popt(ui, format!("{}. {}", letter(ci), a.text), bp);
+                                    popt(ui, styled_choice(style, ci, &a.text), bp);
                                 }
                             }
                             PartKind::Tf { .. } => popt(ui, format!("{rest} (True / False)"), bp),
@@ -1994,7 +2720,7 @@ fn draw_item_body(
                 }
             }
             for _ in 0..rules.max(2) {
-                ruled_line(ui, body_w, bp);
+                ruled_line(ui, body_w, bp, style);
             }
         }
     }
@@ -2032,12 +2758,153 @@ fn kind_pill(k: QKind) -> &'static str {
 // ---------------------------------------------------------------------------
 
 fn remove_item(app: &mut crate::App, exam_id: &Id, i: usize) {
-    apply_items_fn(app, exam_id, |mut items| {
-        if i < items.len() {
-            items.remove(i);
+    apply_items_fn(app, exam_id, |items| without_item(items, i));
+}
+
+// ----- sections (positional: an item with `section` starts one) -------------
+
+/// Contiguous item ranges of the exam's sections, in order: one starts at item 0 and at
+/// every item that carries a section heading. Empty exam: no ranges.
+pub(crate) fn section_ranges(items: &[ExamItem]) -> Vec<std::ops::Range<usize>> {
+    let starts: Vec<usize> = (0..items.len()).filter(|&i| i == 0 || items[i].section.is_some()).collect();
+    starts
+        .iter()
+        .enumerate()
+        .map(|(k, &s)| s..starts.get(k + 1).copied().unwrap_or(items.len()))
+        .collect()
+}
+
+/// `items` without item `i`; a section heading on it moves to the next item (unless that
+/// one already starts a section), so removing a question never deletes its section.
+fn without_item(mut items: Vec<ExamItem>, i: usize) -> Vec<ExamItem> {
+    if i >= items.len() {
+        return items;
+    }
+    let gone = items.remove(i);
+    if let (Some(h), Some(next)) = (gone.section, items.get_mut(i)) {
+        if next.section.is_none() {
+            next.section = Some(h);
         }
-        items
-    });
+    }
+    items
+}
+
+/// Applies a reorder to the items' contents while section headings stay at their positions
+/// (a question moved across a boundary changes section, as on Test Parrot).
+fn with_headings_fixed(items: Vec<ExamItem>, f: impl FnOnce(Vec<ExamItem>) -> Vec<ExamItem>) -> Vec<ExamItem> {
+    let heads: Vec<Option<model::ExamSection>> = items.iter().map(|i| i.section.clone()).collect();
+    let bare: Vec<ExamItem> = items.into_iter().map(|mut i| { i.section = None; i }).collect();
+    let mut out = f(bare);
+    for (i, h) in heads.into_iter().enumerate() {
+        if let Some(it) = out.get_mut(i) {
+            it.section = h;
+        }
+    }
+    out
+}
+
+/// "Insert new section below" question `i`: the next question starts a new (blank) section.
+/// No-op on the last question or when the next one already starts a section.
+fn with_section_below(mut items: Vec<ExamItem>, i: usize) -> Vec<ExamItem> {
+    if let Some(next) = items.get_mut(i + 1) {
+        if next.section.is_none() {
+            next.section = Some(model::ExamSection::default());
+        }
+    }
+    items
+}
+
+/// Shuffles the questions of the section holding item `i` (headings stay put).
+fn with_section_shuffled(items: Vec<ExamItem>, i: usize, rnd: &mut impl FnMut() -> u64) -> Vec<ExamItem> {
+    let Some(r) = section_ranges(&items).into_iter().find(|r| r.contains(&i)) else { return items };
+    let order = shuffled_indices(r.len(), rnd);
+    with_headings_fixed(items, |bare| {
+        let mut out = bare.clone();
+        for (k, o) in order.iter().enumerate() {
+            out[r.start + k] = bare[r.start + o].clone();
+        }
+        out
+    })
+}
+
+/// Shuffles every section's questions (Edit > Shuffle question order).
+fn with_all_sections_shuffled(items: Vec<ExamItem>, rnd: &mut impl FnMut() -> u64) -> Vec<ExamItem> {
+    let starts: Vec<usize> = section_ranges(&items).iter().map(|r| r.start).collect();
+    starts.into_iter().fold(items, |acc, s| with_section_shuffled(acc, s, rnd))
+}
+
+/// Swaps section `s` (heading + its questions) with its neighbour `s + dir` (-1 / +1).
+/// A block that ends up after another but has no heading gets a blank one, so sections
+/// never silently merge.
+fn with_section_moved(items: Vec<ExamItem>, s: usize, dir: i32) -> Vec<ExamItem> {
+    let ranges = section_ranges(&items);
+    let t = s as i64 + dir as i64;
+    if s >= ranges.len() || t < 0 || t as usize >= ranges.len() {
+        return items;
+    }
+    let (a, b) = if dir < 0 { (t as usize, s) } else { (s, t as usize) };
+    let mut blocks: Vec<Vec<ExamItem>> = ranges.iter().map(|r| items[r.clone()].to_vec()).collect();
+    blocks.swap(a, b);
+    let mut out: Vec<ExamItem> = Vec::with_capacity(items.len());
+    for (k, mut blk) in blocks.into_iter().enumerate() {
+        if k > 0 {
+            if let Some(first) = blk.first_mut() {
+                if first.section.is_none() {
+                    first.section = Some(model::ExamSection::default());
+                }
+            }
+        }
+        out.extend(blk);
+    }
+    out
+}
+
+/// Removes section `s`'s heading: its questions join the section above.
+fn with_section_merged_up(mut items: Vec<ExamItem>, s: usize) -> Vec<ExamItem> {
+    if let Some(r) = section_ranges(&items).get(s) {
+        items[r.start].section = None;
+    }
+    items
+}
+
+/// Deletes section `s` with its questions.
+fn with_section_deleted(mut items: Vec<ExamItem>, s: usize) -> Vec<ExamItem> {
+    if let Some(r) = section_ranges(&items).get(s).cloned() {
+        items.drain(r); // the next section keeps its own heading
+    }
+    items
+}
+
+/// A new answer order for item `i`'s multiple-choice question: the current order with its
+/// unlocked answers shuffled (locked ones keep their slot). None when nothing can move.
+fn shuffled_answer_order(q: &model::Question, current: &[usize], rnd: &mut impl FnMut() -> u64) -> Option<Vec<usize>> {
+    let Kind::Mc { answers } = &q.kind else { return None };
+    let n = answers.len();
+    let cur: Vec<usize> = if is_permutation(current, n) { current.to_vec() } else { (0..n).collect() };
+    let movable: Vec<usize> = (0..n).filter(|&p| !answers[cur[p]].locked).collect();
+    if movable.len() < 2 {
+        return None;
+    }
+    for _ in 0..8 {
+        let perm = shuffled_indices(movable.len(), rnd);
+        let mut next = cur.clone();
+        for (k, &p) in movable.iter().enumerate() {
+            next[p] = cur[movable[perm[k]]];
+        }
+        if next != cur {
+            return Some(next);
+        }
+    }
+    None
+}
+
+/// A time-seeded LCG for the editor's one-off shuffles.
+fn editor_rng() -> impl FnMut() -> u64 {
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(7);
+    lcg(t)
 }
 
 /// Duplicate (Test Parrot's per-question menu): copies item `i`'s question in its bank
@@ -2056,7 +2923,7 @@ fn duplicate_item(app: &mut crate::App, exam_id: &Id, i: usize) -> Option<usize>
 /// `items` with a new item for (`bank_id`, `question_id`) inserted after index `i`.
 fn with_copy_after(mut items: Vec<ExamItem>, i: usize, bank_id: &Id, question_id: &Id) -> Vec<ExamItem> {
     let at = (i + 1).min(items.len());
-    items.insert(at, ExamItem { bank_id: bank_id.clone(), question_id: question_id.clone() });
+    items.insert(at, ExamItem::new(bank_id.clone(), question_id.clone()));
     items
 }
 
@@ -2067,7 +2934,10 @@ fn shift_item(app: &mut crate::App, exam_id: &Id, i: usize, dir: i32) {
         }
         let j = (i as i64 + dir as i64).clamp(0, items.len() as i64 - 1) as usize;
         if j != i {
-            items.swap(i, j);
+            items = with_headings_fixed(items, |mut b| {
+                b.swap(i, j);
+                b
+            });
         }
         items
     });
@@ -2103,7 +2973,7 @@ fn add_item(app: &mut crate::App, exam_id: &Id, bank_id: &Id, question_id: &Id, 
     let len = app.store.exam(exam_id).map(|e| e.items.len()).unwrap_or(0);
     let k = at.min(len);
     apply_items_fn(app, exam_id, |mut items| {
-        items.insert(k, ExamItem { bank_id: bank_id.clone(), question_id: question_id.clone() });
+        items.insert(k, ExamItem::new(bank_id.clone(), question_id.clone()));
         items
     });
     k
@@ -2135,14 +3005,15 @@ fn finish_drag(app: &mut crate::App, exam_id: &Id, st: &mut EditUi, from: usize,
     let k = drop_index(&st.rows, y, from);
     st.drag = None;
     apply_items_fn(app, exam_id, |items| {
-        let mut next = items;
-        if from >= next.len() {
-            return next;
+        if from >= items.len() {
+            return items;
         }
-        let moved = next.remove(from);
-        let k = k.min(next.len());
-        next.insert(k, moved);
-        next
+        with_headings_fixed(items, |mut next| {
+            let moved = next.remove(from);
+            let k = k.min(next.len());
+            next.insert(k, moved);
+            next
+        })
     });
 }
 
@@ -2259,6 +3130,15 @@ fn draw_shelf(
         });
 }
 
+/// Shelf sort orders (index into [`SORTS`]).
+const SORTS: [&str; 5] = ["Newest", "Oldest", "Bank order", "Question type", "A to Z"];
+
+/// A shelf filter button that opens a popup (highlighted while a filter is active).
+fn filter_button(ui: &mut egui::Ui, label: &str, active: usize) -> egui::Response {
+    let text = if active > 0 { format!("{label} · {active}") } else { label.to_string() };
+    ui.add(egui::Button::new(RichText::new(text).size(12.0)).selected(active > 0))
+}
+
 fn draw_shelf_inner(
     app: &mut crate::App,
     ui: &mut egui::Ui,
@@ -2266,26 +3146,70 @@ fn draw_shelf_inner(
     exam_id: &Id,
     st: &mut EditUi,
 ) {
-    ui.label(theme::serif("Question shelf").size(17.0));
-    ui.add_space(6.0);
-    egui::ComboBox::from_id_salt("exam_panel_bank")
-        .selected_text(
-            app.panel_bank
-                .as_ref()
-                .and_then(|id| app.store.bank(id))
-                .map(|b| b.name.clone())
-                .unwrap_or_else(|| "Open bank…".to_string()),
-        )
-        .width(ui.available_width())
-        .show_ui(ui, |ui| {
-            for b in app.store.banks.clone() {
-                ui.selectable_value(&mut app.panel_bank, Some(b.id.clone()), b.name.clone());
+    // ---- bank tabs (+ opens another bank) ----
+    if let Some(b) = app.panel_bank.clone() {
+        if !st.open_banks.contains(&b) {
+            st.open_banks.insert(0, b);
+        }
+    }
+    st.open_banks.retain(|b| app.store.bank(b).is_some());
+    let mut close: Option<Id> = None;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+        for b in st.open_banks.clone() {
+            let name = app.store.bank(&b).map(|x| x.name.clone()).unwrap_or_default();
+            let on = app.panel_bank.as_ref() == Some(&b);
+            egui::Frame::new()
+                .fill(if on { theme::card() } else { theme::field() })
+                .stroke(Stroke::new(1.0, if on { theme::accent_col() } else { theme::border() }))
+                .corner_radius(CornerRadius::same(8))
+                .inner_margin(Margin::symmetric(8, 3))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    let r = ui
+                        .add(egui::Label::new(RichText::new(truncate_str(&name, 22)).size(12.5).color(if on { theme::ink() } else { theme::muted_col() })).sense(Sense::click()))
+                        .on_hover_text(&name);
+                    if r.clicked() {
+                        app.panel_bank = Some(b.clone());
+                    }
+                    if ui.add(egui::Button::new(RichText::new("×").size(12.0)).frame(false)).on_hover_text("Close this bank").clicked() {
+                        close = Some(b.clone());
+                    }
+                });
+        }
+        let plus = ui.add(egui::Button::new(RichText::new("+").size(14.0)).frame(false)).on_hover_text("Open another question bank");
+        egui::Popup::menu(&plus).show(|ui| {
+            ui.set_min_width(220.0);
+            ui.label(kit::small_caps_text("Open question bank"));
+            let others: Vec<(Id, String, usize)> = app
+                .store
+                .banks
+                .iter()
+                .filter(|b| !st.open_banks.contains(&b.id))
+                .map(|b| (b.id.clone(), b.name.clone(), b.questions.len()))
+                .collect();
+            if others.is_empty() {
+                ui.label(muted("Every bank is open."));
+            }
+            for (id, name, n) in others {
+                if ui.button(format!("{name}   ({n})")).clicked() {
+                    st.open_banks.push(id.clone());
+                    app.panel_bank = Some(id);
+                }
             }
         });
+    });
+    if let Some(c) = close {
+        st.open_banks.retain(|b| *b != c);
+        if app.panel_bank.as_ref() == Some(&c) {
+            app.panel_bank = st.open_banks.first().cloned();
+        }
+    }
 
     let Some(bank_id) = app.panel_bank.clone() else {
         ui.add_space(12.0);
-        ui.add(egui::Label::new(muted("Create a bank on the Banks screen, then pick it here.")));
+        ui.label(theme::serif("Question bank").size(17.0));
+        ui.add(egui::Label::new(muted("Open a bank with + above (create one on the Banks screen first).")));
         return;
     };
     let Some(bank) = app.store.bank(&bank_id).cloned() else {
@@ -2294,16 +3218,18 @@ fn draw_shelf_inner(
     };
     let in_exam: Vec<ExamItem> = app.store.exam(exam_id).map(|e| e.items.clone()).unwrap_or_default();
 
-    ui.add_space(6.0);
+    ui.add_space(4.0);
+    ui.label(theme::serif("Question bank").size(17.0));
+    ui.add_space(4.0);
     ui.add(
         egui::TextEdit::singleline(&mut st.search)
-            .hint_text("Search this bank")
-            .margin(Margin::symmetric(10, 6))
+            .hint_text("Search questions")
+            .margin(Margin::symmetric(10, 5))
             .desired_width(ui.available_width()),
     );
-    ui.add_space(6.0);
+    ui.add_space(4.0);
 
-    // Topic chips.
+    // ---- filters: Question Type / Difficulty / Topic ----
     let mut topics: Vec<String> = bank
         .questions
         .iter()
@@ -2312,56 +3238,112 @@ fn draw_shelf_inner(
         .collect();
     topics.sort();
     topics.dedup();
+    st.topics.retain(|t| topics.contains(t));
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(5.0, 5.0);
-        if kit::chip_toggle(ui, "All", st.topics.is_empty()).clicked() {
-            st.topics.clear();
-        }
-        for t in &topics {
-            let sel = st.topics.contains(t);
-            if kit::chip_toggle(ui, t, sel).clicked() {
-                if sel {
-                    st.topics.retain(|x| x != t);
-                } else {
-                    st.topics.push(t.clone());
+        let close_outside = egui::PopupCloseBehavior::CloseOnClickOutside;
+        let r = filter_button(ui, "Question Type", st.kinds.len());
+        egui::Popup::menu(&r).close_behavior(close_outside).show(|ui| {
+            for k in [QKind::Mc, QKind::Tf, QKind::Matching, QKind::Blank, QKind::Short, QKind::Multipart] {
+                let n = bank.questions.iter().filter(|q| q.kind.qkind() == k).count();
+                let mut on = st.kinds.contains(&k);
+                if ui.checkbox(&mut on, format!("{}  ({n})", k.label())).changed() {
+                    if on {
+                        st.kinds.push(k);
+                    } else {
+                        st.kinds.retain(|x| *x != k);
+                    }
                 }
             }
-        }
+            if !st.kinds.is_empty() && ui.button("Clear").clicked() {
+                st.kinds.clear();
+            }
+        });
+        let r = filter_button(ui, "Difficulty", usize::from(st.diff != 0));
+        egui::Popup::menu(&r).close_behavior(close_outside).show(|ui| {
+            for (di, label) in [(0u8, "Any difficulty"), (1, "Easy"), (2, "Medium"), (3, "Hard")] {
+                ui.radio_value(&mut st.diff, di, label);
+            }
+        });
+        let r = filter_button(ui, "Topic", st.topics.len());
+        egui::Popup::menu(&r).close_behavior(close_outside).show(|ui| {
+            if topics.is_empty() {
+                ui.label(muted("No topics in this bank yet."));
+            }
+            for t in &topics {
+                let mut on = st.topics.contains(t);
+                if ui.checkbox(&mut on, t).changed() {
+                    if on {
+                        st.topics.push(t.clone());
+                    } else {
+                        st.topics.retain(|x| x != t);
+                    }
+                }
+            }
+            if !st.topics.is_empty() && ui.button("Clear").clicked() {
+                st.topics.clear();
+            }
+        });
     });
     ui.add_space(4.0);
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(5.0, 5.0);
-        for (di, label) in [(0u8, "Any level"), (1, "Low"), (2, "Medium"), (3, "High")] {
-            if kit::chip_toggle(ui, label, st.diff == di).clicked() {
-                st.diff = di;
-            }
-        }
-        if kit::chip_toggle(ui, "Newest first", st.sort_newest).clicked() {
-            st.sort_newest = !st.sort_newest;
-        }
-    });
-    ui.add_space(6.0);
 
     let needle = st.search.trim().to_lowercase();
-    let mut qs: Vec<model::Question> = bank
+    let mut qs: Vec<(usize, model::Question)> = bank
         .questions
         .iter()
-        .filter(|q| needle.is_empty() || q.stem.to_lowercase().contains(&needle) || crate::equation::stem_preview(&q.stem).to_lowercase().contains(&needle))
-        .filter(|q| st.topics.is_empty() || st.topics.iter().any(|t| q.topics.contains(t)))
-        .filter(|q| match (st.diff, &q.difficulty) {
+        .enumerate()
+        .filter(|(_, q)| needle.is_empty() || q.stem.to_lowercase().contains(&needle) || crate::equation::stem_preview(&q.stem).to_lowercase().contains(&needle))
+        .filter(|(_, q)| st.kinds.is_empty() || st.kinds.contains(&q.kind.qkind()))
+        .filter(|(_, q)| st.topics.is_empty() || st.topics.iter().any(|t| q.topics.contains(t)))
+        .filter(|(_, q)| match (st.diff, &q.difficulty) {
             (0, _) => true,
             (1, Some(model::Difficulty::Low))
             | (2, Some(model::Difficulty::Medium))
             | (3, Some(model::Difficulty::High)) => true,
             _ => false,
         })
-        .cloned()
+        .map(|(i, q)| (i, q.clone()))
         .collect();
-    if st.sort_newest {
-        qs.sort_by_key(|q| -q.created);
-    } else {
-        qs.sort_by_key(|q| q.created);
+    match st.sort {
+        0 => qs.sort_by_key(|(i, q)| (-q.created, -(*i as i64))),
+        1 => qs.sort_by_key(|(i, q)| (q.created, *i)),
+        3 => qs.sort_by_key(|(i, q)| (q.kind.qkind() as u8, *i)),
+        4 => qs.sort_by_key(|(_, q)| crate::equation::stem_preview(&q.stem).to_lowercase()),
+        _ => qs.sort_by_key(|(i, _)| *i),
     }
+    let not_in: Vec<Id> = qs
+        .iter()
+        .filter(|(_, q)| !in_exam.iter().any(|it| it.bank_id == bank_id && it.question_id == q.id))
+        .map(|(_, q)| q.id.clone())
+        .collect();
+
+    // ---- sort + Add all ----
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        egui::ComboBox::from_id_salt("shelf_sort")
+            .selected_text(SORTS[st.sort.min(SORTS.len() as u8 - 1) as usize])
+            .width(130.0)
+            .show_ui(ui, |ui| {
+                for (k, l) in SORTS.iter().enumerate() {
+                    ui.selectable_value(&mut st.sort, k as u8, *l);
+                }
+            });
+        let add_all = ui
+            .add_enabled(!not_in.is_empty(), egui::Button::new(RichText::new(format!("+ Add all ({})", not_in.len())).family(theme::bold_family()).size(12.5)))
+            .on_hover_text("Adds every question shown here that is not on the exam yet");
+        if add_all.clicked() {
+            let len = app.store.exam(exam_id).map(|e| e.items.len()).unwrap_or(0);
+            let b = bank_id.clone();
+            let add = not_in.clone();
+            apply_items_fn(app, exam_id, |mut items| {
+                items.extend(add.iter().map(|q| ExamItem::new(b.clone(), q.clone())));
+                items
+            });
+            st.just_added = Some((len, ctx.input(|i| i.time)));
+            screens::toast(app, &format!("Added {} question{}", not_in.len(), if not_in.len() == 1 { "" } else { "s" }), false);
+        }
+    });
+    ui.add_space(6.0);
 
     let used = bank
         .questions
@@ -2379,12 +3361,13 @@ fn draw_shelf_inner(
                 ui.add(egui::Label::new(muted("No questions match.")));
                 return;
             }
-            for q in &qs {
+            for (_, q) in &qs {
                 let count = in_exam
                     .iter()
                     .filter(|it| it.bank_id == bank_id && it.question_id == q.id)
                     .count();
                 shelf_row(app, ui, st, ctx, &bank_id, exam_id, q, count);
+                ui.add_space(6.0);
             }
         });
 
@@ -2398,7 +3381,9 @@ fn draw_shelf_inner(
     });
 }
 
-/// One shelf row: grip | type pill | 2-line stem | points | add / in-exam mark.
+/// One shelf card (Test Parrot's layout): TYPE label with "In exam" / "Image" badges, the
+/// stem on two lines, and edit / copy / add (or in-exam check) buttons. The card drags
+/// onto the page.
 #[allow(clippy::too_many_arguments)]
 fn shelf_row(
     app: &mut crate::App,
@@ -2411,85 +3396,120 @@ fn shelf_row(
     in_count: usize,
 ) {
     let w = ui.available_width();
-    let stem_w = w - (6.0 + 14.0 + 8.0 + 46.0 + 8.0 + 38.0 + 8.0 + 28.0 + 6.0);
+    let btn_w = 3.0 * 26.0 + 2.0 * 4.0;
+    let stem_w = w - 12.0 - btn_w - 18.0;
     let already = in_count > 0;
-    let stem_col = if already { theme::muted_col() } else { theme::ink() };
     let p = ui.painter().clone();
     let stem_txt = crate::equation::stem_preview(&q.stem);
-    let galley = clamped_galley(&p, &stem_txt, FontId::proportional(12.5), stem_col, stem_w, 2);
-    let h = (galley.size().y + 18.0).max(46.0);
+    let galley = clamped_galley(&p, &stem_txt, FontId::proportional(12.5), theme::ink(), stem_w, 2);
+    let h = galley.size().y + 34.0;
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, h), Sense::click_and_drag());
     let drag_this = matches!(&st.drag, Some(DragState { src: DragSrc::Shelf { question_id, .. }, .. }) if *question_id == q.id);
 
-    if resp.hovered() || drag_this {
-        p.rect_filled(rect.shrink2(Vec2::new(0.0, 1.0)), CornerRadius::same(9), theme::hover_bg());
-    }
-    p.line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(1.0, theme::border()));
-    let cy = rect.center().y;
-
-    // Grip.
-    let gx = rect.left() + 6.0 + 7.0;
-    let gcol = if resp.hovered() { theme::accent_col() } else { theme::rule() };
-    for dx in [-2.8, 2.8] {
-        for dy in [-5.0, 0.0, 5.0] {
-            p.circle_filled(Pos2::new(gx + dx, cy + dy), 1.3, gcol);
-        }
-    }
-    // Type pill (same look as kit::type_pill, painted to fit the grid).
-    let px = rect.left() + 6.0 + 14.0 + 8.0;
-    let pr = Rect::from_min_size(Pos2::new(px, cy - 9.0), Vec2::new(46.0, 18.0));
-    p.rect_filled(pr, CornerRadius::same(9), theme::accent_faded());
-    p.text(pr.center(), Align2::CENTER_CENTER, kind_pill(q.kind.qkind()), FontId::new(9.5, theme::bold_family()), theme::accent_col());
-    // Stem.
-    let sx = pr.right() + 8.0;
-    p.galley(Pos2::new(sx, cy - galley.size().y / 2.0), galley, stem_col);
-    // Points.
-    let pts = q.points.map(|v| format!("{} pt", fmt_number(v))).unwrap_or_default();
-    p.text(
-        Pos2::new(rect.right() - 6.0 - 28.0 - 8.0, cy),
-        Align2::RIGHT_CENTER,
-        pts,
-        FontId::proportional(11.5),
-        theme::muted_col(),
+    let fill = if already { theme::hover_bg() } else { theme::card() };
+    p.rect(
+        rect,
+        CornerRadius::same(9),
+        if resp.hovered() || drag_this { theme::accent_faded() } else { fill },
+        Stroke::new(1.0, if resp.hovered() { theme::accent_col() } else { theme::border() }),
+        StrokeKind::Inside,
     );
-    // Add button / in-exam check.
-    let br = Rect::from_center_size(Pos2::new(rect.right() - 6.0 - 13.0, cy), Vec2::splat(26.0));
-    let bresp = ui.interact(br, ui.id().with(("shelf_add", &q.id)), Sense::click());
-    let c = br.center();
+    // TYPE label (+ part count) and badges.
+    let mut x = rect.left() + 12.0;
+    let ty = match &q.kind {
+        Kind::Multipart { parts } => format!("{} · {} PARTS", q.kind.qkind().label().to_uppercase(), parts.len()),
+        _ => q.kind.qkind().label().to_uppercase(),
+    };
+    let tg = p.layout_no_wrap(ty, FontId::new(9.5, theme::bold_family()), theme::muted_col());
+    let ty_y = rect.top() + 8.0;
+    let tw = tg.size().x;
+    p.galley(Pos2::new(x, ty_y), tg, theme::muted_col());
+    x += tw + 8.0;
+    let mut badge = |label: &str, strong: bool| {
+        let g = p.layout_no_wrap(label.to_string(), FontId::new(9.5, theme::bold_family()), if strong { theme::ink() } else { theme::muted_col() });
+        let r = Rect::from_min_size(Pos2::new(x, ty_y - 1.5), g.size() + Vec2::new(10.0, 3.0));
+        p.rect_filled(r, CornerRadius::same(6), if strong { theme::highlighter().gamma_multiply(0.55) } else { theme::field() });
+        x = r.right() + 6.0;
+        p.galley(r.min + Vec2::new(5.0, 1.5), g, Color32::PLACEHOLDER);
+    };
     if already {
+        badge(if in_count > 1 { "In exam ×2+" } else { "In exam" }, true);
+    }
+    if q.image.is_some() {
+        badge("Image", false);
+    }
+    if let Some(pts) = q.points {
+        let g = p.layout_no_wrap(format!("{} pt", fmt_number(pts)), FontId::proportional(10.5), theme::muted_col());
+        p.galley(Pos2::new(rect.right() - btn_w - 14.0 - g.size().x, ty_y), g, Color32::PLACEHOLDER);
+    }
+    // Stem.
+    p.galley(Pos2::new(rect.left() + 12.0, rect.top() + 24.0), galley, theme::ink());
+
+    // Buttons: edit, copy, add / in-exam check.
+    let cy = rect.center().y;
+    let mut bx = rect.right() - 10.0 - 13.0 - 2.0 * 30.0;
+    let mut small = |id: &str, tip: &str| -> (Rect, egui::Response) {
+        let br = Rect::from_center_size(Pos2::new(bx, cy), Vec2::splat(26.0));
+        bx += 30.0;
+        let r = ui.interact(br, ui.id().with((id, &q.id)), Sense::click()).on_hover_text(tip);
+        if r.hovered() {
+            ui.painter().rect_filled(br, CornerRadius::same(7), theme::card());
+        }
+        (br, r)
+    };
+    let (er, eresp) = small("shelf_edit", "Edit question");
+    let (cr, cresp) = small("shelf_copy", "Copy: duplicate this question in the bank");
+    let (br, bresp) = small("shelf_add", if already { "Already in this exam. Drag the card to add it again." } else { "Add to the exam" });
+    let ink = Stroke::new(1.5, theme::muted_col());
+    {
+        // Pencil.
+        let c = er.center();
+        p.line_segment([c + Vec2::new(-4.5, 4.5), c + Vec2::new(3.5, -3.5)], ink);
+        p.line_segment([c + Vec2::new(-4.5, 4.5), c + Vec2::new(-5.0, 2.0)], ink);
+        p.line_segment([c + Vec2::new(2.0, -5.0), c + Vec2::new(5.0, -2.0)], ink);
+        // Copy: two sheets.
+        let c = cr.center();
+        p.rect_stroke(Rect::from_center_size(c + Vec2::new(-1.5, -1.5), Vec2::new(7.5, 8.5)), CornerRadius::same(1), ink, StrokeKind::Middle);
+        p.rect_filled(Rect::from_center_size(c + Vec2::new(1.8, 1.8), Vec2::new(7.5, 8.5)), CornerRadius::same(1), fill);
+        p.rect_stroke(Rect::from_center_size(c + Vec2::new(1.8, 1.8), Vec2::new(7.5, 8.5)), CornerRadius::same(1), ink, StrokeKind::Middle);
+        let c = br.center();
         let s = Stroke::new(2.0, theme::accent_col());
-        p.line_segment([c + Vec2::new(-4.5, 0.5), c + Vec2::new(-1.5, 3.5)], s);
-        p.line_segment([c + Vec2::new(-1.5, 3.5), c + Vec2::new(4.5, -3.5)], s);
-        bresp.clone().on_hover_text("Already in this exam. Drag the row to add it again.");
-    } else {
-        p.rect(
-            br,
-            CornerRadius::same(8),
-            if bresp.hovered() { theme::accent_faded() } else { theme::card() },
-            Stroke::new(1.0, if bresp.hovered() { theme::accent_col() } else { theme::rule() }),
-            StrokeKind::Inside,
-        );
-        let s = Stroke::new(2.0, theme::accent_col());
-        p.line_segment([c + Vec2::new(-4.5, 0.0), c + Vec2::new(4.5, 0.0)], s);
-        p.line_segment([c + Vec2::new(0.0, -4.5), c + Vec2::new(0.0, 4.5)], s);
-        if bresp.clicked() {
-            let len = app.store.exam(exam_id).map(|e| e.items.len()).unwrap_or(0);
-            let idx = add_item(app, exam_id, bank_id, &q.id, len);
-            st.just_added = Some((idx, ctx.input(|i| i.time)));
+        if already {
+            p.line_segment([c + Vec2::new(-4.5, 0.5), c + Vec2::new(-1.5, 3.5)], s);
+            p.line_segment([c + Vec2::new(-1.5, 3.5), c + Vec2::new(4.5, -3.5)], s);
+        } else {
+            p.line_segment([c + Vec2::new(-4.5, 0.0), c + Vec2::new(4.5, 0.0)], s);
+            p.line_segment([c + Vec2::new(0.0, -4.5), c + Vec2::new(0.0, 4.5)], s);
         }
     }
-    if drag_this {
-        p.rect_filled(rect, CornerRadius::same(9), theme::card().gamma_multiply(0.6));
+    if eresp.clicked() {
+        app.qedit = Some(crate::qedit::Draft::from_question(bank_id.clone(), q));
+        app.bank = Some(bank_id.clone());
+        app.screen = crate::Screen::BankEdit(bank_id.clone());
+    }
+    if cresp.clicked() {
+        if let Some(b) = app.store.bank_mut(bank_id) {
+            if crate::bankui::duplicate_in_bank(b, &q.id).is_some() {
+                app.store.save_banks();
+                screens::toast(app, "Question copied in the bank", false);
+            }
+        }
+    }
+    if bresp.clicked() && !already {
+        let len = app.store.exam(exam_id).map(|e| e.items.len()).unwrap_or(0);
+        let idx = add_item(app, exam_id, bank_id, &q.id, len);
+        st.just_added = Some((idx, ctx.input(|i| i.time)));
     }
 
-    if resp.drag_started() && !bresp.hovered() {
+    let on_button = eresp.hovered() || cresp.hovered() || bresp.hovered();
+    if resp.drag_started() && !on_button {
         st.drag = Some(DragState {
             src: DragSrc::Shelf { bank_id: bank_id.clone(), question_id: q.id.clone() },
             stem: q.stem.clone(),
             label: kind_pill(q.kind.qkind()),
         });
     }
-    if resp.hovered() {
+    if resp.hovered() && !on_button {
         ctx.set_cursor_icon(egui::CursorIcon::Grab);
     }
 }
@@ -2527,8 +3547,14 @@ fn doc_numbers(qs: &[model::Question]) -> Vec<u32> {
 }
 
 /// Maps one `model::Question` into the exporters' print conventions.
+#[cfg(test)]
 fn map_question(number: u32, q: &model::Question) -> Mapped {
-    let mut m = map_question_raw(number, q);
+    map_question_style(number, q, model::PaperStyle::Standard)
+}
+
+/// [`map_question`] in a paper style (multipart labels follow the style).
+fn map_question_style(number: u32, q: &model::Question, style: model::PaperStyle) -> Mapped {
+    let mut m = map_question_raw_style(number, q, style);
     // Exports have no typesetter yet: degrade `$latex$` to its Unicode approximation.
     let plain = |s: &mut String| *s = crate::equation::stem_to_plain(s);
     m.dq.text.iter_mut().for_each(plain);
@@ -2537,7 +3563,12 @@ fn map_question(number: u32, q: &model::Question) -> Mapped {
     m
 }
 
+#[cfg(test)]
 fn map_question_raw(number: u32, q: &model::Question) -> Mapped {
+    map_question_raw_style(number, q, model::PaperStyle::Standard)
+}
+
+fn map_question_raw_style(number: u32, q: &model::Question, style: model::PaperStyle) -> Mapped {
     let mut dq = DocQ::default();
     dq.number = number;
     dq.points = q.points;
@@ -2620,7 +3651,7 @@ fn map_question_raw(number: u32, q: &model::Question) -> Mapped {
             for (pi, part) in parts.iter().enumerate() {
                 match &part.kind {
                     PartKind::Mc { answers } => {
-                        s.push_str(&format!("\n{}", part_line(pi, &part.stem)));
+                        s.push_str(&format!("\n{}", part_line_styled(pi, &part.stem, style)));
                         for (ci, a) in answers.iter().enumerate() {
                             s.push_str(&format!("\n      {}. {}", letter(ci), a.text));
                         }
@@ -2638,7 +3669,7 @@ fn map_question_raw(number: u32, q: &model::Question) -> Mapped {
                         kparts.push(format!("{}) {}", part_key_label(pi, &part.stem), label));
                     }
                     PartKind::Tf { correct } => {
-                        s.push_str(&format!("\n{} (True / False)", part_line(pi, &part.stem)));
+                        s.push_str(&format!("\n{} (True / False)", part_line_styled(pi, &part.stem, style)));
                         kparts.push(format!(
                             "{}) {}",
                             part_key_label(pi, &part.stem),
@@ -2646,7 +3677,7 @@ fn map_question_raw(number: u32, q: &model::Question) -> Mapped {
                         ));
                     }
                     PartKind::Short { sample } => {
-                        s.push_str(&format!("\n{}", part_line(pi, &part.stem)));
+                        s.push_str(&format!("\n{}", part_line_styled(pi, &part.stem, style)));
                         rules += 3;
                         kparts.push(format!(
                             "{}) {}",
@@ -2683,16 +3714,11 @@ pub fn headless_export(index: usize, dir: &std::path::Path) -> Result<(), String
         .exams
         .get(index)
         .ok_or_else(|| format!("no exam at index {index} ({} exams in the store)", st.exams.len()))?;
-    let qs: Vec<model::Question> = exam
-        .items
-        .iter()
-        .filter_map(|it| st.question(&it.bank_id, &it.question_id).cloned())
-        .collect();
-    if qs.is_empty() {
+    let placed = resolve_items(&st, exam);
+    if placed.is_empty() {
         return Err("the exam has no resolvable questions".into());
     }
-    let numbers = doc_numbers(&qs);
-    let mapped: Vec<Mapped> = qs.iter().enumerate().map(|(i, q)| map_question(numbers[i], q)).collect();
+    let mapped = map_placed(&placed, exam.paper_style);
     let student = build_doc(exam, &mapped, None, false);
     let key = build_doc(exam, &mapped, None, true);
     let write = |name: &str, bytes: Vec<u8>| std::fs::write(dir.join(name), bytes).map_err(|e| format!("{name}: {e}"));
@@ -2700,6 +3726,70 @@ pub fn headless_export(index: usize, dir: &std::path::Path) -> Result<(), String
     write("exam.docx", crate::export::render_docx(&student)?)?;
     write("key.pdf", crate::export::render_pdf(&key)?)?;
     Ok(())
+}
+
+/// The bank question as this exam prints it: the item's own answer order applied.
+pub(crate) fn item_question(store: &store::Store, it: &ExamItem) -> Option<model::Question> {
+    let mut q = store.question(&it.bank_id, &it.question_id)?.clone();
+    apply_answer_order(&mut q, &it.answer_order);
+    Some(q)
+}
+
+/// Reorders a multiple-choice question's answers by `order` (indices into the bank order);
+/// an empty or stale order (not a permutation of the answers) leaves the bank order.
+fn apply_answer_order(q: &mut model::Question, order: &[usize]) {
+    let Kind::Mc { answers } = &mut q.kind else { return };
+    if order.is_empty() || !is_permutation(order, answers.len()) {
+        return;
+    }
+    *answers = order.iter().map(|&i| answers[i].clone()).collect();
+}
+
+fn is_permutation(order: &[usize], n: usize) -> bool {
+    let mut seen = vec![false; n];
+    order.len() == n && order.iter().all(|&i| i < n && !std::mem::replace(&mut seen[i], true))
+}
+
+/// One printable placed question: the exam item (section heading, work space) and the
+/// resolved question (answer order applied).
+#[derive(Clone)]
+struct Placed {
+    item: ExamItem,
+    q: model::Question,
+}
+
+/// The exam's printable questions in order; items whose question is missing from its bank
+/// are skipped (a skipped item's section heading moves to the next printed question).
+fn resolve_items(st: &store::Store, exam: &model::Exam) -> Vec<Placed> {
+    let mut out: Vec<Placed> = Vec::new();
+    let mut pending: Option<model::ExamSection> = None;
+    for it in &exam.items {
+        if it.section.is_some() {
+            pending = it.section.clone();
+        }
+        if let Some(q) = item_question(st, it) {
+            let mut item = it.clone();
+            item.section = pending.take();
+            out.push(Placed { item, q });
+        }
+    }
+    out
+}
+
+/// Maps placed questions (numbering continues across sections) in a paper style.
+fn map_placed(placed: &[Placed], style: model::PaperStyle) -> Vec<Mapped> {
+    let qs: Vec<model::Question> = placed.iter().map(|p| p.q.clone()).collect();
+    let numbers = doc_numbers(&qs);
+    placed
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let mut m = map_question_style(numbers[i], &p.q, style);
+            m.dq.section = p.item.section.as_ref().map(|s| crate::layout::DocSection { title: s.title.clone(), directions: s.directions.clone() });
+            m.dq.work_lines = p.item.work_lines;
+            m
+        })
+        .collect()
 }
 
 /// Builds a printable exam doc: student test (`is_key` false) or answer key.
@@ -2724,6 +3814,8 @@ fn build_doc(
         is_key,
         version_label: label,
         ruled_blanks: exam.ruled_blanks,
+        style: exam.paper_style,
+        margins: exam.margins,
         questions: mapped
             .iter()
             .map(|m| {
@@ -2733,6 +3825,8 @@ fn build_doc(
                     dq.image = None;
                     dq.rule_lines = 0;
                     dq.text = vec![];
+                    dq.work_lines = 0;
+                    dq.section = None;
                 }
                 dq
             })
@@ -2775,6 +3869,21 @@ fn shuffled_indices(n: usize, rnd: &mut impl FnMut() -> u64) -> Vec<usize> {
         v.swap(i, j);
     }
     v
+}
+
+/// Shuffles placed questions within each section; section headings keep their positions.
+fn shuffle_placed_in_sections(placed: Vec<Placed>, rnd: &mut impl FnMut() -> u64) -> Vec<Placed> {
+    let items: Vec<ExamItem> = placed.iter().map(|p| p.item.clone()).collect();
+    let mut out: Vec<Placed> = Vec::with_capacity(placed.len());
+    for r in section_ranges(&items) {
+        let order = shuffled_indices(r.len(), rnd);
+        for (k, o) in order.into_iter().enumerate() {
+            let mut p = placed[r.start + o].clone();
+            p.item.section = placed[r.start + k].item.section.clone();
+            out.push(p);
+        }
+    }
+    out
 }
 
 /// Moves only the non-locked MC answers around (locked answers keep their slot);
@@ -2829,6 +3938,10 @@ struct SnapDoc {
     pub questions: Vec<SnapQ>,
     /// Name of the produced PDF/DOCX file sitting next to this snapshot.
     pub out_file: String,
+    #[serde(default)]
+    pub style: model::PaperStyle,
+    #[serde(default)]
+    pub margins: Option<model::Margins>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
@@ -2840,6 +3953,10 @@ struct SnapQ {
     pub key_text: String,
     pub rule_lines: u8,
     pub points: Option<f64>,
+    #[serde(default)]
+    pub section: Option<model::ExamSection>,
+    #[serde(default)]
+    pub work_lines: u8,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
@@ -2873,6 +3990,8 @@ impl SnapDoc {
                     key_text: doc.questions[i].key_text.clone(),
                     rule_lines: doc.questions[i].rule_lines,
                     points: doc.questions[i].points,
+                    section: doc.questions[i].section.as_ref().map(|s| model::ExamSection { title: s.title.clone(), directions: s.directions.clone() }),
+                    work_lines: doc.questions[i].work_lines,
                 })
                 .collect::<Vec<_>>();
         SnapDoc {
@@ -2887,6 +4006,8 @@ impl SnapDoc {
             ruled_blanks: doc.ruled_blanks,
             questions,
             out_file,
+            style: doc.style,
+            margins: doc.margins,
         }
     }
 
@@ -2901,6 +4022,8 @@ impl SnapDoc {
             is_key: self.is_key,
             version_label: self.version_label.clone(),
             ruled_blanks: self.ruled_blanks,
+            style: self.style,
+            margins: self.margins,
             questions: self
                 .questions
                 .iter()
@@ -2919,10 +4042,288 @@ impl SnapDoc {
                     key_text: q.key_text.clone(),
                     rule_lines: q.rule_lines,
                     points: q.points,
+                    section: q.section.as_ref().map(|s| crate::layout::DocSection { title: s.title.clone(), directions: s.directions.clone() }),
+                    work_lines: q.work_lines,
                 })
                 .collect(),
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Export preview: real pages, painted from the PDF's own content streams
+// ---------------------------------------------------------------------------
+
+/// One token of a (queShion-written) PDF content stream.
+#[derive(Clone, Debug, PartialEq)]
+enum PdfTok {
+    Num(f64),
+    Name(String),
+    Str(Vec<u8>),
+    Arr(Vec<f64>),
+    Op(String),
+}
+
+/// Tokenizes the small operator subset `export::render_pdf` writes.
+fn pdf_tokens(ops: &[u8]) -> Vec<PdfTok> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < ops.len() {
+        let c = ops[i];
+        if c.is_ascii_whitespace() {
+            i += 1;
+        } else if c == b'(' {
+            let mut depth = 1;
+            let mut s = Vec::new();
+            i += 1;
+            while i < ops.len() {
+                let b = ops[i];
+                if b == b'\\' && i + 1 < ops.len() {
+                    s.push(match ops[i + 1] {
+                        b'n' => b'\n',
+                        b'r' => b'\r',
+                        b't' => b'\t',
+                        o => o,
+                    });
+                    i += 2;
+                    continue;
+                }
+                if b == b'(' {
+                    depth += 1;
+                } else if b == b')' {
+                    depth -= 1;
+                    if depth == 0 {
+                        i += 1;
+                        break;
+                    }
+                }
+                s.push(b);
+                i += 1;
+            }
+            out.push(PdfTok::Str(s));
+        } else if c == b'[' {
+            let end = ops[i..].iter().position(|&b| b == b']').map_or(ops.len(), |p| i + p);
+            let nums = String::from_utf8_lossy(&ops[i + 1..end]).split_whitespace().filter_map(|t| t.parse().ok()).collect();
+            out.push(PdfTok::Arr(nums));
+            i = end + 1;
+        } else {
+            let end = ops[i..].iter().position(|b| b.is_ascii_whitespace() || *b == b'(' || *b == b'[').map_or(ops.len(), |p| i + p).max(i + 1);
+            let t = String::from_utf8_lossy(&ops[i..end]).to_string();
+            out.push(if let Some(n) = t.strip_prefix('/') {
+                PdfTok::Name(n.to_string())
+            } else if let Ok(v) = t.parse::<f64>() {
+                PdfTok::Num(v)
+            } else {
+                PdfTok::Op(t)
+            });
+            i = end;
+        }
+    }
+    out
+}
+
+/// WinAnsi bytes back to text (the inverse of the exporter's mapping, near enough to read).
+fn winansi_text(b: &[u8]) -> String {
+    b.iter()
+        .map(|&c| match c {
+            0x80 => '€',
+            0x85 => '…',
+            0x91 => '‘',
+            0x92 => '’',
+            0x93 => '“',
+            0x94 => '”',
+            0x95 => '•',
+            0x96 => '–',
+            0x97 => '—',
+            0x99 => '™',
+            c => c as char,
+        })
+        .collect()
+}
+
+/// Paints one PDF page (its content stream) into `rect`, scaled from `page_w` x `page_h` pt.
+/// `images[k]` is the texture for `/Im{k+1}` (None paints a grey box).
+fn paint_pdf_page(p: &egui::Painter, rect: Rect, page_w: f64, page_h: f64, ops: &[u8], images: &[Option<egui::TextureId>]) {
+    let s = rect.width() / page_w as f32;
+    let to = |x: f64, y: f64| Pos2::new(rect.left() + x as f32 * s, rect.top() + (page_h - y) as f32 * s);
+    let gray = |v: f64| {
+        let g = (v.clamp(0.0, 1.0) * 255.0) as u8;
+        Color32::from_rgb(g, g, g)
+    };
+    let rgb = |r: f64, g: f64, b: f64| Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8);
+    p.rect_filled(rect, CornerRadius::same(1), Color32::WHITE);
+    let mut stack: Vec<PdfTok> = Vec::new();
+    let (mut fill, mut stroke) = (Color32::BLACK, Color32::BLACK);
+    let mut lw = 1.0_f64;
+    let mut dash = false;
+    let mut font = (String::from("F1"), 11.0_f64);
+    let mut tpos = (0.0_f64, 0.0_f64);
+    let mut path: Vec<Vec<Pos2>> = Vec::new();
+    let mut rects: Vec<Rect> = Vec::new();
+    let mut cm = [1.0_f64, 0.0, 0.0, 1.0, 0.0, 0.0];
+    let num = |st: &[PdfTok], k: usize| -> f64 {
+        match st.get(st.len().wrapping_sub(k)) {
+            Some(PdfTok::Num(v)) => *v,
+            _ => 0.0,
+        }
+    };
+    for t in pdf_tokens(ops) {
+        let PdfTok::Op(op) = &t else {
+            stack.push(t);
+            continue;
+        };
+        match op.as_str() {
+            "g" => fill = gray(num(&stack, 1)),
+            "G" => stroke = gray(num(&stack, 1)),
+            "rg" => fill = rgb(num(&stack, 3), num(&stack, 2), num(&stack, 1)),
+            "RG" => stroke = rgb(num(&stack, 3), num(&stack, 2), num(&stack, 1)),
+            "w" => lw = num(&stack, 1),
+            "d" => dash = matches!(stack.get(stack.len().wrapping_sub(2)), Some(PdfTok::Arr(a)) if !a.is_empty()),
+            "m" => path.push(vec![to(num(&stack, 2), num(&stack, 1))]),
+            "l" => {
+                let pt = to(num(&stack, 2), num(&stack, 1));
+                if let Some(last) = path.last_mut() {
+                    last.push(pt);
+                }
+            }
+            "re" => {
+                let (x, y, w, h) = (num(&stack, 4), num(&stack, 3), num(&stack, 2), num(&stack, 1));
+                rects.push(Rect::from_two_pos(to(x, y), to(x + w, y + h)));
+            }
+            "S" | "f" => {
+                let st = Stroke::new((lw as f32 * s).max(0.6), stroke);
+                if op == "f" {
+                    for r in rects.drain(..) {
+                        p.rect_filled(r, CornerRadius::ZERO, fill);
+                    }
+                } else {
+                    for r in rects.drain(..) {
+                        p.rect_stroke(r, CornerRadius::ZERO, st, StrokeKind::Middle);
+                    }
+                }
+                for seg in path.drain(..) {
+                    if dash {
+                        p.extend(Shape::dotted_line(&seg, stroke, 2.5, 0.5));
+                    } else {
+                        p.add(Shape::line(seg, st));
+                    }
+                }
+            }
+            "Tf" => {
+                if let Some(PdfTok::Name(n)) = stack.get(stack.len().wrapping_sub(2)) {
+                    font = (n.clone(), num(&stack, 1));
+                }
+            }
+            "Td" => tpos = (num(&stack, 2), num(&stack, 1)),
+            "Tj" => {
+                if let Some(PdfTok::Str(b)) = stack.last() {
+                    let size = (font.1 as f32 * s).max(1.0);
+                    let fam = if font.0 == "F2" || font.0 == "F4" { theme::bold_family() } else { egui::FontFamily::Proportional };
+                    let base = to(tpos.0, tpos.1);
+                    p.text(Pos2::new(base.x, base.y - size * 0.78), Align2::LEFT_TOP, winansi_text(b), FontId::new(size, fam), fill);
+                }
+            }
+            "cm" => {
+                cm = [num(&stack, 6), num(&stack, 5), num(&stack, 4), num(&stack, 3), num(&stack, 2), num(&stack, 1)];
+            }
+            "Do" => {
+                if let Some(PdfTok::Name(n)) = stack.last() {
+                    let k: usize = n.trim_start_matches("Im").parse().unwrap_or(1);
+                    let r = Rect::from_two_pos(to(cm[4], cm[5]), to(cm[4] + cm[0], cm[5] + cm[3]));
+                    match images.get(k.saturating_sub(1)).copied().flatten() {
+                        Some(tex) => {
+                            p.image(tex, r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                        }
+                        None => {
+                            p.rect_filled(r, CornerRadius::ZERO, Color32::from_gray(225));
+                        }
+                    }
+                }
+            }
+            "Q" => cm = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            _ => {}
+        }
+        stack.clear();
+    }
+}
+
+/// The export preview's pages, cached in temp memory per exam content + what is exported.
+fn export_preview(app: &mut crate::App, ctx: &egui::Context, exam_id: &Id, key: bool) -> Option<(crate::export::PdfPreview, Vec<Option<egui::TextureId>>)> {
+    let exam = app.store.exam(exam_id)?.clone();
+    let placed = resolve_items(&app.store, &exam);
+    if placed.is_empty() {
+        return None;
+    }
+    let sig = {
+        let mut h = fnv1a(serde_json::to_string(&exam).unwrap_or_default().as_bytes());
+        for p in &placed {
+            h = h.rotate_left(7) ^ fnv1a(serde_json::to_string(&p.q).unwrap_or_default().as_bytes());
+        }
+        h ^ key as u64
+    };
+    let id = egui::Id::new(("qs_export_preview", exam_id));
+    let cached: Option<(u64, crate::export::PdfPreview, Vec<String>)> = ctx.data(|d| d.get_temp(id));
+    let (pv, files) = match cached {
+        Some((s, pv, files)) if s == sig => (pv, files),
+        _ => {
+            let mapped = map_placed(&placed, exam.paper_style);
+            let doc = build_doc(&exam, &mapped, None, key);
+            let pv = crate::export::preview_pages(&doc).ok()?;
+            let files: Vec<String> = mapped
+                .iter()
+                .zip(doc.questions.iter())
+                .filter(|(_, dq)| dq.image.is_some())
+                .map(|(m, _)| m.img.as_ref().map(|r| r.file.clone()).unwrap_or_default())
+                .collect();
+            ctx.data_mut(|d| d.insert_temp(id, (sig, pv.clone(), files.clone())));
+            (pv, files)
+        }
+    };
+    let texs = files.iter().map(|f| app.image_texture(ctx, f).map(|t| t.id())).collect();
+    Some((pv, texs))
+}
+
+/// The export dialog's preview strip: page thumbnails of the document that will export.
+fn draw_export_preview(app: &mut crate::App, ui: &mut egui::Ui, exam_id: &Id, key: bool) {
+    let ctx = ui.ctx().clone();
+    let Some((pv, texs)) = export_preview(app, &ctx, exam_id, key) else {
+        ui.add(egui::Label::new(muted("Add questions to see the pages.")));
+        return;
+    };
+    let n = pv.pages.len();
+    ui.horizontal(|ui| {
+        ui.add(egui::Label::new(muted(RichText::new(if key { "Answer key preview" } else { "Preview" }).size(11.5))));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add(egui::Label::new(muted(RichText::new(format!("{n} page{}", if n == 1 { "" } else { "s" })).size(11.5))));
+        });
+    });
+    let thumb_w = 178.0_f32;
+    let thumb_h = thumb_w * (pv.page_h / pv.page_w) as f32;
+    egui::ScrollArea::horizontal()
+        .id_salt("export_preview_strip")
+        .max_height(thumb_h + 26.0)
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 12.0;
+                for (k, ops) in pv.pages.iter().enumerate() {
+                    ui.vertical(|ui| {
+                        let (r, resp) = ui.allocate_exact_size(Vec2::new(thumb_w, thumb_h), Sense::hover());
+                        let p = ui.painter().with_clip_rect(r);
+                        ui.painter().add(egui::Shadow { offset: [0, 4], blur: 10, spread: 0, color: Color32::from_black_alpha(40) }.as_shape(r, CornerRadius::same(1)));
+                        paint_pdf_page(&p, r, pv.page_w, pv.page_h, ops, &texs);
+                        ui.painter().rect_stroke(r, CornerRadius::same(1), Stroke::new(1.0, theme::border()), StrokeKind::Inside);
+                        resp.on_hover_ui(|ui| {
+                            // A larger look at the hovered page.
+                            let w = 420.0_f32;
+                            let h = w * (pv.page_h / pv.page_w) as f32;
+                            let (big, _) = ui.allocate_exact_size(Vec2::new(w, h), Sense::hover());
+                            paint_pdf_page(&ui.painter().with_clip_rect(big), big, pv.page_w, pv.page_h, ops, &texs);
+                        });
+                        ui.add(egui::Label::new(muted(RichText::new(format!("Page {}", k + 1)).size(10.5))));
+                    });
+                }
+            });
+        });
 }
 
 // ---------------------------------------------------------------------------
@@ -2960,23 +4361,21 @@ impl crate::App {
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .default_width(560.0)
+            .default_width(640.0)
             .show(ctx, |ui| {
                 card_frame(theme::cream()).show(ui, |ui| {
-                    ui.add(egui::Label::new(muted("Preview")));
-                    ui.add(
-                        egui::Label::new(
-                            theme::serif_strong(name.clone())
-                                .size(18.0)
-                                .color(theme::ink()),
-                        )
-                        .wrap(),
-                    );
-                    ui.add(egui::Label::new(muted(format!(
-                        "{n_items} question{} · {} total points",
-                        if n_items == 1 { "" } else { "s" },
-                        fmt_number(n_points),
-                    ))));
+                    ui.set_min_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Label::new(theme::serif_strong(name.clone()).size(16.0).color(theme::ink())).truncate());
+                        ui.add(egui::Label::new(muted(format!(
+                            "{n_items} question{} · {} total points",
+                            if n_items == 1 { "" } else { "s" },
+                            fmt_number(n_points),
+                        ))));
+                    });
+                    ui.add_space(4.0);
+                    // What will export: the student test, or the key when only the key is ticked.
+                    draw_export_preview(self, ui, exam_id, exu.key && !exu.student);
                 });
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
@@ -3085,13 +4484,9 @@ fn do_export_inner(
         .unwrap_or_else(|| exam.name.clone());
 
     // Resolve placed questions once; missing ones are skipped (and reported).
-    let resolved: Vec<Option<model::Question>> = exam
-        .items
-        .iter()
-        .map(|it| app.store.question(&it.bank_id, &it.question_id).cloned())
-        .collect();
-    let n_missing = resolved.iter().filter(|q| q.is_none()).count();
-    if n_missing == resolved.len() {
+    let placed = resolve_items(&app.store, &exam);
+    let n_missing = exam.items.len() - placed.len();
+    if placed.is_empty() {
         return Err(
             "none of the exam's questions resolve (bank questions deleted?)".to_string(),
         );
@@ -3114,34 +4509,23 @@ fn do_export_inner(
     let mut wrote = 0usize;
     for v in 0..n_versions {
         let mut rnd = lcg(base_seed ^ ((v as u64 + 1).wrapping_mul(0x9e37_79b9_7f4a_7c15)));
-        // Question order for this version.
-        let order: Vec<usize> = if exu.shuffle_q {
-            shuffled_indices(resolved.len(), &mut rnd)
-        } else {
-            (0..resolved.len()).collect()
-        };
-        // This version's questions (fresh clones; shuffle answers inside).
-        let mut qs: Vec<model::Question> = Vec::with_capacity(resolved.len());
-        for i in &order {
-            if let Some(q) = &resolved[*i] {
-                let mut q = q.clone();
-                if exu.shuffle_a {
-                    shuffle_answers(&mut q, &mut rnd);
-                }
-                qs.push(q);
+        // This version's questions: shuffled within each section (headings stay put), answers
+        // shuffled inside each question.
+        let mut vqs = placed.clone();
+        if exu.shuffle_q {
+            vqs = shuffle_placed_in_sections(vqs, &mut rnd);
+        }
+        if exu.shuffle_a {
+            for p in vqs.iter_mut() {
+                shuffle_answers(&mut p.q, &mut rnd);
             }
         }
-        let numbers = doc_numbers(&qs);
         let label = if n_versions > 1 {
             Some(format!("Version {}", version_letter(v)))
         } else {
             None
         };
-        let mapped: Vec<Mapped> = qs
-            .iter()
-            .enumerate()
-            .map(|(i, q)| map_question(numbers[i], q))
-            .collect();
+        let mapped: Vec<Mapped> = map_placed(&vqs, exam.paper_style);
 
         let suffix = if n_versions > 1 {
             format!("-Version {}", version_letter(v))
@@ -3438,7 +4822,7 @@ mod tests {
     }
 
     fn exam(items: Vec<ExamItem>) -> Exam {
-        Exam {
+        Exam { paper_style: Default::default(), margins: None,
             id: "exam1".to_string(),
             name: "Quiz".to_string(),
             header: "Name: ______ Class:".to_string(),
@@ -3453,7 +4837,7 @@ mod tests {
     }
 
     fn item(bank: &str, qid: &str) -> ExamItem {
-        ExamItem { bank_id: bank.to_string(), question_id: qid.to_string() }
+        ExamItem::new(bank.to_string(), qid.to_string())
     }
 
     #[test]
@@ -3822,14 +5206,14 @@ mod stem_ui_tests {
         assert_eq!(running_header_h("   ", bp), 0.0);
         let h = running_header_h("Name: ____", bp);
         assert!(h > bp, "the header band is at least a line tall");
-        assert_eq!(page_content_top(0.0, 30.0, h), 30.0 * 1.05, "page 1: header is part of the body");
-        assert_eq!(page_content_top(1.0, 30.0, h), PAGE_H + 30.0 * 1.05 + h);
-        assert_eq!(page_content_top(2.0, 30.0, 0.0), 2.0 * PAGE_H + 30.0 * 1.05);
+        assert_eq!(page_content_top(0.0, PAGE_H, 30.0, h), 30.0, "page 1: header is part of the body");
+        assert_eq!(page_content_top(1.0, PAGE_H, 30.0, h), PAGE_H + 30.0 + h);
+        assert_eq!(page_content_top(2.0, PAGE_H, 30.0, 0.0), 2.0 * PAGE_H + 30.0);
     }
 
     #[test]
     fn duplicate_puts_the_copy_right_after_the_item() {
-        let it = |q: &str| ExamItem { bank_id: "b".into(), question_id: q.into() };
+        let it = |q: &str| ExamItem::new("b", q);
         let out = with_copy_after(vec![it("a"), it("b"), it("c")], 1, &"b".to_string(), &"b2".to_string());
         let ids: Vec<&str> = out.iter().map(|x| x.question_id.as_str()).collect();
         assert_eq!(ids, ["a", "b", "b2", "c"]);
@@ -3837,5 +5221,257 @@ mod stem_ui_tests {
         assert_eq!(out[1].question_id, "a2");
         let out = with_copy_after(Vec::new(), 3, &"b".to_string(), &"z".to_string());
         assert_eq!(out.len(), 1, "an out-of-range index appends");
+    }
+}
+
+#[cfg(test)]
+mod examed_tests {
+    use super::*;
+    use crate::model::{Answer, ExamSection, PaperStyle, Question};
+
+    fn it(q: &str) -> ExamItem {
+        ExamItem::new("b", q)
+    }
+    fn sec(t: &str) -> Option<ExamSection> {
+        Some(ExamSection { title: t.into(), directions: String::new() })
+    }
+    fn ids(items: &[ExamItem]) -> Vec<String> {
+        items.iter().map(|i| i.question_id.clone()).collect()
+    }
+    fn heads(items: &[ExamItem]) -> Vec<Option<String>> {
+        items.iter().map(|i| i.section.as_ref().map(|s| s.title.clone())).collect()
+    }
+    /// q1 q2 | B: q3 q4 | C: q5
+    fn sample() -> Vec<ExamItem> {
+        let mut v: Vec<ExamItem> = ["q1", "q2", "q3", "q4", "q5"].iter().map(|q| it(q)).collect();
+        v[2].section = sec("B");
+        v[4].section = sec("C");
+        v
+    }
+    fn mcq(id: &str, answers: &[(&str, bool, bool)]) -> Question {
+        Question {
+            id: id.into(),
+            stem: format!("Stem {id}"),
+            kind: Kind::Mc { answers: answers.iter().map(|(t, c, l)| Answer { text: t.to_string(), correct: *c, locked: *l }).collect() },
+            points: Some(1.0),
+            difficulty: None,
+            topics: vec![],
+            image: None,
+            explanation: None,
+            figure: None,
+            created: 1,
+            modified: 1,
+        }
+    }
+
+    #[test]
+    fn section_ranges_start_at_zero_and_every_heading() {
+        assert!(section_ranges(&[]).is_empty());
+        assert_eq!(section_ranges(&sample()), vec![0..2, 2..4, 4..5]);
+        let mut v = sample();
+        v[0].section = sec("A");
+        assert_eq!(section_ranges(&v), vec![0..2, 2..4, 4..5], "a heading on item 0 adds no empty range");
+    }
+
+    #[test]
+    fn insert_section_below_marks_the_next_question() {
+        let v = with_section_below(sample(), 0);
+        assert_eq!(heads(&v), vec![None, Some("".into()), Some("B".into()), None, Some("C".into())]);
+        // Already a boundary, or the last question: no-op.
+        assert_eq!(heads(&with_section_below(sample(), 1)), heads(&sample()));
+        assert_eq!(heads(&with_section_below(sample(), 4)), heads(&sample()));
+    }
+
+    #[test]
+    fn removing_a_sections_first_question_keeps_the_section() {
+        let v = without_item(sample(), 2);
+        assert_eq!(ids(&v), vec!["q1", "q2", "q4", "q5"]);
+        assert_eq!(heads(&v), vec![None, None, Some("B".into()), Some("C".into())]);
+        // Removing the only question of a section whose next item already starts one: the
+        // later heading wins (the emptied section disappears).
+        let v = without_item(sample(), 4);
+        assert_eq!(heads(&v), vec![None, None, Some("B".into()), None]);
+    }
+
+    #[test]
+    fn moving_questions_keeps_headings_in_place() {
+        // Swap q2 (end of section 1) with q3 (start of B): q3 joins section 1, q2 opens B.
+        let v = with_headings_fixed(sample(), |mut b| {
+            b.swap(1, 2);
+            b
+        });
+        assert_eq!(ids(&v), vec!["q1", "q3", "q2", "q4", "q5"]);
+        assert_eq!(heads(&v), heads(&sample()));
+    }
+
+    #[test]
+    fn section_move_merge_and_delete() {
+        let v = with_section_moved(sample(), 1, -1);
+        assert_eq!(ids(&v), vec!["q3", "q4", "q1", "q2", "q5"]);
+        assert_eq!(heads(&v), vec![Some("B".into()), None, Some("".into()), None, Some("C".into())], "the headless first block gains a blank heading");
+        let v = with_section_moved(sample(), 2, 1);
+        assert_eq!(ids(&v), ids(&sample()), "moving the last section down is a no-op");
+        let v = with_section_merged_up(sample(), 1);
+        assert_eq!(section_ranges(&v), vec![0..4, 4..5]);
+        let v = with_section_deleted(sample(), 1);
+        assert_eq!(ids(&v), vec!["q1", "q2", "q5"]);
+        assert_eq!(heads(&v), vec![None, None, Some("C".into())]);
+    }
+
+    #[test]
+    fn shuffling_a_section_stays_inside_it() {
+        let mut v: Vec<ExamItem> = (0..12).map(|k| it(&format!("q{k}"))).collect();
+        v[4].section = sec("B");
+        v[9].section = sec("C");
+        for seed in 0..20u64 {
+            let s = with_section_shuffled(v.clone(), 5, &mut lcg(seed));
+            assert_eq!(heads(&s), heads(&v));
+            assert_eq!(ids(&s)[..4], ids(&v)[..4]);
+            assert_eq!(ids(&s)[9..], ids(&v)[9..]);
+            let mut mid = ids(&s)[4..9].to_vec();
+            mid.sort();
+            let mut want = ids(&v)[4..9].to_vec();
+            want.sort();
+            assert_eq!(mid, want);
+        }
+        let all = with_all_sections_shuffled(v.clone(), &mut lcg(3));
+        assert_eq!(heads(&all), heads(&v));
+    }
+
+    #[test]
+    fn answer_order_shuffle_keeps_locked_answers() {
+        let q = mcq("m", &[("A", false, false), ("B", true, false), ("C", false, true), ("D", false, false)]);
+        for seed in 0..30u64 {
+            let o = shuffled_answer_order(&q, &[], &mut lcg(seed)).expect("movable answers");
+            assert!(is_permutation(&o, 4));
+            assert_eq!(o[2], 2, "a locked answer keeps its slot");
+            assert_ne!(o, vec![0, 1, 2, 3]);
+            let mut q2 = q.clone();
+            apply_answer_order(&mut q2, &o);
+            let Kind::Mc { answers } = &q2.kind else { unreachable!() };
+            assert_eq!(answers.iter().filter(|a| a.correct).count(), 1);
+        }
+        let one = mcq("o", &[("A", true, false), ("B", false, true)]);
+        assert!(shuffled_answer_order(&one, &[], &mut lcg(1)).is_none());
+        // A stale order (bank question edited since) is ignored.
+        let mut q3 = q.clone();
+        apply_answer_order(&mut q3, &[1, 0]);
+        let Kind::Mc { answers } = &q3.kind else { unreachable!() };
+        assert_eq!(answers[0].text, "A");
+    }
+
+    #[test]
+    fn printed_doc_carries_sections_work_space_and_answer_order() {
+        let mut st = store::Store::default();
+        st.banks.push(model::QuestionBank {
+            id: "b".into(),
+            name: "B".into(),
+            questions: vec![
+                mcq("q1", &[("Ge", false, false), ("O", true, false)]),
+                mcq("q2", &[("x", true, false), ("y", false, false)]),
+                mcq("q3", &[("u", true, false), ("v", false, false)]),
+            ],
+            created: 0,
+            modified: 0,
+        });
+        let mut ex = model::Exam { items: vec![it("q1"), it("gone"), it("q2"), it("q3")], ..Default::default() };
+        ex.items[0].answer_order = vec![1, 0];
+        ex.items[1].section = sec("Part II");
+        ex.items[3].work_lines = 5;
+        ex.paper_style = PaperStyle::Classic;
+        let placed = resolve_items(&st, &ex);
+        assert_eq!(placed.len(), 3, "the missing question is skipped");
+        assert_eq!(placed[1].item.section.as_ref().map(|s| s.title.as_str()), Some("Part II"), "its heading moves to the next printed question");
+        let mapped = map_placed(&placed, ex.paper_style);
+        assert_eq!(mapped.iter().map(|m| m.dq.number).collect::<Vec<_>>(), vec![1, 2, 3], "numbering continues across sections");
+        assert_eq!(mapped[0].dq.choices, vec!["A. O", "B. Ge"]);
+        assert_eq!(mapped[0].dq.key_text, "A");
+        assert_eq!(mapped[2].dq.work_lines, 5);
+        let doc = build_doc(&ex, &mapped, None, false);
+        assert_eq!(doc.style, PaperStyle::Classic);
+        assert_eq!(doc.questions[1].section.as_ref().map(|s| s.title.as_str()), Some("Part II"));
+        let key = build_doc(&ex, &mapped, None, true);
+        assert!(key.questions.iter().all(|q| q.section.is_none() && q.work_lines == 0));
+        // The snapshot round-trips the new fields.
+        let snap = SnapDoc::from_parts(&ex, &mapped, None, false, "x.pdf".into());
+        let back: SnapDoc = serde_json::from_str(&serde_json::to_string(&snap).unwrap()).unwrap();
+        let d2 = back.to_doc();
+        assert_eq!(d2.style, PaperStyle::Classic);
+        assert_eq!(d2.questions[2].work_lines, 5);
+        assert_eq!(d2.questions[1].section.as_ref().map(|s| s.title.as_str()), Some("Part II"));
+        // Old snapshots (no style / section fields) still load.
+        let old = r#"{"title":"T","header_line":"","heading_pt":16,"body_pt":11,"margin_mm":18,"answers_inline":true,"is_key":false,"version_label":null,"ruled_blanks":0,"questions":[{"number":1,"text":["a"],"choices":[],"image":null,"key_text":"","rule_lines":0,"points":null}],"out_file":"o.pdf"}"#;
+        let s: SnapDoc = serde_json::from_str(old).unwrap();
+        assert_eq!(s.style, PaperStyle::Standard);
+    }
+
+    #[test]
+    fn version_shuffle_stays_within_sections() {
+        let q = |id: &str| Placed { item: it(id), q: mcq(id, &[("a", true, false), ("b", false, false)]) };
+        let mut placed: Vec<Placed> = (0..8).map(|k| q(&format!("q{k}"))).collect();
+        placed[3].item.section = sec("B");
+        for seed in 0..10u64 {
+            let out = shuffle_placed_in_sections(placed.clone(), &mut lcg(seed));
+            let first: Vec<&str> = out[..3].iter().map(|p| p.q.id.as_str()).collect();
+            assert!(first.iter().all(|id| ["q0", "q1", "q2"].contains(id)));
+            assert_eq!(out[3].item.section.as_ref().map(|s| s.title.as_str()), Some("B"));
+            assert!(out.iter().enumerate().all(|(k, p)| (k == 3) == p.item.section.is_some()));
+        }
+    }
+
+    #[test]
+    fn work_space_and_margins_layout_math() {
+        // Condensed lines are closer than Standard ones; the preview pitch follows the style.
+        let bp = 11.0 * PT;
+        assert!(line_pitch_px(bp, PaperStyle::Condensed) < line_pitch_px(bp, PaperStyle::Standard));
+        // Content on page 2 starts below the top margin and the repeated header.
+        let (_, ph) = PaperStyle::ExamBoard.page_pt();
+        assert_eq!(page_content_top(1.0, ph * PT, 40.0, 12.0), ph * PT + 52.0);
+        assert_eq!(fmt_inches(19.05), "0.75");
+        assert_eq!(fmt_inches(25.4), "1");
+        assert_eq!(part_line_styled(0, "NH3", PaperStyle::ExamBoard), "(a) NH3");
+        assert_eq!(split_part_label_styled(1, "CO2", PaperStyle::ExamBoard).0, "(b)");
+        assert_eq!(styled_choice(PaperStyle::Classic, 2, "O"), "c. O");
+        assert_eq!(styled_choice(PaperStyle::ExamBoard, 0, "Ge"), "A Ge");
+    }
+
+    #[test]
+    fn export_preview_pages_are_the_pdfs_pages() {
+        let mk = |n: u32| DocQ { number: n, text: vec![format!("Question {n} (with parens)")], rule_lines: 3, ..Default::default() };
+        let doc = ExamDoc { title: "T".into(), body_pt: 11.0, heading_pt: 16.0, margin_mm: 18.0, questions: (1..=25).map(mk).collect(), ..Default::default() };
+        let pv = crate::export::preview_pages(&doc).unwrap();
+        let pdf = crate::export::render_pdf(&doc).unwrap();
+        assert_eq!(pv.pages.len(), String::from_utf8_lossy(&pdf).matches("/Type /Page ").count());
+        assert_eq!((pv.page_w, pv.page_h), (612.0, 792.0));
+        let toks = pdf_tokens(&pv.pages[0]);
+        let strs: Vec<String> = toks.iter().filter_map(|t| if let PdfTok::Str(b) = t { Some(winansi_text(b)) } else { None }).collect();
+        assert!(strs.iter().any(|s| s == "Question 1 (with parens)"), "escaped parens decode: {strs:?}");
+        assert!(toks.contains(&PdfTok::Op("Tj".into())) && toks.contains(&PdfTok::Name("F1".into())));
+        assert_eq!(pdf_tokens(b"[0.8 2.2] 0 d"), vec![PdfTok::Arr(vec![0.8, 2.2]), PdfTok::Num(0.0), PdfTok::Op("d".into())]);
+    }
+
+    #[test]
+    fn working_copy_signature_ignores_the_edit_time() {
+        let mut a = model::Exam { id: "e".into(), ..Default::default() };
+        let mut b = a.clone();
+        b.modified = 99;
+        assert_eq!(exam_sig(&a), exam_sig(&b));
+        a.items.push(it("q1"));
+        assert_ne!(exam_sig(&a), exam_sig(&b));
+    }
+
+    #[test]
+    fn same_items_sees_section_work_and_order_changes() {
+        let a = sample();
+        let mut b = sample();
+        assert!(same_items(&a, &b));
+        b[0].work_lines = 2;
+        assert!(!same_items(&a, &b));
+        let mut c = sample();
+        c[1].answer_order = vec![1, 0];
+        assert!(!same_items(&a, &c));
+        let mut d = sample();
+        d[2].section = None;
+        assert!(!same_items(&a, &d));
     }
 }

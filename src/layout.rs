@@ -52,6 +52,24 @@ pub struct DocQ {
     /// Ruled answer lines after the stem.
     pub rule_lines: u8,
     pub points: Option<f64>,
+    /// A section starts at this question: its heading prints right before it.
+    pub section: Option<DocSection>,
+    /// Extra work space under the question in printed lines (blank room, or ruled /
+    /// dotted lines in the Classic / Exam Board styles).
+    pub work_lines: u8,
+}
+
+/// A section heading (title and directions; either may be empty).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DocSection {
+    pub title: String,
+    pub directions: String,
+}
+
+impl DocSection {
+    pub fn is_blank_doc(&self) -> bool {
+        self.title.trim().is_empty() && self.directions.trim().is_empty()
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -79,4 +97,15 @@ pub struct ExamDoc {
     /// for a shuffled named version. Renderers may print it as a small muted line
     /// under the header line; `None` (the default) means plain single-copy output.
     pub version_label: Option<String>,
+    /// Format > Paper style (numbering, blanks, rules, points placement, spacing, page size).
+    pub style: crate::model::PaperStyle,
+    /// Per-side margins in mm; None = `margin_mm` on all four sides.
+    pub margins: Option<crate::model::Margins>,
+}
+
+impl ExamDoc {
+    /// Effective margins in mm (top, right, bottom, left).
+    pub fn margins_mm(&self) -> crate::model::Margins {
+        self.margins.unwrap_or_else(|| crate::model::Margins::all(self.margin_mm))
+    }
 }

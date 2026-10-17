@@ -1462,7 +1462,7 @@ fn package_exams(v: &serde_json::Value, lookup: &std::collections::HashMap<Strin
             let Some(bank) = pos.pointer("/question/bank").and_then(serde_json::Value::as_str) else { continue };
             let Some(qid) = pos.pointer("/question/question").and_then(serde_json::Value::as_str) else { continue };
             let Some(q) = lookup.get(&format!("{bank}/{qid}")) else { continue };
-            items.push(ExamItem { bank_id: String::new(), question_id: q.clone() });
+            items.push(ExamItem::new(String::new(), q.clone()));
         }
         if items.is_empty() {
             continue;
@@ -1474,7 +1474,7 @@ fn package_exams(v: &serde_json::Value, lookup: &std::collections::HashMap<Strin
             .filter(|h| !h.is_empty())
             .map(str::to_string)
             .unwrap_or_else(|| DEFAULT_HEADER.to_string());
-        out.push(Exam {
+        out.push(Exam { paper_style: Default::default(), margins: None,
             id: crate::model::new_id(),
             name: name.to_string(),
             header,

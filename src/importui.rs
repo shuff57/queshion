@@ -1158,7 +1158,7 @@ fn sheet(
                 ui.add_space(page_end + side * 0.8 + side * 1.05 - top);
             }
         }
-        let rect = paper_question(app, ui, ctx, q, numbers[n], cw, bp);
+        let rect = paper_question(app, ui, ctx, q, numbers[n], cw, bp, crate::model::PaperStyle::Standard);
         ctx.data_mut(|d| d.insert_temp(h_id, rect.height()));
         if let Some(k) = *k {
             let is_dup = dup.get(k).copied().unwrap_or(false);

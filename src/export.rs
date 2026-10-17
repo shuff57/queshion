@@ -27,11 +27,12 @@
 //! questions print linearly (left items numbered, then the lettered right column
 //! indented); images become a centered italic `[picture]` paragraph.
 
-use crate::layout::{DocImage, DocQ, ExamDoc};
+use crate::layout::{DocImage, DocQ, DocSection, ExamDoc};
+use crate::model::PaperStyle;
 use crate::richtext::{self, Block};
 
-const PAGE_W: f64 = 612.0; // Letter, 72pt/inch
-const PAGE_H: f64 = 792.0;
+#[cfg(test)]
+const PAGE_H: f64 = 792.0; // Letter, 72pt/inch (Exam Board prints A4; see PaperStyle::page_pt)
 const MM_PT: f64 = 72.0 / 25.4;
 const IMG_MAX_PT: f64 = 130.0 * MM_PT; // images fit 130 mm square
 
@@ -260,14 +261,9 @@ fn fnum(v: f64) -> String {
     s
 }
 
+#[cfg(test)]
 fn points_label(p: f64) -> String {
-    if p == 1.0 {
-        "(1 point)".to_string()
-    } else if p.fract() == 0.0 {
-        format!("({} points)", p as i64)
-    } else {
-        format!("({p} points)")
-    }
+    PaperStyle::Standard.points_label(p)
 }
 
 /// Ruled answer lines a question gets; the exporters' default when the caller leaves 0.
@@ -718,7 +714,12 @@ struct R {
     y: f64,
     x0: f64,
     x1: f64,
-    margin: f64,
+    /// Top and bottom margins (pt).
+    mt: f64,
+    mb: f64,
+    page_w: f64,
+    page_h: f64,
+    style: PaperStyle,
     body: f64,
     head: f64,
     lead: f64,
@@ -730,10 +731,31 @@ struct R {
 
 impl R {
     fn remaining(&self) -> f64 {
-        self.y - self.margin
+        self.y - self.mb
     }
     fn full_height(&self) -> f64 {
-        PAGE_H - 2.0 * self.margin - self.running.as_ref().map_or(0.0, |_| self.running_h())
+        self.page_h - self.mt - self.mb - self.running.as_ref().map_or(0.0, |_| self.running_h())
+    }
+    /// One ruled / work-space line's pitch.
+    fn pitch(&self) -> f64 {
+        self.body * self.style.rule_pitch() as f64
+    }
+    /// One answer line across `xa..xb` (dotted on Exam Board), advancing a pitch.
+    fn answer_line(&mut self, xa: f64, xb: f64) {
+        if self.remaining() < self.pitch() {
+            self.new_page();
+        }
+        let p = self.pitch();
+        self.y -= p * 0.55;
+        let y = self.y;
+        if self.style.dotted() {
+            self.cur.extend_from_slice(b"[0.8 2.2] 0 d ");
+            self.rule(xa, y, xb, y);
+            self.cur.extend_from_slice(b"[] 0 d\n");
+        } else {
+            self.rule(xa, y, xb, y);
+        }
+        self.y -= p * 0.45;
     }
     /// Height the repeated header takes at the top of a continuation page.
     fn running_h(&self) -> f64 {
@@ -741,10 +763,17 @@ impl R {
     }
     fn new_page(&mut self) {
         if !self.cur.is_empty() {
+            if self.style == PaperStyle::ExamBoard {
+                // Exam Board: "Turn over" at the foot of every page but the last.
+                let lbl = "Turn over";
+                let w = text_w(lbl, Face::Bold, self.body);
+                let (x, y) = (self.x1 - w, self.mb * 0.55);
+                self.text(x, y, Face::Bold, self.body, lbl);
+            }
             let cur = std::mem::take(&mut self.cur);
             self.pages.push((cur, std::mem::take(&mut self.used)));
         }
-        self.y = PAGE_H - self.margin;
+        self.y = self.page_h - self.mt;
         if let Some(h) = self.running.clone() {
             let x0 = self.x0;
             self.line(x0, &h, Face::Reg);
@@ -890,30 +919,123 @@ impl R {
 /// in the gutter to its left).
 const STEM_INSET: f64 = 32.0;
 const NUM_GAP: f64 = 6.0;
+/// Classic: width of the answer blank printed before an objective question's number.
+const OBJ_BLANK_W: f64 = 40.0;
+
+/// Objective question (MC / TF / matching): it carries choices.
+fn is_objective(q: &DocQ) -> bool {
+    !q.choices.is_empty()
+}
+
+/// Where this question's stem starts (Classic objective questions sit right of an answer blank).
+fn q_stem_x(r: &R, q: &DocQ) -> f64 {
+    let blank = if r.style.objective_blank() && is_objective(q) && !looks_matching(q, is_tf(&q.choices)) { OBJ_BLANK_W } else { 0.0 };
+    r.x0 + STEM_INSET + blank
+}
+
+/// Section heading lines: (bold title lines, italic direction lines).
+fn section_lines(r: &R, s: &DocSection) -> (Vec<String>, Vec<String>) {
+    let w = r.x1 - r.x0;
+    let title = if s.title.trim().is_empty() { vec![] } else { wrap(s.title.trim(), w, Face::Bold, r.body * 1.1) };
+    let dirs = if s.directions.trim().is_empty() { vec![] } else { wrap(s.directions.trim(), w, Face::Ital, r.body) };
+    (title, dirs)
+}
+
+fn section_h(r: &R, s: &DocSection) -> f64 {
+    let (t, d) = section_lines(r, s);
+    if t.is_empty() && d.is_empty() {
+        return r.body * 0.6;
+    }
+    r.body * 0.8 + t.len() as f64 * r.lead * 1.1 + d.len() as f64 * r.lead + r.body * 0.5
+}
+
+fn render_section(r: &mut R, s: &DocSection) {
+    let (t, d) = section_lines(r, s);
+    if t.is_empty() && d.is_empty() {
+        r.y -= r.body * 0.6;
+        return;
+    }
+    r.y -= r.body * 0.8;
+    let x0 = r.x0;
+    for l in t {
+        if r.remaining() < r.lead * 1.1 {
+            r.new_page();
+        }
+        let sz = r.body * 1.1;
+        r.text(x0, r.y - R::ascent_of(sz), Face::Bold, sz, &l);
+        r.y -= r.lead * 1.1;
+    }
+    for l in d {
+        if r.remaining() < r.lead {
+            r.new_page();
+        }
+        r.line(x0, &l, Face::Ital);
+    }
+    r.y -= r.body * 0.5;
+}
 
 pub fn render_pdf(doc: &ExamDoc) -> Result<Vec<u8>, String> {
+    assemble_pdf(layout_pdf(doc, true)?)
+}
+
+/// The PDF's pages before assembly, for the export dialog's live page preview: each page's
+/// content stream (the exact drawing operators the PDF will carry), the page size in pt,
+/// and each image XObject's pixel size (`/Im{k+1}` is `images[k]`, in question order).
+#[derive(Clone, Debug, Default)]
+pub struct PdfPreview {
+    pub page_w: f64,
+    pub page_h: f64,
+    pub pages: Vec<Vec<u8>>,
+    pub images: Vec<(u32, u32)>,
+}
+
+/// Lays the PDF out without encoding images (fast enough to run while the dialog is open).
+pub fn preview_pages(doc: &ExamDoc) -> Result<PdfPreview, String> {
+    let r = layout_pdf(doc, false)?;
+    Ok(PdfPreview {
+        page_w: r.page_w,
+        page_h: r.page_h,
+        pages: r.pages.into_iter().map(|(ops, _)| ops).collect(),
+        images: r.imgs.iter().map(|p| (p.w, p.h)).collect(),
+    })
+}
+
+/// Lays every page out; `encode` false skips the JPEG re-encode (sizes only, for previews).
+fn layout_pdf(doc: &ExamDoc, encode: bool) -> Result<R, String> {
     // Prepare images first (decode -> RGB -> JPEG q85) in question order.
     let mut imgs: Vec<Px> = vec![];
     for q in &doc.questions {
         if let Some(im) = &q.image {
-            imgs.push(prepare_image(im)?);
+            if encode {
+                imgs.push(prepare_image(im)?);
+            } else {
+                imgs.push(Px { jpeg: Vec::new(), w: im.width_px.max(1), h: im.height_px.max(1) });
+            }
         }
     }
 
-    let margin = (doc.margin_mm as f64).max(6.0) * MM_PT;
+    let m = doc.margins_mm();
+    let mm = |v: f32| (v as f64).max(6.0) * MM_PT;
+    let (mt, mr, mb, ml) = (mm(m.top), mm(m.right), mm(m.bottom), mm(m.left));
+    let (pw, ph) = doc.style.page_pt();
+    let (page_w, page_h) = (pw as f64, ph as f64);
     let body = (doc.body_pt as f64).clamp(6.0, 20.0);
     let head = (doc.heading_pt as f64).clamp(8.0, 36.0);
     let mut r = R {
         pages: vec![],
         cur: vec![],
         used: vec![],
-        y: PAGE_H - margin,
-        x0: margin,
-        x1: PAGE_W - margin,
-        margin,
+        y: page_h - mt,
+        x0: ml,
+        x1: page_w - mr,
+        mt,
+        mb,
+        page_w,
+        page_h,
+        style: doc.style,
         body,
         head,
-        lead: body * 1.42,
+        lead: body * doc.style.lead() as f64,
         imgs,
         running: None,
     };
@@ -928,12 +1050,8 @@ pub fn render_pdf(doc: &ExamDoc) -> Result<Vec<u8>, String> {
             r.line(r.x0, doc.header_line.trim(), Face::Reg);
         }
         for _ in 0..doc.ruled_blanks {
-            if r.remaining() < body * 2.0 {
-                r.new_page();
-            }
-            r.y -= body * 1.1;
-            r.rule(r.x0, r.y, r.x1, r.y);
-            r.y -= body * 0.9;
+            let (xa, xb) = (r.x0, r.x1);
+            r.answer_line(xa, xb);
         }
         // Like Test Parrot, the Name/Class/Date line repeats at the top of every page.
         if !doc.header_line.trim().is_empty() {
@@ -960,25 +1078,29 @@ pub fn render_pdf(doc: &ExamDoc) -> Result<Vec<u8>, String> {
             next_img += 1;
             next_img - 1
         });
-        let est = q_est_height(&r, q, img_idx, doc.is_key);
-        // Keep-together: break before a question that will not comfortably fit.
+        let sec = q.section.as_ref().filter(|_| !doc.is_key);
+        let est = q_est_height(&r, q, img_idx, doc.is_key) + sec.map_or(0.0, |s| section_h(&r, s));
+        // Keep-together: break before a question (with its section heading) that will not
+        // comfortably fit.
         if r.remaining() < 40.0 || (est <= r.full_height() && est > r.remaining()) {
             r.new_page();
+        }
+        if let Some(s) = sec {
+            render_section(&mut r, s);
         }
         if doc.is_key {
             render_key_q(&mut r, q);
         } else {
             render_q(&mut r, q, img_idx);
         }
-        r.y -= body * 0.6; // separator between questions
+        r.y -= body * doc.style.q_gap() as f64; // separator between questions
     }
     if !r.cur.is_empty() {
         let cur = std::mem::take(&mut r.cur);
         let used = std::mem::take(&mut r.used);
         r.pages.push((cur, used));
     }
-
-    assemble_pdf(r)
+    Ok(r)
 }
 
 fn render_key_q(r: &mut R, q: &DocQ) {
@@ -991,14 +1113,15 @@ fn render_key_q(r: &mut R, q: &DocQ) {
     if r.remaining() < r.lead {
         r.new_page();
     }
-    r.num_right(stem_x - NUM_GAP, &format!("{}.", q.number), Face::Bold);
+    let lbl = r.style.number_label(q.number);
+    r.num_right(stem_x - NUM_GAP, &lbl, Face::Bold);
     r.items(stem_x, &items);
 }
 
 /// Stem items of an ordinary question plus the points label and its reserved width.
 fn stem_items(r: &R, q: &DocQ) -> (Vec<Item>, Option<String>) {
-    let avail = r.x1 - (r.x0 + STEM_INSET);
-    let pt_label = q.points.map(points_label);
+    let avail = r.x1 - q_stem_x(r, q);
+    let pt_label = q.points.map(|p| r.style.points_label(p));
     let label_w = pt_label.as_deref().map(|l| text_w(l, Face::Reg, r.body) + 6.0).unwrap_or(0.0);
     (layout_blocks(&stem_blocks(&q.text), avail, avail - label_w, r.body, r.lead), pt_label)
 }
@@ -1013,7 +1136,7 @@ fn matching_rows(r: &R, q: &DocQ) -> Vec<(Vec<Vec<Placed>>, Vec<Vec<Placed>>, f6
     (0..rows)
         .map(|i| {
             let l = q.text.get(i).map(|t| text_lines(t, left_w, left_w, r.body)).unwrap_or_default();
-            let rt = q.choices.get(i).map(|c| text_lines(c, right_w, right_w, r.body)).unwrap_or_default();
+            let rt = q.choices.get(i).map(|c| text_lines(&r.style.choice_label(c), right_w, right_w, r.body)).unwrap_or_default();
             let n = l.len().max(rt.len()).max(1);
             let h = (r.lead * n as f64).max(24.0);
             (l, rt, h)
@@ -1022,7 +1145,7 @@ fn matching_rows(r: &R, q: &DocQ) -> Vec<(Vec<Vec<Placed>>, Vec<Vec<Placed>>, f6
 }
 
 fn render_q(r: &mut R, q: &DocQ, img_idx: Option<usize>) {
-    let stem_x = r.x0 + STEM_INSET;
+    let stem_x = q_stem_x(r, q);
     let avail = r.x1 - stem_x;
     let tf = is_tf(&q.choices);
     let matching = looks_matching(q, tf);
@@ -1031,7 +1154,7 @@ fn render_q(r: &mut R, q: &DocQ, img_idx: Option<usize>) {
         // Two columns: left items numbered in print as number, number+1, ...; right
         // column lettered (pre-lettered by the exam worker), 24pt leading per row.
         let mid = r.x0 + (r.x1 - r.x0) * 0.5;
-        let pt_label = q.points.map(points_label);
+        let pt_label = q.points.map(|p| r.style.points_label(p));
         for (i, (left, right, row_h)) in matching_rows(r, q).into_iter().enumerate() {
             if r.remaining() < row_h {
                 r.new_page();
@@ -1040,8 +1163,7 @@ fn render_q(r: &mut R, q: &DocQ, img_idx: Option<usize>) {
             for (j, piece) in left.iter().enumerate() {
                 let by = top - j as f64 * r.lead - R::ascent_of(r.body);
                 if j == 0 {
-                    let n = q.number as usize + i;
-                    let lbl = format!("{n}.");
+                    let lbl = r.style.number_label(q.number + i as u32);
                     let w = text_w(&lbl, Face::Reg, r.body);
                     r.text(stem_x - NUM_GAP - w, by, Face::Reg, r.body, &lbl);
                 }
@@ -1059,6 +1181,7 @@ fn render_q(r: &mut R, q: &DocQ, img_idx: Option<usize>) {
             }
             r.y = top - row_h;
         }
+        work_space(r, q, stem_x);
         return;
     }
 
@@ -1079,9 +1202,14 @@ fn render_q(r: &mut R, q: &DocQ, img_idx: Option<usize>) {
         _ => 0.0,
     };
     let by = r.y - R::ascent_of(r.body) - dy;
-    let lbl = format!("{}.", q.number);
+    let lbl = r.style.number_label(q.number);
     let w = text_w(&lbl, Face::Reg, r.body);
     r.text(stem_x - NUM_GAP - w, by, Face::Reg, r.body, &lbl);
+    if stem_x > r.x0 + STEM_INSET + 1.0 {
+        // Classic: the answer blank in front of an objective question's number.
+        let (xa, xb) = (r.x0, r.x0 + OBJ_BLANK_W - 4.0);
+        r.rule(xa, by - 1.5, xb, by - 1.5);
+    }
     if let Some(lbl) = &pt_label {
         r.text(r.x1 - text_w(lbl, Face::Reg, r.body), by, Face::Reg, r.body, lbl);
     }
@@ -1100,9 +1228,26 @@ fn render_q(r: &mut R, q: &DocQ, img_idx: Option<usize>) {
         }
         r.text(stem_x, r.y - R::ascent_of(r.body), Face::Reg, r.body, "True   False");
         r.y -= r.lead;
+    } else if let Some(cols) = choice_columns(r, q, avail) {
+        // Condensed: choices across in a grid of `cols` columns.
+        let col_w = avail / cols as f64;
+        for row in q.choices.chunks(cols) {
+            if r.remaining() < r.lead {
+                r.new_page();
+            }
+            let by = r.y - R::ascent_of(r.body);
+            for (k, c) in row.iter().enumerate() {
+                let c = r.style.choice_label(c);
+                if let Some(l) = text_lines(&c, col_w, col_w, r.body).first() {
+                    r.placed(stem_x + k as f64 * col_w, by, l);
+                }
+            }
+            r.y -= r.lead;
+        }
     } else {
         for c in &q.choices {
-            for l in text_lines(c, avail, avail, r.body) {
+            let c = r.style.choice_label(c);
+            for l in text_lines(&c, avail, avail, r.body) {
                 if r.remaining() < r.lead {
                     r.new_page();
                 }
@@ -1115,19 +1260,53 @@ fn render_q(r: &mut R, q: &DocQ, img_idx: Option<usize>) {
 
     // Ruled answer lines.
     for _ in 0..rule_count(q) {
-        if r.remaining() < r.body * 2.0 {
-            r.new_page();
-        }
-        r.y -= r.body * 1.1;
-        r.rule(r.x0, r.y, r.x1, r.y);
-        r.y -= r.body * 0.9;
+        let (xa, xb) = (r.x0, r.x1);
+        r.answer_line(xa, xb);
     }
+    work_space(r, q, stem_x);
+}
 
+/// The question's extra work space: ruled / dotted lines (Classic, Exam Board) or blank room.
+fn work_space(r: &mut R, q: &DocQ, stem_x: f64) {
+    if q.work_lines == 0 {
+        return;
+    }
+    if r.style.work_space_lined() {
+        for _ in 0..q.work_lines {
+            let xb = r.x1;
+            r.answer_line(stem_x, xb);
+        }
+    } else {
+        let mut left = q.work_lines as f64 * r.pitch();
+        while left > 0.0 {
+            if r.remaining() <= 1.0 {
+                r.new_page();
+            }
+            let step = left.min(r.remaining());
+            r.y -= step;
+            left -= step;
+        }
+    }
+}
+
+/// Condensed: how many columns the choices print across in (None = one per line). Every
+/// choice must fit its column on one line.
+fn choice_columns(r: &R, q: &DocQ, avail: f64) -> Option<usize> {
+    if !r.style.choices_across() || q.choices.len() < 2 {
+        return None;
+    }
+    let widest = q
+        .choices
+        .iter()
+        .map(|c| natural_w(&line_frags(&richtext::inline(&r.style.choice_label(c)), false), r.body))
+        .fold(0.0_f64, f64::max);
+    let n = q.choices.len();
+    [n, 4, 3, 2].into_iter().filter(|&c| c >= 2 && c <= n).find(|&c| widest + 12.0 <= avail / c as f64)
 }
 
 /// Question height for keep-together page breaks, from the same layout the renderer draws.
 fn q_est_height(r: &R, q: &DocQ, img_idx: Option<usize>, is_key: bool) -> f64 {
-    let stem_x = r.x0 + STEM_INSET;
+    let stem_x = if is_key { r.x0 + STEM_INSET } else { q_stem_x(r, q) };
     let avail = r.x1 - stem_x;
     if is_key {
         if q.key_text.trim().is_empty() {
@@ -1137,15 +1316,17 @@ fn q_est_height(r: &R, q: &DocQ, img_idx: Option<usize>, is_key: bool) -> f64 {
     }
     let tf = is_tf(&q.choices);
     if looks_matching(q, tf) {
-        return matching_rows(r, q).iter().map(|x| x.2).sum::<f64>() + r.body;
+        return matching_rows(r, q).iter().map(|x| x.2).sum::<f64>() + r.body + q.work_lines as f64 * r.pitch();
     }
     let mut h = items_h(&stem_items(r, q).0, r.lead);
     let lines = if tf {
         1
+    } else if let Some(cols) = choice_columns(r, q, avail) {
+        q.choices.len().div_ceil(cols)
     } else {
-        q.choices.iter().map(|c| text_lines(c, avail, avail, r.body).len()).sum::<usize>()
+        q.choices.iter().map(|c| text_lines(&r.style.choice_label(c), avail, avail, r.body).len()).sum::<usize>()
     };
-    h += lines as f64 * r.lead + rule_count(q) as f64 * r.body * 2.0;
+    h += lines as f64 * r.lead + (rule_count(q) as f64 + q.work_lines as f64) * r.pitch();
     if let Some(idx) = img_idx {
         h += 12.0 + pdf_image_size(r, idx).1;
     }
@@ -1199,6 +1380,7 @@ fn prepare_image(im: &DocImage) -> Result<Px, String> {
 }
 
 fn assemble_pdf(r: R) -> Result<Vec<u8>, String> {
+    let media = format!("[0 0 {} {}]", fnum(r.page_w), fnum(r.page_h));
     let npage = r.pages.len();
     let n_imgs = r.imgs.len();
     // Objects: 1 catalog, 2 page tree, 3..=6 fonts, then images, then 2 per page.
@@ -1243,7 +1425,7 @@ fn assemble_pdf(r: R) -> Result<Vec<u8>, String> {
         }
         bodies.push(
             format!(
-                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >>{xo} /ProcSet [/PDF /Text /ImageC] >> /Contents {} 0 R >>\n",
+                "<< /Type /Page /Parent 2 0 R /MediaBox {media} /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >>{xo} /ProcSet [/PDF /Text /ImageC] >> /Contents {} 0 R >>\n",
                 FIRST_IMG + n_imgs + p * 2
             )
             .into_bytes(),
@@ -1288,6 +1470,8 @@ struct Par<'a> {
     bold: bool,
     italic: bool,
     rule: bool,
+    /// Dotted bottom border instead of a solid rule (Exam Board answer lines).
+    dotted: bool,
     center: bool,
     /// OOXML run color, e.g. "808080".
     color: Option<&'static str>,
@@ -1295,7 +1479,7 @@ struct Par<'a> {
 
 impl<'a> Par<'a> {
     fn body(text: &'a str) -> Par<'a> {
-        Par { text, style: None, ind: 0, sz: 0, bold: false, italic: false, rule: false, center: false, color: None }
+        Par { text, style: None, ind: 0, sz: 0, bold: false, italic: false, rule: false, dotted: false, center: false, color: None }
     }
 }
 
@@ -1305,7 +1489,12 @@ fn wpara(xml: &mut String, p: &Par, body_sz: i64) {
         xml.push_str(&format!("<w:pStyle w:val=\"{s}\"/>"));
     }
     if p.rule {
-        xml.push_str("<w:pBdr><w:bottom w:val=\"single\" w:sz=\"6\" w:space=\"1\" w:color=\"808080\"/></w:pBdr>");
+        let val = if p.dotted { "dotted" } else { "single" };
+        xml.push_str(&format!("<w:pBdr><w:bottom w:val=\"{val}\" w:sz=\"6\" w:space=\"1\" w:color=\"808080\"/></w:pBdr>"));
+    }
+    if p.sz > 0 && p.text.is_empty() {
+        // An empty (rule / work-space) paragraph: its height follows `sz`.
+        xml.push_str(&format!("<w:rPr><w:sz w:val=\"{0}\"/><w:szCs w:val=\"{0}\"/></w:rPr>", p.sz));
     }
     if p.ind > 0 {
         xml.push_str(&format!("<w:ind w:left=\"{}\"/>", p.ind));
@@ -1389,13 +1578,15 @@ fn wfrags(xml: &mut String, frags: &[Frag], sz: i64) {
 /// paragraph (points label at its end), later paragraphs and blocks indent to the same
 /// 0.3" column; bullets/numbered lists use the numbering part, tables are real Word
 /// tables. `num_lists` counts numbered lists so each restarts at 1.
-fn docx_stem(b: &mut String, q: &DocQ, pt_label: Option<&str>, body_sz: i64, text_w_tw: i64, num_lists: &mut usize) {
-    const IND: i64 = 432;
-    let mut prefix: Option<String> = Some(format!("{}.", q.number));
+fn docx_stem(b: &mut String, q: &DocQ, pt_label: Option<&str>, body_sz: i64, text_w_tw: i64, num_lists: &mut usize, style: PaperStyle) {
+    // Classic objective questions hang an answer blank before the number.
+    let blank = style.objective_blank() && is_objective(q);
+    let ind_w: i64 = if blank { 1152 } else { 432 };
+    let mut prefix: Option<String> = Some(if blank { format!("_______ {}", style.number_label(q.number)) } else { style.number_label(q.number) });
     // Emits the pending "N." (and points label) as its own paragraph before a non-text block.
     let flush_prefix = |b: &mut String, prefix: &mut Option<String>| {
         if let Some(p) = prefix.take() {
-            b.push_str(&format!("<w:p><w:pPr><w:ind w:left=\"{IND}\" w:hanging=\"{IND}\"/></w:pPr>"));
+            b.push_str(&format!("<w:p><w:pPr><w:ind w:left=\"{ind_w}\" w:hanging=\"{ind_w}\"/></w:pPr>"));
             wrun(b, &p, false, false, 0, body_sz);
             if let Some(l) = pt_label {
                 b.push_str("<w:r><w:tab/></w:r>");
@@ -1410,7 +1601,7 @@ fn docx_stem(b: &mut String, q: &DocQ, pt_label: Option<&str>, body_sz: i64, tex
                 for l in lines {
                     match prefix.take() {
                         Some(p) => {
-                            b.push_str(&format!("<w:p><w:pPr><w:ind w:left=\"{IND}\" w:hanging=\"{IND}\"/></w:pPr>"));
+                            b.push_str(&format!("<w:p><w:pPr><w:ind w:left=\"{ind_w}\" w:hanging=\"{ind_w}\"/></w:pPr>"));
                             wrun(b, &p, false, false, 0, body_sz);
                             b.push_str("<w:r><w:tab/></w:r>");
                             wline(b, l, body_sz, false);
@@ -1419,7 +1610,7 @@ fn docx_stem(b: &mut String, q: &DocQ, pt_label: Option<&str>, body_sz: i64, tex
                             }
                         }
                         None => {
-                            b.push_str(&format!("<w:p><w:pPr><w:ind w:left=\"{IND}\"/></w:pPr>"));
+                            b.push_str(&format!("<w:p><w:pPr><w:ind w:left=\"{ind_w}\"/></w:pPr>"));
                             wline(b, l, body_sz, false);
                         }
                     }
@@ -1447,7 +1638,7 @@ fn docx_stem(b: &mut String, q: &DocQ, pt_label: Option<&str>, body_sz: i64, tex
                 for l in lines {
                     b.push_str(&format!(
                         "<w:p><w:pPr><w:pBdr><w:left w:val=\"single\" w:sz=\"12\" w:space=\"6\" w:color=\"999999\"/></w:pBdr><w:ind w:left=\"{}\"/></w:pPr>",
-                        IND + 200
+                        ind_w + 200
                     ));
                     wline(b, l, body_sz, false);
                     b.push_str("</w:p>");
@@ -1455,7 +1646,7 @@ fn docx_stem(b: &mut String, q: &DocQ, pt_label: Option<&str>, body_sz: i64, tex
             }
             Block::Table { header, rows } => {
                 flush_prefix(b, &mut prefix);
-                docx_table(b, *header, rows, body_sz, text_w_tw - IND, IND);
+                docx_table(b, *header, rows, body_sz, text_w_tw - ind_w, ind_w);
             }
         }
     }
@@ -1600,11 +1791,20 @@ pub fn render_docx(doc: &ExamDoc) -> Result<Vec<u8>, String> {
         }
     }
     for _ in 0..doc.ruled_blanks {
-        wpara(&mut b, &Par { rule: true, ..Par::body("") }, body_sz);
+        wpara(&mut b, &Par { rule: true, dotted: doc.style.dotted(), ..Par::body("") }, body_sz);
     }
 
-    // Text column width in twips (Letter minus both margins).
-    let text_w_tw = 12240 - 2 * tw(doc.margin_mm as f64);
+    let style = doc.style;
+    let m = doc.margins_mm();
+    let (pw, ph) = style.page_pt();
+    let (page_w_tw, page_h_tw) = ((pw as f64 * 20.0).round() as i64, (ph as f64 * 20.0).round() as i64);
+    // Text column width in twips (page minus both side margins).
+    let text_w_tw = page_w_tw - tw(m.left as f64) - tw(m.right as f64);
+    // Answer / work-space line height (half-points of the empty rule paragraph).
+    let rule_sz = ((body_sz as f32) * (style.rule_pitch() / 2.0) * 1.15).round() as i64;
+    let rule_par = |b: &mut String, ind: i64| {
+        wpara(b, &Par { rule: true, dotted: style.dotted(), sz: rule_sz, ind, ..Par::body("") }, body_sz);
+    };
     let mut num_lists = 0usize;
     for q in &doc.questions {
         if doc.is_key {
@@ -1620,25 +1820,43 @@ pub fn render_docx(doc: &ExamDoc) -> Result<Vec<u8>, String> {
             continue;
         }
 
+        if let Some(sec) = &q.section {
+            if !sec.title.trim().is_empty() {
+                wpara(&mut b, &Par { bold: true, sz: body_sz + 2, ..Par::body(sec.title.trim()) }, body_sz);
+            }
+            for l in sec.directions.trim().split('\n').filter(|l| !l.trim().is_empty()) {
+                wpara(&mut b, &Par { italic: true, ..Par::body(l.trim()) }, body_sz);
+            }
+            if !sec.is_blank_doc() {
+                wpara(&mut b, &Par::body(""), body_sz);
+            }
+        }
         // Stem paragraphs: number on the first line, points label appended there.
         // Matching questions print their pairs only (the text entries ARE the
         // left items), handled below.
-        let pt_label = q.points.map(points_label);
+        let pt_label = q.points.map(|p| style.points_label(p));
         let tf = is_tf(&q.choices);
         let matching = looks_matching(q, tf);
-        let ind: i64 = 432; // 0.3" indent so choices line up under the stem
+        let ind: i64 = if style.objective_blank() && is_objective(q) && !matching { 1152 } else { 432 }; // choices line up under the stem
         if matching {
             for (i, item) in q.text.iter().enumerate() {
                 b.push_str("<w:p>");
-                wrun(&mut b, &format!("{}. ", q.number as usize + i), false, false, 0, body_sz);
+                wrun(&mut b, &format!("{} ", style.number_label(q.number + i as u32)), false, false, 0, body_sz);
                 wline(&mut b, &richtext::inline(item), body_sz, false);
                 b.push_str("</w:p>");
             }
             for c in &q.choices {
-                choice_para(&mut b, c, ind, body_sz);
+                choice_para(&mut b, &style.choice_label(c), ind, body_sz);
+            }
+            for _ in 0..q.work_lines {
+                if style.work_space_lined() {
+                    rule_par(&mut b, ind);
+                } else {
+                    wpara(&mut b, &Par { sz: rule_sz, ..Par::body("") }, body_sz);
+                }
             }
         } else {
-            docx_stem(&mut b, q, pt_label.as_deref(), body_sz, text_w_tw, &mut num_lists);
+            docx_stem(&mut b, q, pt_label.as_deref(), body_sz, text_w_tw, &mut num_lists, style);
 
             if q.image.is_some() {
                 wpara(
@@ -1651,17 +1869,43 @@ pub fn render_docx(doc: &ExamDoc) -> Result<Vec<u8>, String> {
             // Choices.
             if tf {
                 wpara(&mut b, &Par { ind, ..Par::body("True   False") }, body_sz);
+            } else if style.choices_across() && q.choices.len() > 1 && q.choices.iter().all(|c| c.chars().count() <= 24) {
+                // Condensed: the choices across one paragraph on evenly spaced tab stops.
+                let n = q.choices.len().min(4) as i64;
+                let step = (text_w_tw - ind) / n;
+                for row in q.choices.chunks(n as usize) {
+                    b.push_str("<w:p><w:pPr><w:tabs>");
+                    for k in 1..n {
+                        b.push_str(&format!("<w:tab w:val=\"left\" w:pos=\"{}\"/>", ind + k * step));
+                    }
+                    b.push_str(&format!("</w:tabs><w:ind w:left=\"{ind}\"/></w:pPr>"));
+                    for (k, c) in row.iter().enumerate() {
+                        if k > 0 {
+                            b.push_str("<w:r><w:tab/></w:r>");
+                        }
+                        wline(&mut b, &richtext::inline(&style.choice_label(c)), body_sz, false);
+                    }
+                    b.push_str("</w:p>");
+                }
             } else {
                 for c in &q.choices {
-                    choice_para(&mut b, c, ind, body_sz);
+                    choice_para(&mut b, &style.choice_label(c), ind, body_sz);
                 }
             }
 
-
             for _ in 0..rule_count(q) {
-                wpara(&mut b, &Par { rule: true, ..Par::body("") }, body_sz);
+                rule_par(&mut b, 0);
             }
-            wpara(&mut b, &Par::body(""), body_sz); // breathing room after each question
+            for _ in 0..q.work_lines {
+                if style.work_space_lined() {
+                    rule_par(&mut b, ind);
+                } else {
+                    wpara(&mut b, &Par { sz: rule_sz, ..Par::body("") }, body_sz);
+                }
+            }
+            if style != PaperStyle::Condensed {
+                wpara(&mut b, &Par::body(""), body_sz); // breathing room after each question
+            }
         }
     }
 
@@ -1682,11 +1926,11 @@ pub fn render_docx(doc: &ExamDoc) -> Result<Vec<u8>, String> {
         ("", "")
     };
     b.push_str(&format!(
-        "<w:sectPr>{head_refs}<w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"{}\" w:right=\"{}\" w:bottom=\"{}\" w:left=\"{}\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/><w:cols w:space=\"720\"/>{title_pg}</w:sectPr></w:body></w:document>",
-        tw(doc.margin_mm as f64),
-        tw(doc.margin_mm as f64),
-        tw(doc.margin_mm as f64),
-        tw(doc.margin_mm as f64)
+        "<w:sectPr>{head_refs}<w:pgSz w:w=\"{page_w_tw}\" w:h=\"{page_h_tw}\"/><w:pgMar w:top=\"{}\" w:right=\"{}\" w:bottom=\"{}\" w:left=\"{}\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/><w:cols w:space=\"720\"/>{title_pg}</w:sectPr></w:body></w:document>",
+        tw(m.top as f64),
+        tw(m.right as f64),
+        tw(m.bottom as f64),
+        tw(m.left as f64)
     ));
 
     let numbering = numbering_xml(num_lists);
@@ -1746,6 +1990,7 @@ mod tests {
                     rule_lines: 0,
                     points: Some(2.0),
                     image: None,
+                    ..Default::default()
                 },
                 DocQ {
                     number: 3,
@@ -1755,6 +2000,7 @@ mod tests {
                     rule_lines: 3,
                     points: None,
                     image: None,
+                    ..Default::default()
                 },
                 DocQ {
                     number: 4,
@@ -1764,11 +2010,13 @@ mod tests {
                     rule_lines: 0,
                     points: None,
                     image: None,
+                    ..Default::default()
                 },
             ],
             ruled_blanks: 2,
             is_key: false,
             version_label: None,
+            ..Default::default()
         }
     }
 
@@ -1905,7 +2153,7 @@ mod tests {
             body_pt: 11.0,
             margin_mm: 18.0,
             questions: vec![
-                DocQ { number: 1, text: vec!["Gravity on the Moon is weaker.".into()], choices: vec!["True".into(), "False".into()], key_text: "True".into(), rule_lines: 0, points: None, image: None },
+                DocQ { number: 1, text: vec!["Gravity on the Moon is weaker.".into()], choices: vec!["True".into(), "False".into()], key_text: "True".into(), rule_lines: 0, points: None, image: None, ..Default::default() },
                 DocQ {
                     number: 2,
                     text: vec!["Item one".into(), "Item two".into()],
@@ -1914,6 +2162,7 @@ mod tests {
                     rule_lines: 0,
                     points: None,
                     image: None,
+                    ..Default::default()
                 },
             ],
             ..Default::default()
@@ -2207,5 +2456,154 @@ mod tests {
         // empty pages are still a valid PDF with one page
         let _ = pdf_pages(&pdf);
         assert!(docxml.contains("<w:sectPr>"));
+    }
+}
+#[cfg(test)]
+mod style_tests {
+    use super::*;
+    use crate::layout::DocSection;
+    use crate::model::{Margins, PaperStyle};
+    use std::io::Read;
+
+    fn doc(style: PaperStyle) -> ExamDoc {
+        ExamDoc {
+            title: "Styles".into(),
+            header_line: "Name: ______".into(),
+            heading_pt: 16.0,
+            body_pt: 11.0,
+            margin_mm: 18.0,
+            style,
+            questions: vec![
+                DocQ {
+                    number: 1,
+                    text: vec!["Closest planet?".into()],
+                    choices: vec!["A. Venus".into(), "B. Mercury".into(), "C. Mars".into()],
+                    points: Some(2.0),
+                    section: Some(DocSection { title: "Part I".into(), directions: "Circle the letter.".into() }),
+                    ..Default::default()
+                },
+                DocQ { number: 2, text: vec!["Explain tides.".into()], rule_lines: 2, work_lines: 3, points: Some(4.0), ..Default::default() },
+            ],
+            ..Default::default()
+        }
+    }
+
+    fn s(pdf: &[u8]) -> String {
+        String::from_utf8_lossy(pdf).into_owned()
+    }
+
+    /// (x, y) of every text draw.
+    fn text_pos(pdf: &[u8]) -> Vec<(f64, f64, String)> {
+        let t = s(pdf);
+        let mut out = vec![];
+        for chunk in t.split(" Td (").skip(1).zip(t.split(" Td (")) {
+            let (after, before) = chunk;
+            let mut nums = before.rsplit(' ');
+            let y = nums.next().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            let x = nums.next().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            out.push((x, y, after.split(") Tj").next().unwrap_or("").to_string()));
+        }
+        out
+    }
+
+    #[test]
+    fn standard_prints_dotted_numbers_and_parenthesised_points() {
+        let pdf = render_pdf(&doc(PaperStyle::Standard)).unwrap();
+        let t = s(&pdf);
+        assert!(t.contains("(1.) Tj") && t.contains("(A. Venus) Tj") && t.contains("((2 points)) Tj") || t.contains("(\\(2 points\\)) Tj"));
+        assert!(t.contains("(Part I) Tj"), "section title prints");
+        assert!(t.contains("(Circle the letter.) Tj"), "section directions print");
+        assert!(t.contains("/MediaBox [0 0 612 792]"));
+    }
+
+    #[test]
+    fn classic_adds_objective_blank_and_lowercase_letters() {
+        let pdf = render_pdf(&doc(PaperStyle::Classic)).unwrap();
+        let t = s(&pdf);
+        assert!(t.contains("(a. Venus) Tj") && t.contains("(b. Mercury) Tj"));
+        let pos = text_pos(&pdf);
+        let n1 = pos.iter().find(|p| p.2 == "1.").unwrap();
+        let n2 = pos.iter().find(|p| p.2 == "2.").unwrap();
+        assert!(n1.0 > n2.0 + 30.0, "the objective question's number sits right of its answer blank");
+        // Work space prints as ruled lines: 2 answer rules + 3 work lines for question 2.
+        let std_rules = s(&render_pdf(&doc(PaperStyle::Standard)).unwrap()).matches(" l S").count();
+        assert_eq!(t.matches(" l S").count(), std_rules + 3 + 1, "3 ruled work lines + the answer blank");
+    }
+
+    #[test]
+    fn condensed_puts_short_choices_across_and_saves_room() {
+        let pdf = render_pdf(&doc(PaperStyle::Condensed)).unwrap();
+        let pos = text_pos(&pdf);
+        let a = pos.iter().find(|p| p.2 == "A. Venus").unwrap();
+        let b = pos.iter().find(|p| p.2 == "B. Mercury").unwrap();
+        assert_eq!(a.1, b.1, "choices share a baseline");
+        assert!(b.0 > a.0);
+        let last = |pdf: &[u8]| text_pos(pdf).iter().map(|p| p.1).fold(f64::MAX, f64::min);
+        let std_pdf = render_pdf(&doc(PaperStyle::Standard)).unwrap();
+        assert!(last(&pdf) > last(&std_pdf), "condensed ends higher on the page");
+    }
+
+    #[test]
+    fn exam_board_is_a4_with_bracket_points_dotted_lines_and_turn_over() {
+        let mut d = doc(PaperStyle::ExamBoard);
+        d.questions = (1..=30).map(|n| DocQ { number: n, text: vec![format!("Question {n}")], rule_lines: 2, points: Some(3.0), ..Default::default() }).collect();
+        let pdf = render_pdf(&d).unwrap();
+        let t = s(&pdf);
+        assert!(t.contains("/MediaBox [0 0 595.28 841.89]"));
+        assert!(t.contains("([3]) Tj"));
+        assert!(t.contains("(7) Tj"), "numbers print without a dot");
+        assert!(t.contains("[0.8 2.2] 0 d"), "dotted answer lines");
+        let pages = t.matches("/Type /Page ").count();
+        assert!(pages >= 2);
+        assert_eq!(t.matches("(Turn over) Tj").count(), pages - 1, "every page but the last");
+    }
+
+    #[test]
+    fn per_side_margins_move_the_text_block() {
+        let mut d = doc(PaperStyle::Standard);
+        d.margins = Some(Margins { top: 10.0, right: 18.0, bottom: 18.0, left: 40.0 });
+        let pdf = render_pdf(&d).unwrap();
+        let pos = text_pos(&pdf);
+        let min_x = pos.iter().map(|p| p.0).fold(f64::MAX, f64::min);
+        let max_y = pos.iter().map(|p| p.1).fold(f64::MIN, f64::max);
+        assert!((min_x - 40.0 * MM_PT).abs() < 0.5, "left margin 40 mm, got x={min_x}");
+        assert!(max_y > 792.0 - 10.0 * MM_PT - 20.0, "top margin 10 mm, first baseline {max_y}");
+    }
+
+    #[test]
+    fn work_space_adds_room_in_the_standard_style() {
+        let mut d = doc(PaperStyle::Standard);
+        let low = |pdf: &[u8]| text_pos(pdf).iter().map(|p| p.1).fold(f64::MAX, f64::min);
+        d.questions.push(DocQ { number: 3, text: vec!["After".into()], ..Default::default() });
+        let a = render_pdf(&d).unwrap();
+        d.questions[1].work_lines = 8;
+        let b = render_pdf(&d).unwrap();
+        assert!((low(&a) - low(&b) - 5.0 * 11.0 * 2.0).abs() < 0.5, "3 -> 8 lines of blank work space push question 3 down: {} vs {}", low(&a), low(&b));
+    }
+
+    fn docx_xml(d: &ExamDoc) -> String {
+        let bytes = render_docx(d).unwrap();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut x = String::new();
+        z.by_name("word/document.xml").unwrap().read_to_string(&mut x).unwrap();
+        x
+    }
+
+    #[test]
+    fn docx_follows_style_margins_and_sections() {
+        let x = docx_xml(&doc(PaperStyle::Standard));
+        assert!(x.contains("Part I") && x.contains("Circle the letter."));
+        assert!(x.contains(r#"<w:pgSz w:w="12240" w:h="15840"/>"#));
+        let mut d = doc(PaperStyle::ExamBoard);
+        d.margins = Some(Margins { top: 10.0, right: 20.0, bottom: 30.0, left: 40.0 });
+        let x = docx_xml(&d);
+        assert!(x.contains(r#"<w:pgSz w:w="11906" w:h="16838"/>"#));
+        assert!(x.contains(r#"w:top="567" w:right="1134" w:bottom="1701" w:left="2268""#));
+        assert!(x.contains(r#"w:val="dotted""#));
+        assert!(x.contains("[4]") && x.contains(">A Venus<"));
+        let x = docx_xml(&doc(PaperStyle::Classic));
+        assert!(x.contains("_______ 1.") && x.contains(">a. Venus<"));
+        let x = docx_xml(&doc(PaperStyle::Condensed));
+        assert!(x.contains("<w:tabs>"), "choices across on tab stops");
     }
 }

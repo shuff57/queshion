@@ -477,12 +477,12 @@ fn exams(v: &Value, ids: &HashMap<String, String>) -> Vec<Exam> {
             .into_iter()
             .flatten()
             .filter_map(|p| p.get("question").and_then(Value::as_str).and_then(|q| ids.get(q)))
-            .map(|q| ExamItem { bank_id: String::new(), question_id: q.clone() })
+            .map(|q| ExamItem::new(String::new(), q.clone()))
             .collect();
         if name.is_empty() || items.is_empty() {
             continue;
         }
-        out.push(Exam {
+        out.push(Exam { paper_style: Default::default(), margins: None,
             id: crate::model::new_id(),
             name: name.to_string(),
             header: crate::formats::DEFAULT_HEADER.to_string(),

@@ -448,7 +448,7 @@ impl crate::App {
 
     pub fn new_exam(&mut self, name: &str) -> Id {
         let t = now_secs();
-        let exam = Exam {
+        let exam = Exam { paper_style: Default::default(), margins: None,
             id: model::new_id(),
             name: name.to_string(),
             header: "Name: __________________ Class: ___________ Date: ___________".to_string(),
@@ -1575,14 +1575,14 @@ impl crate::App {
         };
         let bank_id = bank.id.clone();
         self.store.banks.push(bank);
-        let exam = Exam {
+        let exam = Exam { paper_style: Default::default(), margins: None,
             id: model::new_id(),
             name: "Solar System — Quiz".into(),
             header: "Name: __________________ Class: ___________ Date: ___________".into(),
             title: Some("Solar System Quiz".into()),
             items: vec![
-                ExamItem { bank_id: bank_id.clone(), question_id: q1_id },
-                ExamItem { bank_id, question_id: q3_id },
+                ExamItem::new(bank_id.clone(), q1_id),
+                ExamItem::new(bank_id, q3_id),
             ],
             heading_pt: 16.0,
             body_pt: 11.0,
@@ -2138,14 +2138,14 @@ mod tests {
     fn package_exam_items_remap_onto_the_new_bank() {
         let bank_id = "b123".to_string();
         let mut exams = vec![
-            Exam {
+            Exam { paper_style: Default::default(), margins: None,
                 id: "e1".into(),
                 name: "Quiz".into(),
                 header: String::new(),
                 title: None,
                 items: vec![
-                    ExamItem { bank_id: String::new(), question_id: "q1".into() },
-                    ExamItem { bank_id: "other-bank".into(), question_id: "q2".into() },
+                    ExamItem::new("", "q1"),
+                    ExamItem::new("other-bank", "q2"),
                 ],
                 heading_pt: 16.0,
                 body_pt: 11.0,
