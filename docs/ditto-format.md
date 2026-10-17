@@ -28,7 +28,7 @@ Common members:
 |---|---|---|
 | `id` | string | unique in the file, e.g. `"q1"`; queShion assigns its own ids on import |
 | `type` | string | `multiple-choice`, `true-false`, `matching`, `fill-in-the-blank`, `short-answer`, `multipart` |
-| `stem` | string | exactly what the source prints at the question's number, minus the number and any `[2]` mark. Paragraph breaks are `\n`. Equations are written `$linear$` (e.g. `$x^2+1$`). Subscripts and superscripts in plain text use Unicode (H₂O, m²) |
+| `stem` | string | exactly what the source prints at the question's number, minus the number and any `[2]` mark. Written in queShion stem markup (`docs/stem-format.md`): each printed line is a `\n` line, bullets are `• item` lines, numbered lists `1. item` lines, tables pipe rows (see below). Equations are written `$linear$` (e.g. `$x^2+1$`). Subscripts and superscripts in plain text use Unicode (H₂O, m²) |
 | `label` | string, optional | the number the source prints ("3", "5B-2"). Informational only |
 | `points` | positive integer, optional | only when the source prints a mark. Not on `multipart` itself |
 | `difficulty` | `"easy"`/`"medium"`/`"hard"`, optional | only if the source states it |
@@ -49,7 +49,10 @@ Per type:
   `blanks` holds one entry per `___`, in order: an array of accepted answers, e.g.
   `[["Ionic"], ["magnesium nitrite", "magnesium(II) nitrite"]]`. A blank with no key is `[]`.
   Every question that asks for several short answers laid out in a table is ONE fill-in-the-blank
-  whose stem repeats each table row with a `___` in each answer cell.
+  whose stem holds the table as pipe rows: the header row as printed WITHOUT blanks, then each
+  body row with a bare `___` in each answer cell, e.g.
+  `Formula | Ionic or Covalent? | Name` / `KI | ___ | ___` / `SO₃ | ___ | ___`.
+  `blanks` then reads row by row, cell by cell.
 - **short-answer** — `suggestedAnswer`: string (the source's worked or sample answer, or `""`).
 - **multipart** — one number with lettered parts, or questions sharing one passage/figure.
   The shared material is the `stem` (and `figure`). `parts`: `[{ "stem": "a. NH₃", "type":
@@ -99,6 +102,14 @@ One position per converted question, in printed order, `question` = that questio
 
 - **Tolerant.** Each question is validated alone. One bad question is skipped and reported; it
   never rejects the rest of the page or file.
+- **Table repair.** A model often repeats the column heading in every row
+  (`KI | Ionic or Covalent? ___ | Name ___`) or puts blanks in the header row
+  (`Formula | Ionic or Covalent? ___ | Name ___`). On import such a table is rewritten to the
+  clean shape (header without blanks — synthesised with an empty first cell when the rows had
+  none — and bare `___` cells); the header's stray blanks are dropped from the marker count, and
+  `blanks` is realigned: answers grouped per row are flattened, trailing empty entries are
+  padding, and entries for the dropped header blanks are removed. Applies to every stem,
+  including multipart part stems.
 - Stems never contain the question number, a `[n]` mark, or directions printed above a group.
 - Multi-page sources are converted one page per request and merged in page order.
 - File extension `.ditto.json`; MIME `application/json`.

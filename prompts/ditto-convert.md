@@ -51,6 +51,15 @@ Question ids are `q1`, `q2`, ... in printed order on this page.
 - `stem` is the question text only: no leading number ("3."), no point marks ("[2]"), and not
   the directions printed above a group. Directions printed above a group go in
   `exams[0].sections[].instructions`.
+- Layout: each printed line is its own line (`\n`). A bulleted list is one line per bullet
+  starting with `• `; a numbered list one line per item starting with `1. `, `2. `. A word
+  printed in bold is `**word**`.
+- Tables are pipe tables, one line per row, cells separated by ` | `. The FIRST line is the
+  header row exactly as printed and has NO blanks. Every body row has `___` in each answer cell
+  and nothing else in that cell: never repeat the column heading in a row.
+  Right:  `Formula | Ionic or Covalent? | Name` then `KI | ___ | ___`
+  Wrong:  `KI | Ionic or Covalent? ___ | Name ___`
+  If the printed table has no header row, write the body rows only.
 - Chemical formulas and math: subscripts/superscripts as Unicode (H₂O, Mg(NO₂)₂, m²). Real
   equations as `$linear$` (e.g. `$\frac{a}{b}$` written as `$(a)/(b)$`).
 - If the page prints a mark for a question (`[2]`, `(3 pts)`), set `points` to that whole number.
@@ -85,8 +94,9 @@ Page shows "1. Which gas do plants absorb?" with choices a. O₂  b. CO₂ (circ
 
 Page shows "2. Name each compound." with a table: Formula | Ionic or Covalent? | Name, rows
 KI (Ionic, potassium iodide) and SO₃ (Covalent, sulfur trioxide), answers handwritten:
-{"id":"q2","type":"fill-in-the-blank","stem":"Name each compound.\nKI | Ionic or Covalent? ___ | Name ___\nSO₃ | Ionic or Covalent? ___ | Name ___","blanks":[["Ionic"],["potassium iodide"],["Covalent"],["sulfur trioxide"]]}
-(4 blanks in the stem, 4 entries in `blanks`: one per ___, never grouped by row.)
+{"id":"q2","type":"fill-in-the-blank","stem":"Name each compound.\nFormula | Ionic or Covalent? | Name\nKI | ___ | ___\nSO₃ | ___ | ___","blanks":[["Ionic"],["potassium iodide"],["Covalent"],["sulfur trioxide"]]}
+(The header row has no blanks. 4 blanks in the body rows, 4 entries in `blanks`: one per ___,
+never grouped by row.)
 
 Page shows "3. Give the number of bonding and nonbonding electrons for the structure below:"
 with a Lewis structure in the upper middle of the page and blanks "BONDING ELECTRONS: 14,

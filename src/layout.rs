@@ -6,11 +6,15 @@
 //!
 //! # Conventions (they decide the printed layout — `DocQ` carries no kind)
 //!
-//! * Ordinary questions (MC/MA, Short, Blank, Multipart): `text[0]` is the stem on ONE
-//!   logical line — the exporters wrap it. Extra `text` entries print as further plain
-//!   lines (put explicit breaks as `\n` inside an entry, not as extra entries, or a
-//!   stem will be mistaken for a matching left-item list). `choices` are pre-lettered
-//!   ("A. Venus") and print each on its own line under the stem.
+//! * Ordinary questions (MC/MA, Short, Blank, Multipart): `text[0]` is the stem — the
+//!   exporters wrap it. Every `text` entry may carry stem markup (`docs/stem-format.md`)
+//!   and is parsed with `crate::richtext::parse`: `\n` hard breaks, blank-line paragraphs,
+//!   bullet / numbered lists, quotes, ` | ` tables, `**bold**`, `*italic*`, `_{sub}`,
+//!   `^{sup}`; `$math$` is degraded to Unicode (`equation::stem_to_plain`). A stem
+//!   without markup prints exactly as before. Extra `text` entries print as further blocks
+//!   (put explicit breaks as `\n` inside an entry, not as extra entries, or a stem will
+//!   be mistaken for a matching left-item list). `choices` are pre-lettered ("A. Venus"),
+//!   honour inline markup, and print each on its own line under the stem.
 //! * True/False: `choices` is exactly `["True", "False"]` (any case).
 //! * Matching: EVERY `text` entry is a left-column item — no stem/instructions line —
 //!   printed with continuing numbers `number`, `number+1`, ...; `choices` is the
@@ -18,7 +22,9 @@
 //! * Short answer / essays: leave `choices` empty and set `rule_lines` (3 is the
 //!   default when it is 0 and the stem has no `___` marker). Questions whose stem
 //!   contains `___` with no choices fill-in blanks: they get one ruled line after the
-//!   stem when `rule_lines` is 0.
+//!   stem when `rule_lines` is 0 — unless every blank sits in a table cell (then the
+//!   cell, printed empty and roomy, is the answer space and no line is added).
+//! * `key_text` may carry the same markup (lines, inline styles); the key prints it.
 
 /// A raster image resolved (with `store::media_path`) by the exam worker; the exporters
 /// re-encode to JPEG for the PDF and print `[picture]` in the DOCX.
@@ -34,7 +40,8 @@ pub struct DocQ {
     /// Printed question number. Matching: the number of the FIRST left item; later
     /// items continue `number+1`, `number+2`, ...
     pub number: u32,
-    /// Stem lines — see the module-level conventions.
+    /// Stem entries (may carry stem markup, parsed with `richtext`) — see the module-level
+    /// conventions.
     pub text: Vec<String>,
     /// Pre-lettered choices ("A. Venus"); `["True", "False"]` for TF.
     pub choices: Vec<String>,

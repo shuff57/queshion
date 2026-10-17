@@ -611,7 +611,7 @@ impl App {
         if let Some((dq, idx)) = st.last_deleted.clone() {
             kit::card().inner_margin(Margin::symmetric(14, 8)).show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(theme::text(format!("Question deleted: {}", truncate(&crate::equation::stem_to_plain(&dq.stem), 60))).size(12.5));
+                    ui.label(theme::text(format!("Question deleted: {}", truncate(&crate::equation::stem_preview(&dq.stem), 60))).size(12.5));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if ui
                             .add(Button::new(RichText::new("Dismiss").color(theme::muted_col())).frame(false))
@@ -641,7 +641,7 @@ impl App {
             .iter()
             .enumerate()
             .filter(|(_, q)| {
-                (query.is_empty() || q.stem.to_lowercase().contains(&query))
+                (query.is_empty() || q.stem.to_lowercase().contains(&query) || crate::equation::stem_preview(&q.stem).to_lowercase().contains(&query))
                     && st.diff.is_none_or(|d| Some(d) == q.difficulty)
                     && st.kind.is_none_or(|k| k == q.kind.qkind())
                     && st
@@ -1094,7 +1094,7 @@ fn first_topic(q: &Question) -> String {
 
 fn stem_job(ui: &Ui, text: &str, size: f32, rows: usize, width: f32) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::simple(
-        crate::equation::stem_to_plain(&text.replace('\n', " ")),
+        crate::equation::stem_preview(text),
         egui::FontId::new(size, theme::serif_family()),
         theme::ink(),
         width,

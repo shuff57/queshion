@@ -192,13 +192,67 @@ fn version_letter(v: usize) -> String {
     letter(v)
 }
 
-fn roman(i: usize) -> String {
-    const R: [&str; 12] = [
-        "i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi", "xii",
-    ];
-    R.get(i)
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| format!("({})", i + 1))
+/// The label a part stem already starts with ("a. NH3", "(b) ...", "ii) ...", "3. ..."),
+/// without its punctuation. Imports often keep the source's own part letters in the stem.
+fn own_part_label(stem: &str) -> Option<&str> {
+    let t = stem.trim_start();
+    let inner = t.strip_prefix('(').unwrap_or(t);
+    let n = inner.chars().take_while(|c| c.is_ascii_alphanumeric()).count();
+    if n == 0 || n > 4 {
+        return None;
+    }
+    let core = &inner[..n];
+    let ok = (n == 1 && core.chars().all(|c| c.is_ascii_alphabetic()))
+        || core.chars().all(|c| matches!(c, 'i' | 'v' | 'x'))
+        || (n <= 2 && core.chars().all(|c| c.is_ascii_digit()));
+    let rest = &inner[n..];
+    let rest = rest.strip_prefix('.').or_else(|| rest.strip_prefix(')'))?;
+    (ok && (rest.is_empty() || rest.starts_with(char::is_whitespace))).then_some(core)
+}
+
+/// A multipart part as printed: labelled once (its own label when the stem has one, else a., b., ...).
+fn part_line(pi: usize, stem: &str) -> String {
+    if own_part_label(stem).is_some() {
+        stem.trim_start().to_string()
+    } else {
+        format!("{}. {}", letter(pi).to_lowercase(), stem)
+    }
+}
+
+/// A part split into its printed label ("a.") and the rest of its stem, for a hanging indent.
+fn split_part_label(pi: usize, stem: &str) -> (String, String) {
+    let t = stem.trim_start();
+    if own_part_label(t).is_some() {
+        let end = t.find(['.', ')']).map_or(0, |i| i + 1);
+        return (t[..end].to_string(), t[end..].trim_start().to_string());
+    }
+    (format!("{}.", letter(pi).to_lowercase()), stem.to_string())
+}
+
+/// Ruled answer lines under a fill-in-the-blank item: one per `___` outside tables (a blank in a
+/// table cell is written in the cell), at least one when the stem has no blank at all.
+fn ruled_blanks(stem: &str) -> usize {
+    let total = stem.matches("___").count();
+    if total == 0 {
+        return 1;
+    }
+    let in_tables: usize = crate::richtext::parse(stem)
+        .iter()
+        .map(|b| match b {
+            crate::richtext::Block::Table { rows, .. } => rows
+                .iter()
+                .flatten()
+                .map(|c| crate::richtext::line_text(c).matches("___").count())
+                .sum(),
+            _ => 0,
+        })
+        .sum();
+    total.saturating_sub(in_tables)
+}
+
+/// The part's label for the answer key ("a" in "a) True").
+fn part_key_label(pi: usize, stem: &str) -> String {
+    own_part_label(stem).map(str::to_string).unwrap_or_else(|| letter(pi).to_lowercase())
 }
 
 fn truncate_str(s: &str, max_chars: usize) -> String {
@@ -1221,15 +1275,22 @@ fn ruled_line(ui: &mut egui::Ui, width: f32, bp: f32) {
     );
 }
 
-/// THE stem renderer. Everything that prints a question stem on the preview page
-/// goes through here, so inline LaTeX (the equation worker) is a one-function swap.
+/// True when a stem (or option) needs the structured renderer: markup (`crate::richtext`) or math.
+/// Everything else keeps the original single-label layout exactly.
+fn needs_rich(s: &str) -> bool {
+    crate::richtext::has_markup(s) || s.contains('*')
+}
+
+/// THE stem renderer. Everything that prints a question stem on the preview page goes through
+/// here: structured stems (tables, lists, line breaks, bold/italic, sub/sup, `$math$`) via
+/// `equation::rich_ui`; plain one-line stems exactly as before.
 fn render_stem(ui: &mut egui::Ui, stem: &str, points: Option<f64>, bp: f32) {
-    if crate::equation::has_math(stem) {
-        let prefix = points
-            .map(|p| format!("({} pt{}) ", fmt_number(p), if p == 1.0 { "" } else { "s" }))
-            .unwrap_or_default();
-        let text = format!("{prefix}{}", stem.replace('\n', " — "));
-        crate::equation::stem_ui(ui, &text, bp, PAPER_INK);
+    if needs_rich(stem) {
+        let mut o = crate::equation::Rich::new(bp, PAPER_INK).leading(0.32);
+        if let Some(p) = points {
+            o = o.lead(format!("({} pt{}) ", fmt_number(p), if p == 1.0 { "" } else { "s" }), bp * 0.92, PAPER_SOFT);
+        }
+        crate::equation::rich_ui(ui, stem, &o);
         return;
     }
     let mut job = LayoutJob::default();
@@ -1247,7 +1308,7 @@ fn render_stem(ui: &mut egui::Ui, stem: &str, points: Option<f64>, bp: f32) {
         );
     }
     job.append(
-        &stem.replace('\n', " — "),
+        stem,
         0.0,
         egui::TextFormat {
             font_id: FontId::new(bp, theme::serif_family()),
@@ -1288,6 +1349,8 @@ fn draw_page(
                 let r = ui.vertical(|ui| {
                     ui.set_width(paper_w);
                     let y0 = ui.cursor().top();
+                    // Paper top for the item loop's page-break avoidance (draw_page_article).
+                    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("qs_paper_top"), y0));
                     ui.add_space(side * 1.05);
                     ui.horizontal_top(|ui| {
                         ui.spacing_mut().item_spacing = Vec2::ZERO;
@@ -1455,7 +1518,20 @@ fn draw_page_article(
         }
         let q = app.store.question(&item.bank_id, &item.question_id).cloned();
         let number = numbers.get(i).copied().unwrap_or(i as u32 + 1);
+        // Keep a question off the dashed page-break line: when last frame's height says it
+        // would cross the break, start it at the top of the next page (as the print does).
+        let h_id = egui::Id::new(("qs_item_h", &item.question_id));
+        let paper_top = ctx.data(|d| d.get_temp::<f32>(egui::Id::new("qs_paper_top")));
+        if let (Some(h), Some(p0)) = (ctx.data(|d| d.get_temp::<f32>(h_id)), paper_top) {
+            let top = ui.cursor().top();
+            let page = ((top - p0) / PAGE_H).floor().max(0.0);
+            let page_end = p0 + (page + 1.0) * PAGE_H - side * 0.8;
+            if top + h > page_end && h < PAGE_H - side * 1.85 {
+                ui.add_space(page_end + side * 0.8 + side * 1.05 - top);
+            }
+        }
         let rect = draw_item(app, ui, ctx, exam_id, st, i, number, q.as_ref(), cw, bp, side);
+        ctx.data_mut(|d| d.insert_temp(h_id, rect.height()));
         st.rows.push((i, rect.translate(Vec2::new(0.0, -slot_shift))));
         ui.add_space(bp * 1.0);
     }
@@ -1661,10 +1737,11 @@ fn draw_item(
     rect
 }
 
-/// One answer/option line on the paper: plain label, or equation-aware when it holds `$..$`.
+/// One answer/option line on the paper: plain label, or the structured renderer when it holds
+/// markup or `$..$`.
 fn popt(ui: &mut egui::Ui, s: String, bp: f32) {
-    if crate::equation::has_math(&s) {
-        crate::equation::stem_ui(ui, &s, bp, PAPER_INK);
+    if needs_rich(&s) {
+        crate::equation::rich_ui(ui, &s, &crate::equation::Rich::new(bp, PAPER_INK).leading(0.32));
     } else {
         ui.add(egui::Label::new(ptext(s, bp, false)).wrap());
     }
@@ -1726,8 +1803,7 @@ fn draw_item_body(
         }
         Kind::Blank { .. } => {
             draw_image(app, ui, ctx, q.image.as_ref());
-            let markers = q.stem.matches("___").count().max(1);
-            for _ in 0..markers {
+            for _ in 0..ruled_blanks(&q.stem) {
                 ruled_line(ui, body_w, bp);
             }
         }
@@ -1741,20 +1817,29 @@ fn draw_item_body(
             draw_image(app, ui, ctx, q.image.as_ref());
             let mut rules = 0u32;
             for (pi, part) in parts.iter().enumerate() {
-                match &part.kind {
-                    PartKind::Mc { answers } => {
-                        popt(ui, format!("{}. {}", roman(pi), part.stem), bp);
-                        for (ci, a) in answers.iter().enumerate() {
-                            popt(ui, format!("    {}. {}", letter(ci), a.text), bp);
+                ui.add_space(bp * 0.35);
+                let (label, rest) = split_part_label(pi, &part.stem);
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::ZERO;
+                    let lw = bp * 1.6;
+                    let (lr, _) = ui.allocate_exact_size(Vec2::new(lw, bp * 1.2), Sense::hover());
+                    ui.painter().text(lr.left_top(), Align2::LEFT_TOP, &label, FontId::new(bp, theme::serif_family()), PAPER_INK);
+                    ui.vertical(|ui| {
+                        ui.set_width((body_w - lw).max(40.0));
+                        match &part.kind {
+                            PartKind::Mc { answers } => {
+                                popt(ui, rest.clone(), bp);
+                                for (ci, a) in answers.iter().enumerate() {
+                                    popt(ui, format!("{}. {}", letter(ci), a.text), bp);
+                                }
+                            }
+                            PartKind::Tf { .. } => popt(ui, format!("{rest} (True / False)"), bp),
+                            PartKind::Short { .. } => popt(ui, rest.clone(), bp),
                         }
-                    }
-                    PartKind::Tf { .. } => {
-                        popt(ui, format!("{}. {} (True / False)", roman(pi), part.stem), bp);
-                    }
-                    PartKind::Short { .. } => {
-                        popt(ui, format!("{}. {}", roman(pi), part.stem), bp);
-                        rules += 2;
-                    }
+                    });
+                });
+                if matches!(part.kind, PartKind::Short { .. }) {
+                    rules += 2;
                 }
             }
             for _ in 0..rules.max(2) {
@@ -1977,7 +2062,7 @@ fn drag_overlay(app: &mut crate::App, ctx: &egui::Context, exam_id: &Id, st: &mu
 
     if let Some(p) = pos {
         let r = Rect::from_min_size(Pos2::new(p.x + 12.0, p.y - 18.0), Vec2::new(290.0, 38.0));
-        paint_tilted_card(&painter, r, -0.021, &truncate_str(&crate::equation::stem_to_plain(&drag.stem.replace('\n', " ")), 40), Some(drag.label));
+        paint_tilted_card(&painter, r, -0.021, &truncate_str(&crate::equation::stem_preview(&drag.stem), 40), Some(drag.label));
     }
     ctx.request_repaint();
 }
@@ -2090,7 +2175,7 @@ fn draw_shelf_inner(
     let mut qs: Vec<model::Question> = bank
         .questions
         .iter()
-        .filter(|q| needle.is_empty() || q.stem.to_lowercase().contains(&needle))
+        .filter(|q| needle.is_empty() || q.stem.to_lowercase().contains(&needle) || crate::equation::stem_preview(&q.stem).to_lowercase().contains(&needle))
         .filter(|q| st.topics.is_empty() || st.topics.iter().any(|t| q.topics.contains(t)))
         .filter(|q| match (st.diff, &q.difficulty) {
             (0, _) => true,
@@ -2159,7 +2244,7 @@ fn shelf_row(
     let already = in_count > 0;
     let stem_col = if already { theme::muted_col() } else { theme::ink() };
     let p = ui.painter().clone();
-    let stem_txt = crate::equation::stem_to_plain(&q.stem.replace('\n', " "));
+    let stem_txt = crate::equation::stem_preview(&q.stem);
     let galley = clamped_galley(&p, &stem_txt, FontId::proportional(12.5), stem_col, stem_w, 2);
     let h = (galley.size().y + 18.0).max(46.0);
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, h), Sense::click_and_drag());
@@ -2344,7 +2429,8 @@ fn map_question_raw(number: u32, q: &model::Question) -> Mapped {
         }
         Kind::Blank { accept } => {
             dq.text = vec![q.stem.clone()];
-            dq.rule_lines = q.stem.matches("___").count() as u8;
+            // Blanks inside table cells are answer cells: no ruled line for them.
+            dq.rule_lines = crate::export::blanks_outside_tables(&q.stem) as u8;
             ktext = accept
                 .iter()
                 .map(|group| group.join(" / "))
@@ -2363,7 +2449,7 @@ fn map_question_raw(number: u32, q: &model::Question) -> Mapped {
             for (pi, part) in parts.iter().enumerate() {
                 match &part.kind {
                     PartKind::Mc { answers } => {
-                        s.push_str(&format!("\n{}. {}", letter(pi).to_lowercase(), part.stem));
+                        s.push_str(&format!("\n{}", part_line(pi, &part.stem)));
                         for (ci, a) in answers.iter().enumerate() {
                             s.push_str(&format!("\n      {}. {}", letter(ci), a.text));
                         }
@@ -2378,26 +2464,22 @@ fn map_question_raw(number: u32, q: &model::Question) -> Mapped {
                         } else {
                             ks.iter().map(|i| letter(*i)).collect::<Vec<_>>().join(", ")
                         };
-                        kparts.push(format!("{}) {}", letter(pi).to_lowercase(), label));
+                        kparts.push(format!("{}) {}", part_key_label(pi, &part.stem), label));
                     }
                     PartKind::Tf { correct } => {
-                        s.push_str(&format!(
-                            "\n{}. {} (True / False)",
-                            letter(pi).to_lowercase(),
-                            part.stem
-                        ));
+                        s.push_str(&format!("\n{} (True / False)", part_line(pi, &part.stem)));
                         kparts.push(format!(
                             "{}) {}",
-                            letter(pi).to_lowercase(),
+                            part_key_label(pi, &part.stem),
                             if *correct { "True" } else { "False" }
                         ));
                     }
                     PartKind::Short { sample } => {
-                        s.push_str(&format!("\n{}. {}", letter(pi).to_lowercase(), part.stem));
+                        s.push_str(&format!("\n{}", part_line(pi, &part.stem)));
                         rules += 3;
                         kparts.push(format!(
                             "{}) {}",
-                            letter(pi).to_lowercase(),
+                            part_key_label(pi, &part.stem),
                             sample.trim()
                         ));
                     }
@@ -2405,7 +2487,8 @@ fn map_question_raw(number: u32, q: &model::Question) -> Mapped {
             }
             dq.text = vec![s];
             dq.rule_lines = rules;
-            ktext = kparts.join("  ");
+            // Multi-line part answers each start on their own line; short ones stay on one line.
+            ktext = kparts.join(if kparts.iter().any(|k| k.contains('\n')) { "\n" } else { "  " });
         }
     }
 
@@ -2418,6 +2501,34 @@ fn map_question_raw(number: u32, q: &model::Question) -> Mapped {
     }
     dq.key_text = ktext;
     Mapped { dq, img: q.image.clone() }
+}
+
+/// Headless export (QA hook QUESHION_EXPORT): writes `exam.pdf`, `exam.docx` and `key.pdf` for the
+/// exam at `index` of the store into `dir`, with the real export's mapping (single copy, no
+/// shuffling; questions missing from their bank are skipped).
+pub fn headless_export(index: usize, dir: &std::path::Path) -> Result<(), String> {
+    let st = store::Store::load();
+    let exam = st
+        .exams
+        .get(index)
+        .ok_or_else(|| format!("no exam at index {index} ({} exams in the store)", st.exams.len()))?;
+    let qs: Vec<model::Question> = exam
+        .items
+        .iter()
+        .filter_map(|it| st.question(&it.bank_id, &it.question_id).cloned())
+        .collect();
+    if qs.is_empty() {
+        return Err("the exam has no resolvable questions".into());
+    }
+    let numbers = doc_numbers(&qs);
+    let mapped: Vec<Mapped> = qs.iter().enumerate().map(|(i, q)| map_question(numbers[i], q)).collect();
+    let student = build_doc(exam, &mapped, None, false);
+    let key = build_doc(exam, &mapped, None, true);
+    let write = |name: &str, bytes: Vec<u8>| std::fs::write(dir.join(name), bytes).map_err(|e| format!("{name}: {e}"));
+    write("exam.pdf", crate::export::render_pdf(&student)?)?;
+    write("exam.docx", crate::export::render_docx(&student)?)?;
+    write("key.pdf", crate::export::render_pdf(&key)?)?;
+    Ok(())
 }
 
 /// Builds a printable exam doc: student test (`is_key` false) or answer key.
@@ -3458,4 +3569,79 @@ mod tests {
         assert!(m.dq.key_text.starts_with("A"), "{}", m.dq.key_text);
         assert!(m.dq.key_text.contains("Explanation: Because light is energy."));
     }
+    #[test]
+    fn export_mapping_keeps_stem_markup_and_skips_rules_for_table_blanks() {
+        let stem = "Name them.\nFormula | Name\nKI | ___\nSO\u{2083} | ___";
+        let m = map_question(1, &q("q1", stem, Kind::Blank { accept: vec![] }));
+        assert_eq!(m.dq.text, vec![stem.to_string()], "raw markup reaches the exporters");
+        assert_eq!(m.dq.rule_lines, 0, "table blanks are answer cells");
+        let m = map_question(1, &q("q2", "A: ___  B: ___", Kind::Blank { accept: vec![] }));
+        assert_eq!(m.dq.rule_lines, 2);
+    }
 }
+
+#[cfg(test)]
+mod stem_ui_tests {
+    use super::*;
+
+    #[test]
+    fn part_labels_print_once() {
+        assert_eq!(own_part_label("a. NH₃\nNumber of charge clouds: ___"), Some("a"));
+        assert_eq!(own_part_label("(b) CO₂"), Some("b"));
+        assert_eq!(own_part_label("ii) why"), Some("ii"));
+        assert_eq!(own_part_label("3. third"), Some("3"));
+        assert_eq!(own_part_label("NH₃ is polar"), None);
+        assert_eq!(own_part_label("Ca. 5 g"), None);
+        assert_eq!(own_part_label("e.g. this"), None);
+        assert_eq!(part_line(0, "a. NH₃"), "a. NH₃");
+        assert_eq!(part_line(1, "CO₂"), "b. CO₂");
+        assert_eq!(part_key_label(0, "a. NH₃"), "a");
+        assert_eq!(part_key_label(2, "Why?"), "c");
+        assert_eq!(split_part_label(0, "a. NH₃\nshape: ___"), ("a.".to_string(), "NH₃\nshape: ___".to_string()));
+        assert_eq!(split_part_label(1, "CO₂"), ("b.".to_string(), "CO₂".to_string()));
+    }
+
+    #[test]
+    fn multipart_export_text_is_labelled_once() {
+        let q = model::Question {
+            stem: "Do all:\n• Draw it.".into(),
+            kind: Kind::Multipart {
+                parts: vec![
+                    model::Part { stem: "a. NH₃".into(), kind: PartKind::Short { sample: "pyramidal".into() } },
+                    model::Part { stem: "CO₂".into(), kind: PartKind::Tf { correct: true } },
+                ],
+            },
+            id: "q".into(),
+            points: Some(1.0),
+            difficulty: None,
+            topics: vec![],
+            image: None,
+            explanation: None,
+            figure: None,
+            created: 0,
+            modified: 0,
+        };
+        let m = map_question_raw(4, &q);
+        let t = &m.dq.text[0];
+        assert!(t.contains("\na. NH₃") && !t.contains("a. a."), "{t}");
+        assert!(t.contains("\nb. CO₂ (True / False)"), "{t}");
+        assert!(m.dq.key_text.contains("a) pyramidal") && m.dq.key_text.contains("b) True"), "{}", m.dq.key_text);
+    }
+
+    #[test]
+    fn blanks_in_table_cells_get_no_ruled_lines() {
+        assert_eq!(ruled_blanks("Name:\nFormula | Name\nKI | ___\nNO | ___"), 0);
+        assert_eq!(ruled_blanks("A: ___ B: ___"), 2);
+        assert_eq!(ruled_blanks("Fill:\nx | y\n1 | ___\n2 | ___\nand ___"), 1);
+        assert_eq!(ruled_blanks("no blanks"), 1);
+    }
+
+    #[test]
+    fn rich_detection_keeps_plain_stems_on_the_old_path() {
+        assert!(!needs_rich("Which element is the most electronegative?"));
+        assert!(needs_rich("a\nb"));
+        assert!(needs_rich("the *most* one"));
+        assert!(needs_rich("H_{2}O"));
+    }
+}
+

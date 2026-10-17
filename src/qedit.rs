@@ -590,21 +590,170 @@ fn slash_hook(ui: &mut Ui, eq: &EqCtx, field: EqField, text: &mut String, out: &
     st.store(&eq.ctx, out.response.id);
 }
 
-/// Typeset preview of a field that holds equations; clicking one opens it for editing.
+/// True when a field's text renders differently from its raw form (stem markup or `$math$`).
+fn renders_rich(text: &str) -> bool {
+    crate::richtext::has_markup(text) || text.contains('*')
+}
+
+/// Rendered preview of a field that holds markup or equations; clicking an equation opens it
+/// for editing.
 fn eq_preview(ui: &mut Ui, eq: &EqCtx, field: EqField, text: &str, indent: f32, size: f32) {
-    if !crate::equation::has_math(text) {
+    if !renders_rich(text) {
         return;
     }
     let mut hit = None;
     ui.horizontal(|ui| {
         ui.add_space(indent);
-        let (_, h) = crate::equation::stem_ui_edit(ui, text, size, theme::text_col(), theme::serif_family(), true);
-        hit = h;
+        ui.vertical(|ui| {
+            let o = crate::equation::Rich::new(size, theme::text_col()).editable(true);
+            hit = crate::equation::rich_ui(ui, text, &o).1;
+        });
     });
     if let Some(h) = hit {
         eq.request(field, 0, Some(h.span), h.content);
     }
     ui.add_space(2.0);
+}
+
+/// The stem's rendered preview: how the question prints (tables, lists, bold, scripts, math),
+/// in a soft card under the field. Shown once the stem has any markup or math.
+fn stem_preview(ui: &mut Ui, eq: &EqCtx, text: &str, w: f32) {
+    if !renders_rich(text) {
+        return;
+    }
+    ui.add_space(6.0);
+    Frame::new()
+        .fill(theme::card())
+        .stroke(Stroke::new(1.0, theme::border()))
+        .corner_radius(CornerRadius::same(kit::R_FIELD))
+        .inner_margin(Margin::symmetric(12, 8))
+        .show(ui, |ui| {
+            ui.set_width((w - 26.0).max(40.0));
+            ui.label(theme::muted("Preview").size(11.5));
+            ui.add_space(2.0);
+            eq_preview(ui, eq, EqField::Stem, text, 0.0, 14.0);
+        });
+}
+
+/// The stem's insert helpers.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Markup {
+    Bold,
+    Italic,
+    Bullets,
+    Table,
+}
+
+const TABLE_TEMPLATE: &str = "Column 1 | Column 2 | Column 3\n---|---|---\n___ | ___ | ___\n___ | ___ | ___";
+
+/// Apply an insert helper to `text` with the char selection `sel`; returns the new text and the
+/// new char selection. Bold/italic wrap the selection (or insert a selected placeholder); the
+/// list helper toggles "• " on every line the selection touches; the table helper inserts a
+/// header + two blank rows on lines of their own with "Column 1" selected.
+fn apply_markup(text: &str, sel: std::ops::Range<usize>, m: Markup) -> (String, std::ops::Range<usize>) {
+    let ch: Vec<char> = text.chars().collect();
+    let a = sel.start.min(sel.end).min(ch.len());
+    let b = sel.start.max(sel.end).min(ch.len());
+    let collect = |v: &[char]| v.iter().collect::<String>();
+    match m {
+        Markup::Bold | Markup::Italic => {
+            let mark = if m == Markup::Bold { "**" } else { "*" };
+            let ml = mark.chars().count();
+            // Keep surrounding spaces outside the markers.
+            let (mut s, mut e) = (a, b);
+            while s < e && ch[s].is_whitespace() {
+                s += 1;
+            }
+            while e > s && ch[e - 1].is_whitespace() {
+                e -= 1;
+            }
+            let inner = if s == e { if m == Markup::Bold { "bold text".to_string() } else { "italic text".to_string() } } else { collect(&ch[s..e]) };
+            let n = inner.chars().count();
+            let out = format!("{}{mark}{inner}{mark}{}", collect(&ch[..s]), collect(&ch[e..]));
+            (out, s + ml..s + ml + n)
+        }
+        Markup::Bullets => {
+            let ls = ch[..a].iter().rposition(|c| *c == '\n').map_or(0, |i| i + 1);
+            let le = ch[b..].iter().position(|c| *c == '\n').map_or(ch.len(), |i| b + i);
+            let block = collect(&ch[ls..le]);
+            let lines: Vec<&str> = block.split('\n').collect();
+            let is_b = |l: &str| l.trim_start().starts_with("• ");
+            let all = lines.iter().filter(|l| !l.trim().is_empty()).all(|l| is_b(l)) && lines.iter().any(|l| is_b(l));
+            let new: Vec<String> = lines
+                .iter()
+                .map(|l| {
+                    if all {
+                        l.replacen("• ", "", 1)
+                    } else if is_b(l) || (l.trim().is_empty() && lines.len() > 1) {
+                        l.to_string()
+                    } else {
+                        format!("• {}", l.trim_start())
+                    }
+                })
+                .collect();
+            let nb = new.join("\n");
+            let end = ls + nb.chars().count();
+            (format!("{}{nb}{}", collect(&ch[..ls]), collect(&ch[le..])), end..end)
+        }
+        Markup::Table => {
+            let pre = if a > 0 && ch[a - 1] != '\n' { "\n" } else { "" };
+            let post = if b < ch.len() && ch[b] != '\n' { "\n" } else { "" };
+            let start = a + pre.chars().count();
+            let out = format!("{}{pre}{TABLE_TEMPLATE}{post}{}", collect(&ch[..a]), collect(&ch[b..]));
+            (out, start..start + "Column 1".chars().count())
+        }
+    }
+}
+
+/// Small text button for the stem toolbar.
+fn tool_button(ui: &mut Ui, label: RichText, tip: &str) -> egui::Response {
+    ui.add(
+        Button::new(label.size(12.5).color(theme::text_col()))
+            .fill(Color32::TRANSPARENT)
+            .stroke(Stroke::new(1.0, theme::border()))
+            .corner_radius(CornerRadius::same(8))
+            .min_size(Vec2::new(30.0, 24.0)),
+    )
+    .on_hover_text(tip)
+}
+
+/// The stem toolbar (bold, italic, bullet list, table). Edits `text` around the field's
+/// selection and puts the caret/selection back into the field.
+fn stem_toolbar(ui: &mut Ui, text: &mut String, out: &egui::text_edit::TextEditOutput) {
+    let mut pick = None;
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        if tool_button(ui, RichText::new("B").family(theme::bold_family()), "Bold (**text**)").clicked() {
+            pick = Some(Markup::Bold);
+        }
+        if tool_button(ui, RichText::new("I").italics(), "Italic (*text*)").clicked() {
+            pick = Some(Markup::Italic);
+        }
+        if tool_button(ui, RichText::new("• List"), "Bullet list (lines starting with \"• \")").clicked() {
+            pick = Some(Markup::Bullets);
+        }
+        if tool_button(ui, RichText::new("Table"), "Table (cells separated by \" | \"; ___ is a blank)").clicked() {
+            pick = Some(Markup::Table);
+        }
+        ui.add_space(6.0);
+        ui.label(theme::muted("x_{2} subscript · x^{2} superscript · ___ blank").size(11.0));
+    });
+    let Some(m) = pick else { return };
+    let n = text.chars().count();
+    let sel = out.state.cursor.char_range().map_or(n..n, |r| {
+        let [x, y] = r.sorted_cursors();
+        usize::from(x.index)..usize::from(y.index)
+    });
+    let (t, ns) = apply_markup(text, sel, m);
+    *text = t;
+    let mut st = out.state.clone();
+    st.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+        egui::text::CCursor::new(egui::text::CharIndex::from(ns.start)),
+        egui::text::CCursor::new(egui::text::CharIndex::from(ns.end)),
+    )));
+    st.store(ui.ctx(), out.response.id);
+    ui.memory_mut(|mem| mem.request_focus(out.response.id));
 }
 
 /// Single-line field with the sigma affordance at its right edge.
@@ -760,7 +909,8 @@ fn left_col(ui: &mut Ui, ctx: &egui::Context, draft: &mut Draft, key: UiId, w: f
         eq.request(EqField::Stem, idx, None, String::new());
     }
     slash_hook(ui, &eq, EqField::Stem, &mut draft.stem, &out);
-    eq_preview(ui, &eq, EqField::Stem, &draft.stem, 0.0, 14.0);
+    stem_toolbar(ui, &mut draft.stem, &out);
+    stem_preview(ui, &eq, &draft.stem, w);
     equation_panel(ctx, draft, key);
     ui.add_space(12.0);
 
@@ -1211,6 +1361,42 @@ fn draw_image_row(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn markup_helpers_wrap_toggle_and_insert() {
+        // Bold wraps the selection (spaces stay outside) and keeps it selected.
+        let (t, s) = apply_markup("the most one", 3..9, Markup::Bold);
+        assert_eq!(t, "the **most** one");
+        assert_eq!(&t.chars().collect::<Vec<_>>()[s.clone()].iter().collect::<String>(), "most");
+        // Italic with no selection inserts a selected placeholder.
+        let (t, s) = apply_markup("ab", 1..1, Markup::Italic);
+        assert_eq!(t, "a*italic text*b");
+        assert_eq!(s, 2..13);
+        // Bullets toggle on every touched line.
+        let (t, _) = apply_markup("Do:\nDraw\nCount", 5..12, Markup::Bullets);
+        assert_eq!(t, "Do:\n• Draw\n• Count");
+        let (t, _) = apply_markup(&t, 5..14, Markup::Bullets);
+        assert_eq!(t, "Do:\nDraw\nCount");
+        let (t, _) = apply_markup("", 0..0, Markup::Bullets);
+        assert_eq!(t, "• ");
+        // Table goes on its own lines and parses as a table with a header.
+        let (t, s) = apply_markup("Name these.", 11..11, Markup::Table);
+        assert!(t.starts_with("Name these.\nColumn 1 | "), "{t}");
+        assert_eq!(t.chars().skip(s.start).take(s.end - s.start).collect::<String>(), "Column 1");
+        let blocks = crate::richtext::parse(&t);
+        assert!(matches!(&blocks[1], crate::richtext::Block::Table { header: true, rows } if rows.len() == 3));
+        // Selection past the end is clamped.
+        let (t, _) = apply_markup("x", 5..9, Markup::Bold);
+        assert_eq!(t, "x**bold text**");
+    }
+
+    #[test]
+    fn rich_preview_only_for_markup_or_math() {
+        assert!(!renders_rich("What is 2+2?"));
+        assert!(renders_rich("a\nb"));
+        assert!(renders_rich("$x$"));
+        assert!(renders_rich("**b**"));
+    }
+
     use super::*;
 
     fn sample_question() -> Question {

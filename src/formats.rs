@@ -20,7 +20,10 @@
 //!    (`suggestedAnswer` text); multipart → Multipart (each `part` is a `model::Part`; a
 //!    part carrying subparts — which `PartKind` cannot nest — flattens to its lead-in stem
 //!    plus one part per subpart); `easy`/`medium`/`hard` → Low/Medium/High, `topics` and
-//!    integer `points` are kept. Stem media become `[picture]`/`[picture: alt]`
+//!    integer `points` are kept. Rich text becomes stem markup (`docs/stem-format.md`):
+//!    paragraphs are separated by a blank line, hard breaks are line breaks, lists `• `/`1. `
+//!    lines, quotes `> ` lines, tables pipe rows (a `---|---` line under a marked header row),
+//!    bold/italic `**`/`*`, sub/superscripts Unicode digits or `_{..}`/`^{..}`. Stem media become `[picture]`/`[picture: alt]`
 //!    placeholders — the assets normally travel as files beside the JSON inside the
 //!    package zip, so their bytes are not in the JSON; a media entry that also carries
 //!    inline base64 (`data`/`bytes`/`base64` property) is attached through
@@ -34,8 +37,8 @@
 //!    "questions":[model::Question..]}` — kept working as an alias; ids regenerate; the
 //!    doc name comes from the JSON, else the filename stem.
 //! 3. **CSV** (`.csv`, or any text whose first line looks like a header naming `type` and
-//!    `stem`): single-line comma-separated cells with double quotes (`""` inside a quoted
-//!    cell for a literal quote — no newlines inside cells). Header columns, in any order:
+//!    `stem`): comma-separated cells with double quotes (`""` inside a quoted cell for a
+//!    literal quote; a quoted cell may span lines and keeps its line breaks). Header columns, in any order:
 //!    `type`, `stem`, `points`, `topic` (split into topics on `;`, `,`, `|`), answer columns
 //!    named `a`…`h`, `correct` (letters like `b` or `a,c`; digits `1`… also accepted) and
 //!    `correct_text`. An empty `type` cell defaults to `mc`. Types: `mc`/`ma` (answers from
@@ -46,23 +49,11 @@
 //!    An unparseable `points` cell is ignored (`None`); structural problems (no stem, no
 //!    correct mark, unknown type) fail the whole import naming the row. A `.csv` file
 //!    whose first line is not such a header is not CSV — the text parsers get their try.
-//! 3. **CSV** (`.csv` — header required; a `.csv` whose first line is not such a header
-//!    is not CSV — the text parsers get their try. Single-line comma-separated cells with
-//!    double quotes (`""` inside a quoted cell for a literal quote — no newlines inside
-//!    cells). Header columns, in any order: `type`, `stem`, `points`, `topic` (split into
-//!    topics on `;`, `,`, `|`), answer columns named `a`…`h`, `correct` (letters like `b`
-//!    or `a,c`; digits `1`… also accepted) and `correct_text`. An empty `type` cell
-//!    defaults to `mc`. Types: `mc`/`ma` (answers from the letter columns; correct marks
-//!    from `correct` and/or a `correct_text` cell that matches one answer exactly), `tf`
-//!    (first char of `correct_text`/`correct`: T/Y → true, F/N → false; A/B also mean
-//!    true/false), `short`/`ess`/`essay` and `blank`/`fib`/`num` (the `correct_text` cell
-//!    is the accepted string / sample answer). An unparseable `points` cell is ignored
-//!    (`None`); structural problems (no stem, no correct mark, unknown type) fail the
-//!    whole import naming the row.
 //! 4. **Question-block text**: Blackboard test-generator text (also what the AI converter
 //!    returns and what "Paste your questions" takes) plus untagged Aiken blocks. See
 //!    [`parse_blackboard`] for the grammar. The doc name is the filename stem, or
-//!    "Pasted questions" for an untitled paste. Two hardenings from a live e2e corpus:
+//!    "Pasted questions" for an untitled paste. A stem written over several lines keeps
+//!    its line breaks (MC/MA, TF, NUM and Aiken stems). Two hardenings from a live e2e corpus:
 //!    a TF statement may have its answer glued onto the stem line's tail ("…liquid iron.
 //!    False" — a bare, case-insensitive t/f/true/false word after its statement is the
 //!    answer, stripped from the stem), and in a FIB stem a run of three-or-more
@@ -208,7 +199,7 @@ fn parse_tagged(tag: &str, lines: &[String]) -> Result<(String, Kind), String> {
                     flag
                 });
             }
-            let stem = stem_lines.join(" ");
+            let stem = stem_lines.join("\n");
             if stem.is_empty() {
                 return Err("no stem — write the statement on the line after the TF tag, and T or F on a later line".into());
             }
@@ -230,7 +221,7 @@ fn parse_tagged(tag: &str, lines: &[String]) -> Result<(String, Kind), String> {
                 } else if stem.is_empty() {
                     stem = line.clone();
                 } else {
-                    stem.push(' ');
+                    stem.push('\n');
                     stem.push_str(line);
                 }
             }
@@ -379,7 +370,8 @@ fn normalize_blanks(stem: &str) -> String {
 }
 
 /// MC/MA lines: choices (correct-star or letter-dot) collected in order; everything else
-/// is stem — the first such line, with later ones space-appended so long stems may wrap.
+/// is stem — the first such line, later ones kept as their own lines (`\n`), so a stem's line
+/// breaks, bullets and table rows survive (see `docs/stem-format.md`).
 fn parse_mc(lines: &[String]) -> Result<(String, Vec<Answer>), String> {
     let mut stem = String::new();
     let mut answers: Vec<Answer> = Vec::new();
@@ -391,7 +383,7 @@ fn parse_mc(lines: &[String]) -> Result<(String, Vec<Answer>), String> {
                 if stem.is_empty() {
                     stem = line.clone();
                 } else {
-                    stem.push(' ');
+                    stem.push('\n');
                     stem.push_str(line);
                 }
             }
@@ -446,7 +438,7 @@ fn parse_aiken(block: &[String]) -> Result<Question, String> {
     match choice_at {
         Some(0) => Err("an Aiken question needs stem lines before its choices".into()),
         Some(i) => {
-            let stem = block[..i].join(" ");
+            let stem = block[..i].join("\n");
             let mut answers: Vec<Answer> = Vec::new();
             for line in &block[i..] {
                 match parse_choice(line) {
@@ -539,7 +531,8 @@ fn decimals(s: &str) -> usize {
 /// Header-driven CSV only; returns `None` when the first line does not read as a header
 /// naming both `type` and `stem` (so a `.csv` that is really Blackboard text still parses).
 fn try_csv(text: &str) -> Option<Result<Vec<Question>, String>> {
-    let lines: Vec<&str> = text.split('\n').map(|l| l.trim_end_matches('\r')).filter(|l| !l.trim().is_empty()).collect();
+    let records = csv_records(text);
+    let lines: Vec<&str> = records.iter().map(String::as_str).filter(|l| !l.trim().is_empty()).collect();
     let Some(first) = lines.first() else { return None };
     let Some(cols) = csv_cols(&split_csv_line(first)) else { return None };
 
@@ -712,7 +705,28 @@ fn first_non_empty(a: String, b: String) -> String {
     if a.is_empty() { b } else { a }
 }
 
-/// Splits one CSV line, honoring double quotes and doubled `""` inside them.
+/// CSV records: lines, except that a newline inside a double-quoted cell stays in that cell
+/// (spreadsheets write multi-line cells that way). `\r\n` reads as `\n`.
+fn csv_records(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut in_quotes = false;
+    for c in text.replace("\r\n", "\n").chars() {
+        match c {
+            '"' => {
+                in_quotes = !in_quotes; // a doubled `""` toggles twice: still inside
+                cur.push(c);
+            }
+            '\n' if !in_quotes => out.push(std::mem::take(&mut cur)),
+            c => cur.push(c),
+        }
+    }
+    out.push(cur);
+    out.into_iter().map(|r| r.trim_end_matches('\r').to_string()).collect()
+}
+
+/// Splits one CSV record, honoring double quotes and doubled `""` inside them; a quoted cell
+/// may hold newlines (its line breaks are kept).
 fn split_csv_line(line: &str) -> Vec<String> {
     let mut cells: Vec<String> = Vec::new();
     let mut cur = String::new();
@@ -1097,14 +1111,17 @@ struct Flat {
     images: Vec<String>,
 }
 
+/// A document → stem markup (`docs/stem-format.md`): each block is one chunk, chunks are
+/// separated by a blank line (so paragraphs stay paragraphs), lists become `• ` / `1. ` lines,
+/// tables pipe rows (with a `---|---` line under a marked header row), quotes `> ` lines.
 fn flatten_doc(document: &serde_json::Value) -> Flat {
-    let mut lines: Vec<String> = Vec::new();
+    let mut chunks: Vec<String> = Vec::new();
     let mut blanks: Vec<String> = Vec::new();
     let mut images: Vec<String> = Vec::new();
     for block in children(document) {
-        flatten_block(block, &mut lines, &mut blanks, &mut images);
+        flatten_block(block, &mut chunks, &mut blanks, &mut images);
     }
-    Flat { text: lines.join("\n"), blanks, images }
+    Flat { text: chunks.join("\n\n"), blanks, images }
 }
 
 /// A node with `content` flattened to plain text — choices, prompts, answers; a document
@@ -1136,74 +1153,185 @@ fn asset_hex(node: &serde_json::Value) -> Option<&str> {
     node.get("asset").and_then(serde_json::Value::as_str).and_then(|a| a.strip_prefix("sha256:"))
 }
 
-/// One top-level block → one or more lines; unknown or stray inline nodes at block level
-/// recurse as a paragraph when they say anything.
-fn flatten_block(block: &serde_json::Value, lines: &mut Vec<String>, blanks: &mut Vec<String>, images: &mut Vec<String>) {
+/// Block-level node types (everything else is inline content).
+fn is_block(t: &str) -> bool {
+    matches!(
+        t,
+        "paragraph" | "heading" | "blockquote" | "panel" | "document" | "bullet-list" | "ordered-list" | "list-item" | "code-block" | "rule" | "table" | "side-by-side" | "block-image"
+    )
+}
+
+/// One block → chunks of markup (one per paragraph-like unit); empty paragraphs (spacers)
+/// add nothing. Unknown or stray inline nodes at block level become a paragraph when they
+/// say anything.
+fn flatten_block(block: &serde_json::Value, chunks: &mut Vec<String>, blanks: &mut Vec<String>, images: &mut Vec<String>) {
+    let push = |chunks: &mut Vec<String>, s: String| {
+        let s = s.trim_end().to_string();
+        if !s.trim().is_empty() {
+            chunks.push(s);
+        }
+    };
     match node_type(block) {
-        "paragraph" | "heading" => {
+        "paragraph" => {
             let mut line = String::new();
             for n in children(block) {
                 flatten_inline(n, &mut line, blanks, images);
             }
-            lines.push(line.trim_end().to_string());
+            push(chunks, line);
         }
-        "blockquote" | "panel" | "document" => {
+        "heading" => {
+            let mut line = String::new();
+            for n in children(block) {
+                flatten_inline(n, &mut line, blanks, images);
+            }
+            let core = line.trim();
+            let bolded = if core.is_empty() || core.contains('\n') || core.contains('*') { core.to_string() } else { format!("**{core}**") };
+            push(chunks, bolded);
+        }
+        "blockquote" => {
+            let mut inner: Vec<String> = Vec::new();
             for c in children(block) {
-                flatten_block(c, lines, blanks, images);
+                flatten_block(c, &mut inner, blanks, images);
+            }
+            let quoted: Vec<String> = inner.join("\n").lines().filter(|l| !l.trim().is_empty()).map(|l| format!("> {l}")).collect();
+            push(chunks, quoted.join("\n"));
+        }
+        "panel" | "document" | "side-by-side" | "list-item" => {
+            for c in children(block) {
+                flatten_block(c, chunks, blanks, images);
             }
         }
-        "bullet-list" => {
-            for item in children(block) {
-                let mut line = String::from("- ");
-                flatten_inline(item, &mut line, blanks, images);
-                lines.push(line.trim_end().to_string());
-            }
-        }
-        "ordered-list" => {
-            let start = block.get("start").and_then(serde_json::Value::as_u64).unwrap_or(1);
-            for (i, item) in children(block).iter().enumerate() {
-                let mut line = format!("{}. ", start as usize + i);
-                flatten_inline(item, &mut line, blanks, images);
-                lines.push(line.trim_end().to_string());
-            }
+        "bullet-list" | "ordered-list" => {
+            let mut lines: Vec<String> = Vec::new();
+            list_lines(block, 0, &mut lines, blanks, images);
+            push(chunks, lines.join("\n"));
         }
         "code-block" => {
             let mut line = String::new();
             flatten_inline(block, &mut line, blanks, images);
-            lines.push(line);
+            push(chunks, line);
         }
-        "rule" => lines.push("—".to_string()),
+        "rule" => chunks.push("—".to_string()),
         "table" => {
-            for row in children(block) {
-                let mut line = String::new();
-                for (i, cell) in children(row).iter().enumerate() {
-                    if i > 0 {
-                        line.push_str(" | ");
-                    }
-                    flatten_inline(cell, &mut line, blanks, images);
-                }
-                lines.push(line.trim_end().to_string());
-            }
-        }
-        "side-by-side" => {
-            for panel in children(block) {
-                flatten_block(panel, lines, blanks, images);
-            }
+            let t = table_lines(block, blanks, images);
+            push(chunks, t);
         }
         "inline-image" | "block-image" => {
             if let Some(hex) = asset_hex(block) {
                 images.push(hex.to_string());
             }
-            lines.push(picture_text(node_alt(block)));
+            chunks.push(picture_text(node_alt(block)));
         }
         _ => {
             let mut line = String::new();
             flatten_inline(block, &mut line, blanks, images);
-            if !line.trim().is_empty() {
-                lines.push(line);
+            push(chunks, line);
+        }
+    }
+}
+
+/// A node's content as ONE line (list items, table cells): block children joined by a space,
+/// hard breaks as spaces, nested lists left to the caller.
+fn one_line(node: &serde_json::Value, blanks: &mut Vec<String>, images: &mut Vec<String>, skip_lists: bool) -> String {
+    let mut out = String::new();
+    let add = |out: &mut String, s: &str| {
+        let s = s.replace('\n', " ");
+        let s = s.trim();
+        if s.is_empty() {
+            return;
+        }
+        if !out.is_empty() && !out.ends_with(' ') {
+            out.push(' ');
+        }
+        out.push_str(s);
+    };
+    let mut inline = String::new();
+    for c in children(node) {
+        let t = node_type(c);
+        if skip_lists && matches!(t, "bullet-list" | "ordered-list") {
+            continue;
+        }
+        if is_block(t) {
+            add(&mut out, &std::mem::take(&mut inline));
+            let mut sub: Vec<String> = Vec::new();
+            flatten_block(c, &mut sub, blanks, images);
+            for s in sub {
+                // Nested quote/list markers inside one line read as plain text.
+                let s: Vec<String> = s.lines().map(|l| l.trim_start_matches("> ").to_string()).collect();
+                add(&mut out, &s.join(" "));
+            }
+        } else {
+            flatten_inline(c, &mut inline, blanks, images);
+        }
+    }
+    add(&mut out, &inline);
+    out
+}
+
+/// A bullet/ordered list → `• item` / `1. item` lines; nested lists follow their item,
+/// indented two spaces per level.
+fn list_lines(list: &serde_json::Value, depth: usize, lines: &mut Vec<String>, blanks: &mut Vec<String>, images: &mut Vec<String>) {
+    let ordered = node_type(list) == "ordered-list";
+    let start = list.get("start").and_then(serde_json::Value::as_u64).unwrap_or(1) as usize;
+    let indent = "  ".repeat(depth);
+    for (i, item) in children(list).iter().enumerate() {
+        let marker = if ordered { format!("{}. ", start + i) } else { "• ".to_string() };
+        let text = if node_type(item) == "list-item" {
+            one_line(item, blanks, images, true)
+        } else {
+            let mut s = String::new();
+            flatten_inline(item, &mut s, blanks, images);
+            s.replace('\n', " ").trim().to_string()
+        };
+        lines.push(format!("{indent}{marker}{text}").trim_end().to_string());
+        for c in children(item) {
+            if matches!(node_type(c), "bullet-list" | "ordered-list") {
+                list_lines(c, depth + 1, lines, blanks, images);
             }
         }
     }
+}
+
+/// A table → pipe rows, padded to one cell count (merged cells span with empty cells); a
+/// `---|---` line follows the first row when the source marks it a header. Rows whose first
+/// or last cell is empty get outer pipes so the empty cell survives. A one-column table is
+/// just its lines.
+fn table_lines(table: &serde_json::Value, blanks: &mut Vec<String>, images: &mut Vec<String>) -> String {
+    let flag = |v: &serde_json::Value| v.get("header").and_then(serde_json::Value::as_bool) == Some(true);
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut first_is_header = false;
+    for (r, row) in children(table).iter().enumerate() {
+        let cells = children(row);
+        let mut out: Vec<String> = Vec::new();
+        for cell in cells {
+            out.push(one_line(cell, blanks, images, false).replace('|', "/"));
+            let span = cell.get("colspan").and_then(serde_json::Value::as_u64).unwrap_or(1).max(1);
+            for _ in 1..span {
+                out.push(String::new());
+            }
+        }
+        if r == 0 {
+            first_is_header = flag(row) || (!cells.is_empty() && cells.iter().all(flag));
+        }
+        rows.push(out);
+    }
+    let cols = rows.iter().map(Vec::len).max().unwrap_or(0);
+    if cols < 2 {
+        return rows.iter().map(|r| r.join(" ")).collect::<Vec<_>>().join("\n");
+    }
+    for r in &mut rows {
+        r.resize(cols, String::new());
+    }
+    let outer = rows.iter().any(|r| r[0].is_empty() || r[cols - 1].is_empty());
+    let fmt = |cells: &[String]| if outer { format!("| {} |", cells.join(" | ")) } else { cells.join(" | ") };
+    let mut lines: Vec<String> = Vec::new();
+    for (r, row) in rows.iter().enumerate() {
+        lines.push(fmt(row));
+        if r == 0 && first_is_header && rows.len() > 1 {
+            lines.push(vec!["---"; cols].join("|"));
+        }
+    }
+    lines.join("\n")
 }
 
 fn node_alt(node: &serde_json::Value) -> &str {
@@ -1219,7 +1347,7 @@ fn picture_text(alt: &str) -> String {
 /// their `content`, so paragraphs, links and marks flatten transparently.
 fn flatten_inline(node: &serde_json::Value, out: &mut String, blanks: &mut Vec<String>, images: &mut Vec<String>) {
     match node_type(node) {
-        "text" => out.push_str(node.get("text").and_then(serde_json::Value::as_str).unwrap_or("")),
+        "text" => out.push_str(&marked_text(node)),
         "hard-break" => out.push('\n'),
         "blank" => {
             out.push_str(BLANK);
@@ -1246,6 +1374,33 @@ fn flatten_inline(node: &serde_json::Value, out: &mut String, blanks: &mut Vec<S
             }
         }
     }
+}
+
+/// A text node with its marks as stem markup: subscript/superscript as Unicode digits when
+/// `richtext::unicode_script` covers the text, else `_{..}`/`^{..}`; italic `*..*` and bold
+/// `**..**` wrap the text with its edge whitespace kept outside the markers (so they parse).
+fn marked_text(node: &serde_json::Value) -> String {
+    let text = node.get("text").and_then(serde_json::Value::as_str).unwrap_or("");
+    let marks: Vec<&str> = arr(node, "marks").iter().filter_map(|m| m.as_str().or_else(|| m.get("type").and_then(serde_json::Value::as_str))).collect();
+    let has = |names: &[&str]| marks.iter().any(|m| names.contains(m));
+    if marks.is_empty() || text.trim().is_empty() {
+        return text.to_string();
+    }
+    let lead = &text[..text.len() - text.trim_start().len()];
+    let trail = &text[text.trim_end().len()..];
+    let mut core = text.trim().to_string();
+    let sub = has(&["subscript", "sub"]);
+    let sup = has(&["superscript", "sup"]);
+    if sub || sup {
+        core = crate::richtext::unicode_script(&core, sup).unwrap_or_else(|| if sup { format!("^{{{core}}}") } else { format!("_{{{core}}}") });
+    }
+    if has(&["em", "emphasis", "italic"]) {
+        core = format!("*{core}*");
+    }
+    if has(&["strong", "bold"]) {
+        core = format!("**{core}**");
+    }
+    format!("{lead}{core}{trail}")
 }
 
 /// RFC 4648 base64, standard alphabet. Whitespace ignored, trailing padding optional;
@@ -1831,5 +1986,118 @@ TF,The sky is blue,,science,,,,,TRUE
         assert_eq!(base64_decode("Z m 9 v"), Some(b"foo".to_vec())); // interior whitespace tolerated
         assert_eq!(base64_decode("Z!!="), None);
         assert_eq!(base64_decode("Z"), None); // a stranded single symbol
+    }
+
+    // ---------- stem markup from imports ----------
+
+    fn tp_stem(content: serde_json::Value) -> String {
+        flatten_doc(&serde_json::json!({"type": "document", "content": content})).text
+    }
+
+    #[test]
+    fn package_table_becomes_a_pipe_table_with_header_and_subscripts() {
+        let text = |t: &str| serde_json::json!({"type": "text", "text": t});
+        let sub = |t: &str| serde_json::json!({"type": "text", "text": t, "marks": [{"type": "subscript"}]});
+        let cell = |h: bool, c: Vec<serde_json::Value>| serde_json::json!({"type": "table-cell", "header": h, "content": [{"type": "paragraph", "content": c}]});
+        let stem = tp_stem(serde_json::json!([
+            {"type": "paragraph", "content": [text("Name the following compounds.")]},
+            {"type": "table", "content": [
+                {"type": "table-row", "header": true, "content": [cell(true, vec![text("Formula")]), cell(true, vec![text("Ionic or Covalent?")]), cell(true, vec![text("Name")])]},
+                {"type": "table-row", "content": [cell(false, vec![text("Mg(NO"), sub("2"), text(")"), sub("2")]), cell(false, vec![text("Ionic")]), cell(false, vec![text("magnesium nitrite")])]},
+                {"type": "table-row", "content": [cell(false, vec![text("SO"), sub("3")]), cell(false, vec![text("Covalent")]), cell(false, vec![text("sulfur trioxide")])]},
+            ]},
+        ]));
+        assert_eq!(
+            stem,
+            "Name the following compounds.\n\nFormula | Ionic or Covalent? | Name\n---|---|---\nMg(NO₂)₂ | Ionic | magnesium nitrite\nSO₃ | Covalent | sulfur trioxide"
+        );
+        let blocks = crate::richtext::parse(&stem);
+        assert!(matches!(&blocks[1], crate::richtext::Block::Table { header: true, rows } if rows.len() == 3 && rows[0].len() == 3), "{blocks:?}");
+    }
+
+    #[test]
+    fn package_lists_marks_quotes_and_breaks_become_markup() {
+        let text = |t: &str| serde_json::json!({"type": "text", "text": t});
+        let marked = |t: &str, m: &str| serde_json::json!({"type": "text", "text": t, "marks": [{"type": m}]});
+        let item = |c: Vec<serde_json::Value>| serde_json::json!({"type": "list-item", "content": [{"type": "paragraph", "content": c}]});
+        let stem = tp_stem(serde_json::json!([
+            {"type": "paragraph", "content": [text("Do all:"), {"type": "hard-break"}, text("then "), marked("stop ", "em"), text("here.")]},
+            {"type": "paragraph", "content": []},
+            {"type": "bullet-list", "content": [item(vec![text("Draw it.")]), item(vec![text("Is it "), marked("polar", "strong"), text("?")])]},
+            {"type": "ordered-list", "content": [item(vec![text("first")]), item(vec![text("x"), marked("2", "superscript"), text(" and e"), marked("ab", "superscript")])]},
+            {"type": "blockquote", "content": [{"type": "paragraph", "content": [text("quoted")]}]},
+            {"type": "paragraph", "content": [text("Solve "), {"type": "inline-math", "source": "x^2=4"}, text(".")]},
+        ]));
+        assert_eq!(
+            stem,
+            "Do all:\nthen *stop* here.\n\n• Draw it.\n• Is it **polar**?\n\n1. first\n2. x² and e^{ab}\n\n> quoted\n\nSolve $x^2=4$."
+        );
+        let b = crate::richtext::parse(&stem);
+        use crate::richtext::Block;
+        assert!(matches!(&b[0], Block::Para(l) if l.len() == 2));
+        assert!(matches!(&b[1], Block::Bullets(l) if l.len() == 2));
+        assert!(matches!(&b[2], Block::Numbered(l) if l.len() == 2));
+        assert!(matches!(&b[3], Block::Quote(_)));
+        assert!(b.iter().any(|blk| matches!(blk, Block::Bullets(l) if l[1].iter().any(|s| s.bold && s.text == "polar"))));
+        assert!(matches!(&b[0], Block::Para(l) if l[1].iter().any(|s| s.italic && s.text == "stop")));
+    }
+
+    #[test]
+    fn package_table_without_header_and_with_empty_edge_cells() {
+        let text = |t: &str| serde_json::json!({"type": "text", "text": t});
+        let cell = |t: &str| serde_json::json!({"type": "table-cell", "content": [{"type": "paragraph", "content": if t.is_empty() { serde_json::json!([]) } else { serde_json::json!([text(t)]) }}]});
+        let stem = tp_stem(serde_json::json!([{"type": "table", "content": [
+            {"type": "table-row", "content": [cell("a"), cell("b")]},
+            {"type": "table-row", "content": [cell("c"), cell("")]},
+        ]}]));
+        assert_eq!(stem, "| a | b |\n| c |  |");
+        assert!(matches!(&crate::richtext::parse(&stem)[0], crate::richtext::Block::Table { header: false, rows } if rows.len() == 2 && rows[1].len() == 2));
+    }
+
+    #[test]
+    fn real_ch4_package_imports_its_compound_table_as_a_table() {
+        let Some(home) = std::env::var_os("HOME") else { return };
+        let path = std::path::Path::new(&home).join("Downloads/ch4-quiz-5a-5b.parrot.json");
+        let Ok(data) = std::fs::read(&path) else { return }; // fixture only on the author's box
+        let doc = detect_and_parse(&data, "ch4-quiz-5a-5b.parrot.json").unwrap();
+        let tables: Vec<&Question> = doc.questions.iter().filter(|q| q.stem.contains("Ionic or Covalent?")).collect();
+        assert!(!tables.is_empty());
+        for q in tables {
+            let blocks = crate::richtext::parse(&q.stem);
+            assert!(
+                blocks.iter().any(|b| matches!(b, crate::richtext::Block::Table { header: true, rows } if rows.len() >= 3 && rows[0].len() == 3)),
+                "{:?}",
+                q.stem
+            );
+        }
+        let bullets = doc.questions.iter().find(|q| q.stem.contains("Draw a valid Lewis structure")).unwrap();
+        assert!(bullets.stem.contains("• Draw a valid Lewis structure."), "{:?}", bullets.stem);
+        assert!(bullets.stem.contains("**polar**"), "{:?}", bullets.stem);
+    }
+
+    #[test]
+    fn blackboard_and_aiken_multi_line_stems_keep_their_line_breaks() {
+        let q = parsed("MC\nFor each compound:\n• Draw it.\n• Name it.\n*a. ok\nb. no\n");
+        assert_eq!(q[0].stem, "For each compound:\n• Draw it.\n• Name it.");
+        let q = parsed("TF\nRead this.\nThe sky is blue.\nT\n");
+        assert_eq!(q[0].stem, "Read this.\nThe sky is blue.");
+        let q = parsed("TF\nRead this.\nThe sky is green. False\n");
+        assert_eq!(q[0].stem, "Read this.\nThe sky is green.");
+        assert!(matches!(q[0].kind, Kind::Tf { correct: false }));
+        let q = parsed("NUM\nA cup holds\n8 ounces. How many mL?\n236.6\n");
+        assert_eq!(q[0].stem, "A cup holds\n8 ounces. How many mL?");
+        let q = parsed("Which gas?\nPick one:\na. O2\n*b. CO2\n");
+        assert_eq!(q[0].stem, "Which gas?\nPick one:");
+    }
+
+    #[test]
+    fn csv_quoted_cells_may_span_lines() {
+        let csv = "type,stem,a,b,correct\r\nmc,\"Pick one:\r\n• the gas\r\n• the \"\"best\"\" one\",O2,CO2,b\nmc,Plain?,x,y,a\n";
+        let qs = try_csv(csv).unwrap().unwrap();
+        assert_eq!(qs.len(), 2);
+        assert_eq!(qs[0].stem, "Pick one:\n• the gas\n• the \"best\" one");
+        assert_eq!(qs[1].stem, "Plain?");
+        let Kind::Mc { answers } = &qs[0].kind else { panic!() };
+        assert!(answers[1].correct);
     }
 }

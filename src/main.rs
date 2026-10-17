@@ -23,6 +23,7 @@ pub mod importui;
 pub mod layout;
 pub mod model;
 pub mod qedit;
+pub mod richtext;
 pub mod screens;
 pub mod store;
 pub mod theme;
@@ -336,6 +337,20 @@ fn main() -> Result<(), eframe::Error> {
         let p = figures::params_from_json(&def, &over);
         let png = figures::to_png(&(def.render)(&p), 1.5).expect("render");
         std::fs::write(std::env::var("QUESHION_OUT").expect("QUESHION_OUT"), png).expect("write");
+        return Ok(());
+    }
+    // Headless one-shot: QUESHION_EXPORT=<exam index> QUESHION_OUT=<dir> writes exam.pdf, exam.docx
+    // and key.pdf for that exam of the store (the stem-rendering checks read these).
+    if let Ok(i) = std::env::var("QUESHION_EXPORT") {
+        let dir = std::path::PathBuf::from(std::env::var("QUESHION_OUT").expect("QUESHION_OUT"));
+        std::fs::create_dir_all(&dir).expect("out dir");
+        match examui::headless_export(i.parse().unwrap_or(0), &dir) {
+            Ok(()) => println!("exported to {}", dir.display()),
+            Err(e) => {
+                eprintln!("export failed: {e}");
+                std::process::exit(1);
+            }
+        }
         return Ok(());
     }
     // Headless one-shot: QUESHION_FIT=<crop.png> runs the figure-fitting loop on one picture.

@@ -228,6 +228,46 @@ pub fn stem_to_plain(text: &str) -> String {
         .collect()
 }
 
+/// One-line preview of a stem for cards, lists and search: markup flattened
+/// (`richtext::plain`) and equations as their Unicode approximation.
+pub fn stem_preview(text: &str) -> String {
+    stem_to_plain(&scripts_to_unicode(&crate::richtext::plain(text)))
+}
+
+/// `_{2}` / `^{2+}` (left in by `richtext::plain`) as Unicode sub/superscripts where every
+/// character has one, else the bare text ("x_{ab}" -> "x_ab").
+fn scripts_to_unicode(s: &str) -> String {
+    let ch: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    let mut in_math = false;
+    while i < ch.len() {
+        let c = ch[i];
+        if c == '$' {
+            in_math = !in_math;
+        }
+        if !in_math
+            && (c == '_' || c == '^')
+            && ch.get(i + 1) == Some(&'{')
+            && let Some(end) = (i + 2..ch.len()).find(|&j| ch[j] == '}')
+        {
+            let inner: String = ch[i + 2..end].iter().collect();
+            match crate::richtext::unicode_script(&inner, c == '^') {
+                Some(u) => out.push_str(&u),
+                None => {
+                    out.push(c);
+                    out.push_str(&inner);
+                }
+            }
+            i = end + 1;
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
 // ---------- SVG / PNG for exports ----------
 
 /// Standalone SVG of the equation (black, display style, 20pt). Empty when it does not parse.
@@ -335,14 +375,25 @@ fn build(ctx: &egui::Context, content: &str, size: f32, ppp: f32, max_w: f64) ->
 // ---------- mixed text + equations ----------
 
 enum Elem {
-    Word { g: Arc<Galley>, asc: f32, breakable: bool, color: Color32 },
-    Math { img: Rc<EqImg>, span: Range<usize>, content: String },
+    /// A word (with its trailing spaces). `dy` shifts it off the baseline (sub/superscript).
+    Word { g: Arc<Galley>, asc: f32, breakable: bool, color: Color32, dy: f32 },
+    /// A typeset equation; `span` is its char range in the source when it can be clicked.
+    Math { img: Rc<EqImg>, span: Option<Range<usize>>, content: String },
+    /// A `___` blank drawn as a writing line.
+    Blank { w: f32, breakable: bool, color: Color32 },
     Break,
 }
 
 struct Placed {
     x: f32,
     elem: usize,
+}
+
+struct FLine {
+    items: Vec<Placed>,
+    asc: f32,
+    desc: f32,
+    w: f32,
 }
 
 /// Which equation of a stem was clicked this frame.
@@ -363,54 +414,94 @@ pub fn stem_ui_with(ui: &mut Ui, text: &str, size: f32, color: Color32, family: 
     stem_ui_edit(ui, text, size, color, family, false).0
 }
 
-/// Same, and with `editable` the equations are clickable chips; the clicked one is returned.
-pub fn stem_ui_edit(ui: &mut Ui, text: &str, size: f32, color: Color32, family: FontFamily, editable: bool) -> (Response, Option<EqHit>) {
-    let avail = ui.available_width().max(40.0);
-    let font = FontId::new(size, family);
-    let ctx = ui.ctx().clone();
-    let mut elems: Vec<Elem> = Vec::new();
-    let pad = size * 0.12;
+fn word_galley(ui: &Ui, w: &str, font: &FontId, color: Color32, italics: bool) -> Arc<Galley> {
+    if italics {
+        let job = egui::text::LayoutJob::single_section(
+            w.to_string(),
+            egui::TextFormat { font_id: font.clone(), color, italics, ..Default::default() },
+        );
+        ui.painter().layout_job(job)
+    } else {
+        ui.painter().layout_no_wrap(w.to_string(), font.clone(), color)
+    }
+}
 
-    let push_words = |elems: &mut Vec<Elem>, t: &str, color: Color32, ui: &Ui| {
-        let mut first = true;
-        for line in t.split('\n') {
-            if !first {
-                elems.push(Elem::Break);
-            }
-            first = false;
-            for w in split_words(line) {
-                let g = ui.painter().layout_no_wrap(w.to_string(), font.clone(), color);
-                let (asc, _) = galley_asc_desc(&g);
-                elems.push(Elem::Word { g, asc, breakable: w.ends_with(' '), color });
-            }
+fn push_word(elems: &mut Vec<Elem>, ui: &Ui, w: &str, font: &FontId, color: Color32, italics: bool, dy: f32) {
+    let g = word_galley(ui, w, font, color, italics);
+    let (asc, _) = galley_asc_desc(&g);
+    elems.push(Elem::Word { g, asc, breakable: w.ends_with(' '), color, dy });
+}
+
+/// Words of `t` (each `\n` a hard break). With `blank_w`, runs of three or more `_` become
+/// writing lines that wide.
+#[allow(clippy::too_many_arguments)]
+fn push_text(elems: &mut Vec<Elem>, ui: &Ui, t: &str, font: &FontId, color: Color32, italics: bool, dy: f32, blank_w: Option<f32>) {
+    for (li, line) in t.split('\n').enumerate() {
+        if li > 0 {
+            elems.push(Elem::Break);
         }
-    };
-
-    for p in pieces(text) {
-        match p.seg {
-            Segment::Text(t) => push_words(&mut elems, &t, color, ui),
-            Segment::Math(m) => match eq_image(&ctx, &m, size, avail - 2.0 * pad) {
-                Some(img) => elems.push(Elem::Math { img, span: p.span, content: m }),
-                None => push_words(&mut elems, &format!("${m}$"), theme::bad(), ui),
-            },
+        for w in split_words(line) {
+            match blank_w {
+                Some(bw) if w.contains("___") => {
+                    for (piece, is_blank) in split_blanks(w) {
+                        if is_blank {
+                            elems.push(Elem::Blank { w: bw, breakable: piece.ends_with(' '), color });
+                        } else {
+                            push_word(elems, ui, piece, font, color, italics, dy);
+                        }
+                    }
+                }
+                _ => push_word(elems, ui, w, font, color, italics, dy),
+            }
         }
     }
+}
 
-    struct Line {
-        items: Vec<Placed>,
-        asc: f32,
-        desc: f32,
-        w: f32,
-    }
-    let new_line = || Line { items: vec![], asc: size * 0.8, desc: size * 0.25, w: 0.0 };
-    let width_of = |e: &Elem| -> f32 {
-        match e {
-            Elem::Word { g, .. } => g.size().x,
-            Elem::Math { img, .. } => img.size.x + 2.0 * pad,
-            Elem::Break => 0.0,
+/// Split a word into text pieces and `___` runs (trailing spaces stay a text piece, so the gap
+/// after a blank keeps its width and the line can break there).
+fn split_blanks(w: &str) -> Vec<(&str, bool)> {
+    let mut out = Vec::new();
+    let b = w.as_bytes();
+    let (mut i, mut start) = (0, 0);
+    while i < b.len() {
+        if b[i] == b'_' {
+            let mut j = i;
+            while j < b.len() && b[j] == b'_' {
+                j += 1;
+            }
+            if j - i >= 3 {
+                if start < i {
+                    out.push((&w[start..i], false));
+                }
+                out.push((&w[i..j], true));
+                start = j;
+                i = j;
+                continue;
+            }
+            i = j;
+        } else {
+            i += 1;
         }
-    };
-    let mut lines: Vec<Line> = vec![new_line()];
+    }
+    if start < w.len() {
+        out.push((&w[start..], false));
+    }
+    out
+}
+
+fn elem_width(e: &Elem, pad: f32) -> f32 {
+    match e {
+        Elem::Word { g, .. } => g.size().x,
+        Elem::Math { img, .. } => img.size.x + 2.0 * pad,
+        Elem::Blank { w, .. } => *w,
+        Elem::Break => 0.0,
+    }
+}
+
+/// Greedy line breaking of `elems` into lines at most `avail` wide.
+fn flow(elems: &[Elem], avail: f32, size: f32, pad: f32) -> Vec<FLine> {
+    let new_line = || FLine { items: vec![], asc: size * 0.8, desc: size * 0.25, w: 0.0 };
+    let mut lines: Vec<FLine> = vec![new_line()];
     let mut prev_breakable = true;
     for (idx, e) in elems.iter().enumerate() {
         if matches!(e, Elem::Break) {
@@ -418,7 +509,7 @@ pub fn stem_ui_edit(ui: &mut Ui, text: &str, size: f32, color: Color32, family: 
             prev_breakable = true;
             continue;
         }
-        let w = width_of(e);
+        let w = elem_width(e, pad);
         let cur = lines.last_mut().unwrap();
         // a trailing space shouldn't force a wrap
         let trimmed = match e {
@@ -432,9 +523,9 @@ pub fn stem_ui_edit(ui: &mut Ui, text: &str, size: f32, color: Color32, family: 
         cur.items.push(Placed { x: cur.w, elem: idx });
         cur.w += w;
         match e {
-            Elem::Word { asc, breakable, g, .. } => {
-                cur.asc = cur.asc.max(*asc);
-                cur.desc = cur.desc.max((g.size().y - asc).max(0.0));
+            Elem::Word { asc, breakable, g, dy, .. } => {
+                cur.asc = cur.asc.max(asc - dy);
+                cur.desc = cur.desc.max((g.size().y - asc + dy).max(0.0));
                 prev_breakable = *breakable;
             }
             Elem::Math { img, .. } => {
@@ -442,29 +533,54 @@ pub fn stem_ui_edit(ui: &mut Ui, text: &str, size: f32, color: Color32, family: 
                 cur.desc = cur.desc.max(img.size.y - img.baseline);
                 prev_breakable = false;
             }
+            Elem::Blank { breakable, .. } => prev_breakable = *breakable,
             Elem::Break => {}
         }
     }
+    lines
+}
 
-    let leading = size * 0.18;
-    let total_h: f32 = lines.iter().map(|l| l.asc + l.desc + leading).sum::<f32>() - leading;
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(avail, total_h.max(size)), Sense::hover());
-    let painter = ui.painter_at(rect.expand2(Vec2::new(2.0, 6.0)));
+fn flow_height(lines: &[FLine], leading: f32) -> f32 {
+    (lines.iter().map(|l| l.asc + l.desc + leading).sum::<f32>() - leading).max(0.0)
+}
+
+/// Natural (unwrapped) width of a run of elements.
+fn natural_width(elems: &[Elem], pad: f32) -> f32 {
+    let mut best: f32 = 0.0;
+    let mut cur = 0.0;
+    for e in elems {
+        if matches!(e, Elem::Break) {
+            best = best.max(cur);
+            cur = 0.0;
+        } else {
+            cur += elem_width(e, pad);
+        }
+    }
+    best.max(cur)
+}
+
+/// Paint flowed lines with their top-left at `origin`. Returns the clicked equation, if any.
+#[allow(clippy::too_many_arguments)]
+fn paint_flow(ui: &Ui, painter: &egui::Painter, origin: Pos2, lines: &[FLine], elems: &[Elem], leading: f32, pad: f32, color: Color32, editable: bool) -> Option<EqHit> {
     let ppp = ui.pixels_per_point();
     let snap = |v: f32| (v * ppp).round() / ppp;
     let mut hit = None;
-    let mut y = rect.top();
-    for line in &lines {
+    let mut y = origin.y;
+    for line in lines {
         let base = y + line.asc;
         for p in &line.items {
             match &elems[p.elem] {
-                Elem::Word { g, asc, color, .. } => {
-                    painter.galley(Pos2::new(rect.left() + p.x, base - asc), g.clone(), *color);
+                Elem::Word { g, asc, color, dy, .. } => {
+                    painter.galley(Pos2::new(origin.x + p.x, base - asc + dy), g.clone(), *color);
+                }
+                Elem::Blank { w, color, .. } => {
+                    let yy = snap(base + 2.0);
+                    painter.line_segment([Pos2::new(origin.x + p.x + 1.0, yy), Pos2::new(origin.x + p.x + w - 3.0, yy)], egui::Stroke::new(1.0, *color));
                 }
                 Elem::Math { img, span, content } => {
-                    let min = Pos2::new(snap(rect.left() + p.x + pad), snap(base - img.baseline));
+                    let min = Pos2::new(snap(origin.x + p.x + pad), snap(base - img.baseline));
                     let r = Rect::from_min_size(min, img.size);
-                    if editable {
+                    if editable && let Some(span) = span {
                         let hr = r.expand2(Vec2::new(pad, 1.0));
                         let id = ui.id().with(("eqchip", span.start));
                         let rs = ui.interact(hr, id, Sense::click());
@@ -483,7 +599,367 @@ pub fn stem_ui_edit(ui: &mut Ui, text: &str, size: f32, color: Color32, family: 
         }
         y += line.asc + line.desc + leading;
     }
+    hit
+}
+
+/// Same, and with `editable` the equations are clickable chips; the clicked one is returned.
+/// The text is literal (no stem markup); see [`rich_ui`] for structured stems.
+pub fn stem_ui_edit(ui: &mut Ui, text: &str, size: f32, color: Color32, family: FontFamily, editable: bool) -> (Response, Option<EqHit>) {
+    let avail = ui.available_width().max(40.0);
+    let font = FontId::new(size, family);
+    let ctx = ui.ctx().clone();
+    let mut elems: Vec<Elem> = Vec::new();
+    let pad = size * 0.12;
+
+    for p in pieces(text) {
+        match p.seg {
+            Segment::Text(t) => push_text(&mut elems, ui, &t, &font, color, false, 0.0, None),
+            Segment::Math(m) => match eq_image(&ctx, &m, size, avail - 2.0 * pad) {
+                Some(img) => elems.push(Elem::Math { img, span: Some(p.span), content: m }),
+                None => push_text(&mut elems, ui, &format!("${m}$"), &font, theme::bad(), false, 0.0, None),
+            },
+        }
+    }
+
+    let lines = flow(&elems, avail, size, pad);
+    let leading = size * 0.18;
+    let total_h = flow_height(&lines, leading);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(avail, total_h.max(size)), Sense::hover());
+    let painter = ui.painter_at(rect.expand2(Vec2::new(2.0, 6.0)));
+    let hit = paint_flow(ui, &painter, rect.left_top(), &lines, &elems, leading, pad, color, editable);
     (resp, hit)
+}
+
+// ---------- structured stems (richtext blocks) ----------
+
+/// How [`rich_ui`] draws a stem.
+#[derive(Clone, Debug)]
+pub struct Rich {
+    pub size: f32,
+    pub color: Color32,
+    pub family: FontFamily,
+    pub bold_family: FontFamily,
+    /// Extra space between wrapped lines, as a fraction of `size`.
+    pub leading: f32,
+    /// Equations become clickable chips (the clicked one is returned).
+    pub editable: bool,
+    /// A run drawn before the first line (e.g. "(2 pts) "): text, size, colour.
+    pub lead: Option<(String, f32, Color32)>,
+    /// Width of a `___` blank, as a multiple of `size`.
+    pub blank_em: f32,
+}
+
+impl Rich {
+    /// House serif at `size` in `color`.
+    pub fn new(size: f32, color: Color32) -> Rich {
+        Rich {
+            size,
+            color,
+            family: theme::serif_family(),
+            bold_family: theme::serif_bold_family(),
+            leading: 0.22,
+            editable: false,
+            lead: None,
+            blank_em: 4.5,
+        }
+    }
+    pub fn leading(mut self, l: f32) -> Rich {
+        self.leading = l;
+        self
+    }
+    pub fn editable(mut self, e: bool) -> Rich {
+        self.editable = e;
+        self
+    }
+    pub fn lead(mut self, text: impl Into<String>, size: f32, color: Color32) -> Rich {
+        self.lead = Some((text.into(), size, color));
+        self
+    }
+}
+
+/// Math spans of `text` in order, with their char ranges (to make richtext math clickable).
+fn math_spans(text: &str) -> Vec<(String, Range<usize>)> {
+    pieces(text)
+        .into_iter()
+        .filter_map(|p| match p.seg {
+            Segment::Math(m) => Some((m, p.span)),
+            Segment::Text(_) => None,
+        })
+        .collect()
+}
+
+struct RichCtx<'a> {
+    o: &'a Rich,
+    ctx: egui::Context,
+    spans: Vec<(String, Range<usize>)>,
+    next_span: usize,
+}
+
+impl RichCtx<'_> {
+    fn pad(&self) -> f32 {
+        self.o.size * 0.12
+    }
+
+    /// Elements of one richtext line, `avail` wide (equations wider than that are wrapped).
+    fn line_elems(&mut self, ui: &Ui, elems: &mut Vec<Elem>, line: &crate::richtext::Line, avail: f32, force_bold: bool, blanks: bool) {
+        let size = self.o.size;
+        let bw = blanks.then_some((self.o.blank_em * size).min(avail.max(size * 2.0)));
+        for sp in line {
+            let color = self.o.color;
+            if sp.math {
+                let content = sp.text.as_str();
+                let lit = format!("${content}$");
+                let ok = !content.trim().is_empty() && !content.starts_with(char::is_whitespace) && !content.ends_with(char::is_whitespace);
+                let fam = if force_bold || sp.bold { self.o.bold_family.clone() } else { self.o.family.clone() };
+                let font = FontId::new(size, fam);
+                if !ok {
+                    push_text(elems, ui, &lit, &font, color, sp.italic, 0.0, bw);
+                    continue;
+                }
+                let span = self.spans[self.next_span.min(self.spans.len())..].iter().position(|(m, _)| m == content).map(|k| {
+                    let at = self.next_span + k;
+                    self.next_span = at + 1;
+                    self.spans[at].1.clone()
+                });
+                match eq_image(&self.ctx, content, size, avail - 2.0 * self.pad()) {
+                    Some(img) => elems.push(Elem::Math { img, span, content: content.to_string() }),
+                    None => push_text(elems, ui, &lit, &font, theme::bad(), false, 0.0, None),
+                }
+                continue;
+            }
+            let fam = if force_bold || sp.bold { self.o.bold_family.clone() } else { self.o.family.clone() };
+            let (fsize, dy) = if sp.sup {
+                (size * 0.68, -size * 0.34)
+            } else if sp.sub {
+                (size * 0.68, size * 0.16)
+            } else {
+                (size, 0.0)
+            };
+            let font = FontId::new(fsize, fam);
+            push_text(elems, ui, &sp.text, &font, color, sp.italic, dy, bw);
+        }
+    }
+
+    fn lead_elems(&self, ui: &Ui, elems: &mut Vec<Elem>) {
+        if let Some((t, s, c)) = &self.o.lead {
+            push_text(elems, ui, t, &FontId::new(*s, self.o.family.clone()), *c, false, 0.0, None);
+        }
+    }
+
+    /// Flow `elems` at `avail`, allocate the space at the cursor (indented by `indent`) and paint.
+    fn place(&self, ui: &mut Ui, elems: &[Elem], indent: f32, avail: f32) -> (Rect, Option<EqHit>) {
+        let size = self.o.size;
+        let leading = size * self.o.leading;
+        let lines = flow(elems, avail, size, self.pad());
+        let h = flow_height(&lines, leading).max(size);
+        let full = ui.available_width().max(indent + avail);
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(full, h), Sense::hover());
+        let origin = rect.left_top() + Vec2::new(indent, 0.0);
+        let painter = ui.painter_at(rect.expand2(Vec2::new(2.0, 6.0)));
+        let hit = paint_flow(ui, &painter, origin, &lines, elems, leading, self.pad(), self.o.color, self.o.editable);
+        (rect, hit)
+    }
+}
+
+/// Render a stem with its markup (`crate::richtext`): paragraphs with hard line breaks, bullet
+/// and numbered lists with a hanging indent, quotes, bordered tables (header row in bold),
+/// bold/italic, sub/superscripts, `___` blanks as writing lines and typeset `$math$`.
+pub fn rich_ui(ui: &mut Ui, text: &str, o: &Rich) -> (Response, Option<EqHit>) {
+    use crate::richtext::{Block, parse};
+    let avail = ui.available_width().max(40.0);
+    let size = o.size;
+    let mut rc = RichCtx { o, ctx: ui.ctx().clone(), spans: math_spans(text), next_span: 0 };
+    let mut hit = None;
+    let blocks = parse(text);
+    let gap = size * 0.4;
+    let leading = size * o.leading;
+    let resp = ui
+        .scope(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::ZERO;
+            for (bi, block) in blocks.iter().enumerate() {
+                if bi > 0 {
+                    ui.add_space(gap);
+                }
+                let first = bi == 0;
+                if first && o.lead.is_some() && !matches!(block, Block::Para(_)) {
+                    let mut e = Vec::new();
+                    rc.lead_elems(ui, &mut e);
+                    rc.place(ui, &e, 0.0, avail);
+                    ui.add_space(gap * 0.5);
+                }
+                match block {
+                    Block::Para(lines) => {
+                        let mut e = Vec::new();
+                        if first {
+                            rc.lead_elems(ui, &mut e);
+                        }
+                        for (li, l) in lines.iter().enumerate() {
+                            if li > 0 {
+                                e.push(Elem::Break);
+                            }
+                            rc.line_elems(ui, &mut e, l, avail, false, true);
+                        }
+                        hit = hit.take().or(rc.place(ui, &e, 0.0, avail).1);
+                    }
+                    Block::Bullets(items) | Block::Numbered(items) | Block::Quote(items) => {
+                        let kind = match block {
+                            Block::Bullets(_) => 0,
+                            Block::Numbered(_) => 1,
+                            _ => 2,
+                        };
+                        let indent = match kind {
+                            0 => size * 1.25,
+                            1 => size * (1.0 + 0.55 * (items.len().to_string().len() as f32)),
+                            _ => size * 1.1,
+                        };
+                        let mut qtop = f32::NAN;
+                        let mut qbot = 0.0;
+                        for (k, l) in items.iter().enumerate() {
+                            if k > 0 {
+                                ui.add_space(leading);
+                            }
+                            let mut e = Vec::new();
+                            rc.line_elems(ui, &mut e, l, avail - indent, false, true);
+                            let (r, h) = rc.place(ui, &e, indent, avail - indent);
+                            hit = hit.take().or(h);
+                            let font = FontId::new(size, o.family.clone());
+                            let base_y = r.top() + size * 0.8;
+                            match kind {
+                                0 => {
+                                    ui.painter().circle_filled(Pos2::new(r.left() + size * 0.45, base_y - size * 0.3), size * 0.13, o.color);
+                                }
+                                1 => {
+                                    let g = ui.painter().layout_no_wrap(format!("{}.", k + 1), font, o.color);
+                                    let (asc, _) = galley_asc_desc(&g);
+                                    let x = r.left() + indent - size * 0.35 - g.size().x;
+                                    ui.painter().galley(Pos2::new(x, base_y - asc), g, o.color);
+                                }
+                                _ => {
+                                    if qtop.is_nan() {
+                                        qtop = r.top();
+                                    }
+                                    qbot = r.bottom();
+                                }
+                            }
+                        }
+                        if kind == 2 && !qtop.is_nan() {
+                            let x = ui.min_rect().left() + size * 0.35;
+                            ui.painter().line_segment([Pos2::new(x, qtop), Pos2::new(x, qbot)], egui::Stroke::new(size * 0.16, o.color.gamma_multiply(0.35)));
+                        }
+                    }
+                    Block::Table { header, rows } => {
+                        hit = hit.take().or(table_ui(ui, &mut rc, *header, rows, avail));
+                    }
+                }
+            }
+        })
+        .response;
+    (resp, hit)
+}
+
+/// Column widths for a table: natural widths when they fit; otherwise narrow columns keep theirs
+/// and the wide ones share what is left in proportion to their natural width.
+pub fn table_widths(natural: &[f32], avail: f32) -> Vec<f32> {
+    let total: f32 = natural.iter().sum();
+    if total <= avail || natural.is_empty() {
+        return natural.to_vec();
+    }
+    let n = natural.len() as f32;
+    let share = avail / n;
+    let narrow: f32 = natural.iter().filter(|w| **w <= share).sum();
+    let wide: f32 = natural.iter().filter(|w| **w > share).sum();
+    let left = (avail - narrow).max(0.0);
+    natural.iter().map(|w| if *w <= share { *w } else { w / wide * left }).collect()
+}
+
+fn table_ui(ui: &mut Ui, rc: &mut RichCtx, header: bool, rows: &[Vec<crate::richtext::Line>], avail: f32) -> Option<EqHit> {
+    use crate::richtext::line_text;
+    let size = rc.o.size;
+    let color = rc.o.color;
+    let ncols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+    if ncols == 0 {
+        return None;
+    }
+    let hpad = size * 0.45;
+    let vpad = size * 0.28;
+    let blank_cell = |l: &crate::richtext::Line| {
+        let t = line_text(l);
+        let t = t.trim();
+        !t.is_empty() && t.chars().all(|c| c == '_')
+    };
+    // Natural widths (unwrapped). A cell that is only `___` is an empty write-in box.
+    let write_w = size * 7.0;
+    let saved = rc.next_span;
+    let mut nat = vec![size * 2.0; ncols];
+    for (ri, row) in rows.iter().enumerate() {
+        for (ci, cell) in row.iter().enumerate() {
+            let w = if blank_cell(cell) {
+                write_w
+            } else {
+                let mut e = Vec::new();
+                rc.line_elems(ui, &mut e, cell, f32::INFINITY, header && ri == 0, true);
+                natural_width(&e, rc.pad())
+            };
+            nat[ci] = nat[ci].max(w + 2.0 * hpad);
+        }
+    }
+    rc.next_span = saved;
+    let widths = table_widths(&nat, avail - 1.0);
+    let leading = size * rc.o.leading;
+    // Lay out every cell at its column width.
+    let mut laid: Vec<Vec<(Vec<Elem>, Vec<FLine>)>> = Vec::new();
+    let mut heights: Vec<f32> = Vec::new();
+    for (ri, row) in rows.iter().enumerate() {
+        let mut cells = Vec::new();
+        let mut h = size;
+        for ci in 0..ncols {
+            let inner = (widths[ci] - 2.0 * hpad).max(size);
+            let mut e = Vec::new();
+            if let Some(cell) = row.get(ci)
+                && !blank_cell(cell)
+            {
+                rc.line_elems(ui, &mut e, cell, inner, header && ri == 0, true);
+            }
+            let lines = flow(&e, inner, size, rc.pad());
+            h = h.max(flow_height(&lines, leading));
+            cells.push((e, lines));
+        }
+        laid.push(cells);
+        heights.push(h + 2.0 * vpad);
+    }
+    let tw: f32 = widths.iter().sum();
+    let th: f32 = heights.iter().sum();
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width().max(tw), th), Sense::hover());
+    let painter = ui.painter_at(rect.expand(2.0));
+    let ppp = ui.pixels_per_point();
+    let snap = |v: f32| (v * ppp).round() / ppp + 0.5 / ppp;
+    let table = Rect::from_min_size(rect.left_top(), Vec2::new(tw, th));
+    let stroke = egui::Stroke::new(1.0, color.gamma_multiply(0.7));
+    let mut hit = None;
+    let mut y = table.top();
+    for (ri, cells) in laid.iter().enumerate() {
+        let mut x = table.left();
+        for (ci, (e, lines)) in cells.iter().enumerate() {
+            let inner = widths[ci] - 2.0 * hpad;
+            // Header cells are centred, body cells left-aligned.
+            let lw = lines.iter().map(|l| l.w).fold(0.0, f32::max);
+            let dx = if header && ri == 0 { ((inner - lw) / 2.0).max(0.0) } else { 0.0 };
+            let o = Pos2::new(x + hpad + dx, y + vpad);
+            hit = hit.or(paint_flow(ui, &painter, o, lines, e, leading, rc.pad(), color, rc.o.editable));
+            x += widths[ci];
+        }
+        y += heights[ri];
+        if ri + 1 < laid.len() {
+            painter.hline(table.x_range(), snap(y), stroke);
+        }
+    }
+    let mut x = table.left();
+    for w in &widths[..ncols - 1] {
+        x += w;
+        painter.vline(snap(x), table.y_range(), stroke);
+    }
+    painter.rect_stroke(Rect::from_min_max(Pos2::new(snap(table.left()), snap(table.top())), Pos2::new(snap(table.right()), snap(table.bottom()))), 0.0, stroke, egui::StrokeKind::Middle);
+    hit
 }
 
 /// Split into words, each carrying its trailing spaces.
@@ -609,5 +1085,60 @@ mod tests {
             out.drop_without_applying_deltas();
         }
         assert!(CACHE.with(|c| !c.borrow().is_empty()));
+    }
+
+    #[test]
+    fn blanks_split_out_of_words() {
+        assert_eq!(split_blanks("___"), vec![("___", true)]);
+        assert_eq!(split_blanks("x___. "), vec![("x", false), ("___", true), (". ", false)]);
+        assert_eq!(split_blanks("___  "), vec![("___", true), ("  ", false)]);
+        assert_eq!(split_blanks("a_b"), vec![("a_b", false)]);
+    }
+
+    #[test]
+    fn table_columns_fit_or_share() {
+        assert_eq!(table_widths(&[50.0, 80.0], 300.0), vec![50.0, 80.0]);
+        let w = table_widths(&[40.0, 400.0, 400.0], 300.0);
+        assert_eq!(w[0], 40.0);
+        assert!((w.iter().sum::<f32>() - 300.0).abs() < 0.01, "{w:?}");
+        assert!((w[1] - w[2]).abs() < 0.01);
+    }
+
+    #[test]
+    fn stem_preview_is_one_flat_line() {
+        assert_eq!(stem_preview("Name:\nA | B\nKI | ___"), "Name: A | B · KI | ___");
+        assert_eq!(stem_preview("**Find** $x^2$"), "Find x²");
+        assert_eq!(stem_preview("ΔH^{2+} and H_{2}O, x_{ab}"), "ΔH²⁺ and H₂O, x_ab");
+    }
+
+    /// Structured stems through real egui frames: every block kind, a clickable equation inside
+    /// a table cell, and the clicked-chip span pointing at the right `$..$` in the source.
+    #[test]
+    fn rich_frames() {
+        let ctx = egui::Context::default();
+        crate::theme::setup(&ctx);
+        let text = "Lead **bold** *it* H_{2}O x^{2} ___ $x^2$\n• one\n• two $a/b$\n1. a\n2. b\n> quote\nh1 | h2\n---|---\nKI | $y$\nNO | ___";
+        let spans = math_spans(text);
+        assert_eq!(spans.len(), 3);
+        let mut heights = Vec::new();
+        for i in 0..3 {
+            let mut input = egui::RawInput::default();
+            input.screen_rect = Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(900.0, 900.0)));
+            input.time = Some(i as f64 * 0.1);
+            let out = ctx.run_ui(input, |ui| {
+                for w in [60.0, 200.0, 700.0] {
+                    ui.allocate_ui(egui::vec2(w, 10.0), |ui| {
+                        let o = Rich::new(14.0, Color32::BLACK).editable(true).lead("(1 pt) ", 12.0, Color32::GRAY);
+                        let (r, _) = rich_ui(ui, text, &o);
+                        heights.push(r.rect.height());
+                        rich_ui(ui, "| a | b |\n| c | d |", &Rich::new(14.0, Color32::BLACK));
+                        rich_ui(ui, "", &Rich::new(14.0, Color32::BLACK));
+                    });
+                }
+            });
+            out.drop_without_applying_deltas();
+        }
+        // Narrower columns wrap into taller blocks.
+        assert!(heights[0] > heights[2], "{heights:?}");
     }
 }
