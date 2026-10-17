@@ -124,14 +124,16 @@ fn predprey(p: &Params, size: Pt) -> Vec<Handle> {
     }
     let show_prey = p.s("show") != "Predators only";
     let show_pred = p.s("show") != "Prey only";
+    // predators may have their own scale on the right (kind 11)
+    let ap = axes.iter().find(|x| x.kind == 11).copied().unwrap_or(a);
     if show_prey && a.inside((0.0, prey0)) {
         hs.push(Handle::knob((a.px(0.0), a.py(prey0)), "Drag to set the starting prey", move |q, t| {
             q.set_f("prey0", a.vy(t.1).max(0.1));
         }).with_cursor(crate::figures::interact::Cursor::ResizeV));
     }
-    if show_pred && a.inside((0.0, pred0)) {
-        hs.push(Handle::diamond((a.px(0.0), a.py(pred0)), "Drag to set the starting predators", move |q, t| {
-            q.set_f("pred0", a.vy(t.1).max(0.1));
+    if show_pred && ap.inside((0.0, pred0)) {
+        hs.push(Handle::diamond((ap.px(0.0), ap.py(pred0)), "Drag to set the starting predators", move |q, t| {
+            q.set_f("pred0", ap.vy(t.1).max(0.1));
         }).with_cursor(crate::figures::interact::Cursor::ResizeV));
     }
     if p.s("source") == "Populations" {
@@ -142,9 +144,9 @@ fn predprey(p: &Params, size: Pt) -> Vec<Handle> {
                 q.set_f("prey_avg", a.vy(t.1).max(1.0));
             }).with_cursor(crate::figures::interact::Cursor::ResizeV));
         }
-        if show_pred && a.inside((0.0, qa)) {
-            hs.push(Handle::square((xr - 22.0, a.py(qa)), "Drag to set the average predators", move |q, t| {
-                q.set_f("pred_avg", a.vy(t.1).max(1.0));
+        if show_pred && ap.inside((0.0, qa)) {
+            hs.push(Handle::square((xr - 22.0, ap.py(qa)), "Drag to set the average predators", move |q, t| {
+                q.set_f("pred_avg", ap.vy(t.1).max(1.0));
             }).with_cursor(crate::figures::interact::Cursor::ResizeV));
         }
         let c = p.f("cycle");
@@ -178,6 +180,15 @@ fn punnett_h(p: &Params, size: Pt) -> Vec<Handle> {
             }));
         }
     }
+    if p.s("cells") == "Some blank" && p.b("filled") {
+        for j in 0..l.nr {
+            for i in 0..l.nc {
+                let c = (l.gx + l.cell * (i as f64 + 0.5), l.gy + l.cell * (j as f64 + 0.5));
+                let idx = j * l.nc + i;
+                hs.push(Handle::zone(c, (l.cell - 8.0, l.cell - 8.0), "Click to blank or fill this cell", move |q| punnett::toggle_blank_cell(q, idx)));
+            }
+        }
+    }
     hs
 }
 
@@ -186,7 +197,7 @@ fn punnett_h(p: &Params, size: Pt) -> Vec<Handle> {
 fn pedigree_h(p: &Params, size: Pt) -> Vec<Handle> {
     let mut hs = vec![title_zone(size, if p.s("title").trim().is_empty() { 14.0 } else { 34.0 })];
     let (_, _, whos) = pedigree::people_of(p);
-    let carriers = p.b("carriers");
+    let carriers = pedigree::carriers_visible(p);
     for w in whos {
         let (gi, num, st) = (w.gi, w.num, w.status);
         let next = match st {

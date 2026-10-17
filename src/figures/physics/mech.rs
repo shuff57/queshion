@@ -14,77 +14,214 @@ const FK: [[&str; 6]; 6] = [
     ["f5_ang", "Force 5 direction (deg)", "f5_len", "Force 5 length", "f5_lab", "Force 5 label"],
     ["f6_ang", "Force 6 direction (deg)", "f6_len", "Force 6 length", "f6_lab", "Force 6 label"],
 ];
+/// Per-force extras: label mode, mark angle, measured from, angle label mode, angle label, components.
+const FX: [[&str; 6]; 6] = [
+    ["f1_lab_mode", "f1_mark", "f1_from", "f1_alab_mode", "f1_alab", "f1_comps"],
+    ["f2_lab_mode", "f2_mark", "f2_from", "f2_alab_mode", "f2_alab", "f2_comps"],
+    ["f3_lab_mode", "f3_mark", "f3_from", "f3_alab_mode", "f3_alab", "f3_comps"],
+    ["f4_lab_mode", "f4_mark", "f4_from", "f4_alab_mode", "f4_alab", "f4_comps"],
+    ["f5_lab_mode", "f5_mark", "f5_from", "f5_alab_mode", "f5_alab", "f5_comps"],
+    ["f6_lab_mode", "f6_mark", "f6_from", "f6_alab_mode", "f6_alab", "f6_comps"],
+];
+const FXL: [[&str; 6]; 6] = [
+    ["Force 1 label shows", "Force 1: mark its angle", "Force 1 angle measured from", "Force 1 angle label shows", "Force 1 angle label", "Force 1: show its components"],
+    ["Force 2 label shows", "Force 2: mark its angle", "Force 2 angle measured from", "Force 2 angle label shows", "Force 2 angle label", "Force 2: show its components"],
+    ["Force 3 label shows", "Force 3: mark its angle", "Force 3 angle measured from", "Force 3 angle label shows", "Force 3 angle label", "Force 3: show its components"],
+    ["Force 4 label shows", "Force 4: mark its angle", "Force 4 angle measured from", "Force 4 angle label shows", "Force 4 angle label", "Force 4: show its components"],
+    ["Force 5 label shows", "Force 5: mark its angle", "Force 5 angle measured from", "Force 5 angle label shows", "Force 5 angle label", "Force 5: show its components"],
+    ["Force 6 label shows", "Force 6: mark its angle", "Force 6 angle measured from", "Force 6 angle label shows", "Force 6 angle label", "Force 6: show its components"],
+];
 const FDEF: [(f64, &str); 6] = [(270.0, "F_g"), (90.0, "F_N"), (0.0, "F_f"), (180.0, "F_T"), (45.0, "F_app"), (225.0, "F_s")];
+const FMODES: [&str; 3] = ["Text", "Blank line", "None"];
 
 fn fbd_params() -> Vec<ParamDef> {
     let mut v = vec![
         ParamDef::choice("body", "Body", &["Dot", "Block", "Ball", "Cart"], "Dot"),
+        ParamDef::int("body_size", "Body size (%)", 50, 200, 100),
         ParamDef::int("n", "Number of forces", 1, 6, 2),
     ];
     for (i, k) in FK.iter().enumerate() {
+        let x = FX[i];
+        let xl = FXL[i];
         v.push(ParamDef::float(k[0], k[1], 0.0, 360.0, 1.0, FDEF[i].0));
-        v.push(ParamDef::float(k[2], k[3], 0.4, 1.6, 0.05, 1.0));
+        v.push(ParamDef::float(k[2], k[3], 0.25, 2.0, 0.05, 1.0));
+        v.push(ParamDef::choice(x[0], xl[0], &FMODES, "Text"));
         v.push(ParamDef::text(k[4], k[5], FDEF[i].1));
+        v.push(ParamDef::bool(x[1], xl[1], false));
+        v.push(ParamDef::choice(x[2], xl[2], &["Horizontal", "Vertical"], "Horizontal"));
+        v.push(ParamDef::choice(x[3], xl[3], &FMODES, "Text"));
+        v.push(ParamDef::text(x[4], xl[4], "theta"));
+        v.push(ParamDef::bool(x[5], xl[5], false));
     }
     v.push(ParamDef::text("body_lab", "Label inside the body (blank = none)", ""));
+    v.push(ParamDef::choice("mv_lab_mode", "Velocity label shows", &FMODES, "Text"));
     v.push(ParamDef::text("mv_lab", "Velocity label", "v"));
+    v.push(ParamDef::choice("ma_lab_mode", "Acceleration label shows", &FMODES, "Text"));
     v.push(ParamDef::text("ma_lab", "Acceleration label", "a"));
     v.push(ParamDef::choice("notation", "Vector notation", &["None", "Arrow", "Bold"], "None"));
     v.push(ParamDef::choice("motion", "Motion (drawn beside the body)", &["None", "Velocity", "Acceleration", "Both"], "None"));
-    v.push(ParamDef::float("mdir", "Motion direction (deg)", 0.0, 360.0, 1.0, 0.0));
+    v.push(ParamDef::float("mdir", "Velocity direction (deg)", 0.0, 360.0, 1.0, 0.0));
+    v.push(ParamDef::float("adir", "Acceleration direction (deg; -1 = same as velocity)", -1.0, 360.0, 1.0, -1.0));
     v.push(ParamDef::bool("mirror", "Mirror (flip left to right)", false));
     v.push(ParamDef::bool("color", "Color (for slides)", false));
     v
 }
 
-pub(super) fn ray_exit(kind: &str, ang: f64) -> f64 {
+/// Distance from the body's centre to its edge along `ang` (body scaled by `sc`).
+pub(super) fn ray_exit(kind: &str, ang: f64, sc: f64) -> f64 {
     let (hw, hh, circ) = match kind { "Block" => (38.0, 28.0, false), "Ball" => (28.0, 28.0, true), "Cart" => (48.0, 22.0, false), _ => (6.0, 6.0, true) };
+    let (hw, hh) = if kind == "Dot" { (hw, hh) } else { (hw * sc, hh * sc) };
     if circ { return hw; }
     let a = ang.to_radians();
     let (c, s) = (a.cos().abs().max(1e-6), a.sin().abs().max(1e-6));
     (hw / c).min(hh / s)
 }
 
+/// Geometry shared by the renderer and the handles.
+pub(super) struct FGeo {
+    pub w: f64,
+    pub h: f64,
+    pub cx: f64,
+    pub cy: f64,
+    pub sc: f64,
+    /// (tail, tip, direction deg) per force; tails are offset when forces share a direction.
+    pub forces: Vec<(Pt, Pt, f64)>,
+    /// (centre, direction deg, label key, label mode key) per motion arrow.
+    pub motion: Vec<(Pt, f64, &'static str, &'static str)>,
+}
+
+pub(super) fn fbd_geo(p: &Params) -> FGeo {
+    let body = p.s("body");
+    let sc = (p.f("body_size") / 100.0).clamp(0.5, 2.0);
+    let n = p.i("n").clamp(1, 6) as usize;
+    let angs: Vec<f64> = (0..n).map(|i| p.f(FK[i][0]).rem_euclid(360.0)).collect();
+    // raw geometry around (0,0)
+    let mut forces = vec![];
+    for i in 0..n {
+        let ang = angs[i];
+        let same: Vec<usize> = (0..n).filter(|&j| (angs[j] - ang).abs() < 1.0).collect();
+        let k = same.iter().position(|&j| j == i).unwrap_or(0) as f64;
+        let off = (k - (same.len() as f64 - 1.0) / 2.0) * 14.0;
+        let (ox, oy) = pol(0.0, 0.0, off, ang - 90.0);
+        let total = ray_exit(body, ang, sc) + 20.0 + 55.0 * p.f(FK[i][2]);
+        let tip = pol(ox, oy, total, ang);
+        forces.push(((ox, oy), tip, ang));
+    }
+    let m = p.s("motion");
+    let (sv, sa) = (m == "Velocity" || m == "Both", m == "Acceleration" || m == "Both");
+    let mut right = 60.0f64 * if body == "Dot" { 0.5 } else { sc };
+    for (_, t, _) in &forces { if t.1.abs() < 70.0 { right = right.max(t.0 + 40.0); } }
+    let mx = right.max(100.0) + 60.0;
+    let mut motion = vec![];
+    let adir = if p.f("adir") < 0.0 { p.f("mdir") } else { p.f("adir") };
+    let rows = sv as usize + sa as usize;
+    let mut y = if rows == 2 { -36.0 } else { 0.0 };
+    if sv { motion.push(((mx, y), p.f("mdir"), "mv_lab", "mv_lab_mode")); y += 72.0; }
+    if sa { motion.push(((mx, y), adir, "ma_lab", "ma_lab_mode")); }
+    // bounding box (labels need ~34 px past a tip)
+    let (mut x0, mut x1, mut y0, mut y1) = (-70.0f64 * sc, 70.0f64 * sc, -50.0f64 * sc, 50.0f64 * sc);
+    for (_, t, _) in &forces { x0 = x0.min(t.0 - 40.0); x1 = x1.max(t.0 + 40.0); y0 = y0.min(t.1 - 36.0); y1 = y1.max(t.1 + 36.0); }
+    for (c, _, _, _) in &motion { x0 = x0.min(c.0 - 50.0); x1 = x1.max(c.0 + 50.0); y0 = y0.min(c.1 - 50.0); y1 = y1.max(c.1 + 50.0); }
+    // keep the old 480x360 canvas centred on the body unless something sticks out
+    let hw = 240f64.max(-x0 + 16.0).max(x1 + 16.0);
+    let hh = 180f64.max(-y0 + 16.0).max(y1 + 16.0);
+    let (w, h, cx, cy) = (2.0 * hw, 2.0 * hh, hw, hh);
+    let sh = |q: Pt| (q.0 + cx, q.1 + cy);
+    FGeo {
+        w, h, cx, cy, sc,
+        forces: forces.into_iter().map(|(a, b, g)| (sh(a), sh(b), g)).collect(),
+        motion: motion.into_iter().map(|(c, a, k, mk)| (sh(c), a, k, mk)).collect(),
+    }
+}
+
+/// `F_A` -> `F_{Ax}` (component labels keep the force's name).
+fn comp_label(lab: &str, axis: &str) -> String {
+    let t = lab.trim();
+    if t.is_empty() || t.eq_ignore_ascii_case("none") { return format!("F_{axis}"); }
+    match t.split_once('_') {
+        Some((b, s)) => format!("{b}_{{{}{axis}}}", s.trim_matches(|c| c == '{' || c == '}')),
+        None => format!("{t}_{axis}"),
+    }
+}
+
 fn fbd_render(p: &Params) -> String {
-    let mut g = G::new(480.0, 360.0, p.b("mirror"));
+    let geo = fbd_geo(p);
+    let (cx, cy, sc) = (geo.cx, geo.cy, geo.sc);
+    let mut g = G::new(geo.w, geo.h, p.b("mirror"));
     let col = p.b("color");
-    let (cx, cy) = (240.0, 180.0);
     let body = p.s("body").to_string();
     match body.as_str() {
-        "Block" => g.rect(cx - 38.0, cy - 28.0, 76.0, 56.0, FILL, INK, SW),
-        "Ball" => g.circle(cx, cy, 28.0, FILL, INK, SW),
+        "Block" => g.rect(cx - 38.0 * sc, cy - 28.0 * sc, 76.0 * sc, 56.0 * sc, FILL, INK, SW),
+        "Ball" => g.circle(cx, cy, 28.0 * sc, FILL, INK, SW),
         "Cart" => {
-            g.rect(cx - 48.0, cy - 22.0, 96.0, 28.0, FILL, INK, SW);
-            g.circle(cx - 26.0, cy + 12.0, 9.0, FILL, INK, SW);
-            g.circle(cx + 26.0, cy + 12.0, 9.0, FILL, INK, SW);
+            g.rect(cx - 48.0 * sc, cy - 22.0 * sc, 96.0 * sc, 28.0 * sc, FILL, INK, SW);
+            g.circle(cx - 26.0 * sc, cy + 12.0 * sc, 9.0 * sc, FILL, INK, SW);
+            g.circle(cx + 26.0 * sc, cy + 12.0 * sc, 9.0 * sc, FILL, INK, SW);
         }
         _ => {}
     }
     let st = match p.s("notation") { "Arrow" => VEC, "Bold" => BOLD, _ => ITALIC };
-    for i in 0..(p.i("n").clamp(1, 6) as usize) {
-        let ang = p.f(FK[i][0]);
-        let len = p.f(FK[i][2]);
-        let total = ray_exit(&body, ang) + 20.0 + 55.0 * len;
-        let (tx, ty) = pol(cx, cy, total, ang);
-        let c = colr(col, i);
-        g.arrow(cx, cy, tx, ty, c, SW);
-        let (ux, uy) = ((tx - cx) / total, (ty - cy) / total);
-        g.label_dir(tx, ty, ux, uy, 24.0, p.s(FK[i][4]), st);
-    }
-    if body == "Dot" { g.circle(cx, cy, 6.0, INK, INK, 1.0); }
-    if body != "Dot" && !p.s("body_lab").trim().is_empty() { g.label_at(cx, cy, 22.0, p.s("body_lab"), ITALIC); }
-    // motion indicators beside the body
-    let m = p.s("motion").to_string();
-    let md = p.f("mdir");
-    let mut row = 0.0;
-    for (name, lab) in [("Velocity", p.s("mv_lab")), ("Acceleration", p.s("ma_lab"))] {
-        if m == name || m == "Both" {
-            let (mx, my) = (415.0, 292.0 + row);
-            let (a, b) = (pol(mx, my, -26.0, md), pol(mx, my, 26.0, md));
-            g.dash_arrow(a.0, a.1, b.0, b.1, if col { PAL[1] } else { INK }, SW);
-            g.label_dir(b.0, b.1, (b.0 - mx) / 26.0, (b.1 - my) / 26.0, 20.0, lab, st);
-            row += 40.0;
+    // components and angle marks under the arrows
+    for (i, &(tail, tip, ang)) in geo.forces.iter().enumerate() {
+        let x = FX[i];
+        if p.b(x[5]) {
+            let cc = if col { PAL[i % PAL.len()] } else { GREY };
+            let (ex, ey) = (tip.0, tail.1);
+            if (tip.0 - tail.0).abs() > 4.0 { g.dash_arrow(tail.0, tail.1, ex, ey, cc, 1.8); }
+            if (tip.1 - tail.1).abs() > 4.0 { g.dash_arrow(ex, ey, tip.0, tip.1, cc, 1.8); }
+            let lab = p.s(FK[i][4]);
+            let sy = if tip.1 < tail.1 { 1.0 } else { -1.0 };
+            g.tex((tail.0 + ex) / 2.0, tail.1 + 22.0 * sy + 6.0, 18.0, "middle", &comp_label(lab, "x"), ITALIC);
+            let sx = if tip.0 > tail.0 { 1.0 } else { -1.0 };
+            g.tex(ex + 8.0 * sx, (ey + tip.1) / 2.0 + 6.0, 18.0, if sx > 0.0 { "start" } else { "end" }, &comp_label(lab, "y"), ITALIC);
         }
+        if p.b(x[1]) {
+            let refa = if p.s(x[2]) == "Vertical" {
+                if ang.rem_euclid(360.0) <= 180.0 { 90.0 } else { 270.0 }
+            } else if (ang.rem_euclid(360.0) - 180.0).abs() < 90.0 { 180.0 } else { 0.0 };
+            // signed sweep from the reference to the force, the short way round
+            let mut d = (ang - refa).rem_euclid(360.0);
+            if d > 180.0 { d -= 360.0; }
+            let r0 = ray_exit(&body, refa, sc);
+            let r = (r0 + 26.0).max(44.0);
+            let e = pol(tail.0, tail.1, r + 14.0, refa);
+            let s0 = pol(tail.0, tail.1, r0.max(4.0), refa);
+            g.dash(s0.0, s0.1, e.0, e.1, INK, 1.3);
+            g.polyline(&arc_pts(tail.0, tail.1, r, refa, refa + d), INK, 1.5);
+            let mid = pol(tail.0, tail.1, r + 16.0, refa + d / 2.0);
+            let t = match p.s(x[3]) { "Blank line" => String::new(), "None" => "none".into(), _ => p.s(x[4]).to_string() };
+            g.label_at(mid.0, mid.1, 22.0, &t, ITALIC);
+        }
+    }
+    for (i, &(tail, tip, _)) in geo.forces.iter().enumerate() {
+        let c = colr(col, i);
+        g.arrow(tail.0, tail.1, tip.0, tip.1, c, SW);
+        let l = ((tip.0 - tail.0).powi(2) + (tip.1 - tail.1).powi(2)).sqrt().max(1e-6);
+        let (mut ux, mut uy) = ((tip.0 - tail.0) / l, (tip.1 - tail.1) / l);
+        // side-by-side arrows (same direction): push their labels apart sideways
+        let side = (tail.0 - cx) * (-uy) + (tail.1 - cy) * ux; // offset along the arrow's normal
+        if side.abs() > 1.0 {
+            let s = side.signum();
+            let (nx, ny) = (-uy * s, ux * s);
+            let (vx, vy) = (ux * 0.5 + nx, uy * 0.5 + ny);
+            let vl = (vx * vx + vy * vy).sqrt();
+            ux = vx / vl;
+            uy = vy / vl;
+        }
+        g.label_dir(tip.0, tip.1, ux, uy, 24.0, &lab_mode(p, FK[i][4], FX[i][0]), st);
+    }
+    if body == "Dot" { g.circle(cx, cy, 6.0, INK, INK, 1.0); } else { g.circle(cx, cy, 3.0, INK, INK, 1.0); }
+    if body != "Dot" && !p.s("body_lab").trim().is_empty() { g.label_at(cx, cy + 14.0 * sc, 20.0, p.s("body_lab"), ITALIC); }
+    // motion indicators beside the body: dashed, since they are not forces
+    for &(c, md, key, mk) in &geo.motion {
+        let (a, b) = (pol(c.0, c.1, -26.0, md), pol(c.0, c.1, 26.0, md));
+        g.dash_arrow(a.0, a.1, b.0, b.1, if col { PAL[1] } else { INK }, SW);
+        let lab = lab_mode(p, key, mk);
+        // label beside the middle of the arrow (right of travel)
+        let (ux, uy) = ((b.0 - c.0) / 26.0, (b.1 - c.1) / 26.0);
+        let (nx, ny) = (-uy, ux);
+        let s = if nx < -0.1 || (nx.abs() <= 0.1 && ny > 0.0) { -1.0 } else { 1.0 };
+        g.label_dir(c.0 + nx * s * 4.0, c.1 + ny * s * 4.0, nx * s, ny * s, 21.0, &lab, st);
     }
     g.finish()
 }
@@ -100,20 +237,31 @@ const VK: [[&str; 8]; 4] = [
 const VDEF: [(f64, f64, &str); 4] = [(4.0, 0.0, "A"), (3.0, 90.0, "B"), (2.0, 180.0, "C"), (2.0, 270.0, "D")];
 const ARROW_STYLES: [&str; 3] = ["Drawn", "Dashed", "Left off"];
 
+const VMODE: [[&str; 2]; 4] = [
+    ["v1_lab_mode", "Vector 1 label shows"], ["v2_lab_mode", "Vector 2 label shows"],
+    ["v3_lab_mode", "Vector 3 label shows"], ["v4_lab_mode", "Vector 4 label shows"],
+];
+const LMODES: [&str; 3] = ["Text", "Blank line", "None"];
+
 fn vector_params() -> Vec<ParamDef> {
     let mut v = vec![ParamDef::int("n", "Number of vectors", 1, 4, 2)];
     for (i, k) in VK.iter().enumerate() {
-        v.push(ParamDef::float(k[0], k[1], 0.0, 10.0, 0.5, VDEF[i].0));
+        v.push(ParamDef::float(k[0], k[1], 0.0, 12.0, 0.5, VDEF[i].0));
         v.push(ParamDef::float(k[2], k[3], 0.0, 360.0, 1.0, VDEF[i].1));
+        v.push(ParamDef::choice(VMODE[i][0], VMODE[i][1], &LMODES, "Text"));
         v.push(ParamDef::text(k[4], k[5], VDEF[i].2));
         v.push(ParamDef::choice(k[6], k[7], &ARROW_STYLES, "Drawn"));
     }
     v.push(ParamDef::bool("resultant", "Show resultant", true));
     v.push(ParamDef::choice("res_style", "Resultant arrow", &ARROW_STYLES, "Drawn"));
+    v.push(ParamDef::choice("res_lab_mode", "Resultant label shows", &LMODES, "Text"));
     v.push(ParamDef::text("res_lab", "Resultant label", "R"));
     v.push(ParamDef::bool("mark_angle", "Mark its angle", false));
+    v.push(ParamDef::choice("ang_lab_mode", "Angle label shows", &["Text", "Blank line", "Degrees"], "Text"));
+    v.push(ParamDef::text("ang_lab", "Angle label", "theta"));
     v.push(ParamDef::bool("components", "Show its components", false));
     v.push(ParamDef::choice("grid", "Grid and axes", &["Grid", "Axes only", "None"], "Grid"));
+    v.push(ParamDef::bool("axes", "x and y axes, from the first tail", false));
     v.push(ParamDef::bool("mirror", "Mirror (flip left to right)", false));
     v.push(ParamDef::bool("color", "Color (for slides)", false));
     v
@@ -146,71 +294,117 @@ pub(super) fn vlayout(p: &Params, w: f64, h: f64) -> VLay {
     let gx1 = (x1.ceil() + 1.0).max(gx0 + 4.0);
     let gy0 = y0.floor() - 1.0;
     let gy1 = (y1.ceil() + 1.0).max(gy0 + 4.0);
-    let u = ((w - 60.0) / (gx1 - gx0)).min((h - 50.0) / (gy1 - gy0)).min(46.0);
+    let u = ((w - 60.0) / (gx1 - gx0)).min((h - 50.0) / (gy1 - gy0)).min(64.0);
     let (ox, oy) = ((w - u * (gx1 - gx0)) / 2.0 - gx0 * u, (h + u * (gy1 - gy0)) / 2.0 + gy0 * u);
     VLay { n, pts, res, u, ox, oy, gx0, gx1, gy0, gy1 }
+}
+
+/// Label centres of the vectors and the resultant: each on the side of its arrow away from the
+/// middle of the figure (ties: right of travel, left for a lone vector / the resultant).
+pub(super) fn vlabel_pos(p: &Params, l: &VLay) -> (Vec<Pt>, Pt) {
+    let pxy = |q: Pt| (l.ox + q.0 * l.u, l.oy - q.1 * l.u);
+    let mut cen: Vec<Pt> = l.pts.iter().map(|&q| pxy(q)).collect();
+    if p.b("components") { cen.push(pxy((l.res.0, 0.0))); }
+    let k = cen.len() as f64;
+    let mid = (cen.iter().map(|q| q.0).sum::<f64>() / k, cen.iter().map(|q| q.1).sum::<f64>() / k);
+    // offset grows with the label's half-extent across the arrow
+    let place = |a: Pt, b: Pt, pref: f64, text: &str| -> Pt {
+        let tw = parse_tex(text, ITALIC).0.iter().map(|(t, lv)| t.chars().count() as f64 * if *lv == 0 { 13.0 } else { 9.0 }).sum::<f64>();
+        let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+        let len = (dx * dx + dy * dy).sqrt().max(1e-6);
+        let (nx, ny) = (-dy / len, dx / len);
+        let m = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+        let d = (m.0 - mid.0) * nx + (m.1 - mid.1) * ny;
+        let s = if d.abs() < 2.0 { pref } else { d.signum() };
+        let off = 8.0 + (tw / 2.0 + 4.0) * nx.abs() + 13.0 * ny.abs();
+        (m.0 + nx * s * off, m.1 + ny * s * off)
+    };
+    let v = (0..l.n).map(|i| place(pxy(l.pts[i]), pxy(l.pts[i + 1]), if l.n == 1 { -1.0 } else { 1.0 }, p.s(VK[i][4]))).collect();
+    (v, place(pxy((0.0, 0.0)), pxy(l.res), -1.0, p.s("res_lab")))
 }
 
 fn vector_render(p: &Params) -> String {
     let (w, h) = (480.0, 360.0);
     let mut g = G::new(w, h, p.b("mirror"));
+    g.halo = true;
     let col = p.b("color");
+    let (vcol, ccol) = if col { ("#7c3aed", "#a78bfa") } else { (INK, "#6b7280") };
+    if col { g.tcol = "#7c3aed"; }
     let VLay { n, pts, res, u, ox, oy, gx0, gx1, gy0, gy1 } = vlayout(p, w, h);
     let pxy = |q: Pt| (ox + q.0 * u, oy - q.1 * u);
     let mode = p.s("grid").to_string();
+    let fs = 25.0;
     if mode == "Grid" {
         let mut x = gx0;
-        while x <= gx1 + 1e-9 { let a = pxy((x, gy0)); let b = pxy((x, gy1)); g.line(a.0, a.1, b.0, b.1, "#b6bcc6", 1.0); x += 1.0; }
+        while x <= gx1 + 1e-9 { let a = pxy((x, gy0)); let b = pxy((x, gy1)); g.line(a.0, a.1, b.0, b.1, "#cdd1d8", 1.2); x += 1.0; }
         let mut y = gy0;
-        while y <= gy1 + 1e-9 { let a = pxy((gx0, y)); let b = pxy((gx1, y)); g.line(a.0, a.1, b.0, b.1, "#b6bcc6", 1.0); y += 1.0; }
-        let (a, b) = (pxy((gx0, gy0)), pxy((gx1, gy1)));
-        g.polyline(&[(a.0, a.1), (b.0, a.1), (b.0, b.1), (a.0, b.1), (a.0, a.1)], "#8a919d", 1.2);
-    } else if mode == "Axes only" {
-        let (a, b) = (pxy((gx0, 0.0)), pxy((gx1, 0.0)));
-        g.arrow(a.0, a.1, b.0, b.1, INK, 1.6);
-        let (c, d) = (pxy((0.0, gy0)), pxy((0.0, gy1)));
-        g.arrow(c.0, c.1, d.0, d.1, INK, 1.6);
-        g.tex(b.0 - 4.0, b.1 + 20.0, 16.0, "end", "x", ITALIC);
-        g.tex(d.0 + 10.0, d.1 + 8.0, 16.0, "start", "y", ITALIC);
+        while y <= gy1 + 1e-9 { let a = pxy((gx0, y)); let b = pxy((gx1, y)); g.line(a.0, a.1, b.0, b.1, "#cdd1d8", 1.2); y += 1.0; }
     }
-    // components of the resultant
+    if mode == "Axes only" || p.b("axes") {
+        // double-headed axes through the first tail
+        let (a, b) = (pxy((gx0 + 0.25, 0.0)), pxy((gx1 - 0.25, 0.0)));
+        g.dim_arrow(a.0, a.1, b.0, b.1, INK, 1.8);
+        let (c, d) = (pxy((0.0, gy0 + 0.25)), pxy((0.0, gy1 - 0.25)));
+        g.dim_arrow(c.0, c.1, d.0, d.1, INK, 1.8);
+        let tc = g.tcol;
+        g.tcol = "#111";
+        g.tex(b.0 + 10.0, b.1 + 8.0, 24.0, "start", "x", ITALIC);
+        g.tex(d.0, d.1 - 10.0, 24.0, "middle", "y", ITALIC);
+        g.tcol = tc;
+    }
+    let lab = |i: usize| lab_mode(p, VK[i][4], VMODE[i][0]);
+    // components of the resultant (of vector 1 when there is no resultant)
     if p.b("components") && n >= 1 {
         let (o, c, r) = (pxy((0.0, 0.0)), pxy((res.0, 0.0)), pxy(res));
-        let cc = if col { PAL[3] } else { GREY };
-        if res.0.abs() > 0.01 { g.dash_arrow(o.0, o.1, c.0, c.1, cc, 1.8); }
-        if res.1.abs() > 0.01 { g.dash_arrow(c.0, c.1, r.0, r.1, cc, 1.8); }
+        if res.0.abs() > 0.01 { g.dash_arrow(o.0, o.1, c.0, c.1, ccol, 2.2); }
+        if res.1.abs() > 0.01 { g.dash_arrow(c.0, c.1, r.0, r.1, ccol, 2.2); }
+        let base = if n >= 2 && p.b("resultant") { p.s("res_lab").to_string() } else { p.s(VK[0][4]).to_string() };
+        let base = { let b = base.trim(); if b.is_empty() || b.eq_ignore_ascii_case("none") { "R".to_string() } else { b.split('_').next().unwrap_or("R").to_string() } };
+        let tc = g.tcol;
+        g.tcol = if col { "#a78bfa" } else { "#6b7280" };
         let sx = if res.1 >= 0.0 { 1.0 } else { -1.0 };
-        g.tex((o.0 + c.0) / 2.0, (o.1 + c.1) / 2.0 + 20.0 * sx + 5.0, 16.0, "middle", "R_x", ITALIC);
-        let sg = if res.0 >= 0.0 { 1.0 } else { -1.0 };
-        g.tex((c.0 + r.0) / 2.0 + 10.0 * sg, (c.1 + r.1) / 2.0 + 5.0, 16.0, if sg > 0.0 { "start" } else { "end" }, "R_y", ITALIC);
+        g.tex(o.0 + (c.0 - o.0) * 0.3, (o.1 + c.1) / 2.0 + 26.0 * sx + 4.0, fs, "middle", &format!("{base}_x"), ITALIC);
+        let sg = if res.0 >= 0.0 { -1.0 } else { 1.0 };
+        g.tex((c.0 + r.0) / 2.0 + 12.0 * sg, (c.1 + r.1) / 2.0 + 8.0, fs, if sg > 0.0 { "start" } else { "end" }, &format!("{base}_y"), ITALIC);
+        g.tcol = tc;
     }
+    let (vlabs, rlab) = vlabel_pos(p, &vlayout(p, w, h));
     // the vectors
     for i in 0..n {
         let (a, b) = (pxy(pts[i]), pxy(pts[i + 1]));
-        let c = colr(col, i);
-        styled_arrow(&mut g, p.s(VK[i][6]), a, b, c, SW);
+        let c = if col { vcol } else { colr(false, i) };
+        styled_arrow(&mut g, p.s(VK[i][6]), a, b, c, SW + 1.0);
         let (dx, dy) = (b.0 - a.0, b.1 - a.1);
         let l = (dx * dx + dy * dy).sqrt().max(1e-6);
-        // right-hand side of the direction of travel (pixel y-down: rotate (dx,dy) by +90deg)
-        let (nx, ny) = (-dy / l, dx / l);
-        g.label_at((a.0 + b.0) / 2.0 + nx * 17.0, (a.1 + b.1) / 2.0 + ny * 17.0, 20.0, p.s(VK[i][4]), ITALIC);
+        let _ = l;
+        g.label_at(vlabs[i].0, vlabs[i].1, fs, &lab(i), ITALIC);
     }
     if p.b("resultant") && n >= 2 {
         let (a, b) = (pxy((0.0, 0.0)), pxy(res));
-        let c = if col { PAL[0] } else { INK };
-        styled_arrow(&mut g, p.s("res_style"), a, b, c, SW + 0.5);
+        styled_arrow(&mut g, p.s("res_style"), a, b, vcol, SW + 1.0);
         let (dx, dy) = (b.0 - a.0, b.1 - a.1);
-        let l = (dx * dx + dy * dy).sqrt().max(1e-6);
-        let (nx, ny) = (-dy / l, dx / l);
-        g.label_at((a.0 + b.0) / 2.0 - nx * 18.0, (a.1 + b.1) / 2.0 - ny * 18.0, 20.0, p.s("res_lab"), ITALIC);
+        let _ = (dx, dy);
+        g.label_at(rlab.0, rlab.1, fs, &lab_mode(p, "res_lab", "res_lab_mode"), ITALIC);
     }
     if p.b("mark_angle") && n >= 1 {
         let ang = res.1.atan2(res.0).to_degrees().rem_euclid(360.0);
         let o = pxy((0.0, 0.0));
         let r = (u * 1.1).clamp(22.0, 40.0);
-        g.polyline(&arc_pts(o.0, o.1, r, 0.0, ang), INK, 1.4);
-        let mid = pol(o.0, o.1, r + 24.0, ang / 2.0);
-        g.tex(mid.0, mid.1 + 6.0, 17.0, "middle", &format!("{:.1}°", ang), UPRIGHT);
+        g.polyline(&arc_pts(o.0, o.1, r, 0.0, ang), INK, 1.6);
+        let tc = g.tcol;
+        g.tcol = "#111";
+        match p.s("ang_lab_mode") {
+            "Degrees" => {
+                let mid = pol(o.0, o.1, r + 24.0, ang / 2.0);
+                g.tex(mid.0, mid.1 + 6.0, 17.0, "middle", &format!("{:.1}°", ang), UPRIGHT);
+            }
+            m => {
+                let mid = pol(o.0, o.1, r + 16.0, ang / 2.0);
+                let t = if m == "Blank line" { String::new() } else { p.s("ang_lab").to_string() };
+                g.label_at(mid.0 + 4.0, mid.1, 22.0, &t, ITALIC);
+            }
+        }
+        g.tcol = tc;
     }
     g.finish()
 }
@@ -218,23 +412,41 @@ fn vector_render(p: &Params) -> String {
 // ---------------------------------------------------------------- inclined plane
 
 const DIRS: [&str; 3] = ["None", "Up the ramp", "Down the ramp"];
+const IMODES: [&str; 3] = ["Text", "Blank line", "None"];
 
 fn incline_params() -> Vec<ParamDef> {
     vec![
         ParamDef::choice("obj", "Object", &["Block", "Ball", "Cart"], "Block"),
+        ParamDef::choice("obj_lab_mode", "Object label shows", &IMODES, "Text"),
         ParamDef::text("obj_lab", "Object label", "m"),
-        ParamDef::int("size", "Object size (%)", 50, 150, 100),
+        ParamDef::int("size", "Object size (%)", 50, 200, 100),
         ParamDef::float("pos", "Where on the ramp", 0.15, 0.85, 0.05, 0.55),
+        ParamDef::bool("two", "A second block higher up, tied by a string", false),
+        ParamDef::text("obj2_lab", "Second block label", "m_2"),
+        ParamDef::bool("tension", "Tension in the string", false),
         ParamDef::float("angle", "Ramp angle (deg)", 5.0, 75.0, 1.0, 30.0),
         ParamDef::bool("show_angle", "Mark the angle", true),
-        ParamDef::text("ang_lab", "Angle label", "theta"),
+        ParamDef::choice("ang_lab_mode", "Angle label shows", &IMODES, "Text"),
+        ParamDef::text("ang_lab", "Angle label (e.g. theta or 30°)", "theta"),
         ParamDef::choice("surface", "Surface", &["Smooth", "Rough"], "Smooth"),
         ParamDef::bool("gravity", "Gravity", false),
+        ParamDef::choice("grav_lab_mode", "Gravity label shows", &IMODES, "Text"),
+        ParamDef::text("grav_lab", "Gravity label", "F_g"),
         ParamDef::bool("normal", "Normal force", false),
+        ParamDef::choice("norm_lab_mode", "Normal force label shows", &IMODES, "Text"),
+        ParamDef::text("norm_lab", "Normal force label", "F_N"),
         ParamDef::choice("friction", "Friction", &DIRS, "None"),
+        ParamDef::choice("fric_lab_mode", "Friction label shows", &IMODES, "Text"),
+        ParamDef::text("fric_lab", "Friction label", "F_f"),
         ParamDef::choice("applied", "Applied force", &DIRS, "None"),
+        ParamDef::choice("app_lab_mode", "Applied force label shows", &IMODES, "Text"),
+        ParamDef::text("app_lab", "Applied force label", "F_A"),
         ParamDef::choice("velocity", "Velocity", &DIRS, "None"),
+        ParamDef::choice("vel_lab_mode", "Velocity label shows", &IMODES, "Text"),
+        ParamDef::text("vel_lab", "Velocity label", "v"),
         ParamDef::choice("accel", "Acceleration", &DIRS, "None"),
+        ParamDef::choice("acc_lab_mode", "Acceleration label shows", &IMODES, "Text"),
+        ParamDef::text("acc_lab", "Acceleration label", "a"),
         ParamDef::bool("mark_len", "Mark the length of the ramp", false),
         ParamDef::text("len_lab", "Length label", "L"),
         ParamDef::bool("mark_h", "Mark the height of the ramp", false),
@@ -243,6 +455,34 @@ fn incline_params() -> Vec<ParamDef> {
         ParamDef::bool("color", "Color (for slides)", false),
     ]
 }
+
+/// `F_g` -> `F_{g1}` for the k-th of two objects (labels without a subscript gain one).
+fn indexed(lab: &str, k: usize, two: bool) -> String {
+    if !two || lab.is_empty() || lab == "none" || lab.trim() == "T" { return lab.to_string(); }
+    match lab.split_once('_') {
+        Some((b, s)) => format!("{b}_{{{}{k}}}", s.trim_matches(|c| c == '{' || c == '}')),
+        None => format!("{lab}_{k}"),
+    }
+}
+
+/// A drawn object on the ramp: centre, half height (along the normal), half length (along the
+/// ramp), whether it is round.
+#[derive(Clone, Copy)]
+struct RampObj { com: Pt, hh: f64, hl: f64, round: bool }
+
+impl RampObj {
+    /// Point where a ray from the centre along unit `d` leaves the object.
+    fn exit(&self, d: Pt, uu: Pt, nn: Pt) -> Pt {
+        let t = if self.round { self.hh } else {
+            let (a, b) = ((d.0 * uu.0 + d.1 * uu.1).abs().max(1e-6), (d.0 * nn.0 + d.1 * nn.1).abs().max(1e-6));
+            (self.hl / a).min(self.hh / b)
+        };
+        (self.com.0 + d.0 * t, self.com.1 + d.1 * t)
+    }
+}
+
+/// Distance of the ramp-length mark above the slope for an object of half height `hh`.
+pub(super) fn len_mark_off(hh: f64) -> f64 { 2.0 * hh + 34.0 }
 
 fn incline_render(p: &Params) -> String {
     let (w, h) = (520.0, 330.0);
@@ -258,7 +498,7 @@ fn incline_render(p: &Params) -> String {
     let lh = bw / tr.cos();
     g.poly(&[(ax, ground), (bx, ground), (tx, ty)], "#f3f4f7", INK, SW);
     g.hatch(ax - 28.0, bx + 28.0, ground, true);
-    // rough surface texture just inside the slope
+    // rough surface: short ticks just inside the slope
     if p.s("surface") == "Rough" {
         let mut s = 8.0;
         while s < lh - 4.0 {
@@ -267,59 +507,110 @@ fn incline_render(p: &Params) -> String {
             s += 11.0;
         }
     }
-    // object
+    // objects
     let sz = 50.0 * p.f("size") / 100.0;
-    let s0 = p.f("pos") * lh;
-    let base = (ax + uu.0 * s0, ground + uu.1 * s0);
+    let two = p.b("two");
     let kind = p.s("obj").to_string();
-    let (com, half_h, half_l) = match kind.as_str() {
-        "Ball" => {
-            let r = sz / 2.0;
-            let c = (base.0 + nn.0 * r, base.1 + nn.1 * r);
-            g.circle(c.0, c.1, r, FILL, INK, SW);
-            (c, r, r)
-        }
-        "Cart" => {
-            let (len, hh, r) = (sz * 1.5, sz * 0.5, sz * 0.14);
-            let loc = |l: f64, hgt: f64| (base.0 + uu.0 * l + nn.0 * hgt, base.1 + uu.1 * l + nn.1 * hgt);
-            let pts = [loc(-len / 2.0, 2.0 * r), loc(len / 2.0, 2.0 * r), loc(len / 2.0, 2.0 * r + hh), loc(-len / 2.0, 2.0 * r + hh)];
-            g.poly(&pts, FILL, INK, SW);
-            for l in [-len * 0.3, len * 0.3] { let c = loc(l, r); g.circle(c.0, c.1, r, "#fff", INK, SW); }
-            (loc(0.0, 2.0 * r + hh / 2.0), 2.0 * r + hh / 2.0, len / 2.0)
-        }
-        _ => {
-            let loc = |l: f64, hgt: f64| (base.0 + uu.0 * l + nn.0 * hgt, base.1 + uu.1 * l + nn.1 * hgt);
-            let pts = [loc(-sz / 2.0, 0.0), loc(sz / 2.0, 0.0), loc(sz / 2.0, sz), loc(-sz / 2.0, sz)];
-            g.poly(&pts, FILL, INK, SW);
-            (loc(0.0, sz / 2.0), sz / 2.0, sz / 2.0)
-        }
+    let draw_obj = |g: &mut G, kind: &str, s0: f64, lab: &str| -> RampObj {
+        let base = (ax + uu.0 * s0, ground + uu.1 * s0);
+        let loc = |l: f64, hgt: f64| (base.0 + uu.0 * l + nn.0 * hgt, base.1 + uu.1 * l + nn.1 * hgt);
+        let o = match kind {
+            "Ball" => {
+                let r = sz / 2.0;
+                let c = loc(0.0, r);
+                g.circle(c.0, c.1, r, FILL, INK, SW);
+                RampObj { com: c, hh: r, hl: r, round: true }
+            }
+            "Cart" => {
+                let (len, hh, r) = (sz * 1.5, sz * 0.5, sz * 0.14);
+                let pts = [loc(-len / 2.0, 2.0 * r), loc(len / 2.0, 2.0 * r), loc(len / 2.0, 2.0 * r + hh), loc(-len / 2.0, 2.0 * r + hh)];
+                g.poly(&pts, FILL, INK, SW);
+                for l in [-len * 0.3, len * 0.3] { let c = loc(l, r); g.circle(c.0, c.1, r, "#fff", INK, SW); }
+                RampObj { com: loc(0.0, 2.0 * r + hh / 2.0), hh: hh / 2.0 + r, hl: len / 2.0, round: false }
+            }
+            _ => {
+                let pts = [loc(-sz / 2.0, 0.0), loc(sz / 2.0, 0.0), loc(sz / 2.0, sz), loc(-sz / 2.0, sz)];
+                g.poly(&pts, FILL, INK, SW);
+                RampObj { com: loc(0.0, sz / 2.0), hh: sz / 2.0, hl: sz / 2.0, round: false }
+            }
+        };
+        let st = if lab.trim().chars().next().is_some_and(|c| c.is_ascii_digit()) { UPRIGHT } else { ITALIC };
+        g.label_at(o.com.0, o.com.1, 20.0, lab, st);
+        o
     };
-    if kind != "Cart" || true { g.label_at(com.0, com.1, 20.0, p.s("obj_lab"), ITALIC); }
-    // force arrows from the centre of the object
-    let dirv = |d: &str, sgn: f64| -> Option<(f64, f64)> {
-        match d { "Up the ramp" => Some((uu.0 * sgn, uu.1 * sgn)), "Down the ramp" => Some((-uu.0 * sgn, -uu.1 * sgn)), _ => None }
-    };
-    let mut forces: Vec<((f64, f64), &str, &str, usize)> = Vec::new();
-    if p.b("gravity") { forces.push(((0.0, 1.0), "F_g", "g", 0)); }
-    if p.b("normal") { forces.push((nn, "F_N", "n", 1)); }
-    if let Some(d) = dirv(p.s("friction"), 1.0) { forces.push((d, "F_f", "f", 2)); }
-    if let Some(d) = dirv(p.s("applied"), 1.0) { forces.push((d, "F_app", "a", 3)); }
-    for (d, lab, _k, i) in forces {
-        let l = 62.0 + half_h.max(half_l) * 0.9;
-        let tip = (com.0 + d.0 * l, com.1 + d.1 * l);
-        g.arrow(com.0, com.1, tip.0, tip.1, colr(col, i), SW);
-        g.label_dir(tip.0, tip.1, d.0, d.1, 20.0, lab, ITALIC);
+    let pos = p.f("pos");
+    let mut objs: Vec<RampObj> = vec![];
+    if two {
+        // the pair is centred on `pos`, the first object lower down
+        let gap = (sz * 1.9).max(lh * 0.32);
+        let s1 = (pos * lh - gap / 2.0).max(sz * 0.8);
+        let s2 = (s1 + gap).min(lh - sz * 0.8);
+        let o1 = draw_obj(&mut g, "Block", s1, &lab_mode(p, "obj_lab", "obj_lab_mode"));
+        let o2 = draw_obj(&mut g, "Block", s2, p.s("obj2_lab"));
+        // the string between them
+        let a = (o1.com.0 + uu.0 * o1.hl, o1.com.1 + uu.1 * o1.hl);
+        let b = (o2.com.0 - uu.0 * o2.hl, o2.com.1 - uu.1 * o2.hl);
+        g.line(a.0, a.1, b.0, b.1, INK, 1.4);
+        objs.push(o1);
+        objs.push(o2);
+    } else {
+        objs.push(draw_obj(&mut g, &kind, pos * lh, &lab_mode(p, "obj_lab", "obj_lab_mode")));
     }
-    // velocity / acceleration: dashed, drawn beside the object (off the ramp side)
-    let mut off = half_h + 34.0;
-    for (name, key, lab) in [("velocity", "velocity", "v"), ("accel", "accel", "a")] {
-        let _ = name;
-        if let Some(d) = dirv(p.s(key), 1.0) {
-            let c = (com.0 + nn.0 * off, com.1 + nn.1 * off);
-            let (a, b) = ((c.0 - d.0 * 30.0, c.1 - d.1 * 30.0), (c.0 + d.0 * 30.0, c.1 + d.1 * 30.0));
+    let dirv = |d: &str| -> Option<Pt> {
+        match d { "Up the ramp" => Some(uu), "Down the ramp" => Some((-uu.0, -uu.1)), _ => None }
+    };
+    let arrow_len = 46.0 + sz * 0.3;
+    let force = |g: &mut G, from: Pt, d: Pt, lab: &str, i: usize| {
+        let tip = (from.0 + d.0 * arrow_len, from.1 + d.1 * arrow_len);
+        g.arrow(from.0, from.1, tip.0, tip.1, colr(col, i), SW);
+        g.label_dir(tip.0, tip.1, d.0, d.1, 19.0, lab, ITALIC);
+    };
+    let n_obj = objs.len();
+    for (k, o) in objs.iter().enumerate() {
+        let k1 = k + 1;
+        if p.b("gravity") {
+            let from = o.exit((0.0, 1.0), uu, nn);
+            force(&mut g, from, (0.0, 1.0), &indexed(&lab_mode(p, "grav_lab", "grav_lab_mode"), k1, two), 0);
+        }
+        if p.b("normal") {
+            let from = (o.com.0 + nn.0 * o.hh, o.com.1 + nn.1 * o.hh);
+            force(&mut g, from, nn, &indexed(&lab_mode(p, "norm_lab", "norm_lab_mode"), k1, two), 1);
+        }
+        if let Some(d) = dirv(p.s("friction")) {
+            // along the surface from the face it acts towards
+            let sgn = d.0 * uu.0 + d.1 * uu.1;
+            let from = (o.com.0 + uu.0 * o.hl * sgn - nn.0 * o.hh * 0.55, o.com.1 + uu.1 * o.hl * sgn - nn.1 * o.hh * 0.55);
+            force(&mut g, from, d, &indexed(&lab_mode(p, "fric_lab", "fric_lab_mode"), k1, two), 2);
+        }
+        if let Some(d) = dirv(p.s("applied")) {
+            // applied force acts on the last (upper) object
+            if k + 1 == n_obj {
+                let sgn = d.0 * uu.0 + d.1 * uu.1;
+                let from = (o.com.0 + uu.0 * o.hl * sgn, o.com.1 + uu.1 * o.hl * sgn);
+                force(&mut g, from, d, &lab_mode(p, "app_lab", "app_lab_mode"), 3);
+            }
+        }
+        if two && p.b("tension") {
+            let (d, sgn) = if k == 0 { (uu, 1.0) } else { ((-uu.0, -uu.1), -1.0) };
+            let from = (o.com.0 + uu.0 * o.hl * sgn, o.com.1 + uu.1 * o.hl * sgn);
+            let tip = (from.0 + d.0 * 34.0, from.1 + d.1 * 34.0);
+            g.arrow(from.0, from.1, tip.0, tip.1, colr(col, 4), SW);
+            let m = ((from.0 + tip.0) / 2.0 + nn.0 * 14.0, (from.1 + tip.1) / 2.0 + nn.1 * 14.0);
+            g.label_at(m.0, m.1, 18.0, "T", ITALIC);
+        }
+    }
+    // velocity / acceleration: dashed, drawn beside (above) the upper object
+    let top = *objs.last().unwrap();
+    let mut off = top.hh + 34.0;
+    for (key, mk, lk) in [("velocity", "vel_lab_mode", "vel_lab"), ("accel", "acc_lab_mode", "acc_lab")] {
+        if let Some(d) = dirv(p.s(key)) {
+            // above the object and a little ahead, clear of the normal force
+            let ahead = top.hl * 0.9 + 14.0;
+            let c = (top.com.0 + nn.0 * off + d.0 * ahead, top.com.1 + nn.1 * off + d.1 * ahead);
+            let (a, b) = ((c.0 - d.0 * 26.0, c.1 - d.1 * 26.0), (c.0 + d.0 * 26.0, c.1 + d.1 * 26.0));
             g.dash_arrow(a.0, a.1, b.0, b.1, if col { PAL[1] } else { INK }, SW);
-            g.label_dir(b.0, b.1, d.0, d.1, 20.0, lab, ITALIC);
-            off += 30.0;
+            g.label_dir(c.0 + nn.0 * 2.0, c.1 + nn.1 * 2.0, nn.0, nn.1, 19.0, &lab_mode(p, lk, mk), ITALIC);
+            off += 34.0;
         }
     }
     // angle mark
@@ -327,14 +618,18 @@ fn incline_render(p: &Params) -> String {
         let r = (lh * 0.22).clamp(34.0, 60.0);
         g.polyline(&arc_pts(ax, ground, r, 0.0, th), INK, 1.5);
         let m = pol(ax, ground, r + 20.0, th / 2.0);
-        g.label_at(m.0, m.1, 20.0, p.s("ang_lab"), ITALIC);
+        let t = lab_mode(p, "ang_lab", "ang_lab_mode");
+        let st = if t.chars().next().is_some_and(|c| c.is_ascii_digit()) { UPRIGHT } else { ITALIC };
+        g.label_at(m.0 + if st == UPRIGHT { 8.0 } else { 0.0 }, m.1, 20.0, &t, st);
     }
     if p.b("mark_len") {
-        let o = -26.0;
-        let (s0, s1) = (46.0, lh - 24.0);
-        let (a, b) = ((ax + uu.0 * s0 + nn.0 * o, ground + uu.1 * s0 + nn.1 * o), (ax + uu.0 * s1 + nn.0 * o, ground + uu.1 * s1 + nn.1 * o));
-                g.dim_arrow(a.0, a.1, b.0, b.1, INK, 1.4);
-        g.label_at((a.0 + b.0) / 2.0 - nn.0 * 14.0, (a.1 + b.1) / 2.0 - nn.1 * 14.0, 20.0, p.s("len_lab"), ITALIC);
+        // dimension line above the slope, clear of the objects, with extension lines
+        let o = len_mark_off(top.hh);
+        let (a, b) = ((ax + nn.0 * o, ground + nn.1 * o), (tx + nn.0 * o, ty + nn.1 * o));
+        g.line(ax + nn.0 * 6.0, ground + nn.1 * 6.0, ax + nn.0 * (o + 8.0), ground + nn.1 * (o + 8.0), INK, 1.0);
+        g.line(tx + nn.0 * 6.0, ty + nn.1 * 6.0, tx + nn.0 * (o + 8.0), ty + nn.1 * (o + 8.0), INK, 1.0);
+        g.dim_arrow(a.0, a.1, b.0, b.1, INK, 1.4);
+        g.label_at((a.0 + b.0) / 2.0 + nn.0 * 14.0, (a.1 + b.1) / 2.0 + nn.1 * 14.0, 20.0, p.s("len_lab"), ITALIC);
     }
     if p.b("mark_h") {
         let x = bx + 28.0;
@@ -345,269 +640,56 @@ fn incline_render(p: &Params) -> String {
     g.finish()
 }
 
-// ---------------------------------------------------------------- pulley
+// ---------------------------------------------------------------- pulley (see pulley.rs)
 
-fn pulley_params() -> Vec<ParamDef> {
-    vec![
-        ParamDef::choice("setup", "Setup", &["Atwood", "Table", "Ramp", "Block & tackle"], "Atwood"),
-        ParamDef::text("l_lab", "Left object label", "m_1"),
-        ParamDef::int("l_size", "Left object size (%)", 60, 150, 100),
-        ParamDef::text("r_lab", "Right object label", "m_2"),
-        ParamDef::int("r_size", "Right object size (%)", 60, 150, 100),
-        ParamDef::choice("lower", "Hangs lower", &["Neither", "Left", "Right"], "Neither"),
-        ParamDef::bool("third", "Hang a third object below", false),
-        ParamDef::text("t_lab", "Third object label", "m_3"),
-        ParamDef::float("angle", "Ramp angle (deg)", 15.0, 60.0, 1.0, 30.0),
-        ParamDef::bool("tension", "Tension", false),
-        ParamDef::bool("gravity", "Gravity", false),
-        ParamDef::choice("accel", "Acceleration", &["None", "Right falls", "Left falls"], "None"),
-        ParamDef::bool("mirror", "Mirror (flip left to right)", false),
-        ParamDef::bool("color", "Color (for slides)", false),
-    ]
-}
-
-fn pulley_wheel(g: &mut G, cx: f64, cy: f64, r: f64) {
-    g.circle(cx, cy, r, "#f3f4f7", INK, SW);
-    g.circle(cx, cy, 8.0 * (r / 44.0).max(0.6), "none", INK, 1.8);
-    g.circle(cx, cy, 2.6, INK, INK, 1.0);
-}
-
-fn mass_box(g: &mut G, cx: f64, top: f64, s: f64, lab: &str) {
-    g.rect(cx - s / 2.0, top, s, s, FILL, INK, SW);
-    g.label_at(cx, top + s / 2.0, 22.0, lab, ITALIC);
-}
-
-fn pulley_render(p: &Params) -> String {
-    let (w, h) = (480.0, 430.0);
-    let mut g = G::new(w, h, p.b("mirror"));
-    let col = p.b("color");
-    let setup = p.s("setup").to_string();
-    let (ls, rs) = (60.0 * p.f("l_size") / 100.0, 60.0 * p.f("r_size") / 100.0);
-    let lower = p.s("lower").to_string();
-    let (dl, dr) = (if lower == "Left" { 45.0 } else { 0.0 }, if lower == "Right" { 45.0 } else { 0.0 });
-    let tcol = colr(col, 0);
-    let gcol = colr(col, 1);
-    let acol = colr(col, 2);
-    let accel = p.s("accel").to_string();
-    // helper-collected geometry: (center x, top y, size) of the hanging masses
-    let mut hang: Vec<(f64, f64, f64)> = Vec::new();
-    let r = 42.0;
-    match setup.as_str() {
-        "Table" => {
-            // tabletop at left, pulley at its right edge, right mass hangs
-            let (top, edge) = (170.0, 290.0);
-            g.rect(40.0, top, edge - 40.0, 14.0, "#f3f4f7", INK, SW);
-            g.line(60.0, top + 14.0, 60.0, 385.0, INK, SW);
-            g.line(edge - 20.0, top + 14.0, edge - 20.0, 385.0, INK, SW);
-            let pc = (edge + 24.0, top - ls / 2.0 + 0.0 + r * 0.0 + 2.0);
-            let pr = 24.0;
-            let pcy = top - ls / 2.0 + pr;
-            let _ = pc;
-            let pcx = edge + 8.0;
-            g.line(edge, top + 7.0, pcx, pcy, INK, SW);
-            pulley_wheel(&mut g, pcx, pcy, pr);
-            let lx = 160.0 + 0.0;
-            let ytop = top - ls;
-            let sy = pcy - pr;
-            mass_box(&mut g, lx, ytop, ls, p.s("l_lab"));
-            g.line(lx + ls / 2.0, sy.max(ytop + ls / 2.0) , pcx, sy, INK, 2.0);
-            let _ = (ytop, sy);
-            let rx = pcx + pr;
-            let rt = 250.0 + dr;
-            g.line(rx, pcy, rx, rt, INK, 2.0);
-            hang.push((rx, rt, rs));
-            mass_box(&mut g, rx, rt, rs, p.s("r_lab"));
-            if p.b("tension") {
-                g.arrow(lx + ls / 2.0, ytop + ls / 2.0, lx + ls / 2.0 + 56.0, ytop + ls / 2.0, tcol, SW);
-                g.tex(lx + ls / 2.0 + 28.0, ytop + ls / 2.0 - 8.0, 20.0, "middle", "T", ITALIC);
-            }
-            if p.b("gravity") {
-                g.arrow(lx, ytop + ls / 2.0, lx, ytop + ls / 2.0 + 56.0, gcol, SW);
-                g.tex(lx + 8.0, ytop + ls / 2.0 + 56.0, 20.0, "start", "F_g", ITALIC);
-            }
-            if accel != "None" {
-                let right = accel == "Right falls";
-                let (a, b) = if right { (lx - ls / 2.0 - 70.0, lx - ls / 2.0 - 8.0) } else { (lx - ls / 2.0 - 8.0, lx - ls / 2.0 - 70.0) };
-                g.arrow(a, ytop + ls / 2.0, b, ytop + ls / 2.0, acol, SW);
-                g.tex((a + b) / 2.0, ytop + ls / 2.0 - 10.0, 20.0, "middle", "a", ITALIC);
-            }
-        }
-        "Ramp" => {
-            let th = p.f("angle").to_radians();
-            let ground = 350.0;
-            let ax = 30.0;
-            let hgt = 190.0;
-            let bw = (hgt / th.tan()).min(280.0);
-            let tp = (ax + bw, ground - bw * th.tan());
-            g.poly(&[(ax, ground), (tp.0, ground), tp], "#f3f4f7", INK, SW);
-            g.hatch(ax - 10.0, tp.0 + 80.0, ground, true);
-            let uu = (th.cos(), -th.sin());
-            let nn = (-th.sin(), -th.cos());
-            let sz = ls;
-            // string line is parallel to the slope through the block centre
-            let hh = sz / 2.0;
-            // pulley sits at the apex, circle tangent to the string line
-            let pr = 24.0;
-            let q = (tp.0 + nn.0 * hh + uu.0 * hh * th.tan(), tp.1 + nn.1 * hh + uu.1 * hh * th.tan());
-            let c = (q.0 - nn.0 * pr, q.1 - nn.1 * pr);
-            let sb = 0.5 * ((tp.0 - ax) / th.cos());
-            let base = (ax + uu.0 * sb, ground + uu.1 * sb);
-            let loc = |l: f64, hgt: f64| (base.0 + uu.0 * l + nn.0 * hgt, base.1 + uu.1 * l + nn.1 * hgt);
-            let pts = [loc(-sz / 2.0, 0.0), loc(sz / 2.0, 0.0), loc(sz / 2.0, sz), loc(-sz / 2.0, sz)];
-            g.poly(&pts, FILL, INK, SW);
-            let com = loc(0.0, sz / 2.0);
-            g.label_at(com.0, com.1, 22.0, p.s("l_lab"), ITALIC);
-            let sa = loc(sz / 2.0, sz / 2.0);
-            g.line(sa.0, sa.1, q.0, q.1, INK, 2.0);
-            pulley_wheel(&mut g, c.0, c.1, pr);
-            let rx = c.0 + pr;
-            let rt = c.1 + 80.0 + dr;
-            g.line(rx, c.1, rx, rt, INK, 2.0);
-            let rot = nn.1.atan2(nn.0).to_degrees();
-            let _ = rot;
-            mass_box(&mut g, rx, rt, rs, p.s("r_lab"));
-            hang.push((rx, rt, rs));
-            if p.b("tension") {
-                let tip = (com.0 + uu.0 * 60.0, com.1 + uu.1 * 60.0);
-                g.arrow(com.0, com.1, tip.0, tip.1, tcol, SW);
-                g.label_dir(tip.0, tip.1, uu.0, uu.1, 20.0, "T", ITALIC);
-            }
-            if p.b("gravity") {
-                g.arrow(com.0, com.1, com.0, com.1 + 56.0, gcol, SW);
-                g.label_dir(com.0, com.1 + 56.0, 0.0, 1.0, 20.0, "F_g", ITALIC);
-            }
-            if accel != "None" {
-                let d = if accel == "Right falls" { (-uu.0, -uu.1) } else { (uu.0, uu.1) };
-                let c0 = (com.0 + nn.0 * (sz / 2.0 + 28.0), com.1 + nn.1 * (sz / 2.0 + 28.0));
-                let (a, b) = ((c0.0 - d.0 * 26.0, c0.1 - d.1 * 26.0), (c0.0 + d.0 * 26.0, c0.1 + d.1 * 26.0));
-                g.arrow(a.0, a.1, b.0, b.1, acol, SW);
-                g.label_dir(b.0, b.1, d.0, d.1, 20.0, "a", ITALIC);
-            }
-        }
-        "Block & tackle" => {
-            g.hatch(110.0, 380.0, 30.0, false);
-            // fixed pulley and a movable pulley carrying the load
-            let (fx, fy) = (200.0, 100.0);
-            g.line(fx, 30.0, fx, fy - 30.0, INK, SW);
-            pulley_wheel(&mut g, fx, fy, 30.0);
-            let (mx, my) = (fx + 60.0, 220.0 + dl);
-            g.line(mx + 30.0, 30.0, mx + 30.0, my, INK, 2.0); // rope tied to the ceiling
-            pulley_wheel(&mut g, mx, my, 30.0);
-            // rope: ceiling -> right side of movable -> underneath -> left side -> fixed pulley top -> down
-            g.polyline(&arc_pts(mx, my, 30.0, 0.0, -180.0), INK, 2.0);
-            g.line(mx - 30.0, my, fx + 30.0, fy, INK, 2.0);
-            g.polyline(&arc_pts(fx, fy, 30.0, 0.0, 180.0), INK, 2.0);
-            g.line(fx - 30.0, fy, fx - 30.0, 330.0, INK, 2.0);
-            g.arrow(fx - 30.0, 300.0, fx - 30.0, 372.0, tcol, SW);
-            g.tex(fx - 42.0, 350.0, 22.0, "end", "F", ITALIC);
-            // load
-            g.line(mx, my + 3.0, mx, my + 70.0, INK, 2.0);
-            mass_box(&mut g, mx, my + 70.0, ls, p.s("l_lab"));
-            hang.push((mx, my + 70.0, ls));
-            if p.b("tension") {
-                g.arrow(mx - 30.0, my - 12.0, mx - 30.0, my - 58.0, tcol, 2.0);
-                g.arrow(mx + 30.0, my - 12.0, mx + 30.0, my - 58.0, tcol, 2.0);
-                g.tex(mx - 6.0, my - 36.0, 18.0, "end", "T", ITALIC);
-                g.tex(mx + 36.0, my - 36.0, 18.0, "start", "T", ITALIC);
-            }
-            if accel != "None" {
-                let down = accel == "Right falls";
-                let (a, b) = if down { (my + 92.0, my + 140.0) } else { (my + 140.0, my + 92.0) };
-                g.arrow(mx + ls / 2.0 + 24.0, a, mx + ls / 2.0 + 24.0, b, acol, SW);
-                g.tex(mx + ls / 2.0 + 34.0, (a + b) / 2.0 + 6.0, 20.0, "start", "a", ITALIC);
-            }
-        }
-        _ => {
-            // Atwood machine
-            g.hatch(130.0, 350.0, 30.0, false);
-            let (cx, cy) = (240.0, 105.0);
-            g.line(cx, 30.0, cx, cy - r, INK, SW);
-            pulley_wheel(&mut g, cx, cy, r);
-            let (lx, rx) = (cx - r, cx + r);
-            let (lt, rt) = (235.0 + dl, 235.0 + dr);
-            g.line(lx, cy, lx, lt, INK, 2.0);
-            g.line(rx, cy, rx, rt, INK, 2.0);
-            mass_box(&mut g, lx, lt, ls, p.s("l_lab"));
-            mass_box(&mut g, rx, rt, rs, p.s("r_lab"));
-            hang.push((lx, lt, ls));
-            hang.push((rx, rt, rs));
-            if p.b("tension") {
-                for (x, t) in [(lx, lt), (rx, rt)] {
-                    g.arrow(x, t, x, t - 50.0, tcol, SW);
-                    g.tex(x + 8.0, t - 22.0, 18.0, "start", "T", ITALIC);
-                }
-            }
-            if accel != "None" {
-                let right_down = accel == "Right falls";
-                for (side, (x, t, s)) in [(-1.0, (lx, lt, ls)), (1.0, (rx, rt, rs))] {
-                    let down = (side > 0.0) == right_down;
-                    let (a, b) = if down { (t + 8.0, t + 56.0) } else { (t + 56.0, t + 8.0) };
-                    let ax = x + side * (s / 2.0 + 22.0);
-                    g.arrow(ax, a, ax, b, acol, SW);
-                    g.tex(ax + side * 8.0, (a + b) / 2.0 + 6.0, 20.0, if side > 0.0 { "start" } else { "end" }, "a", ITALIC);
-                }
-            }
-        }
-    }
-    // third object hangs below the right-hand (or load) mass
-    if p.b("third") {
-        if let Some(&(x, t, s)) = hang.last() {
-            let ss = 46.0;
-            g.line(x, t + s, x, t + s + 34.0, INK, 2.0);
-            mass_box(&mut g, x, t + s + 34.0, ss, p.s("t_lab"));
-        }
-    }
-    // weights of hanging masses (offset beside the string so they stay readable)
-    if p.b("gravity") && setup != "Table" && setup != "Ramp" {
-        let third = p.b("third");
-        let n_h = hang.len();
-        for (i, &(x, t, s)) in hang.iter().enumerate() {
-            if third && i + 1 == n_h {
-                // the third object carries the weight arrow instead
-                let (ty, ts) = (t + s + 34.0, 46.0);
-                g.arrow(x, ty + ts, x, ty + ts + 42.0, gcol, SW);
-                g.tex(x + 8.0, ty + ts + 40.0, 18.0, "start", "F_g", ITALIC);
-                continue;
-            }
-            g.arrow(x, t + s, x, t + s + 42.0, gcol, SW);
-            g.tex(x + 8.0, t + s + 40.0, 18.0, "start", "F_g", ITALIC);
-        }
-    }
-    g.finish()
-}
+use super::pulley::{pulley_params, pulley_render};
 
 // ---------------------------------------------------------------- projectile motion
+
+const PMODES: [&str; 3] = ["Text", "Blank line", "None"];
 
 fn proj_params() -> Vec<ParamDef> {
     vec![
         ParamDef::choice("from", "Launch from", &["Level ground", "A cliff"], "Level ground"),
-        ParamDef::float("angle", "Launch angle (deg)", 5.0, 85.0, 1.0, 45.0),
+        ParamDef::float("angle", "Launch angle (deg; 0 = horizontal, off a cliff)", 0.0, 85.0, 1.0, 45.0),
         ParamDef::float("cliff", "Cliff height (relative)", 0.1, 1.2, 0.05, 0.4),
         ParamDef::bool("show_angle", "Mark the angle", true),
-        ParamDef::text("ang_lab", "Angle label", "theta"),
+        ParamDef::choice("ang_lab_mode", "Angle label shows", &PMODES, "Text"),
+        ParamDef::text("ang_lab", "Angle label (e.g. theta or 30°)", "theta"),
         ParamDef::choice("object", "Object", &["Ball", "Dot"], "Ball"),
         ParamDef::int("size", "Object size (%)", 30, 150, 60),
         ParamDef::choice("path", "Path", &["Dashed", "Solid", "None"], "Dashed"),
         ParamDef::int("steps", "Ball at equal time steps (0 = off)", 0, 12, 0),
+        ParamDef::bool("letters", "Letter the positions A, B, C...", false),
         ParamDef::bool("show_v", "Launch velocity", true),
+        ParamDef::choice("v_lab_mode", "Velocity label shows", &PMODES, "Text"),
         ParamDef::text("v_lab", "Velocity label", "v_0"),
         ParamDef::bool("comps", "Its components", false),
+        ParamDef::choice("vx_lab_mode", "Horizontal component label shows", &PMODES, "Text"),
+        ParamDef::text("vx_lab", "Horizontal component label", "v_{0x}"),
+        ParamDef::choice("vy_lab_mode", "Vertical component label shows", &PMODES, "Text"),
+        ParamDef::text("vy_lab", "Vertical component label", "v_{0y}"),
         ParamDef::bool("show_g", "Acceleration due to gravity", false),
+        ParamDef::choice("g_lab_mode", "Gravity label shows", &PMODES, "Text"),
+        ParamDef::text("g_lab", "Gravity label", "g"),
         ParamDef::bool("mark_h", "Mark the maximum height", false),
         ParamDef::text("h_lab", "Height label", "H"),
         ParamDef::bool("mark_r", "Mark the range", false),
         ParamDef::text("r_lab", "Range label", "R"),
+        ParamDef::bool("mark_cliff", "Mark the cliff height", false),
+        ParamDef::text("cliff_lab", "Cliff height label", "h"),
         ParamDef::bool("mirror", "Mirror (flip left to right)", false),
         ParamDef::bool("color", "Color (for slides)", false),
     ]
 }
 
-pub(super) struct PG { pub th: f64, pub vx: f64, pub vy: f64, pub h0: f64, pub r: f64, pub ground: f64, pub lx: f64, pub ly: f64, pub s: f64, pub t_land: f64 }
+pub(super) struct PG { pub th: f64, pub vx: f64, pub vy: f64, #[allow(dead_code)] pub h0: f64, pub r: f64, pub ground: f64, pub lx: f64, pub ly: f64, pub s: f64, pub t_land: f64 }
 
 /// Launch geometry of the projectile figure (canvas width `w`).
 pub(super) fn proj_geo(p: &Params, w: f64) -> PG {
     let cliff = p.s("from") == "A cliff";
-    let th = p.f("angle").clamp(5.0, 85.0);
+    // a horizontal launch only makes sense off a cliff
+    let th = p.f("angle").clamp(if cliff { 0.0 } else { 5.0 }, 85.0);
     let (vx, vy) = (th.to_radians().cos(), th.to_radians().sin());
     let h0 = if cliff { p.f("cliff") } else { 0.0 };
     let r = if p.s("object") == "Dot" { 4.0 } else { 34.0 * p.f("size") / 100.0 };
@@ -631,76 +713,107 @@ fn proj_render(p: &Params) -> String {
     let cliff = p.s("from") == "A cliff";
     let PG { th, vx, vy, r, ground, lx, ly, s, t_land, .. } = proj_geo(p, w);
     let pos = |t: f64| (lx + s * vx * t, ly - s * (vy * t - 0.5 * t * t));
-    // ground and cliff
-    g.hatch(10.0, w - 10.0, ground, true);
+    // ground (a plain line, as in the reference) and cliff
     if cliff {
-        g.poly(&[(10.0, ly + r), (lx + r, ly + r), (lx + r, ground), (10.0, ground)], "#f3f4f7", INK, SW);
-        g.hatch(10.0, w - 10.0, ground, true);
+        g.poly(&[(46.0, ly + r), (lx + r, ly + r), (lx + r, ground), (46.0, ground)], "#f3f4f7", INK, 1.8);
     }
+    g.line(10.0, ground, w - 10.0, ground, INK, 1.8);
     // path
     let pts: Vec<Pt> = (0..=80).map(|i| pos(t_land * i as f64 / 80.0)).collect();
     let pc = if col { PAL[1] } else { INK };
     match p.s("path") {
-        "Dashed" => g.dash_polyline(&pts, pc, 2.0),
+        "Dashed" => g.pattern_polyline(&pts, pc, 1.8, "7 5"),
         "Solid" => g.polyline(&pts, pc, 2.0),
         _ => {}
     }
     let end = *pts.last().unwrap();
-    if p.s("path") == "None" { let _ = end; }
-    // equal time steps
+    // equal time steps (with optional letters; A is the launch position)
     let steps = p.i("steps");
+    let letters = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M"];
+    let br = if p.s("object") == "Dot" { 4.5 } else { r };
     if steps > 0 {
-        let rr = (r * 0.55).max(5.0);
         for i in 1..=steps {
             let q = pos(t_land * i as f64 / steps as f64);
-            g.circle(q.0, q.1, rr, FILL, INK, 1.8);
+            if p.s("object") == "Dot" { g.circle(q.0, q.1, 4.5, INK, INK, 1.0); } else { g.circle(q.0, q.1, r, FILL, INK, 1.8); }
+        }
+    }
+    if p.b("letters") {
+        let n = steps.max(0) as usize;
+        for i in 0..=n {
+            let t = if n == 0 { 0.0 } else { t_land * i as f64 / n as f64 };
+            let q = pos(t);
+            // above the ball, nudged outwards from the middle of the flight
+            let dx = if t < vy - 1e-9 { -1.0 } else if t > vy + 1e-9 { 1.0 } else { 0.0 };
+            g.tex(q.0 + dx * (br + 6.0), q.1 - br - 8.0, 18.0, if dx < 0.0 { "end" } else if dx > 0.0 { "start" } else { "middle" }, letters[i.min(12)], UPRIGHT);
         }
     }
     // launch object
     if p.s("object") == "Dot" { g.circle(lx, ly, 4.5, INK, INK, 1.0); } else { g.circle(lx, ly, r, FILL, INK, SW); }
-    // velocity, components, angle
-    let vlen = 80.0;
-    let tip = pol(lx, ly, r + vlen, th);
+    // velocity, components, angle: dashed arrows (they are not forces)
+    let vlen = 56.0;
+    let tip = pol(lx, ly, br + vlen, th);
     let vc = if col { PAL[0] } else { INK };
     if p.b("comps") {
         let cc = if col { PAL[2] } else { GREY };
-        let (ex, ey) = (lx + (r + vlen) * vx, ly);
-        g.dash_arrow(lx + r * 0.0, ly, ex, ey, cc, 1.8);
-        g.dash_arrow(ex, ey, tip.0, tip.1, cc, 1.8);
-        g.tex((lx + ex) / 2.0 + 6.0, ly + 24.0, 18.0, "middle", "v_0x", ITALIC);
-        g.tex(ex + 8.0, (ey + tip.1) / 2.0 + 6.0, 18.0, "start", "v_0y", ITALIC);
+        let (ex, ey) = (lx + (br + vlen) * vx, ly);
+        let tc = g.tcol;
+        g.tcol = if col { PAL[2] } else { GREY };
+        if vx > 0.05 {
+            g.dash_arrow(lx + br * vx, ly, ex, ey, cc, 1.5);
+            g.label_at(ex + 22.0, ly + 2.0, 17.0, &lab_mode(p, "vx_lab", "vx_lab_mode"), ITALIC);
+        }
+        if vy > 0.05 {
+            let up = (lx, ly - (br + vlen) * vy);
+            g.dash_arrow(lx, ly - br, up.0, up.1, cc, 1.5);
+            g.dash(up.0, up.1, tip.0, tip.1, cc, 0.9);
+            g.label_at(lx - br - 20.0, (ly + up.1) / 2.0, 17.0, &lab_mode(p, "vy_lab", "vy_lab_mode"), ITALIC);
+        }
+        g.tcol = tc;
     }
     if p.b("show_v") {
-        let a = pol(lx, ly, r, th);
-        g.arrow(a.0, a.1, tip.0, tip.1, vc, SW);
-        g.label_dir(tip.0, tip.1, -vy * 0.2 - 0.3, -vy.max(0.4), 21.0, p.s("v_lab"), ITALIC);
+        let a = pol(lx, ly, br, th);
+        g.dash_arrow(a.0, a.1, tip.0, tip.1, vc, SW);
+        g.label_dir(tip.0, tip.1, -0.2, -1.0, 19.0, &lab_mode(p, "v_lab", "v_lab_mode"), ITALIC);
     }
-    if p.b("show_angle") {
-        let ar = r + 34.0 + if p.b("comps") { 0.0 } else { 0.0 };
-        g.polyline(&arc_pts(lx, ly, ar, 0.0, th), INK, 1.5);
-        let m = pol(lx, ly, ar + 16.0, th / 2.0);
-        g.label_at(m.0 + 6.0, m.1, 19.0, p.s("ang_lab"), ITALIC);
+    if p.b("show_angle") && th > 0.5 {
+        let ar = br + 26.0;
+        g.dash(lx + br, ly, lx + ar + 12.0, ly, GREY, 1.0);
+        g.polyline(&arc_pts(lx, ly, ar, 0.0, th), INK, 1.4);
+        let m = pol(lx, ly, ar + 15.0, th / 2.0);
+        let t = lab_mode(p, "ang_lab", "ang_lab_mode");
+        let st = if t.chars().next().is_some_and(|c| c.is_ascii_digit()) { UPRIGHT } else { ITALIC };
+        g.label_at(m.0 + 6.0, m.1, 18.0, &t, st);
     }
     if p.b("show_g") {
-        let gx = w - 36.0;
-        g.arrow(gx, 70.0, gx, 130.0, if col { PAL[3] } else { INK }, SW);
-        g.tex(gx - 10.0, 108.0, 20.0, "end", "g", ITALIC);
+        // beside the path on its way down
+        // under the path on its way down, clear of the curve
+        let q = pos(vy + (t_land - vy) * 0.45);
+        let gx = q.0.min(w - 30.0);
+        let gy = (q.1 + br + 14.0).min(ground - 52.0);
+        g.dash_arrow(gx, gy, gx, gy + 40.0, if col { PAL[3] } else { INK }, SW);
+        g.label_dir(gx + 2.0, gy + 20.0, 1.0, 0.0, 18.0, &lab_mode(p, "g_lab", "g_lab_mode"), ITALIC);
     }
-    if p.b("mark_h") {
+    if p.b("mark_h") && vy > 0.05 {
+        // from the launch level up to the top of the flight, at the apex
         let apex = pos(vy);
-        g.dash(lx, apex.1, apex.0 + 40.0, apex.1, GREY, 1.0);
-        let x = apex.0 + 28.0;
-        g.dim_arrow(x, apex.1, x, ly, INK, 1.4);
-        g.dash(apex.0, apex.1, apex.0, ly, GREY, 1.0);
-        g.tex(x + 8.0, (apex.1 + ly) / 2.0 + 6.0, 20.0, "start", p.s("h_lab"), ITALIC);
+        let top = apex.1 - br;
+        g.dim_arrow(apex.0, top, apex.0, ly, INK, 1.2);
+        g.label_at(apex.0 + 14.0, (top + ly) / 2.0, 19.0, p.s("h_lab"), ITALIC);
     }
     if p.b("mark_r") {
         let (a, b) = (lx, end.0);
-        let y = ground + 24.0;
-        g.line(a, ground + 2.0, a, y + 6.0, INK, 1.0);
-        g.line(b, ground + 2.0, b, y + 6.0, INK, 1.0);
-        g.dim_arrow(a, y, b, y, INK, 1.4);
-        g.tex((a + b) / 2.0, y - 6.0, 20.0, "middle", p.s("r_lab"), ITALIC);
+        let y = ground + 22.0;
+        g.line(a, ground + 2.0, a, y + 6.0, INK, 0.8);
+        g.line(b, ground + 2.0, b, y + 6.0, INK, 0.8);
+        g.dim_arrow(a, y, b, y, INK, 1.2);
+        g.label_at((a + b) / 2.0, y + 16.0, 19.0, p.s("r_lab"), ITALIC);
+    }
+    if p.b("mark_cliff") && cliff {
+        let x = 32.0;
+        let top = ly + r;
+        g.line(x - 4.0, top, 46.0, top, INK, 0.8);
+        g.dim_arrow(x, top, x, ground, INK, 1.2);
+        g.label_at(x - 13.0, (top + ground) / 2.0, 19.0, p.s("cliff_lab"), ITALIC);
     }
     g.finish()
 }

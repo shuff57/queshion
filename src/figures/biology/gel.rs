@@ -82,6 +82,12 @@ pub fn params() -> Vec<ParamDef> {
         ParamDef::text("title", "Chart title (blank = none)", ""),
         ParamDef::float("band_height", "Band thickness", 0.5, 2.5, 0.1, 1.0),
         ParamDef::float("run_length", "Gel length (px of run)", 250.0, 520.0, 10.0, 400.0),
+        ParamDef::choice("lane_labels", "Lane labels", &["Names", "Blank lines", "None"], "Names"),
+        ParamDef::bool("lane_numbers", "Lane numbers", false),
+        ParamDef::choice("ladder_sizes", "Ladder sizes", &["Sizes", "Blank lines", "None"], "Sizes"),
+        ParamDef::choice("size_units", "Ladder size units", &["bp", "kb"], "bp"),
+        ParamDef::choice("electrode_style", "Electrodes", &["Signs", "Named", "Blank", "None"], "Signs"),
+        ParamDef::choice("answer_kind", "Answer key lists", &["Matching lanes", "Band sizes", "Both"], "Matching lanes"),
     ]
 }
 
@@ -107,9 +113,9 @@ struct Lane {
 fn ladder_bands(kind: &str) -> (&'static str, Vec<(f64, f64)>) {
     let k = kind.to_lowercase();
     if k.contains("100") {
-        ("100 bp ladder", vec![(1500.0, 0.7), (1000.0, 1.0), (900.0, 1.0), (800.0, 1.0), (700.0, 1.0), (600.0, 1.0), (500.0, 2.0), (400.0, 1.0), (300.0, 1.0), (200.0, 1.0), (100.0, 1.0)])
+        ("100 bp ladder", vec![(1517.0, 1.0), (1200.0, 1.0), (1000.0, 1.6), (900.0, 0.8), (800.0, 0.8), (700.0, 0.7), (600.0, 0.6), (517.0, 1.0), (500.0, 1.0), (400.0, 1.0), (300.0, 0.8), (200.0, 0.7), (100.0, 1.0)])
     } else if k.contains("lam") || k.contains('λ') || k.contains("hind") {
-        ("λ DNA / HindIII", vec![(23130.0, 1.0), (9416.0, 1.0), (6557.0, 1.0), (4361.0, 1.0), (2322.0, 0.8), (2027.0, 0.8), (564.0, 0.4)])
+        ("λ DNA / HindIII", vec![(23130.0, 1.6), (9416.0, 1.2), (6557.0, 1.0), (4361.0, 0.8), (2322.0, 0.6), (2027.0, 0.6), (564.0, 0.35), (125.0, 0.3)])
     } else {
         ("1 kb ladder", vec![(10000.0, 1.0), (8000.0, 1.0), (6000.0, 1.4), (5000.0, 1.0), (4000.0, 0.6), (3000.0, 2.0), (2000.0, 1.3), (1500.0, 0.6), (1000.0, 1.3), (500.0, 0.5)])
     }
@@ -155,45 +161,109 @@ fn run_frac(bp: f64, agarose: &str) -> f64 {
     (0.12 + t * (0.76 - 0.12)).clamp(0.05, 0.95)
 }
 
+/// Ladder-size label text in the chosen units ("8000 bp", "10,000 bp", "1.5 kb").
+fn size_label(bp: f64, units: &str) -> String {
+    if units == "kb" {
+        // three significant figures, like 23.1 kb, 9.42 kb, 0.564 kb
+        let kb = bp / 1000.0;
+        let dec = (2 - kb.abs().max(1e-9).log10().floor() as i32).clamp(0, 4) as u32;
+        let f = 10f64.powi(dec as i32);
+        format!("{} kb", fnum((kb * f).round() / f))
+    } else if bp >= 10000.0 {
+        format!("{} bp", commas(bp.round() as i64))
+    } else {
+        format!("{} bp", bp.round() as i64)
+    }
+}
+
+fn plain_sizes(bands: &[(f64, f64)]) -> String {
+    bands.iter().map(|(bp, _)| format!("{}", bp.round() as i64)).collect::<Vec<_>>().join(", ")
+}
+
+/// Rough text width in px for the sans face at `size`.
+fn tw(s: &str, size: f64) -> f64 { s.chars().count() as f64 * size * 0.56 }
+
 pub fn render(p: &Params) -> String {
     let text = setup_text(p.s("setup")).unwrap_or(p.s("lanes")).to_string();
     let mut lanes = parse_lanes(&text);
     if lanes.is_empty() { lanes.push(Lane { label: "Sample".into(), ladder: None, bands: vec![] }); }
     let agar = p.s("agarose").to_string();
     let look = p.s("look").to_string();
-    let (gel_fill, band, glow, bg_text) = match look.as_str() {
-        "Blue stain" => ("#eaf1ff", "#1e3a8a", false, INK),
-        "Glowing" => ("#0a0f1e", "#8ff5a8", true, INK),
-        _ => ("#f3f3f3", "#111111", false, INK),
+    // effective modes (the old bools still switch a feature off entirely)
+    let lmode = if !p.b("lane_names") { "None" } else { match p.s("lane_labels") { "Blank lines" => "Blank lines", "None" => "None", _ => "Names" } };
+    let smode = if !p.b("sizes") { "None" } else { match p.s("ladder_sizes") { "Blank lines" => "Blank lines", "None" => "None", _ => "Sizes" } };
+    let emode = if !p.b("electrodes") { "None" } else { match p.s("electrode_style") { "Named" => "Named", "Blank" => "Blank", "None" => "None", _ => "Signs" } };
+    let units = if p.s("size_units") == "kb" { "kb" } else { "bp" };
+    let numbers = p.b("lane_numbers");
+    let (gel_fill, band, glow, well_fill, well_stroke) = match look.as_str() {
+        "Blue stain" => ("#e3ecfb", "#1e3a8a", false, "#fff", INK),
+        "Glowing" => ("#1b1d22", "#fffaf0", true, "#2c3039", "#5b6170"),
+        _ => ("#f6f6f6", "#111111", false, "#fff", INK),
     };
     let title = p.s("title").trim().to_string();
     let n = lanes.len();
     let lane_w = 56.0;
-    let name_len = if p.b("lane_names") { lanes.iter().map(|l| l.label.chars().count()).max().unwrap_or(0) } else { 0 };
-    let name_h = if name_len == 0 { 10.0 } else { (name_len as f64 * 8.4 * 0.72 + 26.0).min(150.0) };
-    let left = if p.b("sizes") || p.b("electrodes") { 112.0 } else { 40.0 };
-    let right = if p.b("ruler") { 70.0 } else { 36.0 };
+    // ladder lanes whose sizes get written: first lane (left side) and last lane (right side)
+    let left_ladder = if smode != "None" && lanes[0].ladder.is_some() { Some(0usize) } else { None };
+    let right_ladder = if smode != "None" && n > 1 && lanes[n - 1].ladder.is_some() { Some(n - 1) } else { None };
+    let label_w = |li: Option<usize>| -> f64 {
+        let Some(i) = li else { return 0.0 };
+        if smode == "Blank lines" { return 96.0; }
+        lanes[i].bands.iter().map(|(bp, _)| tw(&size_label(*bp, units), 13.0)).fold(0.0, f64::max) + 56.0
+    };
+    let name_len = if lmode == "Names" { lanes.iter().map(|l| l.label.chars().count()).max().unwrap_or(0) } else { 0 };
+    // short names sit level above their lanes; long ones are turned 45 degrees
+    let flat = lmode == "Names" && (name_len as f64) * 8.6 <= lane_w + 6.0;
+    let name_h = match lmode {
+        "Names" if flat => 26.0,
+        "Names" if name_len > 0 => (name_len as f64 * 8.4 * 0.72 + 26.0).min(150.0),
+        "Blank lines" => 30.0,
+        _ => 10.0,
+    } + if numbers { 24.0 } else { 0.0 };
+    let elec_w = match emode { "None" => 0.0, "Named" => 104.0, _ => 40.0 };
+    let left = 24.0 + label_w(left_ladder).max(elec_w);
+    let ruler_w = if p.b("ruler") { 64.0 } else { 0.0 };
+    let mut right = 24.0 + label_w(right_ladder) + ruler_w;
+    if lmode == "Names" && !flat {
+        // the last rotated name leans right past the gel edge
+        let last = lanes[n - 1].label.chars().count() as f64 * 8.6 * 0.72 + 14.0;
+        right = right.max(last - 40.0);
+    }
     let gel_w = n as f64 * lane_w + 24.0;
     let run = p.f("run_length").clamp(250.0, 520.0);
     let gel_h = run + 40.0;
     let top = 20.0 + if title.is_empty() { 0.0 } else { 36.0 } + name_h;
-    let w = (left + gel_w + right).max(420.0);
-    let gx = left + (w - left - gel_w - right) / 2.0;
     let gy = top;
     let well_y = gy + 18.0;
-    let answer_lines: Vec<String> = if p.b("answer") {
-        let samples: Vec<&Lane> = lanes.iter().filter(|l| l.ladder.is_none() && !l.bands.is_empty()).collect();
-        let mut v = Vec::new();
-        for i in 0..samples.len() {
-            for j in i + 1..samples.len() {
-                let (a, b) = (samples[i], samples[j]);
-                let same = a.bands.len() == b.bands.len() && a.bands.iter().zip(&b.bands).all(|(x, y)| (x.0 - y.0).abs() / x.0.max(1.0) < 0.01);
-                if same { v.push(format!("{} matches {}", a.label, b.label)); }
+    // answer key
+    let kind = p.s("answer_kind");
+    let mut answer_lines: Vec<String> = Vec::new();
+    if p.b("answer") {
+        if kind == "Band sizes" || kind == "Both" {
+            for (i, l) in lanes.iter().enumerate() {
+                if l.bands.is_empty() { continue; }
+                if l.ladder.is_some() && smode != "Blank lines" { continue; }
+                let name = if lmode == "Names" && !l.label.trim().is_empty() { l.label.clone() } else { format!("Lane {}", i + 1) };
+                answer_lines.push(format!("{name}: {} bp", plain_sizes(&l.bands)));
             }
         }
-        if v.is_empty() { v.push("No lanes match.".into()); }
-        v
-    } else { vec![] };
+        if kind != "Band sizes" {
+            let samples: Vec<&Lane> = lanes.iter().filter(|l| l.ladder.is_none() && !l.bands.is_empty()).collect();
+            let mut v = Vec::new();
+            for i in 0..samples.len() {
+                for j in i + 1..samples.len() {
+                    let (a, b) = (samples[i], samples[j]);
+                    let same = a.bands.len() == b.bands.len() && a.bands.iter().zip(&b.bands).all(|(x, y)| (x.0 - y.0).abs() / x.0.max(1.0) < 0.01);
+                    if same { v.push(format!("{} matches {}", a.label, b.label)); }
+                }
+            }
+            if v.is_empty() { v.push("No lanes match.".into()); }
+            answer_lines.extend(v);
+        }
+    }
+    let ans_w = answer_lines.iter().map(|l| tw(l, 15.0)).fold(0.0, f64::max) + 40.0;
+    let w = (left + gel_w + right).max(420.0).max(ans_w);
+    let gx = left + (w - left - gel_w - right) / 2.0;
     let h = gy + gel_h + 30.0 + if answer_lines.is_empty() { 0.0 } else { 14.0 + answer_lines.len() as f64 * 22.0 };
     LAST.with(|l| *l.borrow_mut() = Layout {
         w, gx, gy, well_y, run, lane_w, agar: agar.clone(),
@@ -201,70 +271,184 @@ pub fn render(p: &Params) -> String {
     });
     let mut d = Doc::new(w, h);
     if glow {
-        d.raw(r#"<defs><filter id="glow" x="-50%" y="-200%" width="200%" height="500%"><feGaussianBlur stdDeviation="3"/></filter></defs>"#);
+        d.raw(r#"<defs><filter id="glow" x="-50%" y="-200%" width="200%" height="500%"><feGaussianBlur stdDeviation="2.6"/></filter></defs>"#);
     }
     if !title.is_empty() { bold(&mut d, w / 2.0, 32.0, 20.0, "middle", &title); }
-    d.raw(&format!(r##"<rect x="{gx:.1}" y="{gy:.1}" width="{gel_w:.1}" height="{gel_h:.1}" rx="7" fill="{gel_fill}" stroke="{INK}" stroke-width="2"/>"##));
+    d.raw(&format!(r##"<rect x="{gx:.1}" y="{gy:.1}" width="{gel_w:.1}" height="{gel_h:.1}" rx="7" fill="{gel_fill}" stroke="{}" stroke-width="2"/>"##, if glow { gel_fill } else { INK }));
     let lane_x = |i: usize| gx + 12.0 + lane_w * (i as f64 + 0.5);
+    let bh = p.f("band_height").clamp(0.5, 2.5);
     for (i, l) in lanes.iter().enumerate() {
         let cx = lane_x(i);
-        let well_fill = if glow { "#222a44" } else { "#fff" };
-        d.rect(cx - 18.0, well_y - 5.0, 36.0, 10.0, well_fill, if glow { "#667" } else { INK }, 1.3);
-        if p.b("lane_names") {
-            let (tx, ty) = (cx + 4.0, gy - 10.0);
-            txt(&mut d, tx, ty, 14.0, "start", SANS, &format!(r#"font-weight="bold" transform="rotate(-45 {tx:.1} {ty:.1})""#), &l.label);
+        d.raw(&format!(r#"<rect x="{:.1}" y="{:.1}" width="36" height="10" rx="1.5" fill="{well_fill}" stroke="{well_stroke}" stroke-width="1.3"/>"#, cx - 18.0, well_y - 5.0));
+        let num_y = gy - 10.0;
+        let lab_y = if numbers { gy - 34.0 } else { gy - 10.0 };
+        if numbers {
+            txt(&mut d, cx, num_y, 14.0, "middle", SANS, "", &(i + 1).to_string());
         }
-        for (bp, amt) in &l.bands {
+        match lmode {
+            "Names" if flat => bold(&mut d, cx, lab_y, 15.0, "middle", &l.label),
+            "Names" => {
+                let (tx, ty) = (cx + 4.0, lab_y);
+                txt(&mut d, tx, ty, 14.0, "start", SANS, &format!(r#"font-weight="bold" transform="rotate(-45 {tx:.1} {ty:.1})""#), &l.label);
+            }
+            "Blank lines" => { d.line(cx - 24.0, lab_y - 6.0, cx + 24.0, lab_y - 6.0, INK, 1.4); }
+            _ => {}
+        }
+        // bands, merging those too close for the gel to separate into one thicker band
+        let mut bs: Vec<(f64, f64, f64)> = l.bands.iter().map(|(bp, amt)| {
             let y = well_y + 8.0 + run_frac(*bp, &agar) * run;
-            let th = (3.2 + 1.6 * amt.min(3.0)) * p.f("band_height").clamp(0.5, 2.5);
+            let th = (3.2 + 1.6 * amt.min(3.0)) * bh;
+            (y - th / 2.0, y + th / 2.0, *amt)
+        }).collect();
+        bs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        let mut merged: Vec<(f64, f64, f64)> = Vec::new();
+        for b in bs {
+            match merged.last_mut() {
+                Some(m) if b.0 < m.1 + 0.5 => { m.1 = m.1.max(b.1); m.2 += b.2; }
+                _ => merged.push(b),
+            }
+        }
+        for (y0, y1, amt) in merged {
+            let th = y1 - y0;
             let op = (0.4 + 0.55 * amt).min(1.0);
+            let rx = (th / 2.0).min(3.0);
             if glow {
-                d.raw(&format!(r#"<rect x="{:.1}" y="{:.1}" width="38" height="{:.1}" fill="{band}" opacity="0.8" filter="url(#glow)"/>"#, cx - 19.0, y - th / 2.0, th + 1.0));
+                d.raw(&format!(r##"<rect x="{:.1}" y="{:.1}" width="40" height="{:.1}" rx="{rx:.1}" fill="#ffcf7a" opacity="{:.2}" filter="url(#glow)"/>"##, cx - 20.0, y0 - 1.0, th + 2.0, (0.35 + 0.4 * amt).min(0.9)));
             }
-            d.raw(&format!(r#"<rect x="{:.1}" y="{:.1}" width="34" height="{th:.1}" rx="1.5" fill="{band}" opacity="{op:.2}"/>"#, cx - 17.0, y - th / 2.0));
+            d.raw(&format!(r#"<rect x="{:.1}" y="{y0:.1}" width="34" height="{th:.1}" rx="{rx:.1}" fill="{band}" opacity="{op:.2}"/>"#, cx - 17.0));
         }
     }
-    // ladder size labels from the first ladder lane
-    if p.b("sizes") {
-        if let Some(l) = lanes.iter().find(|l| l.ladder.is_some()) {
+    // ladder size labels beside a ladder in the first / last lane
+    for (li, side_left) in [(left_ladder, true), (right_ladder, false)] {
+        let Some(li) = li else { continue };
+        let mut bands = lanes[li].bands.clone();
+        bands.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+        let edge = if side_left { gx } else { gx + gel_w };
+        let sgn = if side_left { -1.0 } else { 1.0 };
+        // group bands that land on (almost) the same spot: one label "500/517 bp"
+        let mut groups: Vec<(f64, Vec<f64>)> = Vec::new();
+        for (bp, _) in bands {
+            let y = well_y + 8.0 + run_frac(bp, &agar) * run;
+            match groups.last_mut() {
+                Some(g) if (y - g.0).abs() < 3.0 => g.1.push(bp),
+                _ => groups.push((y, vec![bp])),
+            }
+        }
+        if smode == "Blank lines" {
             let mut last = f64::MIN;
-            let mut bands = l.bands.clone();
-            bands.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
-            for (bp, _) in bands {
-                let y = well_y + 8.0 + run_frac(bp, &agar) * run;
-                if y - last < 11.0 { continue; }
-                last = y;
-                txt(&mut d, gx - 24.0, y + 4.0, 12.0, "end", SANS, "", &format!("{} bp", commas(bp as i64)));
-                d.line(gx - 18.0, y, gx - 6.0, y, bg_text, 1.2);
+            for (y, _) in &groups {
+                if y - last < 9.0 { continue; }
+                last = *y;
+                d.line(edge + sgn * 3.0, *y, edge + sgn * 92.0, *y, INK, 1.2);
+            }
+            continue;
+        }
+        // spread labels at least `gap` apart, then draw angled leaders to the bands
+        let gap = 15.0;
+        let ys: Vec<f64> = groups.iter().map(|g| g.0).collect();
+        let mut ly = ys.clone();
+        for _ in 0..60 {
+            let mut moved = false;
+            for i in 1..ly.len() {
+                let over = gap - (ly[i] - ly[i - 1]);
+                if over > 0.01 {
+                    ly[i - 1] -= over / 2.0;
+                    ly[i] += over / 2.0;
+                    moved = true;
+                }
+            }
+            if !moved { break; }
+        }
+        for (i, (y, bps)) in groups.iter().enumerate() {
+            let mut v = bps.clone();
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let lab = if v.len() == 1 {
+                size_label(v[0], units)
+            } else {
+                let unit = if units == "kb" { " kb" } else { " bp" };
+                let parts: Vec<String> = v.iter().map(|bp| size_label(*bp, units).trim_end_matches(unit).to_string()).collect();
+                format!("{}{unit}", parts.join("/"))
+            };
+            txt(&mut d, edge + sgn * 22.0, ly[i] + 4.5, 13.0, if side_left { "end" } else { "start" }, SANS, "", &lab);
+            if (ly[i] - y).abs() < 0.5 {
+                d.line(edge + sgn * 16.0, *y, edge + sgn * 4.0, *y, INK, 1.2);
+            } else {
+                d.polyline(&[(edge + sgn * 16.0, ly[i]), (edge + sgn * 9.0, *y), (edge + sgn * 4.0, *y)], INK, 1.2);
             }
         }
     }
-    if p.b("electrodes") {
-        let ex = if p.b("sizes") { gx - 90.0 } else { gx - 22.0 };
-        d.circle(ex, gy + 22.0, 10.0, INK, INK, 1.0);
-        d.line(ex - 5.0, gy + 22.0, ex + 5.0, gy + 22.0, "#fff", 2.4);
-        d.circle(ex, gy + gel_h - 22.0, 10.0, "#dc2626", "#dc2626", 1.0);
-        d.line(ex - 5.0, gy + gel_h - 22.0, ex + 5.0, gy + gel_h - 22.0, "#fff", 2.4);
-        d.line(ex, gy + gel_h - 27.0, ex, gy + gel_h - 17.0, "#fff", 2.4);
+    if emode != "None" {
+        let ex = gx - 22.0;
+        let (ty, by) = (well_y, gy + gel_h - 22.0);
+        if emode == "Blank" {
+            d.circle(ex, ty, 12.0, "none", INK, 1.8);
+            d.circle(ex, by, 12.0, "none", "#dc2626", 1.8);
+        } else {
+            d.circle(ex, ty, 12.0, INK, INK, 1.0);
+            d.line(ex - 6.0, ty, ex + 6.0, ty, "#fff", 2.6);
+            d.circle(ex, by, 12.0, "#dc2626", "#dc2626", 1.0);
+            d.line(ex - 6.0, by, ex + 6.0, by, "#fff", 2.6);
+            d.line(ex, by - 6.0, ex, by + 6.0, "#fff", 2.6);
+            if emode == "Named" {
+                bold(&mut d, ex - 18.0, ty + 6.0, 16.0, "end", "Cathode");
+                bold(&mut d, ex - 18.0, by + 6.0, 16.0, "end", "Anode");
+            }
+        }
     }
     if p.b("ruler") {
-        let rx = gx + gel_w + 14.0;
-        let mm = 5.0; // px per mm: 80 mm over the run
-        d.line(rx, well_y, rx, well_y + run, INK, 1.4);
-        for i in 0..=((run / mm) as i64) {
+        let rx = gx + gel_w + 14.0 + label_w(right_ladder);
+        let mm = 5.0; // px per mm: 80 mm over the default run
+        let nmm = (run / mm) as i64;
+        d.rect(rx, well_y - 12.0, 34.0, nmm as f64 * mm + 24.0, "#fff", INK, 1.3);
+        for i in 0..=nmm {
             let y = well_y + i as f64 * mm;
-            let len = if i % 10 == 0 { 12.0 } else if i % 5 == 0 { 8.0 } else { 4.0 };
+            let len = if i % 10 == 0 { 12.0 } else if i % 5 == 0 { 8.0 } else { 5.0 };
             d.line(rx, y, rx + len, y, INK, 1.0);
-            if i % 10 == 0 { txt(&mut d, rx + 16.0, y + 4.0, 11.0, "start", SANS, "", &i.to_string()); }
+            if i % 10 == 0 { txt(&mut d, rx + 21.0, y + 4.5, 12.0, "middle", SANS, "", &(i / 10).to_string()); }
         }
-        txt(&mut d, rx + 6.0, well_y - 10.0, 11.0, "middle", SANS, "", "mm");
+        txt(&mut d, rx + 17.0, well_y + nmm as f64 * mm + 30.0, 13.0, "middle", SANS, "", "cm");
     }
     for (i, l) in answer_lines.iter().enumerate() {
         let y = gy + gel_h + 36.0 + i as f64 * 22.0;
-        if i == 0 { bold(&mut d, w / 2.0, y - 4.0 - 4.0, 14.0, "middle", "Answer key"); }
-        txt(&mut d, w / 2.0, y + 14.0, 14.0, "middle", SANS, "", l);
+        if i == 0 { bold(&mut d, w / 2.0, y - 8.0, 14.0, "middle", "Answer key"); }
+        txt(&mut d, w / 2.0, y + 14.0, 15.0, "middle", SANS, "", l);
     }
     d.finish()
+}
+
+/// "Start from an example" entries (mirroring the reference gallery).
+pub fn examples() -> Vec<Example> {
+    let st = |v: &str| Value::S(v.into());
+    vec![
+        Example { name: "DNA fingerprinting gel: crime scene and three suspects", params: vec![("setup", st("Crime scene")), ("look", st("Glowing"))] },
+        Example { name: "Paternity test gel: mother, child and two possible fathers", params: vec![
+            ("setup", st(SETUPS[0])),
+            ("lanes", st("Ladder: ladder 1kb | Mother: 4800, 2900, 1600, 800 | Child: 4800, 3200, 1600, 650 | Father 1: 5600, 3500, 2200, 1100 | Father 2: 4400, 3200, 1900, 650")),
+            ("look", st("Blue stain")),
+            ("answer_kind", st("Band sizes")),
+        ] },
+        Example { name: "PTC taster gene PCR and HaeIII digest gel with a 100 bp ladder", params: vec![
+            ("setup", st(SETUPS[0])),
+            ("lanes", st("Ladder: ladder 100bp | Uncut: 221 | TT: 177, 44 x0.3 | Tt: 221, 177, 44 x0.3 | tt: 221")),
+            ("agarose", st("2%")),
+            ("lane_numbers", Value::B(true)),
+        ] },
+        Example { name: "Lambda DNA restriction digest gel with a ruler for a standard curve", params: vec![
+            ("setup", st(SETUPS[0])),
+            ("lanes", st("Ladder: ladder lambda | Uncut: 48502 x4 | EcoRI: 21226 x3.5, 7421 x1.2, 5804, 5643, 4878 x0.8, 3530 x0.6 | BamHI: 16841 x2.7, 7233 x1.2, 6770 x1.1, 6527 x1.1, 5626 x0.9, 5505 x0.9")),
+            ("agarose", st("0.8%")),
+            ("size_units", st("kb")),
+            ("ruler", Value::B(true)),
+        ] },
+        Example { name: "Plasmid restriction digest gel worksheet: draw the double digest", params: vec![
+            ("setup", st(SETUPS[0])),
+            ("lanes", st("Ladder: ladder 1kb | EcoRI: 5000 | HindIII: 3200, 1800 | Both:")),
+            ("ladder_sizes", st("Blank lines")),
+            ("electrode_style", st("Blank")),
+            ("answer", Value::B(true)),
+            ("answer_kind", st("Band sizes")),
+        ] },
+    ]
 }
 
 #[cfg(test)]
@@ -294,5 +478,11 @@ mod tests {
         render_case("gel-electrophoresis", "paternity", &[("setup", s("Paternity test")), ("agarose", s("2%")), ("look", s("Blue stain"))]);
         render_case("gel-electrophoresis", "digest", &[("setup", s("Restriction digest")), ("agarose", s("0.8%"))]);
         render_case("gel-electrophoresis", "bare", &[("lane_names", Value::B(false)), ("sizes", Value::B(false)), ("electrodes", Value::B(false))]);
+        render_case("gel-electrophoresis", "modes", &[("lane_labels", s("Blank lines")), ("lane_numbers", Value::B(true)), ("ladder_sizes", s("Blank lines")), ("electrode_style", s("Named")), ("answer", Value::B(true)), ("answer_kind", s("Both")), ("size_units", s("kb"))]);
+        render_case("gel-electrophoresis", "right_ladder", &[("lanes", s("A: 500, 300 | B: 450 | L: ladder 100bp")), ("ruler", Value::B(true))]);
+        for ex in examples() {
+            let over: Vec<(&str, Value)> = ex.params.clone();
+            render_case("gel-electrophoresis", "example", &over);
+        }
     }
 }

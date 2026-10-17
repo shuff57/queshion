@@ -23,8 +23,8 @@ pub struct Spec { pub max: f64, pub min: f64, pub unit: f64, pub red: usize, acc
 
 pub fn spec(size: &str) -> Spec {
     match size {
-        "2 µL" => Spec { max: 2.0, min: 0.2, unit: 0.01, red: 2, accent: "#a78bfa", tip: "#e5e7eb" },
-        "10 µL" => Spec { max: 10.0, min: 1.0, unit: 0.1, red: 1, accent: "#d1d5db", tip: "#e5e7eb" },
+        "2 µL" => Spec { max: 2.0, min: 0.2, unit: 0.01, red: 2, accent: "#cbd5e1", tip: "#f8fafc" },
+        "10 µL" => Spec { max: 10.0, min: 1.0, unit: 0.1, red: 1, accent: "#cbd5e1", tip: "#f8fafc" },
         "100 µL" => Spec { max: 100.0, min: 10.0, unit: 1.0, red: 0, accent: "#facc15", tip: "#fde047" },
         "200 µL" => Spec { max: 200.0, min: 20.0, unit: 1.0, red: 0, accent: "#facc15", tip: "#fde047" },
         "1000 µL" => Spec { max: 1000.0, min: 100.0, unit: 10.0, red: 0, accent: "#60a5fa", tip: "#bfdbfe" },
@@ -48,32 +48,35 @@ pub fn render(p: &Params) -> String {
     let (w, h) = (320.0, 640.0);
     let cx = 150.0;
     let mut d = Doc::new(w, h);
-    let body = "#e5e7eb";
     let color = p.b("color");
-    let accent = if color { sp.accent } else { "#d4d4d4" };
+    // black and white: black outlines on white, like the reference
+    let body = if color { "#e5e7eb" } else { "#fff" };
+    let light = if color { "#f3f4f6" } else { "#fff" };
+    let accent = if color { sp.accent } else { "#fff" };
 
     // plunger button + shaft
     d.rect(cx - 12.0, 36.0, 24.0, 14.0, accent, INK, 2.0);
-    d.rect(cx - 9.0, 50.0, 18.0, 30.0, "#f3f4f6", INK, 2.0);
+    d.rect(cx - 9.0, 50.0, 18.0, 30.0, light, INK, 2.0);
     // body with thumb hook
     let b = format!(
-        "M{l:.1},470 L{l:.1},92 Q{l:.1},80 {l2:.1},80 L{r1:.1},80 C{r2:.1},68 {r3:.1},74 {r3:.1},106 C{r3:.1},134 {r4:.1},148 {r5:.1},148 C{r6:.1},136 {r7:.1},118 {r:.1},112 L{r:.1},470 Z",
+        "M{lb:.1},470 Q{l:.1},452 {l:.1},430 L{l:.1},92 Q{l:.1},80 {l2:.1},80 L{r1:.1},80 C{r2:.1},68 {r3:.1},74 {r3:.1},106 C{r3:.1},134 {r4:.1},148 {r5:.1},148 C{r6:.1},136 {r7:.1},118 {r:.1},112 L{r:.1},430 Q{r:.1},452 {rb:.1},470 Z",
+        lb = cx - 21.0, rb = cx + 21.0,
         l = cx - 28.0, l2 = cx - 16.0, r1 = cx + 12.0, r2 = cx + 40.0, r3 = cx + 58.0, r4 = cx + 54.0, r5 = cx + 44.0,
         r6 = cx + 36.0, r7 = cx + 31.0, r = cx + 28.0
     );
     d.path(&b, body, INK, 2.2);
     // collar, neck, shaft
-    d.rect(cx - 19.0, 470.0, 38.0, 16.0, "#f3f4f6", INK, 2.0);
-    d.poly(&[(cx - 17.0, 486.0), (cx + 17.0, 486.0), (cx + 8.0, 530.0), (cx - 8.0, 530.0)], "#f3f4f6", INK, 2.0);
-    d.rect(cx - 7.0, 530.0, 14.0, 42.0, "#f3f4f6", INK, 2.0);
+    d.raw(&format!(r#"<rect x="{:.1}" y="470" width="38" height="16" rx="3" fill="{light}" stroke="{INK}" stroke-width="2"/>"#, cx - 19.0));
+    d.poly(&[(cx - 17.0, 486.0), (cx + 17.0, 486.0), (cx + 8.0, 530.0), (cx - 8.0, 530.0)], light, INK, 2.0);
+    d.poly(&[(cx - 7.0, 530.0), (cx + 7.0, 530.0), (cx + 5.0, 572.0), (cx - 5.0, 572.0)], light, INK, 2.0);
     if p.b("tip") {
         d.rect(cx - 9.0, 568.0, 18.0, 7.0, accent, INK, 1.6);
-        d.poly(&[(cx - 8.0, 574.0), (cx + 8.0, 574.0), (cx + 1.5, 600.0), (cx - 1.5, 600.0)], if color { sp.tip } else { "#f5f5f5" }, INK, 1.8);
+        d.poly(&[(cx - 8.0, 574.0), (cx + 8.0, 574.0), (cx + 1.5, 612.0), (cx - 1.5, 612.0)], if color { sp.tip } else { "#fff" }, INK, 1.8);
     }
     // display window: three rows
     let (wx, wy, ww, rh) = (cx - 16.0, 150.0, 32.0, 28.0);
-    d.rect(wx, wy, ww, rh * 3.0, "#fff", INK, 2.2);
-    for i in 1..3 { d.line(wx, wy + rh * i as f64, wx + ww, wy + rh * i as f64, INK, 1.0); }
+    d.raw(&format!(r##"<rect x="{wx:.1}" y="{wy:.1}" width="{ww:.1}" height="{:.1}" rx="5" fill="#fff" stroke="{INK}" stroke-width="2.2"/>"##, rh * 3.0));
+    for i in 1..3 { d.line(wx + 4.0, wy + rh * i as f64, wx + ww - 4.0, wy + rh * i as f64, "#9ca3af", 0.8); }
     for (i, v) in dg.iter().enumerate() {
         let red = color && sp.red > 0 && i >= 3 - sp.red;
         let col = if red { "#c1121f" } else { INK };
@@ -81,7 +84,7 @@ pub fn render(p: &Params) -> String {
     }
     if p.b("decimal_line") && sp.red > 0 {
         let ly = wy + rh * (3 - sp.red) as f64;
-        d.line(wx - 2.0, ly, wx + ww + 2.0, ly, INK, 3.4);
+        d.line(wx, ly, wx + ww, ly, INK, 2.4);
     }
     if p.b("size_label") {
         bold(&mut d, cx, wy - 10.0, 11.0, "middle", &size);
@@ -95,6 +98,18 @@ pub fn render(p: &Params) -> String {
         bold(&mut d, w / 2.0, 22.0, 17.0, "middle", p.s("title").trim());
     }
     d.finish()
+}
+
+/// "Start from an example" entries (the reference gallery).
+pub fn examples() -> Vec<Example> {
+    let st = |v: &str| Value::S(v.into());
+    vec![
+        Example { name: "P20 micropipette set to 15.7 µL", params: vec![("size", st("20 µL")), ("volume", Value::F(15.7))] },
+        Example { name: "P200 micropipette set to 154 µL", params: vec![("size", st("200 µL")), ("volume", Value::F(154.0))] },
+        Example { name: "P1000 micropipette set to 820 µL", params: vec![("size", st("1000 µL")), ("volume", Value::F(820.0))] },
+        Example { name: "P2 micropipette set to 0.85 µL", params: vec![("size", st("2 µL")), ("volume", Value::F(0.85))] },
+        Example { name: "Black and white P10 micropipette set to 4.6 µL", params: vec![("size", st("10 µL")), ("volume", Value::F(4.6)), ("tip", Value::B(false)), ("color", Value::B(false))] },
+    ]
 }
 
 #[cfg(test)]
@@ -115,5 +130,6 @@ mod tests {
         render_case("micropipette-reading", "p2", &[("size", s("2 µL")), ("volume", Value::F(0.75)), ("tip", Value::B(false))]);
         render_case("micropipette-reading", "p1000", &[("size", s("1000 µL")), ("volume", Value::F(350.0)), ("color", Value::B(false)), ("size_label", Value::B(false))]);
         render_case("micropipette-reading", "p200", &[("size", s("200 µL")), ("volume", Value::F(150.0))]);
+        for ex in examples() { render_case("micropipette-reading", "example", &ex.params); }
     }
 }

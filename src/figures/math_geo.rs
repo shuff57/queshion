@@ -35,12 +35,15 @@ type Rule = Arc<dyn Fn(&mut Params, Pt) + Send + Sync>;
 fn rule(f: impl Fn(&mut Params, Pt) + Send + Sync + 'static) -> Rule { Arc::new(f) }
 
 /// Turns model-space vertices into handles: shown at rotate(model), dragged through unrotate.
-fn poly_handles(fm: Fm, rot_deg: f64, items: Vec<(Pt, &str, Rule)>) -> Vec<Handle> {
+/// Uses the flip + total turn (side-at-bottom and Turn) of the render `Fm::of` just ran.
+fn poly_handles(fm: Fm, _rot_deg: f64, items: Vec<(Pt, &str, Rule)>) -> Vec<Handle> {
+    let (flip, tot) = super::math::last_xf();
+    let fx = move |q: Pt| if flip { (-q.0, q.1) } else { q };
     items
         .into_iter()
         .map(|(m, tip, f)| {
-            let pos = fm.scr(rot(m, rot_deg));
-            Handle::knob(pos, tip, move |p, s| f(p, rot(fm.mdl(s), -rot_deg)))
+            let pos = fm.scr(rot(fx(m), tot));
+            Handle::knob(pos, tip, move |p, s| f(p, fx(rot(fm.mdl(s), -tot))))
         })
         .collect()
 }
@@ -69,25 +72,12 @@ pub fn handles(id: &str, p: &Params, size: (f64, f64)) -> Option<Vec<Handle>> {
 
 fn triangle(p: &Params) -> Option<Vec<Handle>> {
     let fm = Fm::of("triangle", p)?;
-    let (ab, bc, ca) = (p.f("ab"), p.f("bc"), p.f("ca"));
-    let (aa, ab_ang) = (p.f("ang_a").to_radians(), p.f("ang_b").to_radians());
     let mode = p.s("mode").to_string();
-    let b = (ab, 0.0);
-    let c = if mode.starts_with("Three") {
-        let cx = (ca * ca + ab * ab - bc * bc) / (2.0 * ab);
-        (cx, (ca * ca - cx * cx).max(0.0).sqrt())
-    } else if mode.starts_with("Two sides") {
-        (ca * aa.cos(), ca * aa.sin())
-    } else if mode.starts_with("Two angles") {
-        let bl = ab * ab_ang.sin() / (std::f64::consts::PI - aa - ab_ang).sin();
-        (bl * aa.cos(), bl * aa.sin())
-    } else if mode.starts_with("Right") {
-        (ab, bc)
-    } else if mode.starts_with("Isosceles") {
-        (ab / 2.0, (bc * bc - ab * ab / 4.0).max(0.0).sqrt())
-    } else {
-        (ab / 2.0, ab * 3f64.sqrt() / 2.0)
-    };
+    let [_, b, c] = super::math::triangle_pts(p).ok()?;
+    if mode.starts_with("Two angles and a side not") { return Some(vec![]); }
+    if mode.starts_with("Two sides and an angle not") {
+        return Some(poly_handles(fm, 0.0, vec![(b, "Drag to change side AB", rule(|p, m| p.set_f("ab", m.0)))]));
+    }
     let mut items: Vec<(Pt, &str, Rule)> = vec![(b, "Drag to change side AB", rule(|p, m| p.set_f("ab", m.0)))];
     let m2 = mode.clone();
     let cr: Option<Rule> = if mode.starts_with("Three") {
@@ -201,14 +191,17 @@ fn regular_polygon(p: &Params) -> Option<Vec<Handle>> {
     for k in 0..n {
         let phi = phi0 + 360.0 * k as f64 / n as f64;
         let model = (r * phi.to_radians().cos(), r * phi.to_radians().sin());
-        let pos = fm.scr(rot(model, rotd));
+        let (flip, _) = super::math::last_xf();
+        let fm_model = if flip { (-model.0, model.1) } else { model };
+        let pos = fm.scr(rot(fm_model, rotd));
         let from = from.clone();
+        let phi_s = if flip { 180.0 - phi } else { phi };
         out.push(Handle::knob(pos, "Drag a vertex: size and rotation", move |p, s| {
             let m = fm.mdl(s);
             let rr = len(m).max(1e-6);
             let val = match from.as_str() { "Radius" => rr, "Apothem" => rr * half.cos(), _ => 2.0 * rr * half.sin() };
             p.set_f("value", val);
-            p.set_f("rotate", norm180(deg(m.1, m.0) - phi));
+            p.set_f("rotate", norm180(deg(m.1, m.0) - phi_s));
         }));
     }
     Some(out)
@@ -298,83 +291,104 @@ fn angles(p: &Params) -> Vec<Handle> {
             }
         }));
     }
-    out
+    turned(out, AC, p.f("turn"))
 }
 
 // ---------- parallel lines ----------
 
 fn parallel_lines(p: &Params) -> Vec<Handle> {
-    let nl = p.i("lines").clamp(2, 3) as usize;
-    let th = p.f("angle");
-    let (w, h) = (520.0, 360.0 + 40.0 * (nl as f64 - 2.0));
-    let gap = 120.0 * p.f("gap").clamp(0.5, 3.0);
-    let ys: Vec<f64> = (0..nl).map(|i| h / 2.0 - gap * (nl as f64 - 1.0) / 2.0 + gap * i as f64).collect();
-    let cx0 = w / 2.0;
-    let tr = th.to_radians();
-    let slope = (tr.cos(), -tr.sin());
-    let cross: Vec<Pt> = ys.iter().map(|y| { let t = (*y - ys[0]) / slope.1; (cx0 + slope.0 * t, *y) }).collect();
-    let tl = 70.0 / slope.1.abs().max(0.2);
-    let tip = (cross[0].0 + slope.0 * tl, cross[0].1 + slope.1 * tl);
-    let c0 = cross[0];
-    let mut out = vec![Handle::knob(tip, "Drag the transversal to change the angle", move |p, s| {
-        let a = angle_deg(c0, s);
-        p.set_f("angle", if a > 180.0 { a - 180.0 } else { a });
-    })];
-    let last = ys[nl - 1];
-    out.push(Handle::bar((100.0, last), true, "Drag to change the gap between lines", move |p, s| {
-        let nl = p.i("lines").clamp(2, 3) as f64;
-        let h = 360.0 + 40.0 * (nl - 2.0);
-        p.set_f("gap", 2.0 * (s.1 - h / 2.0) / (nl - 1.0) / 120.0);
-    }));
+    let (w, h, ys) = super::math::pl_layout(p);
+    let nl = ys.len();
+    let nt = p.i("transversals").clamp(1, 2) as usize;
+    let mut out = Vec::new();
     let rad = 26.0;
-    for (i, c) in cross.iter().enumerate() {
-        let secs = [(th, 180.0, 1usize), (0.0, th, 2), (360.0 - (180.0 - th), 360.0, 3), (180.0, 180.0 + th, 4)];
-        for (a0, a1, k) in secs {
-            let num = (i * 4 + k) as f64;
-            let mid = (a0 + a1) / 2.0;
-            let r = if a1 - a0 < 50.0 { rad + 16.0 } else { rad + 8.0 };
-            out.push(Handle::zone(dirp(*c, mid, r), (30.0, 22.0), "Click to label or unlabel this angle", move |p| {
-                let on = nums(p.s("marked")).contains(&num);
-                toggle(p, "marked", num, !on);
-            }));
+    for ti in 0..nt {
+        let th = if ti == 0 { p.f("angle") } else { p.f("angle_b").clamp(15.0, 165.0) };
+        let key = if ti == 0 { "angle" } else { "angle_b" };
+        let cx0 = if nt == 1 { w / 2.0 } else if ti == 0 { w / 2.0 - 70.0 } else { w / 2.0 + 70.0 };
+        let tr = th.to_radians();
+        let slope = (tr.cos(), -tr.sin());
+        let cross: Vec<Pt> = ys.iter().map(|y| { let t = (*y - ys[0]) / slope.1; (cx0 + slope.0 * t, *y) }).collect();
+        let tl = 70.0 / slope.1.abs().max(0.2);
+        let tip = (cross[0].0 + slope.0 * tl, cross[0].1 + slope.1 * tl);
+        let c0 = cross[0];
+        out.push(Handle::knob(tip, "Drag the transversal to change the angle", move |p, s| {
+            let a = angle_deg(c0, s);
+            p.set_f(key, if a > 180.0 { a - 180.0 } else { a });
+        }));
+        for (i, c) in cross.iter().enumerate() {
+            let secs = [(th, 180.0, 1usize), (0.0, th, 2), (360.0 - (180.0 - th), 360.0, 3), (180.0, 180.0 + th, 4)];
+            for (a0, a1, k) in secs {
+                let num = (ti * 4 * nl + i * 4 + k) as f64;
+                let mid = (a0 + a1) / 2.0;
+                let r = if a1 - a0 < 50.0 { rad + 16.0 } else { rad + 8.0 };
+                out.push(Handle::zone(dirp(*c, mid, r), (30.0, 22.0), "Click to label or unlabel this angle", move |p| {
+                    let on = nums(p.s("marked")).contains(&num);
+                    toggle(p, "marked", num, !on);
+                }));
+            }
         }
     }
-    out
+    let last = ys[nl - 1];
+    out.push(Handle::bar((100.0, last), true, "Drag to change the gap between lines", move |p, s| {
+        // last line sits at 120 + gap * (lines - 1) (see math::pl_layout)
+        let nl = p.i("lines").clamp(2, 3) as f64;
+        p.set_f("gap", (s.1 - 120.0) / (nl - 1.0) / 120.0);
+    }));
+    let _ = h;
+    turned(out, (w / 2.0, h / 2.0), p.f("turn"))
+}
+
+/// Handles laid out for an unturned figure, turned with it about `c` (drags see unturned points).
+fn turned(hs: Vec<Handle>, c: Pt, turn: f64) -> Vec<Handle> {
+    if turn.abs() < 1e-9 { return hs; }
+    hs.into_iter()
+        .map(|mut h| {
+            h.pos = super::math::turn_scr(h.pos, c, turn);
+            if let Some(f) = h.drag.take() {
+                h.drag = Some(Arc::new(move |p: &mut Params, s: Pt| f(p, super::math::turn_scr(s, c, -turn))));
+            }
+            h
+        })
+        .collect()
 }
 
 // ---------- 3D solids ----------
 
+use super::math::{cone_height, depth_sx, oblp, prism_geom, pyramid_height};
+
 const KC: f64 = 0.5 * 0.766_044_443_118_978; // 0.5 cos 40
 const KS: f64 = 0.5 * 0.642_787_609_686_539_3; // 0.5 sin 40
-fn proj(q: (f64, f64, f64)) -> Pt { (q.0 + q.1 * KC, q.2 + q.1 * KS) }
+fn proj(q: (f64, f64, f64), sx: f64) -> Pt { oblp(q, sx) }
 
 fn base_of(p: &Params, kinds: &str) -> Vec<(f64, f64, f64)> {
     poly_base(kinds, p.f("length"), p.f("width"), p.i("n").clamp(3, 12) as usize, p.f("side"))
 }
 
-/// Handles on the base shared by prism and pyramid.
+/// Handles on the (standing) base shared by prism and pyramid.
 fn base_handles(fm: Fm, p: &Params, kind: &str, out: &mut Vec<Handle>) {
+    let sx = depth_sx(p);
     let b = base_of(p, kind);
     if kind == "Regular polygon" {
         let (b0, b1) = (b[0], b[1]);
-        let pe = proj((b1.0 - b0.0, b1.1 - b0.1, 0.0));
+        let pe = proj((b1.0 - b0.0, b1.1 - b0.1, 0.0), sx);
         let pe_n = pe.0 * pe.0 + pe.1 * pe.1;
-        out.push(Handle::knob(fm.scr(proj(b1)), "Drag to change the side of the base", move |p, s| {
+        out.push(Handle::knob(fm.scr(proj(b1, sx)), "Drag to change the side of the base", move |p, s| {
             let m = fm.mdl(s);
-            let o = proj(poly_base("Regular polygon", 0.0, 0.0, p.i("n").clamp(3, 12) as usize, p.f("side"))[0]);
+            let o = proj(poly_base("Regular polygon", 0.0, 0.0, p.i("n").clamp(3, 12) as usize, p.f("side"))[0], sx);
             let t = ((m.0 - o.0) * pe.0 + (m.1 - o.1) * pe.1) / pe_n.max(1e-9);
             p.set_f("side", t * p.f("side"));
         }));
         return;
     }
-    out.push(Handle::knob(fm.scr(proj(b[1])), "Drag to change the length", move |p, s| p.set_f("length", fm.mdl(s).0)));
+    out.push(Handle::knob(fm.scr(proj(b[1], sx)), "Drag to change the length", move |p, s| p.set_f("length", fm.mdl(s).0)));
     if b.len() >= 3 {
         let iso = kind == "Isosceles triangle";
-        out.push(Handle::knob(fm.scr(proj(b[2])), "Drag: width and length", move |p, s| {
+        out.push(Handle::knob(fm.scr(proj(b[2], sx)), "Drag: width and length", move |p, s| {
             let m = fm.mdl(s);
             let w = m.1 / KS;
             p.set_f("width", w);
-            let x = m.0 - w * KC;
+            let x = m.0 - sx * w * KC;
             p.set_f("length", if iso { 2.0 * x } else { x });
         }));
     }
@@ -382,56 +396,80 @@ fn base_handles(fm: Fm, p: &Params, kind: &str, out: &mut Vec<Handle>) {
 
 fn prism(p: &Params) -> Option<Vec<Handle>> {
     let fm = Fm::of("prism", p)?;
+    let sx = depth_sx(p);
     let kind = p.s("base").to_string();
-    let b = base_of(p, &kind);
-    let oblique = p.s("stands") == "Oblique";
-    let lean = if oblique { p.f("lean") } else { 0.0 };
-    let top = (b[0].0 + lean, b[0].1, p.f("height"));
-    let (y0, x0) = (b[0].1, b[0].0);
+    let (v, k, lying, _) = prism_geom(p);
     let mut out = Vec::new();
+    if lying {
+        // front face is the base polygon (x, z); the depth is the prism's height
+        if kind != "Regular polygon" {
+            out.push(Handle::knob(fm.scr(proj(v[1], sx)), "Drag to change the triangle's base", move |p, s| p.set_f("length", fm.mdl(s).0)));
+            out.push(Handle::knob(fm.scr(proj(v[2], sx)), "Drag to change the triangle's height", move |p, s| p.set_f("width", fm.mdl(s).1)));
+        }
+        out.push(Handle::knob(fm.scr(proj(v[k + 1], sx)), "Drag to change the length (depth)", move |p, s| p.set_f("height", fm.mdl(s).1 / KS)));
+        return Some(out);
+    }
+    let b = base_of(p, &kind);
+    let top = v[k];
+    let (y0, x0) = (b[0].1, b[0].0);
     base_handles(fm, p, &kind, &mut out);
-    out.push(Handle::knob(fm.scr(proj(top)), "Drag to change the height", move |p, s| {
+    out.push(Handle::knob(fm.scr(proj(top, sx)), "Drag to change the height", move |p, s| {
         let m = fm.mdl(s);
         p.set_f("height", m.1 - y0 * KS);
-        if p.s("stands") == "Oblique" { p.set_f("lean", m.0 - y0 * KC - x0); }
+        if p.s("stands") == "Oblique" { p.set_f("lean", m.0 - sx * y0 * KC - x0); }
     }));
     Some(out)
 }
 
 fn pyramid(p: &Params) -> Option<Vec<Handle>> {
     let fm = Fm::of("pyramid", p)?;
+    let sx = depth_sx(p);
     let kind = p.s("base").to_string();
     let b = base_of(p, &kind);
     let k = b.len() as f64;
     let c = (b.iter().map(|q| q.0).sum::<f64>() / k, b.iter().map(|q| q.1).sum::<f64>() / k);
     let lean = if p.s("stands") == "Oblique" { p.f("lean") } else { 0.0 };
-    let apex = (c.0 + lean, c.1, p.f("height"));
+    let apex = (c.0 + lean, c.1, pyramid_height(p));
     let mut out = Vec::new();
     base_handles(fm, p, &kind, &mut out);
-    out.push(Handle::knob(fm.scr(proj(apex)), "Drag the apex: height and lean", move |p, s| {
+    out.push(Handle::knob(fm.scr(proj(apex, sx)), "Drag the apex: height and lean", move |p, s| {
         let m = fm.mdl(s);
         let base = poly_base(p.s("base"), p.f("length"), p.f("width"), p.i("n").clamp(3, 12) as usize, p.f("side"));
         let k = base.len() as f64;
         let c = (base.iter().map(|q| q.0).sum::<f64>() / k, base.iter().map(|q| q.1).sum::<f64>() / k);
-        p.set_f("height", m.1 - c.1 * KS);
-        if p.s("stands") == "Oblique" { p.set_f("lean", m.0 - c.1 * KC - c.0); }
+        let h = m.1 - c.1 * KS;
+        if p.s("given") == "Slant height" && p.s("stands") != "Oblique" {
+            let mid = ((base[0].0 + base[1].0) / 2.0, (base[0].1 + base[1].1) / 2.0);
+            let a2 = (mid.0 - c.0).powi(2) + (mid.1 - c.1).powi(2);
+            p.set_f("slant", (h.max(0.1).powi(2) + a2).sqrt());
+        } else {
+            p.set_f("height", h);
+        }
+        if p.s("stands") == "Oblique" { p.set_f("lean", m.0 - sx * c.1 * KC - c.0); }
     }));
     Some(out)
 }
 
 fn round_solid(id: &str, p: &Params, _cyl: bool) -> Option<Vec<Handle>> {
     let fm = Fm::of(id, p)?;
-    let (r, h) = (p.f("radius"), p.f("height"));
+    let r = p.f("radius");
+    let h = if id == "cone" { cone_height(p) } else { p.f("height") };
     let c = p.f("view").to_radians().cos();
     let lean = if p.s("stands") == "Oblique" { p.f("lean") } else { 0.0 };
     let top = fm.scr((lean, h * c));
     let rad = fm.scr((r, 0.0));
+    let cone = id == "cone";
     Some(vec![
         Handle::knob(rad, "Drag to change the radius", move |p, s| p.set_f("radius", fm.mdl(s).0)).with_cursor(Cursor::ResizeH),
         Handle::knob(top, "Drag to change the height (and lean if oblique)", move |p, s| {
             let m = fm.mdl(s);
             let c = p.f("view").to_radians().cos().max(0.1);
-            p.set_f("height", m.1 / c);
+            let h = m.1 / c;
+            if cone && p.s("given") == "Slant height" && p.s("stands") != "Oblique" {
+                p.set_f("slant", (h * h + p.f("radius").powi(2)).sqrt());
+            } else {
+                p.set_f("height", h);
+            }
             if p.s("stands") == "Oblique" { p.set_f("lean", m.0); }
         }),
     ])

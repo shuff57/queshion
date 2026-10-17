@@ -42,6 +42,104 @@ pub fn greek(s: &str) -> String {
 }
 
 
+/// Splits a label into (text, level) runs: level 0 base, -1 subscript, 1 superscript. A leading
+/// `\vec{..}` or `\mathbf{..}` wrapper overrides the style.
+pub fn parse_tex(s: &str, st: u8) -> (Vec<(String, i8)>, u8) {
+    let mut s = s.trim().to_string();
+    let mut st = st;
+    for (pre, sty) in [("\\vec{", VEC), ("\\mathbf{", BOLD), ("\\mathrm{", UPRIGHT), ("\\text{", UPRIGHT)] {
+        if let Some(rest) = s.strip_prefix(pre) {
+            if let Some(i) = rest.find('}') {
+                s = format!("{}{}", &rest[..i], &rest[i + 1..]);
+                st = sty;
+            }
+        }
+    }
+    let s = s.replace('\\', "");
+    let mut runs: Vec<(String, i8)> = Vec::new();
+    let push = |runs: &mut Vec<(String, i8)>, t: String, l: i8| {
+        if t.is_empty() { return; }
+        if let Some(last) = runs.last_mut() { if last.1 == l { last.0.push_str(&t); return; } }
+        runs.push((t, l));
+    };
+    let cs: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    let mut base = String::new();
+    while i < cs.len() {
+        let c = cs[i];
+        if (c == '_' || c == '^') && i + 1 < cs.len() {
+            push(&mut runs, greek_words(&base), 0);
+            base.clear();
+            let lvl = if c == '_' { -1 } else { 1 };
+            let mut t = String::new();
+            if cs[i + 1] == '{' {
+                let mut j = i + 2;
+                while j < cs.len() && cs[j] != '}' { t.push(cs[j]); j += 1; }
+                i = j + 1;
+            } else if c == '_' {
+                // a bare subscript runs to the next space or ^
+                let mut j = i + 1;
+                while j < cs.len() && cs[j] != ' ' && cs[j] != '^' && cs[j] != '_' { t.push(cs[j]); j += 1; }
+                i = j;
+            } else {
+                let mut j = i + 1;
+                if cs[j] == '-' { t.push('-'); j += 1; }
+                while j < cs.len() && (cs[j].is_alphanumeric()) { t.push(cs[j]); j += 1; if !cs[j - 1].is_ascii_digit() { break; } }
+                i = j;
+            }
+            push(&mut runs, greek_words(&t).replace('-', "−"), lvl);
+        } else {
+            base.push(c);
+            i += 1;
+        }
+    }
+    push(&mut runs, greek_words(&base), 0);
+    if runs.is_empty() { runs.push((String::new(), 0)); }
+    (runs, st)
+}
+
+/// Replaces whole alphabetic words that name a Greek letter.
+pub fn greek_words(s: &str) -> String {
+    let mut out = String::new();
+    let mut word = String::new();
+    for c in s.chars().chain(std::iter::once('\0')) {
+        if c.is_ascii_alphabetic() { word.push(c); continue; }
+        if !word.is_empty() { out.push_str(&greek(&word)); word.clear(); }
+        if c != '\0' { out.push(c); }
+    }
+    out
+}
+
+/// Text of a label with a Text / Blank line / None mode param: "" draws a blank line and
+/// "none" draws nothing (the conventions of `G::label_dir` / `G::label_at`).
+pub fn lab_mode(p: &crate::figures::Params, text_key: &str, mode_key: &str) -> String {
+    match p.s(mode_key) {
+        "Blank line" => String::new(),
+        "None" => "none".into(),
+        _ => p.s(text_key).to_string(),
+    }
+}
+
+/// Chart title from `title` + `title_mode` (Text / Blank line / None). Returns true when
+/// something was drawn. An empty title in Text mode draws nothing (the old behaviour).
+pub fn draw_title(g: &mut G, p: &crate::figures::Params, cx: f64, y: f64) -> bool {
+    match p.s("title_mode") {
+        "None" => false,
+        "Blank line" => { g.line(cx - 120.0, y + 2.0, cx + 120.0, y + 2.0, INK, 1.5); true }
+        _ => {
+            let t = p.s("title").trim();
+            if t.is_empty() { return false; }
+            g.title_text(cx, y, 19.0, t);
+            true
+        }
+    }
+}
+
+/// True when the chart title takes up room.
+pub fn has_title(p: &crate::figures::Params) -> bool {
+    match p.s("title_mode") { "None" => false, "Blank line" => true, _ => !p.s("title").trim().is_empty() }
+}
+
 /// Nice tick step (1, 2, 5 x 10^k) giving roughly `target` ticks over `range`.
 pub fn nice_step(range: f64, target: f64) -> f64 {
     let raw = (range / target).max(1e-9);
@@ -63,11 +161,20 @@ pub struct G {
     pub d: Doc,
     pub w: f64,
     pub mir: bool,
+    /// Draw `tex` labels with a white halo (for labels over gridlines).
+    pub halo: bool,
+    /// Fill colour of `tex` labels.
+    pub tcol: &'static str,
 }
 
 impl G {
-    pub fn new(w: f64, h: f64, mir: bool) -> Self { G { d: Doc::new(w, h), w, mir } }
+    pub fn new(w: f64, h: f64, mir: bool) -> Self { G { d: Doc::new(w, h), w, mir, halo: false, tcol: "#111" } }
     pub fn x(&self, x: f64) -> f64 { if self.mir { self.w - x } else { x } }
+    /// Text anchor after mirroring (start and end swap so labels stay on the same side).
+    pub fn anc<'a>(&self, a: &'a str) -> &'a str {
+        if !self.mir { return a; }
+        match a { "start" => "end", "end" => "start", o => o }
+    }
     pub fn finish(&self) -> String { self.d.finish() }
 
     pub fn line(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, c: &str, sw: f64) {
@@ -114,10 +221,6 @@ impl G {
         let p: Vec<Pt> = pts.iter().map(|&(x, y)| (self.x(x), y)).collect();
         self.d.polyline(&p, stroke, sw);
     }
-    pub fn dash_polyline(&mut self, pts: &[Pt], stroke: &str, sw: f64) {
-        let p: Vec<String> = pts.iter().map(|&(x, y)| format!("{:.2},{:.2}", self.x(x), y)).collect();
-        let _ = write!(self.d_raw(), r#"<polyline points="{}" fill="none" stroke="{stroke}" stroke-width="{sw}" stroke-dasharray="{:.1} {:.1}" stroke-linejoin="round"/>"#, p.join(" "), sw * 2.6 + 2.0, sw * 2.2 + 2.5);
-    }
     pub fn pattern_polyline(&mut self, pts: &[Pt], stroke: &str, sw: f64, dash: &str) {
         let p: Vec<String> = pts.iter().map(|&(x, y)| format!("{:.2},{:.2}", self.x(x), y)).collect();
         let _ = write!(self.d_raw(), r#"<polyline points="{}" fill="none" stroke="{stroke}" stroke-width="{sw}" stroke-dasharray="{dash}" stroke-linejoin="round"/>"#, p.join(" "));
@@ -132,8 +235,23 @@ impl G {
     /// Sans text (axis numbers etc.). `bold` selects weight.
     pub fn text(&mut self, x: f64, y: f64, size: f64, anchor: &str, s: &str, bold: bool) {
         let x = self.x(x);
+        let anchor = self.anc(anchor);
         let wt = if bold { "bold" } else { "normal" };
         let _ = write!(self.d_raw(), r##"<text x="{x:.2}" y="{y:.2}" font-size="{size}" text-anchor="{anchor}" font-weight="{wt}" font-family="{SANS}" fill="#111">{}</text>"##, esc(s));
+    }
+    /// Bold sans title text that understands `^2` / `_x` like `tex` (upright).
+    pub fn title_text(&mut self, x: f64, y: f64, size: f64, s: &str) {
+        let (runs, _) = parse_tex(&supers(s), UPRIGHT);
+        let x = self.x(x);
+        let mut body = String::new();
+        let mut cur = 0i8;
+        for (t, lvl) in &runs {
+            let dy = (*lvl - cur) as f64 * -size * 0.3;
+            let fs = if *lvl == 0 { size } else { size * 0.7 };
+            let _ = write!(body, r#"<tspan font-size="{fs:.1}" dy="{dy:.1}">{}</tspan>"#, esc(t));
+            cur = *lvl;
+        }
+        let _ = write!(self.d_raw(), r##"<text x="{x:.2}" y="{y:.2}" font-size="{size}" text-anchor="middle" font-weight="bold" font-family="{SANS}" fill="#111">{body}</text>"##);
     }
     /// Text rotated -90 degrees about its anchor (y-axis titles).
     pub fn vtext(&mut self, x: f64, y: f64, size: f64, s: &str, bold: bool) {
@@ -141,26 +259,44 @@ impl G {
         let wt = if bold { "bold" } else { "normal" };
         let _ = write!(self.d_raw(), r##"<text x="{x:.2}" y="{y:.2}" font-size="{size}" text-anchor="middle" font-weight="{wt}" font-family="{SANS}" fill="#111" transform="rotate(-90 {x:.2} {y:.2})">{}</text>"##, esc(s));
     }
-    /// Math-style label: italic serif, `_` starts a subscript, `theta` etc. become Greek.
+    /// Math-style label: italic serif. `_x` / `_{xy}` subscript, `^x` / `^{xy}` superscript,
+    /// whole words like `theta` become Greek, `\vec{F}` / `\mathbf{F}` switch the style.
     pub fn tex(&mut self, x: f64, y: f64, size: f64, anchor: &str, s: &str, st: u8) {
-        let (base, sub) = match s.split_once('_') {
-            Some((b, r)) => (greek(b), r.trim_matches(|c| c == '{' || c == '}').to_string()),
-            None => (greek(s), String::new()),
-        };
+        let (runs, st) = parse_tex(s, st);
         let x = self.x(x);
+        let anchor = self.anc(anchor);
         let style = if st == BOLD || st == UPRIGHT { "normal" } else { "italic" };
         let wt = if st == BOLD { "bold" } else { "normal" };
-        let subx = if sub.is_empty() { String::new() } else {
-            format!(r#"<tspan font-size="{:.1}" dy="{:.1}" font-style="{}">{}</tspan>"#, size * 0.66, size * 0.2, if sub.chars().all(|c| c.is_ascii_digit()) { "normal" } else { style }, esc(&sub))
-        };
-        let _ = write!(self.d_raw(), r##"<text x="{x:.2}" y="{y:.2}" font-size="{size}" text-anchor="{anchor}" font-style="{style}" font-weight="{wt}" font-family="{SERIF}" fill="#111">{}{subx}</text>"##, esc(&base));
+        let mut body = String::new();
+        let mut cur = 0i8;
+        let mut base_w = 0.0;
+        let mut total = 0.0;
+        for (t, lvl) in &runs {
+            let dy = match (cur, *lvl) {
+                (a, b) if a == b => 0.0,
+                (0, -1) => size * 0.2, (0, 1) => -size * 0.38,
+                (-1, 0) => -size * 0.2, (1, 0) => size * 0.38,
+                (-1, 1) => -size * 0.58, _ => size * 0.58,
+            };
+            let fs = if *lvl == 0 { size } else { size * 0.66 };
+            // digits, and word subscripts such as "air" or "app", stay upright; single letters are italic
+            let word = *lvl == -1 && t.chars().count() >= 2 && t.chars().all(|c| c.is_ascii_lowercase());
+            let fst = if *lvl != 0 && (word || t.chars().all(|c| c.is_ascii_digit() || c == '-' || c == '+')) { "normal" } else { style };
+            let _ = write!(body, r#"<tspan font-size="{fs:.1}" dy="{dy:.1}" font-style="{fst}">{}</tspan>"#, esc(t));
+            let w = t.chars().count() as f64 * fs * if *lvl == 0 { 0.55 } else { 0.62 };
+            if *lvl == 0 && total == base_w { base_w += w; }
+            total += w;
+            cur = *lvl;
+        }
+        let (tc, halo) = (self.tcol, self.halo);
+        let _ = write!(self.d_raw(), r##"<text x="{x:.2}" y="{y:.2}" font-size="{size}" text-anchor="{anchor}" font-style="{style}" font-weight="{wt}" font-family="{SERIF}" fill="{}"{}>{body}</text>"##, tc, if halo { r##" stroke="#fff" stroke-width="5" stroke-linejoin="round" paint-order="stroke""## } else { "" });
         if st == VEC {
-            let bw = base.chars().count() as f64 * size * 0.55;
-            let total = bw + sub.chars().count() as f64 * size * 0.42;
+            let bw = base_w.max(size * 0.5);
             let left = match anchor { "start" => x, "end" => x - total, _ => x - total / 2.0 };
-            let (a, b) = (left + bw * 0.05, left + bw * 0.95);
+            let (a, b) = (left + bw * 0.05, left + bw * 0.95 + 2.0);
             let ay = y - size * 0.92;
-            let _ = write!(self.d_raw(), r##"<polyline points="{a:.1},{ay:.1} {b:.1},{ay:.1}" stroke="#111" stroke-width="1.3" fill="none"/><polygon points="{b:.1},{ay:.1} {:.1},{:.1} {:.1},{:.1}" fill="#111"/>"##, b - 4.5, ay - 2.4, b - 4.5, ay + 2.4);
+            let c = self.tcol;
+            let _ = write!(self.d_raw(), r##"<polyline points="{a:.1},{ay:.1} {b:.1},{ay:.1}" stroke="{c}" stroke-width="1.3" fill="none"/><polygon points="{b:.1},{ay:.1} {:.1},{:.1} {:.1},{:.1}" fill="{c}"/>"##, b - 4.5, ay - 2.4, b - 4.5, ay + 2.4);
         }
     }
     /// Label placed beyond a point `(px,py)` in direction `(ux,uy)` (pixel y-down).
@@ -213,34 +349,6 @@ pub struct Axes {
 impl Axes {
     pub fn px(&self, x: f64) -> f64 { self.x0 + (x - self.xmin) / (self.xmax - self.xmin) * self.w }
     pub fn py(&self, y: f64) -> f64 { self.y0 + self.h - (y - self.ymin) / (self.ymax - self.ymin) * self.h }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn draw(&self, g: &mut G, xstep: f64, ystep: f64, grid: bool, numbers: bool, xlabel: &str, ylabel: &str, fs: f64) {
-        let (l, r, t, b) = (self.x0, self.x0 + self.w, self.y0, self.y0 + self.h);
-        let ticks = |lo: f64, hi: f64, st: f64| -> Vec<f64> {
-            let mut v = Vec::new();
-            let mut k = (lo / st).ceil();
-            while k * st <= hi + st * 1e-6 { v.push(k * st); k += 1.0; }
-            v
-        };
-        for xv in ticks(self.xmin, self.xmax, xstep) {
-            let x = self.px(xv);
-            if grid { g.line(x, t, x, b, "#555", 0.8); } else { g.line(x, b, x, b - 6.0, INK, 1.4); }
-            if numbers { g.text(x, b + fs + 6.0, fs, "middle", &fmt_num(xv), true); }
-        }
-        for yv in ticks(self.ymin, self.ymax, ystep) {
-            let y = self.py(yv);
-            if grid { g.line(l, y, r, y, "#555", 0.8); } else { g.line(l, y, l + 6.0, y, INK, 1.4); }
-            if numbers { g.text(l - 8.0, y + fs * 0.35, fs, "end", &fmt_num(yv), true); }
-        }
-        // frame, left axis and zero line
-        g.polyline(&[(l, t), (r, t), (r, b), (l, b), (l, t)], INK, 1.2);
-        g.line(l, t, l, b, INK, 2.6);
-        g.line(l, b, r, b, INK, 2.6);
-        if self.ymin < 0.0 && self.ymax > 0.0 { let y = self.py(0.0); g.line(l, y, r, y, INK, 2.6); }
-        if !xlabel.is_empty() { g.text((l + r) / 2.0, b + fs * 2.0 + 14.0, fs + 3.0, "middle", xlabel, true); }
-        if !ylabel.is_empty() { g.vtext(l - fs * 3.2 - 8.0, (t + b) / 2.0, fs + 3.0, ylabel, true); }
-    }
 }
 
 /// "m/s^2" -> "m/s²" for the common cases.

@@ -1,8 +1,12 @@
 //! Instrument-reading figures: volume, displacement, gas syringe, ruler, balance, thermometer, pH.
 use super::*;
+use super::magnify::{self, Focus};
 use crate::figures::{Params, ParamDef, Subject};
 
-const SIZES: [&str; 6] = ["10 mL", "25 mL", "50 mL", "100 mL", "250 mL", "1000 mL"];
+const SIZES: [&str; 7] = ["10 mL", "25 mL", "50 mL", "100 mL", "250 mL", "1000 mL", "600 mL"];
+const MAG3: [&str; 3] = ["Instrument and magnifier", "Magnifier only", "Instrument only"];
+const VOL_MARKS: [&str; 12] = ["Automatic", "0.1 mL", "0.2 mL", "0.5 mL", "1 mL", "2 mL", "5 mL", "10 mL", "20 mL", "25 mL", "50 mL", "100 mL"];
+const VOL_NUMS: [&str; 12] = ["Automatic", "1 mL", "2 mL", "5 mL", "10 mL", "20 mL", "25 mL", "50 mL", "100 mL", "200 mL", "0.5 mL", "No numbers"];
 const COLORS: [&str; 4] = ["Gray", "Blue", "Red", "Green"];
 
 pub fn defs() -> Vec<FigureDef> {
@@ -60,18 +64,28 @@ fn liquid_shape(d: &mut Doc, v: &Vessel, yb: f64) {
     d.path(&p, v.color, v.edge, 1.0);
 }
 
+/// Tick marks every `v.minor`, long ticks + numbers every `num` (0 = long ticks every
+/// `v.major` without numbers), medium ticks halfway.
 fn scale_ticks(d: &mut Doc, v: &Vessel, side_x: f64, dir: f64, label_x: f64, label_anchor: &str, unit: &str) {
+    scale_ticks_n(d, v, side_x, dir, label_x, label_anchor, unit, v.major, true);
+}
+
+fn scale_ticks_n(d: &mut Doc, v: &Vessel, side_x: f64, dir: f64, label_x: f64, label_anchor: &str, unit: &str, num_step: f64, numbers: bool) {
     let n = (v.max / v.minor).round() as i64;
+    let on = |val: f64, step: f64| { let r = val / step; (r - r.round()).abs() < 1e-6 };
+    let gap = (v.y(v.minor) - v.y(0.0)).abs();
+    let thin = (gap * 0.35).min(0.9).max(0.15);
+    let lab_gap = (v.y(num_step) - v.y(0.0)).abs();
+    let lab_every = ((15.0 / lab_gap.max(0.1)).ceil() as i64).max(1);
     for k in 0..=n {
         let val = k as f64 * v.minor;
         let y = v.y(val);
-        let rel = val / v.major;
-        let is_major = (rel - rel.round()).abs() < 1e-6;
-        let relh = val / (v.major / 2.0);
-        let is_mid = (relh - relh.round()).abs() < 1e-6;
+        let is_major = on(val, num_step);
+        let is_mid = !is_major && on(val, num_step / 2.0) && (num_step / 2.0) / v.minor >= 1.0 - 1e-9;
         let len = if is_major { 22.0 } else if is_mid { 15.0 } else { 9.0 };
-        d.line(side_x, y, side_x + dir * len, y, INK, if is_major { 1.4 } else { 0.9 });
-        if is_major { tx(d, label_x, y + 4.0, 12.0, label_anchor, INK, false, &lab(val, v.major)); }
+        d.line(side_x, y, side_x + dir * len, y, INK, if is_major { 1.4f64.min(thin * 2.5).max(0.6) } else { thin });
+        let idx = (val / num_step).round() as i64;
+        if is_major && numbers && idx % lab_every == 0 { tx(d, label_x, y + 4.0, 12.0, label_anchor, INK, false, &lab(val, num_step)); }
     }
     tx(d, label_x, v.ytop.min(v.ybot) - 36.0, 12.0, label_anchor, INK, true, unit);
 }
@@ -79,64 +93,97 @@ fn scale_ticks(d: &mut Doc, v: &Vessel, side_x: f64, dir: f64, label_x: f64, lab
 fn volume_params() -> Vec<ParamDef> {
     vec![
         ParamDef::choice("instrument", "Instrument", &["Graduated cylinder", "Buret", "Beaker"], "Graduated cylinder"),
-        ParamDef::choice("size", "Size", &SIZES, "100 mL"),
+        ParamDef::choice("size", "Size (cylinder or beaker; the buret is 50 mL, or 25 mL for sizes up to 25)", &SIZES, "100 mL"),
         ParamDef::choice("color", "Liquid color", &COLORS, "Gray"),
         ParamDef::float("reading", "Reading (mL)", 0.0, 1000.0, 0.05, 43.6),
         ParamDef::bool("dotted", "Dotted line at the meniscus", false),
-        ParamDef::bool("answer", "Show the reading as a caption", false),
-        ParamDef::text("title", "Title (optional)", ""),
+        ParamDef::bool("answer", "Answer key (the reading under the figure)", false),
+        ParamDef::text("title", "Chart title text", ""),
+        ParamDef::choice("marks", "Smallest marks", &VOL_MARKS, "Automatic"),
+        ParamDef::choice("numbered", "Numbered every", &VOL_NUMS, "Automatic"),
+        ParamDef::choice("unit", "Unit", &["mL", "cm³"], "mL"),
+        magnify::show_param(&MAG3, "Instrument only"),
+        magnify::marks_param(),
+        title_style(false),
     ]
 }
 
 fn size_ml(s: &str) -> f64 { s.split_whitespace().next().and_then(|t| t.parse().ok()).unwrap_or(100.0) }
+fn ml_of(s: &str) -> Option<f64> { s.split_whitespace().next().and_then(|t| t.parse().ok()) }
 
-/// (major, minor) graduation spacing for a cylinder of `max` mL.
+/// (numbered step, minor) graduation spacing for a cylinder of `max` mL (reference defaults).
 fn cyl_marks(max: f64) -> (f64, f64) {
-    match max as i64 { 10 => (1.0, 0.2), 25 => (5.0, 0.5), 50 => (10.0, 1.0), 100 => (10.0, 1.0), 250 => (50.0, 2.0), _ => (100.0, 10.0) }
+    match max as i64 { 10 => (1.0, 0.1), 25 => (5.0, 0.5), 50 => (10.0, 1.0), 100 => (10.0, 1.0), 250 => (20.0, 2.0), 600 => (50.0, 5.0), _ => (100.0, 10.0) }
+}
+
+/// Decimal places for a reading with one estimated digit past the smallest mark.
+fn read_dp(minor: f64) -> usize { ((-(minor.log10().floor())) + 1.0).max(0.0) as usize }
+
+/// (max, numbered step, minor, numbers shown) of the volume instrument.
+fn vol_scale(p: &Params) -> (f64, f64, f64, bool) {
+    let kind = p.s("instrument");
+    let size = size_ml(p.s("size"));
+    let (max, (num0, minor0)) = match kind {
+        "Buret" => { let m = if size <= 25.0 { 25.0 } else { 50.0 }; (m, (1.0, if m <= 25.0 { 0.1 } else { 0.1 })) }
+        "Beaker" => (size, (size / 5.0, size / 10.0)),
+        _ => (size, cyl_marks(size)),
+    };
+    let (num, minor, numbers) = marks_from(p, max, num0, minor0);
+    (max, num, minor, numbers)
+}
+
+/// Applies the "Smallest marks" / "Numbered every" choices (Automatic = the given defaults).
+fn marks_from(p: &Params, max: f64, num0: f64, minor0: f64) -> (f64, f64, bool) {
+    let minor = ml_of(p.s("marks")).filter(|m| max / m <= 600.0).unwrap_or(minor0);
+    let numbers = p.s("numbered") != "No numbers";
+    let mut num = ml_of(p.s("numbered")).filter(|n| *n >= minor - 1e-9 && max / n <= 60.0).unwrap_or(num0);
+    if num < minor { num = minor; }
+    (num, minor, numbers)
 }
 
 fn volume_render(p: &Params) -> String {
     let kind = p.s("instrument");
-    let size = size_ml(p.s("size"));
     let (fill, edge) = liquid(p.s("color"));
     let burette = kind == "Buret";
     let beaker = kind == "Beaker";
-    let max = if burette { if size <= 25.0 { 25.0 } else { 50.0 } } else { size };
+    let (max, num_step, minor, numbers) = vol_scale(p);
+    let unit = p.s("unit");
+    let unit = if unit.is_empty() { "mL" } else { unit };
     let reading = p.f("reading").clamp(0.0, max);
-    let (w_img, h_img) = if burette { (360.0, 760.0) } else { (360.0, 600.0) };
+    let (w_img, h_img) = if burette { (300.0, 740.0) } else if beaker { (330.0, 540.0) } else { (290.0, 560.0) };
     let mut d = Doc::new(w_img, h_img);
     let cx = 140.0;
+    let focus;
     if burette {
-        let (major, minor) = if max <= 25.0 { (1.0, 0.1) } else { (1.0, 0.2) };
-        let v = Vessel { cx, w: 30.0, ytop: 60.0, ybot: 620.0, max, major, minor, inverted: true, level: reading, color: fill, edge, mdepth: 5.0 };
+        let v = Vessel { cx, w: 30.0, ytop: 60.0, ybot: 620.0, max, major: num_step, minor, inverted: true, level: reading, color: fill, edge, mdepth: 5.0 };
         liquid_shape(&mut d, &v, 640.0);
         // glass: tube, stopcock, tip
         let (xl, xr) = (cx - 15.0, cx + 15.0);
         d.path(&format!("M{xl},{:.1} L{xl},640 L{:.1},640 L{:.1},700 L{:.1},700 L{:.1},640 L{xr},640 L{xr},{:.1}", 36.0, cx - 4.0, cx - 2.0, cx + 2.0, cx + 4.0, 36.0), "none", GLASS_EDGE, 1.6);
         d.rect(cx - 24.0, 650.0, 48.0, 12.0, "#e8edf0", GLASS_EDGE, 1.4);
         d.rect(cx + 24.0, 653.0, 30.0, 6.0, "#d44", "#833", 1.0);
-        scale_ticks(&mut d, &v, xr, -1.0, xr + 12.0, "start", "mL");
+        scale_ticks_n(&mut d, &v, xr, -1.0, xr + 12.0, "start", unit, num_step, numbers);
         if p.b("dotted") { dashed(&mut d, cx, v.y(reading), xr + 40.0, v.y(reading), "#555", 1.2); }
+        focus = Focus { x: xr + 2.0, y: v.y(reading), label_px: (v.y(num_step) - v.y(0.0)).abs().max(60.0 / p.i("mag_marks").clamp(1, 6) as f64) };
     } else {
         let (w, ytop, ybot) = if beaker { (170.0, 90.0, 470.0) } else { (70.0, 90.0, 500.0) };
-        let (major, minor) = if beaker { (max / 5.0, max / 10.0) } else { cyl_marks(max) };
         let md = if beaker { 3.0 } else { 7.0 };
-        let v = Vessel { cx, w, ytop, ybot, max, major, minor, inverted: false, level: reading, color: fill, edge, mdepth: md };
+        let v = Vessel { cx, w, ytop, ybot, max, major: num_step, minor, inverted: false, level: reading, color: fill, edge, mdepth: md };
         let (xl, xr) = (cx - w / 2.0, cx + w / 2.0);
         liquid_shape(&mut d, &v, ybot + 6.0);
-        d.rect(xl, ytop - 40.0, 0.0, 0.0, "none", "none", 0.0);
         if beaker {
             d.path(&format!("M{:.1},{:.1} L{xl:.1},{:.1} L{xl:.1},{:.1} L{xr:.1},{:.1} L{xr:.1},{:.1} L{:.1},{:.1}", xl - 8.0, ytop - 40.0, ytop - 30.0, ybot + 6.0, ybot + 6.0, ytop - 30.0, xr + 8.0, ytop - 40.0), "none", GLASS_EDGE, 1.8);
         } else {
             d.path(&format!("M{:.1},{:.1} L{xl:.1},{:.1} L{xl:.1},{:.1} L{xr:.1},{:.1} L{xr:.1},{:.1} L{:.1},{:.1}", xl - 5.0, ytop - 28.0, ytop - 24.0, ybot + 6.0, ybot + 6.0, ytop - 24.0, xr + 5.0, ytop - 28.0), "none", GLASS_EDGE, 1.8);
             d.poly(&[(xl, ybot + 6.0), (xl - 24.0, ybot + 22.0), (xr + 24.0, ybot + 22.0), (xr, ybot + 6.0)], "#eef3f6", GLASS_EDGE, 1.6);
         }
-        scale_ticks(&mut d, &v, xr, -1.0, xr + 12.0, "start", "mL");
+        scale_ticks_n(&mut d, &v, xr, -1.0, xr + 12.0, "start", unit, num_step, numbers);
         if p.b("dotted") { dashed(&mut d, cx, v.y(reading), xr + 40.0, v.y(reading), "#555", 1.2); }
+        focus = Focus { x: xr + 2.0, y: v.y(reading), label_px: (v.y(num_step) - v.y(0.0)).abs().max(80.0 / p.i("mag_marks").clamp(1, 6) as f64) };
     }
-    if p.b("answer") { tx(&mut d, 180.0, h_img - 14.0, 14.0, "middle", INK, true, &format!("Reading: {} mL", num(reading, 2))); }
-    title_at(&mut d, p, 180.0, h_img - 38.0, 15.0);
-    d.finish()
+    let svg = magnify::compose(p, d.finish(), &[focus], false);
+    let foot = if p.b("answer") { vec![format!("Reading: {} {unit}", num(reading, read_dp(minor)))] } else { vec![] };
+    wrap(p, svg, &foot)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -152,9 +199,16 @@ fn disp_params() -> Vec<ParamDef> {
         ParamDef::choice("object", "Object", &["Marbles", "Rock", "Cube", "Metal cylinder"], "Marbles"),
         ParamDef::int("count", "Number of marbles", 1, 5, 2),
         ParamDef::bool("dotted", "Dotted line at the meniscus", false),
-        ParamDef::text("title", "Title (optional)", ""),
-        ParamDef::text("lab_before", "Left label", "Before"),
-        ParamDef::text("lab_after", "Right label", "After"),
+        ParamDef::text("title", "Chart title text", ""),
+        ParamDef::text("lab_before", "Under the first cylinder", "Before"),
+        ParamDef::text("lab_after", "Under the second cylinder", "After"),
+        ParamDef::choice("marks", "Smallest marks", &VOL_MARKS, "Automatic"),
+        ParamDef::choice("numbered", "Numbered every", &VOL_NUMS, "Automatic"),
+        ParamDef::choice("unit", "Unit", &["mL", "cm³"], "mL"),
+        magnify::show_param(&["Cylinders only", "Cylinders and magnifiers"], "Cylinders only"),
+        magnify::marks_param(),
+        answer_param("Answer key (before, after and the object's volume)"),
+        title_style(false),
     ]
 }
 
@@ -163,11 +217,14 @@ fn disp_render(p: &Params) -> String {
     let (fill, edge) = liquid(p.s("color"));
     let before = p.f("before").clamp(0.0, max);
     let after = p.f("after").clamp(0.0, max).max(before);
-    let (major, minor) = cyl_marks(max);
+    let (n0, m0) = cyl_marks(max);
+    let (num_step, minor, numbers) = marks_from(p, max, n0, m0);
+    let unit = if p.s("unit").is_empty() { "mL" } else { p.s("unit") };
     let mut d = Doc::new(600.0, 600.0);
     let (w, ytop, ybot) = (84.0, 90.0, 500.0);
+    let mut foci = Vec::new();
     for (idx, (cx, lvl)) in [(120.0, before), (400.0, after)].into_iter().enumerate() {
-        let v = Vessel { cx, w, ytop, ybot, max, major, minor, inverted: false, level: lvl, color: fill, edge, mdepth: 7.0 };
+        let v = Vessel { cx, w, ytop, ybot, max, major: num_step, minor, inverted: false, level: lvl, color: fill, edge, mdepth: 7.0 };
         let (xl, xr) = (cx - w / 2.0, cx + w / 2.0);
         liquid_shape(&mut d, &v, ybot + 6.0);
         if idx == 1 {
@@ -197,13 +254,18 @@ fn disp_render(p: &Params) -> String {
         }
         d.path(&format!("M{:.1},{:.1} L{xl:.1},{:.1} L{xl:.1},{:.1} L{xr:.1},{:.1} L{xr:.1},{:.1} L{:.1},{:.1}", xl - 5.0, ytop - 28.0, ytop - 24.0, ybot + 6.0, ybot + 6.0, ytop - 24.0, xr + 5.0, ytop - 28.0), "none", GLASS_EDGE, 1.8);
         d.poly(&[(xl, ybot + 6.0), (xl - 24.0, ybot + 22.0), (xr + 24.0, ybot + 22.0), (xr, ybot + 6.0)], "#eef3f6", GLASS_EDGE, 1.6);
-        scale_ticks(&mut d, &v, xr, -1.0, xr + 12.0, "start", "mL");
+        scale_ticks_n(&mut d, &v, xr, -1.0, xr + 12.0, "start", unit, num_step, numbers);
         if p.b("dotted") { dashed(&mut d, cx, v.y(lvl), xr + 40.0, v.y(lvl), "#555", 1.2); }
         tx(&mut d, cx, 560.0, 15.0, "middle", INK, true, if idx == 0 { p.s("lab_before") } else { p.s("lab_after") });
+        foci.push(Focus { x: xr + 2.0, y: v.y(lvl), label_px: (v.y(num_step) - v.y(0.0)).abs().max(70.0 / p.i("mag_marks").clamp(1, 6) as f64) });
     }
     d.arrow(222.0, 300.0, 292.0, 300.0, INK, 2.0);
-    title_at(&mut d, p, 300.0, 592.0, 15.0);
-    d.finish()
+    let svg = magnify::compose(p, d.finish(), &foci, true);
+    let dp = read_dp(minor);
+    let foot = if p.b("answer") {
+        vec![format!("{}: {} {unit} · {}: {} {unit} · Object: {} {unit}", p.s("lab_before"), num(before, dp), p.s("lab_after"), num(after, dp), num(after - before, dp))]
+    } else { vec![] };
+    wrap(p, svg, &foot)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -216,8 +278,11 @@ fn syringe_params() -> Vec<ParamDef> {
         ParamDef::choice("size", "Gas syringe size", &["50 cm³", "100 cm³"], "100 cm³"),
         ParamDef::choice("unit", "Unit", &["cm³", "mL"], "cm³"),
         ParamDef::float("volume", "Volume of gas", 0.0, 100.0, 0.1, 43.6),
-        ParamDef::bool("answer", "Show the reading as a caption", false),
-        ParamDef::text("title", "Title (optional)", ""),
+        ParamDef::bool("answer", "Answer key (the volume under the figure)", false),
+        ParamDef::text("title", "Chart title text", ""),
+        magnify::show_param(&MAG3, "Instrument only"),
+        magnify::marks_param(),
+        title_style(false),
     ]
 }
 
@@ -269,9 +334,10 @@ fn syringe_render(p: &Params) -> String {
         if maj { tx(&mut d, x, top - 6.0, 12.0, "middle", INK, false, &format!("{}", k)); }
     }
     tx(&mut d, x0 - 6.0, top - 6.0, 12.0, "end", INK, true, unit);
-    if p.b("answer") { tx(&mut d, x0 + len / 2.0, h - 12.0, 14.0, "middle", INK, true, &format!("Reading: {} {}", num(vol, 1), unit)); }
-    title_at(&mut d, p, x0 + len / 2.0, h - 34.0, 15.0);
-    d.finish()
+    let focus = Focus { x: xp, y: top + 14.0, label_px: len / max * 10.0 };
+    let svg = magnify::compose(p, d.finish(), &[focus], true);
+    let foot = if p.b("answer") { vec![format!("Volume of gas: {} {}", num(vol, 1), unit)] } else { vec![] };
+    wrap(p, svg, &foot)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -287,8 +353,12 @@ fn length_params() -> Vec<ParamDef> {
         ParamDef::float("offset", "Left end at", 0.0, 100.0, 0.01, 0.0),
         ParamDef::choice("object", "Object", &["Marbles", "Rock", "Cube", "Metal cylinder"], "Metal cylinder"),
         ParamDef::bool("dashes", "Dashed lines at its ends", false),
-        ParamDef::bool("answer", "Show the length as a caption", false),
-        ParamDef::text("title", "Title (optional)", ""),
+        ParamDef::bool("answer", "Answer key (the length under the figure)", false),
+        ParamDef::text("title", "Chart title text", ""),
+        ParamDef::choice("read_to", "Read to (answer key)", &["One estimated digit", "Nearest mark"], "One estimated digit"),
+        magnify::show_param(&["Ruler and magnifiers", "Ruler only"], "Ruler only"),
+        magnify::marks_param(),
+        title_style(false),
     ]
 }
 
@@ -371,9 +441,24 @@ fn length_render(p: &Params) -> String {
         dashed(&mut d, x1, top_of_obj + 4.0, x1, ry + 40.0, "#c0392b", 1.1);
         dashed(&mut d, x2, top_of_obj + 4.0, x2, ry + 40.0, "#c0392b", 1.1);
     }
-    if p.b("answer") { tx(&mut d, 350.0, 238.0, 14.0, "middle", INK, true, &format!("Length: {} {}", num(len, 2), unit)); }
-    title_at(&mut d, p, 350.0, 26.0, 15.0);
-    d.finish()
+    let foci = [Focus { x: x1, y: ry + 22.0, label_px: lstep * ppu }, Focus { x: x2, y: ry + 22.0, label_px: lstep * ppu }];
+    let svg = magnify::compose(p, d.finish(), &foci, true);
+    let foot = if p.b("answer") {
+        let shown = if p.s("read_to") == "Nearest mark" {
+            let r = (len / u).round() * u;
+            if imperial { inch_fraction(r) } else { num(r, read_dp(u).saturating_sub(1)) }
+        } else { num(len, read_dp(u)) };
+        vec![format!("Length: {shown} {}", if imperial { "in" } else { "cm" })]
+    } else { vec![] };
+    wrap(p, svg, &foot)
+}
+
+/// 3.3125 -> "3 5/16".
+fn inch_fraction(v: f64) -> String {
+    let sixteenths = (v * 16.0).round() as i64;
+    let (whole, mut num_, mut den) = (sixteenths / 16, sixteenths % 16, 16);
+    while num_ > 0 && num_ % 2 == 0 { num_ /= 2; den /= 2; }
+    match (whole, num_) { (w, 0) => format!("{w}"), (0, n) => format!("{n}/{den}"), (w, n) => format!("{w} {n}/{den}") }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -386,7 +471,11 @@ fn mass_params() -> Vec<ParamDef> {
         ParamDef::choice("pan", "On the pan", &["Nothing", "Marbles", "Rock", "Cube", "Metal cylinder"], "Nothing"),
         ParamDef::float("mass", "Mass (g)", 0.0, 610.0, 0.01, 24.73),
         ParamDef::choice("places", "Digital decimal places", &["0.1", "0.01", "0.001"], "0.01"),
-        ParamDef::text("title", "Title (optional)", ""),
+        ParamDef::text("title", "Chart title text", ""),
+        magnify::show_param(&["Instrument and magnifier", "Instrument only", "Beams only"], "Instrument only"),
+        magnify::marks_param(),
+        answer_param("Answer key (the mass under the figure)"),
+        title_style(false),
     ]
 }
 
@@ -395,6 +484,7 @@ fn mass_render(p: &Params) -> String {
     let mass = p.f("mass").clamp(0.0, if triple { 610.0 } else { 9999.0 });
     let pan = p.s("pan");
     let mut d = Doc::new(700.0, 400.0);
+    let focus;
     if triple {
         // base and pan
         d.path("M40,350 L330,350 L330,372 L40,372 Z", "#7a8790", INK, 1.6);
@@ -432,6 +522,7 @@ fn mass_render(p: &Params) -> String {
         }
         d.rect(bx0 - 6.0, 60.0, 6.0, 210.0, "#6c7880", INK, 1.0);
         d.line(bx0 + bl + 2.0, 60.0, bx0 + bl + 2.0, 270.0, "#888", 0.8);
+        focus = Focus { x: bx0 + 10.0 + ones / 10.0 * (bl - 20.0), y: 248.0, label_px: (bl - 20.0) / 10.0 };
     } else {
         let places = match p.s("places") { "0.1" => 1, "0.001" => 3, _ => 2 };
         d.rect(100.0, 250.0, 420.0, 100.0, "#e7ebee", INK, 1.8);
@@ -445,9 +536,18 @@ fn mass_render(p: &Params) -> String {
         d.poly(&[(180.0, 250.0), (200.0, 232.0), (440.0, 232.0), (460.0, 250.0)], "#c9d1d6", INK, 1.5);
         d.rect(210.0, 218.0, 220.0, 14.0, "#dde3e7", INK, 1.5);
         if pan != "Nothing" { object(&mut d, pan, 320.0, 218.0, 90.0, 5); }
+        focus = Focus { x: 250.0, y: 297.0, label_px: 220.0 / p.i("mag_marks").clamp(1, 6) as f64 };
     }
-    title_at(&mut d, p, 350.0, 26.0, 15.0);
-    d.finish()
+    let places = if triple { 2 } else { match p.s("places") { "0.1" => 1, "0.001" => 3, _ => 2 } };
+    let foot = if p.b("answer") { vec![format!("Mass: {} g", num(mass, places))] } else { vec![] };
+    if p.s("mag_show") == "Beams only" && triple {
+        let (_, _, body) = magnify::inner(&d.finish());
+        let mut c = Doc::new(440.0, 250.0);
+        c.raw(&format!(r#"<g transform="translate(-300 -44)">{body}</g>"#));
+        return wrap(p, c.finish(), &foot);
+    }
+    let svg = magnify::compose(p, d.finish(), &[focus], false);
+    wrap(p, svg, &foot)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -461,7 +561,11 @@ fn temp_params() -> Vec<ParamDef> {
         ParamDef::choice("liquid", "Liquid color", &["Red", "Blue", "Gray"], "Red"),
         ParamDef::float("temperature", "Temperature", -50.0, 400.0, 0.1, 23.4),
         ParamDef::choice("places", "Digital decimal places", &["0", "0.1"], "0.1"),
-        ParamDef::text("title", "Title (optional)", ""),
+        ParamDef::text("title", "Chart title text", ""),
+        magnify::show_param(&MAG3, "Instrument only"),
+        magnify::marks_param(),
+        answer_param("Answer key (the temperature under the figure)"),
+        title_style(false),
     ]
 }
 
@@ -473,7 +577,8 @@ fn temp_render(p: &Params) -> String {
         _ => (-10.0, 110.0, 1.0, 10.0, "°C"),
     };
     let t = p.f("temperature");
-    let mut d = Doc::new(360.0, 640.0);
+    let mut d = Doc::new(300.0, 640.0);
+    let focus;
     if p.s("thermometer") == "Digital probe" {
         let dp = if p.s("places") == "0" { 0 } else { 1 };
         d.rect(60.0, 60.0, 240.0, 120.0, "#e3e8ec", INK, 1.8);
@@ -485,9 +590,12 @@ fn temp_render(p: &Params) -> String {
         d.path("M180,180 C180,260 120,260 120,330 C120,380 200,360 200,420", "none", "#3c4850", 4.0);
         d.rect(190.0, 420.0, 20.0, 150.0, "#b8c0c6", INK, 1.5);
         d.poly(&[(190.0, 570.0), (210.0, 570.0), (200.0, 600.0)], "#8e999f", INK, 1.5);
+        focus = Focus { x: 190.0, y: 109.0, label_px: 200.0 / p.i("mag_marks").clamp(1, 6) as f64 };
     } else {
         let (ytop, ybot) = (70.0, 500.0);
         let t = t.clamp(lo, hi);
+        let t_shown = t;
+        let _ = t_shown;
         let y = |v: f64| ybot - (v - lo) / (hi - lo) * (ybot - ytop);
         let cx = 110.0;
         let col = match p.s("liquid") { "Blue" => "#2e6fd0", "Gray" => "#7e8790", _ => "#d6342c" };
@@ -506,9 +614,12 @@ fn temp_render(p: &Params) -> String {
             if mj { tx(&mut d, cx + 40.0, y(v) + 4.0, 12.0, "start", INK, false, &format!("{}", v.round() as i64)); }
         }
         tx(&mut d, cx + 12.0, ytop - 20.0, 14.0, "start", INK, true, sym);
+        focus = Focus { x: cx + 16.0, y: y(t), label_px: lstep / (hi - lo) * (ybot - ytop) };
     }
-    title_at(&mut d, p, 180.0, 26.0, 15.0);
-    d.finish()
+    let dp = if p.s("thermometer") == "Digital probe" { if p.s("places") == "0" { 0 } else { 1 } } else { 1 };
+    let foot = if p.b("answer") { vec![format!("Temperature: {} {sym}", num(t, dp))] } else { vec![] };
+    let svg = magnify::compose(p, d.finish(), &[focus], false);
+    wrap(p, svg, &foot)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -534,7 +645,9 @@ fn ph_params() -> Vec<ParamDef> {
         ParamDef::choice("instrument", "Instrument", &["Digital meter", "Analog meter", "pH paper"], "Digital meter"),
         ParamDef::choice("places", "Decimal places", &["0.0", "0.00"], "0.00"),
         ParamDef::float("ph", "pH", 0.0, 14.0, 0.01, 4.62),
-        ParamDef::text("title", "Title (optional)", ""),
+        ParamDef::text("title", "Chart title text", ""),
+        answer_param("Answer key (the pH under the figure)"),
+        title_style(false),
     ]
 }
 
@@ -595,8 +708,9 @@ fn ph_render(p: &Params) -> String {
             d.rect(321.0, 372.0, 18.0, 56.0, "#b8c0c6", INK, 1.5);
         }
     }
-    title_at(&mut d, p, 280.0, 14.0, 13.0);
-    d.finish()
+    let dp = match p.s("instrument") { "pH paper" => 0, "Analog meter" => 2, _ => if p.s("places") == "0.0" { 1 } else { 2 } };
+    let foot = if p.b("answer") { vec![format!("pH: {}", num(ph, dp))] } else { vec![] };
+    wrap(p, d.finish(), &foot)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -620,10 +734,7 @@ pub(super) fn handles(id: &str, p: &Params, _size: (f64, f64)) -> Option<Vec<Han
 }
 
 /// Effective scale maximum of the volume-reading instrument (mirrors `volume_render`).
-fn vol_max(p: &Params) -> f64 {
-    let size = size_ml(p.s("size"));
-    if p.s("instrument") == "Buret" { if size <= 25.0 { 25.0 } else { 50.0 } } else { size }
-}
+fn vol_max(p: &Params) -> f64 { vol_scale(p).0 }
 
 /// y of volume `v` and its inverse, for the vessel the renderer draws.
 fn vol_axis(p: &Params) -> (f64, f64, bool, f64) {
@@ -635,6 +746,7 @@ fn vol_axis(p: &Params) -> (f64, f64, bool, f64) {
 }
 
 fn vol_handles(p: &Params) -> Vec<Handle> {
+    if magnify::magnifier_only(p) { return vec![]; }
     let max = vol_max(p);
     let (ytop, ybot, inv, cx) = vol_axis(p);
     let r = p.f("reading").clamp(0.0, max);
@@ -681,6 +793,7 @@ fn syringe_geom(p: &Params) -> (f64, f64, f64, f64) {
 }
 
 fn syringe_handles(p: &Params) -> Vec<Handle> {
+    if magnify::magnifier_only(p) { return vec![]; }
     let (max, x0, len, cy) = syringe_geom(p);
     let vol = p.f("volume").clamp(0.0, max);
     vec![Handle::bar((x0 + vol / max * len + 10.0, cy), false, "Drag the plunger to set the volume", move |q, t| {
@@ -701,6 +814,7 @@ fn ruler_total(p: &Params) -> f64 {
 }
 
 fn length_handles(p: &Params) -> Vec<Handle> {
+    if magnify::magnifier_only(p) { return vec![]; }
     let total = ruler_total(p);
     let (rx0, rw, ry) = (30.0, 640.0, 150.0);
     let ppu = rw / total;
@@ -741,6 +855,7 @@ fn length_handles(p: &Params) -> Vec<Handle> {
 }
 
 fn mass_handles(p: &Params) -> Vec<Handle> {
+    if p.s("mag_show") == "Beams only" && p.s("balance").starts_with("Triple") { return vec![]; }
     if !p.s("balance").starts_with("Triple") {
         return vec![Handle::zone((230.0, 297.0), (230.0, 62.0), "Scroll to change the mass", |_| {}).with_scroll(|q, dy| {
             q.set_f("mass", q.f("mass") + dy * 0.1);
@@ -785,6 +900,7 @@ fn temp_scale(p: &Params) -> (f64, f64) {
 }
 
 fn temp_handles(p: &Params) -> Vec<Handle> {
+    if magnify::magnifier_only(p) { return vec![]; }
     if p.s("thermometer") == "Digital probe" {
         return vec![Handle::zone((180.0, 109.0), (200.0, 62.0), "Scroll to change the temperature", |_| {}).with_scroll(|q, dy| {
             q.set_f("temperature", q.f("temperature") + dy * 0.1);
@@ -827,4 +943,74 @@ fn ph_handles(p: &Params) -> Vec<Handle> {
             q.set_f("ph", q.f("ph") + dy * 0.05);
         })],
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Examples
+// ---------------------------------------------------------------------------------------------
+
+#[allow(unused_imports)]
+use crate::figures::{Example, Value};
+#[allow(dead_code)]
+fn ex(name: &'static str, params: Vec<(&'static str, Value)>) -> Example { Example { name, params } }
+
+fn sv(v: &str) -> Value { Value::S(v.into()) }
+fn bv(v: bool) -> Value { Value::B(v) }
+fn fv(v: f64) -> Value { Value::F(v) }
+fn iv(v: i64) -> Value { Value::I(v) }
+
+pub(super) fn examples(id: &str) -> Option<Vec<Example>> {
+    let m = ("mag_show", sv("Instrument and magnifier"));
+    Some(match id {
+        "volume-reading" => vec![
+            ex("Graduated cylinder reading 34.5 mL", vec![("reading", fv(34.5)), m.clone()]),
+            ex("10 mL graduated cylinder reading 7.36 mL", vec![("size", sv("10 mL")), ("reading", fv(7.36)), m.clone()]),
+            ex("Meniscus close-up: 50 mL cylinder at 26.0 mL", vec![("size", sv("50 mL")), ("reading", fv(26.0)), ("mag_show", sv("Magnifier only")), ("mag_marks", iv(3))]),
+            ex("1000 mL graduated cylinder reading 640 mL", vec![("size", sv("1000 mL")), ("reading", fv(640.0)), m.clone()]),
+            ex("Buret reading 12.35 mL", vec![("instrument", sv("Buret")), ("reading", fv(12.35)), m.clone(), ("mag_marks", iv(3))]),
+            ex("Beaker reading 160 mL", vec![("instrument", sv("Beaker")), ("size", sv("250 mL")), ("reading", fv(160.0)), ("color", sv("Red"))]),
+            ex("25 cm³ graduated cylinder reading 18.25 cm³", vec![("size", sv("25 mL")), ("reading", fv(18.25)), ("unit", sv("cm³")), m.clone()]),
+        ],
+        "volume-by-displacement" => vec![
+            ex("Marbles in a 25 mL graduated cylinder", vec![("size", sv("25 mL")), ("before", fv(12.0)), ("after", fv(15.5)), ("count", iv(3)), ("answer", bv(true))]),
+            ex("Rock in a 100 mL graduated cylinder", vec![("size", sv("100 mL")), ("object", sv("Rock")), ("before", fv(50.0)), ("after", fv(63.0))]),
+            ex("Metal cube in a 50 mL graduated cylinder", vec![("size", sv("50 mL")), ("object", sv("Cube")), ("before", fv(20.0)), ("after", fv(28.0)), ("mag_show", sv("Cylinders and magnifiers"))]),
+            ex("Metal cylinder in a 10 mL graduated cylinder", vec![("size", sv("10 mL")), ("object", sv("Metal cylinder")), ("before", fv(5.0)), ("after", fv(7.4)), ("color", sv("Blue"))]),
+            ex("Cube in a 100 cm³ cylinder with 2 cm³ marks", vec![("size", sv("100 mL")), ("object", sv("Cube")), ("before", fv(40.0)), ("after", fv(52.0)), ("marks", sv("2 mL")), ("unit", sv("cm³"))]),
+        ],
+        "gas-syringe" => vec![
+            ex("Gas syringe collecting gas: 64 cm³", vec![("volume", fv(64.0))]),
+            ex("Gas syringe plunger close-up: 37.6 cm³", vec![("show", sv("Syringe only")), ("size", sv("50 cm³")), ("volume", fv(37.6)), ("mag_show", sv("Magnifier only"))]),
+            ex("Gas syringe reading in mL: 31.8 mL", vec![("show", sv("Syringe only")), ("unit", sv("mL")), ("volume", fv(31.8)), m.clone()]),
+            ex("50 cm³ gas syringe reading 23.5 cm³", vec![("size", sv("50 cm³")), ("volume", fv(23.5)), m.clone(), ("answer", bv(true))]),
+        ],
+        "length-reading" => vec![
+            ex("Metric ruler reading 7.45 cm", vec![("length", fv(7.45)), ("mag_show", sv("Ruler and magnifiers"))]),
+            ex("Centimeter ruler without millimeters: 5.3 cm", vec![("marks", sv("1 cm")), ("length", fv(5.3)), ("object", sv("Cube"))]),
+            ex("Ruler measuring not from zero (rock)", vec![("object", sv("Rock")), ("offset", fv(2.0)), ("length", fv(4.6)), ("dashes", bv(true))]),
+            ex("Meter stick reading 62.4 cm", vec![("ruler", sv("100 cm")), ("marks", sv("1 cm")), ("length", fv(62.4))]),
+            ex("Inch ruler reading 3 5/16 inches", vec![("units", sv("Imperial (in)")), ("length", fv(3.3125)), ("read_to", sv("Nearest mark")), ("answer", bv(true))]),
+        ],
+        "mass-reading" => vec![
+            ex("Triple beam balance reading 263.47 g", vec![("mass", fv(263.47)), m.clone()]),
+            ex("Triple beam balance: rock, 72.35 g", vec![("mass", fv(72.35)), ("pan", sv("Rock"))]),
+            ex("Digital balance reading 12.47 g", vec![("balance", sv("Digital balance")), ("mass", fv(12.47))]),
+            ex("Digital balance: metal cube, 21.6 g", vec![("balance", sv("Digital balance")), ("pan", sv("Cube")), ("mass", fv(21.6)), ("places", sv("0.1"))]),
+            ex("Analytical balance reading 0.2537 g", vec![("balance", sv("Digital balance")), ("mass", fv(0.254)), ("places", sv("0.001"))]),
+        ],
+        "temperature-reading" => vec![
+            ex("Thermometer reading 22.6 °C", vec![("temperature", fv(22.6)), m.clone(), ("mag_marks", iv(3))]),
+            ex("Thermometer below zero: -4.5 °C", vec![("temperature", fv(-4.5)), m.clone(), ("mag_marks", iv(3))]),
+            ex("Fahrenheit thermometer reading 98.6 °F", vec![("unit", sv("Fahrenheit (°F)")), ("temperature", fv(98.6)), m.clone()]),
+            ex("Kelvin thermometer reading 295.4 K", vec![("unit", sv("Kelvin (K)")), ("temperature", fv(295.4)), ("liquid", sv("Blue"))]),
+            ex("Digital thermometer reading 78.4 °C", vec![("thermometer", sv("Digital probe")), ("temperature", fv(78.4))]),
+        ],
+        "ph-reading" => vec![
+            ex("pH meter reading 3.27", vec![("ph", fv(3.27))]),
+            ex("Analog pH meter reading 8.46", vec![("instrument", sv("Analog meter")), ("ph", fv(8.46))]),
+            ex("pH paper: acid, pH 2", vec![("instrument", sv("pH paper")), ("ph", fv(2.0))]),
+            ex("pH paper: base, pH 11", vec![("instrument", sv("pH paper")), ("ph", fv(11.0))]),
+        ],
+        _ => return None,
+    })
 }

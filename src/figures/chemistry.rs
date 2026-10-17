@@ -7,6 +7,9 @@ use super::{interact, FigureDef, Params};
 
 mod handles;
 mod atoms;
+pub mod frame;
+pub mod magnify;
+pub use frame::*;
 mod curves;
 pub mod data;
 mod lewis;
@@ -143,9 +146,30 @@ pub fn title_at(d: &mut Doc, p: &Params, cx: f64, y: f64, size: f64) {
 /// Palette for curve colours.
 pub const CURVE_COLORS: [&str; 6] = ["#1f5fa8", "#c0392b", "#2e8b57", "#8e44ad", "#d68910", "#1b1b1b"];
 
-/// Direct-manipulation handles for this subject's figures (None = not one of ours).
+/// "Start from an example" entries for this subject's figures.
+pub fn examples(id: &str) -> Option<Vec<super::Example>> {
+    spectra::examples(id)
+        .or_else(|| atoms::examples(id))
+        .or_else(|| curves::examples(id))
+        .or_else(|| lewis::examples(id))
+        .or_else(|| measure::examples(id))
+}
+
+/// Handles are laid out in the figure's own coordinates; the chart-title band the wrapper adds
+/// shifts the figure down, so positions and pointer coordinates are shifted to match.
 pub fn handles(id: &str, p: &Params, size: (f64, f64)) -> Option<Vec<interact::Handle>> {
-    handles::handles(id, p, size)
+    let dy = frame::title_band(p);
+    let hs = handles::handles(id, p, (size.0, size.1 - dy))?;
+    if dy == 0.0 {
+        return Some(hs);
+    }
+    Some(hs.into_iter().map(|mut h| {
+        h.pos.1 += dy;
+        if let Some(f) = h.drag.take() {
+            h.drag = Some(std::sync::Arc::new(move |q: &mut Params, t: (f64, f64)| f(q, (t.0, t.1 - dy))));
+        }
+        h
+    }).collect())
 }
 
 pub fn defs() -> Vec<FigureDef> {

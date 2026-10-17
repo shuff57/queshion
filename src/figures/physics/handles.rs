@@ -3,7 +3,7 @@
 //! those files expose (`vlayout`, `proj_geo`, `motion_axes`, ...) are reused where they exist and
 //! the remaining constants are copied next to a comment naming the renderer line they come from.
 use super::graphs::{build_segs, motion_axes, motion_layout, series, SK};
-use super::mech::{proj_geo, ray_exit, vlayout, PG};
+use super::mech::{fbd_geo, proj_geo, ray_exit, vlabel_pos, vlayout, PG};
 use crate::figures::interact::{angle_deg, cycle, dist, polar, Cursor, Handle, Pt};
 use crate::figures::Params;
 
@@ -55,39 +55,36 @@ const FLAB: [&str; 6] = ["f1_lab", "f2_lab", "f3_lab", "f4_lab", "f5_lab", "f6_l
 
 fn fbd(p: &Params, size: (f64, f64)) -> Vec<Handle> {
     let m = M::new(p, size);
-    let (cx, cy) = (240.0, 180.0); // fbd_render
+    let geo = fbd_geo(p);
+    let (cx, cy, sc) = (geo.cx, geo.cy, geo.sc);
     let body = p.s("body").to_string();
     let mut out = vec![];
     if body != "Dot" {
-        out.push(lab(m, (cx, cy), 50.0, "body_lab"));
+        out.push(lab(m, (cx, cy + 8.0), 50.0, "body_lab"));
     }
-    for i in 0..p.i("n").clamp(1, 6) as usize {
-        let (ang, len) = (p.f(FANG[i]), p.f(FLEN[i]));
-        let total = ray_exit(&body, ang) + 20.0 + 55.0 * len;
-        let tip = polar((cx, cy), ang, total);
-        let (ux, uy) = ((tip.0 - cx) / total, (tip.1 - cy) / total);
+    for (i, &(tail, tip, _)) in geo.forces.iter().enumerate() {
+        let l = dist(tail, tip).max(1e-6);
+        let (ux, uy) = ((tip.0 - tail.0) / l, (tip.1 - tail.1) / l);
         out.push(lab(m, (tip.0 + ux * 28.0, tip.1 + uy * 22.0), 54.0, FLAB[i]));
         let b = body.clone();
         out.push(Handle::knob(m.p(tip), "Drag to set this force's direction and length", move |p, q| {
             let q = m.p(q);
-            let r = dist((cx, cy), q);
+            let r = dist(tail, q);
             if r < 4.0 { return; }
-            let a = angle_deg((cx, cy), q);
+            let a = angle_deg(tail, q);
             p.set_f(FANG[i], a);
-            p.set_f(FLEN[i], (r - ray_exit(&b, a) - 20.0) / 55.0);
+            p.set_f(FLEN[i], (r - ray_exit(&b, a, sc) - 20.0) / 55.0);
         }));
     }
-    let mo = p.s("motion");
-    if mo != "None" {
-        let c = (415.0, 292.0); // first motion row
-        let tip = polar(c, p.f("mdir"), 26.0);
-        out.push(Handle::knob(m.p(tip), "Drag to turn the velocity / acceleration arrow", move |p, q| {
-            p.set_f("mdir", angle_deg(c, m.p(q)));
+    for &(c, _, key, _) in &geo.motion {
+        let dkey = if key == "mv_lab" { "mdir" } else { "adir" };
+        let ang = if dkey == "adir" && p.f("adir") < 0.0 { p.f("mdir") } else { p.f(dkey) };
+        let tip = polar(c, ang, 26.0);
+        out.push(Handle::knob(m.p(tip), "Drag to turn this motion arrow", move |p, q| {
+            p.set_f(dkey, angle_deg(c, m.p(q)));
         }));
-        let (key, row) = if mo == "Acceleration" { ("ma_lab", 0.0) } else { ("mv_lab", 0.0) };
-        let _ = row;
-        out.push(lab(m, (tip.0 + (tip.0 - c.0) * 0.8, tip.1 + (tip.1 - c.1) * 0.8), 40.0, key));
     }
+    let _ = cy;
     out
 }
 
@@ -103,12 +100,10 @@ fn vector(p: &Params, size: (f64, f64)) -> Vec<Handle> {
     let (ox, oy, u) = (l.ox, l.oy, l.u);
     let pxy = |q: Pt| (ox + q.0 * u, oy - q.1 * u);
     let mut out = vec![];
+    let (vl, rl) = vlabel_pos(p, &l);
     for i in 0..l.n {
-        let (a, b) = (pxy(l.pts[i]), pxy(l.pts[i + 1]));
-        let (dx, dy) = (b.0 - a.0, b.1 - a.1);
-        let len = (dx * dx + dy * dy).sqrt().max(1e-6);
-        let (nx, ny) = (-dy / len, dx / len);
-        out.push(lab(m, ((a.0 + b.0) / 2.0 + nx * 17.0, (a.1 + b.1) / 2.0 + ny * 17.0), 34.0, VLAB[i]));
+        let b = pxy(l.pts[i + 1]);
+        out.push(lab(m, vl[i], 34.0, VLAB[i]));
         let start = l.pts[i];
         out.push(Handle::knob(m.p(b), "Drag the tip to change this vector's length and direction", move |p, q| {
             let q = m.p(q);
@@ -121,11 +116,7 @@ fn vector(p: &Params, size: (f64, f64)) -> Vec<Handle> {
         }));
     }
     if p.b("resultant") && l.n >= 2 {
-        let (a, b) = (pxy((0.0, 0.0)), pxy(l.res));
-        let (dx, dy) = (b.0 - a.0, b.1 - a.1);
-        let len = (dx * dx + dy * dy).sqrt().max(1e-6);
-        let (nx, ny) = (-dy / len, dx / len);
-        out.push(lab(m, ((a.0 + b.0) / 2.0 - nx * 18.0, (a.1 + b.1) / 2.0 - ny * 18.0), 34.0, "res_lab"));
+        out.push(lab(m, rl, 34.0, "res_lab"));
     }
     out
 }
@@ -155,7 +146,8 @@ fn incline(p: &Params, size: (f64, f64)) -> Vec<Handle> {
     out.push(lab(m, com, 40.0, "obj_lab"));
     out.push(lab(m, polar((ax, ground), th / 2.0, r + 20.0), 40.0, "ang_lab"));
     if p.b("mark_len") {
-        out.push(lab(m, (ax + uu.0 * (lh / 2.0) - nn.0 * 40.0, ground + uu.1 * (lh / 2.0) - nn.1 * 40.0), 30.0, "len_lab"));
+        let o = super::mech::len_mark_off(up) + 14.0;
+        out.push(lab(m, (ax + uu.0 * (lh / 2.0) + nn.0 * o, ground + uu.1 * (lh / 2.0) + nn.1 * o), 30.0, "len_lab"));
     }
     out.push(Handle::knob(m.p(arc), "Drag to change the ramp angle", move |p, q| {
         p.set_f("angle", angle_deg((ax, ground), m.p(q)));
@@ -170,58 +162,25 @@ fn incline(p: &Params, size: (f64, f64)) -> Vec<Handle> {
 
 // ------------------------------------------------------------------ pulley
 
-/// A hanging box: centre x, current top y, its rest top y, size, which side name it lowers as.
-struct Box_ { cx: f64, top: f64, rest: f64, s: f64, side: &'static str, size_key: &'static str, lab: &'static str }
 
 fn pulley(p: &Params, size: (f64, f64)) -> Vec<Handle> {
     let m = M::new(p, size);
-    let (ls, rs) = (60.0 * p.f("l_size") / 100.0, 60.0 * p.f("r_size") / 100.0);
-    let lower = p.s("lower");
-    let (dl, dr) = (if lower == "Left" { 45.0 } else { 0.0 }, if lower == "Right" { 45.0 } else { 0.0 });
-    let mut boxes: Vec<Box_> = vec![];
+    let geo = super::pulley::pulley_geo(p);
     let mut out = vec![];
-    match p.s("setup") {
-        "Table" => {
-            let (top, edge) = (170.0, 290.0);
-            boxes.push(Box_ { cx: 160.0, top: top - ls, rest: top - ls, s: ls, side: "", size_key: "l_size", lab: "l_lab" });
-            boxes.push(Box_ { cx: edge + 8.0 + 24.0, top: 250.0 + dr, rest: 250.0, s: rs, side: "Right", size_key: "r_size", lab: "r_lab" });
-        }
-        "Ramp" => {
-            let th = p.f("angle").to_radians();
-            let (ground, ax, hgt) = (350.0, 30.0, 190.0);
-            let bw = (hgt / th.tan()).min(280.0);
-            let tp = (ax + bw, ground - bw * th.tan());
-            let (uu, nn) = ((th.cos(), -th.sin()), (-th.sin(), -th.cos()));
-            let (hh, pr) = (ls / 2.0, 24.0);
-            let q = (tp.0 + nn.0 * hh + uu.0 * hh * th.tan(), tp.1 + nn.1 * hh + uu.1 * hh * th.tan());
-            let c = (q.0 - nn.0 * pr, q.1 - nn.1 * pr);
-            boxes.push(Box_ { cx: c.0 + pr, top: c.1 + 80.0 + dr, rest: c.1 + 80.0, s: rs, side: "Right", size_key: "r_size", lab: "r_lab" });
-            let sb = 0.5 * ((tp.0 - ax) / th.cos());
-            let base = (ax + uu.0 * sb, ground + uu.1 * sb);
-            out.push(lab(m, (base.0 + nn.0 * ls / 2.0, base.1 + nn.1 * ls / 2.0), 40.0, "l_lab"));
-            let k = polar((ax, ground), p.f("angle"), 60.0);
-            out.push(Handle::knob(m.p(k), "Drag to change the ramp angle", move |p, q| {
-                p.set_f("angle", angle_deg((ax, ground), m.p(q)));
-            }));
-        }
-        "Block & tackle" => {
-            let (mx, my) = (260.0, 220.0 + dl);
-            boxes.push(Box_ { cx: mx, top: my + 70.0, rest: 290.0, s: ls, side: "Left", size_key: "l_size", lab: "l_lab" });
-        }
-        _ => {
-            boxes.push(Box_ { cx: 240.0 - 42.0, top: 235.0 + dl, rest: 235.0, s: ls, side: "Left", size_key: "l_size", lab: "l_lab" });
-            boxes.push(Box_ { cx: 240.0 + 42.0, top: 235.0 + dr, rest: 235.0, s: rs, side: "Right", size_key: "r_size", lab: "r_lab" });
-        }
+    if let Some((ax, ground)) = geo.ramp {
+        let k = polar((ax, ground), p.f("angle"), 60.0);
+        out.push(Handle::knob(m.p(k), "Drag to change the ramp angle", move |p, q| {
+            p.set_f("angle", angle_deg((ax, ground), m.p(q)));
+        }));
     }
-    for b in boxes {
-        out.push(lab(m, (b.cx, b.top + b.s / 2.0), 36.0, b.lab));
+    for b in geo.boxes {
+        out.push(lab(m, (b.cx, b.top + b.s / 2.0), 36.0, b.lab_key));
         let (cx, side, rest, key) = (b.cx, b.side, b.rest, b.size_key);
         out.push(Handle::diamond(m.p((cx + b.s / 2.0, b.top)), "Drag to resize this object", move |p, q| {
             let q = m.p(q);
             p.set_i(key, ((2.0 * (q.0 - cx).abs()) * 100.0 / 60.0).round() as i64);
         }).with_cursor(Cursor::ResizeH));
         if !side.is_empty() {
-            let key = b.size_key;
             out.push(Handle::knob(m.p((cx, b.top + b.s)), "Drag down to let this object hang lower", move |p, q| {
                 let s = 60.0 * p.f(key) / 100.0;
                 let d = q.1 - s - rest;
@@ -243,17 +202,18 @@ fn projectile(p: &Params, size: (f64, f64)) -> Vec<Handle> {
     let w = size.0;
     let PG { th, vx, vy, r, ground, lx, ly, s, t_land, .. } = proj_geo(p, w);
     let pos = |t: f64| (lx + s * vx * t, ly - s * (vy * t - 0.5 * t * t));
-    let tip = polar((lx, ly), th, r + 80.0);
+    let br = if p.s("object") == "Dot" { 4.5 } else { r };
+    let tip = polar((lx, ly), th, br + 56.0);
     let mut out = vec![];
-    out.push(lab(m, polar((lx, ly), th / 2.0, r + 50.0), 36.0, "ang_lab").tap_pos(m, (6.0, 0.0)));
-    out.push(lab(m, (tip.0 - vy * 2.0 - 3.0, tip.1 - vy.max(0.4) * 10.0 - 10.0), 40.0, "v_lab"));
+    out.push(lab(m, polar((lx, ly), th / 2.0, br + 41.0), 36.0, "ang_lab").tap_pos(m, (6.0, 0.0)));
+    out.push(lab(m, (tip.0 - 2.0, tip.1 - 20.0), 40.0, "v_lab"));
     if p.b("mark_h") {
         let apex = pos(vy);
-        out.push(lab(m, (apex.0 + 44.0, (apex.1 + ly) / 2.0), 30.0, "h_lab"));
+        out.push(lab(m, (apex.0 + 14.0, (apex.1 + ly) / 2.0), 30.0, "h_lab"));
     }
     if p.b("mark_r") {
         let end = pos(t_land);
-        out.push(lab(m, ((lx + end.0) / 2.0, ground + 24.0 - 14.0), 30.0, "r_lab"));
+        out.push(lab(m, ((lx + end.0) / 2.0, ground + 38.0), 30.0, "r_lab"));
     }
     // object: scroll to resize
     out.push(Handle::zone(m.p((lx, ly)), (2.0 * r + 6.0, 2.0 * r + 6.0), "Scroll to resize the object", |_| {})
@@ -292,7 +252,7 @@ fn motion(p: &Params, size: (f64, f64)) -> Vec<Handle> {
     out.push(lab(m, (w / 2.0 + 20.0, 24.0), 220.0, "title"));
     for (pi, (which, rect)) in panels.iter().enumerate() {
         let which = *which;
-        let (axs, _, _) = motion_axes(&segs, which, *rect);
+        let (axs, _, _) = motion_axes(p, &segs, which, *rect);
         let a = Ax { x0: axs.x0, y0: axs.y0, w: axs.w, h: axs.h, xmin: axs.xmin, xmax: axs.xmax, ymin: axs.ymin, ymax: axs.ymax };
         let ykey = match which { 0 => "yt_pos", 1 => "yt_vel", _ => "yt_acc" };
         out.push(Handle::label(m.p((50.0, a.y0 + a.h / 2.0)), (24.0, 120.0), ykey, "Double-click to edit the axis title"));
@@ -300,6 +260,16 @@ fn motion(p: &Params, size: (f64, f64)) -> Vec<Handle> {
             out.push(Handle::label(m.p((a.x0 + a.w / 2.0, a.y0 + a.h + 40.0)), (200.0, 22.0), "xt", "Double-click to edit the axis title"));
         }
         if which == 2 { continue; }
+        if which == 0 && p.b("tangent") && !segs.is_empty() {
+            let tt = p.f("tangent_t").clamp(segs[0].t0, segs.last().unwrap().t1);
+            let sg = *segs.iter().find(|s| tt <= s.t1 + 1e-9).unwrap_or(segs.last().unwrap());
+            let tmax = segs.last().unwrap().t1;
+            out.push(Handle::knob(m.p((axs.px(tt), axs.py(sg.x(tt)))), "Drag along the graph to move the tangent", move |p, q| {
+                let q = m.p(q);
+                let t = a.xmin + (q.0 - a.x0) / a.w * (a.xmax - a.xmin);
+                p.set_f("tangent_t", t.clamp(0.0, tmax));
+            }).with_cursor(Cursor::ResizeH));
+        }
         if which == 0 {
             let s0 = segs[0];
             out.push(Handle::bar(m.p((axs.px(0.0), axs.py(s0.x0))), true, "Drag to set the starting position", move |p, q| {
@@ -355,70 +325,50 @@ fn motion(p: &Params, size: (f64, f64)) -> Vec<Handle> {
 
 fn waves(p: &Params, size: (f64, f64)) -> Vec<Handle> {
     let m = M::new(p, size);
-    let kind = p.s("kind").to_string();
-    let time = p.s("against") == "Time";
-    let (a, wl) = (p.f("amp"), p.f("wl").max(0.5));
-    let cyc = p.i("cycles").clamp(1, 5) as f64;
-    let xmax = wl * cyc;
-    let trans = kind != "Longitudinal";
-    let long = kind != "Transverse";
-    let w = size.0;
-    let h = size.1;
-    let top = if p.s("title").trim().is_empty() { 24.0 } else { 52.0 };
-    let (ox, pw) = (100.0, 460.0);
-    let px = move |x: f64| ox + x / xmax * pw;
+    let l = super::graphs::wave_layout(p);
+    let (a, wl) = (p.f("amp").max(0.001), p.f("wl").max(0.001));
     let mut out = vec![];
-    out.push(lab(m, (w / 2.0 + 20.0, 24.0), 220.0, "title"));
-    let _ = time;
-    let mut y_cursor = top;
-    let damp = move |p: &mut Params, here: f64| {
-        // The axis rescales with the wavelength, so steer by ratio (damped) rather than absolute.
-        let f = ((here - ox) / (px(wl) - ox)).clamp(0.2, 5.0);
-        p.set_f("wl", wl * f.powf(0.12));
+    out.push(lab(m, (l.w / 2.0 + 20.0, 26.0), 220.0, "title"));
+    let fit = p.b("xaxis_fit");
+    let damp = move |p: &mut Params, f: f64| {
+        // with a fitted axis the scale follows the wavelength, so steer by ratio (damped)
+        p.set_f("wl", (wl * if fit { f.powf(0.12) } else { f }).max(0.1));
     };
-    if trans {
-        let ph = if kind == "Both" { 260.0 } else { h - top - 85.0 };
-        let ystep = super::common::nice_step(a * 2.6, 8.0);
-        let ymax = (a * 1.35 / ystep).ceil() * ystep;
-        let py = move |y: f64| top + ph / 2.0 - y / ymax * (ph / 2.0);
+    let cyc_scroll = |p: &mut Params, d: f64| p.set_f("cycles", (p.f("cycles") + if d >= 0.0 { 0.5 } else { -0.5 }).clamp(0.5, 8.0));
+    if let Some(ax) = l.panel {
+        let (x0, w, xmin, xmax) = (ax.x0, ax.w, ax.xmin, ax.xmax);
+        let (y0, h, ymin, ymax) = (ax.y0, ax.h, ax.ymin, ax.ymax);
+        let px = move |x: f64| x0 + (x - xmin) / (xmax - xmin) * w;
+        let py = move |y: f64| y0 + h - (y - ymin) / (ymax - ymin) * h;
         out.push(Handle::knob(m.p((px(wl / 4.0), py(a))), "Drag the crest up or down to set the amplitude", move |p, q| {
             let q = m.p(q);
-            p.set_f("amp", (top + ph / 2.0 - q.1) / (ph / 2.0) * ymax);
+            p.set_f("amp", (ymin + (y0 + h - q.1) / h * (ymax - ymin)).max(0.1));
         }).with_cursor(Cursor::ResizeV));
         out.push(Handle::knob(m.p((px(wl), py(0.0))), "Drag sideways to stretch or squeeze the wavelength; scroll to add or remove cycles", move |p, q| {
-            damp(p, m.p(q).0);
-        }).with_cursor(Cursor::ResizeH).with_scroll(|p, d| p.set_i("cycles", p.i("cycles") + if d >= 0.0 { 1 } else { -1 })));
-        out.push(lab(m, (px(wl / 4.0) + 16.0, (py(0.0) + py(a)) / 2.0), 30.0, "amp_lab"));
-        let (s, e) = if xmax >= wl * 1.25 - 1e-9 { (wl / 4.0, wl * 1.25) } else { (0.0, wl) };
-        let y = py(a + (ymax - a) * 0.5);
-        out.push(lab(m, ((px(s) + px(e)) / 2.0, y - 14.0), 36.0, "wl_lab"));
-        out.push(lab(m, (w / 2.0 + 20.0 - 10.0, top - 0.0 + ph + 40.0), 200.0, "xt").tap_skip(kind == "Both"));
-        out.push(Handle::label(m.p((50.0, top + ph / 2.0)), (24.0, 120.0), "yt", "Double-click to edit the axis title"));
-        y_cursor += ph + if kind == "Both" { 46.0 } else { 0.0 };
-    }
-    if long {
-        let (bh, by) = (70.0, y_cursor + 20.0);
-        if !trans {
-            out.push(Handle::knob(m.p((px(wl), by + bh / 2.0)), "Drag sideways to stretch or squeeze the wavelength; scroll to add or remove cycles", move |p, q| {
-                damp(p, m.p(q).0);
-            }).with_cursor(Cursor::ResizeH).with_scroll(|p, d| p.set_i("cycles", p.i("cycles") + if d >= 0.0 { 1 } else { -1 })));
-            if p.b("mark_wl") {
-                let (s, e) = if xmax >= wl * 1.25 - 1e-9 { (wl / 4.0, wl * 1.25) } else { (0.0, wl) };
-                out.push(lab(m, ((px(s) + px(e)) / 2.0, by - 26.0 - 14.0), 36.0, "wl_lab"));
-            }
+            let xq = xmin + (m.p(q).0 - x0) / w * (xmax - xmin);
+            damp(p, (xq / wl).clamp(0.2, 5.0));
+        }).with_cursor(Cursor::ResizeH).with_scroll(cyc_scroll));
+        out.push(lab(m, (px(wl / 4.0) + 14.0, (py(0.0) + py(a)) / 2.0 - 8.0), 30.0, "amp_lab"));
+        let (s, e) = if wl * 1.25 <= xmax.min(wl * p.f("cycles")) + 1e-9 { (wl / 4.0, wl * 1.25) } else { (0.0, wl) };
+        out.push(lab(m, ((px(s) + px(e)) / 2.0, py(a) - 22.0 - 12.0), 36.0, "wl_lab"));
+        out.push(lab(m, (x0 + w / 2.0, y0 + h + 30.0), 200.0, "xt"));
+        out.push(Handle::label(m.p((x0 - 52.0, y0 + h / 2.0)), (24.0, 120.0), "yt", "Double-click to edit the axis title"));
+    } else if let Some((by, bh)) = l.strip {
+        let ax = l.sx;
+        let (x0, w, xmin, xmax) = (ax.x0, ax.w, ax.xmin, ax.xmax);
+        let px = move |x: f64| x0 + (x - xmin) / (xmax - xmin) * w;
+        out.push(Handle::knob(m.p((px(wl), by + bh / 2.0)), "Drag sideways to stretch or squeeze the wavelength; scroll to add or remove cycles", move |p, q| {
+            let xq = xmin + (m.p(q).0 - x0) / w * (xmax - xmin);
+            damp(p, (xq / wl).clamp(0.2, 5.0));
+        }).with_cursor(Cursor::ResizeH).with_scroll(cyc_scroll));
+        if p.b("mark_wl") {
+            let (s, e) = if wl * 1.25 <= xmax.min(wl * p.f("cycles")) + 1e-9 { (wl / 4.0, wl * 1.25) } else { (0.0, wl) };
+            out.push(lab(m, ((px(s) + px(e)) / 2.0, by - 14.0 - 12.0), 36.0, "wl_lab"));
         }
-        out.push(Handle::label(m.p((ox + pw / 2.0, by + bh + 14.0 + 42.0)), (200.0, 22.0), "xt", "Double-click to edit the axis title"));
+        out.push(Handle::label(m.p((x0 + w / 2.0, by + bh + 44.0 + 40.0)), (200.0, 22.0), "xt", "Double-click to edit the axis title"));
     }
+    let _ = size;
     out
-}
-
-trait TapSkip { fn tap_skip(self, skip: bool) -> Self; }
-impl TapSkip for Handle {
-    /// Used to park a label zone off-canvas when its text is not drawn in this layout.
-    fn tap_skip(mut self, skip: bool) -> Self {
-        if skip { self.pos = (-100.0, -100.0); self.edit = None; self.click = None; }
-        self
-    }
 }
 
 // ------------------------------------------------------------------ spring scale
@@ -433,7 +383,8 @@ fn spring(p: &Params, size: (f64, f64)) -> Vec<Handle> {
     if view == "Magnifier only" {
         return out;
     }
-    let ix = if view == "Instrument only" { w / 2.0 } else { 130.0 };
+    let (_, ix, _, _) = super::instr::spring_layout(p);
+    let _ = w;
     let (y0, y1) = (130.0, 424.0);
     let value = p.f("reading").min(cap) + p.f("offset") * cap;
     let py = y0 + (y1 - y0) * value.clamp(-0.08 * cap, 1.06 * cap) / cap;
@@ -459,50 +410,36 @@ const RVAL: [&str; 4] = ["r1_val", "r2_val", "r3_val", "r4_val"];
 
 fn circuit(p: &Params, size: (f64, f64)) -> Vec<Handle> {
     let m = M::new(p, size);
-    let parallel = p.s("layout") == "In parallel";
-    let n = p.i("n").clamp(1, 4) as usize;
-    let (top_y, bot_y, lx) = (if parallel { 90.0 } else { 110.0 }, 280.0, 110.0);
-    let rx = if parallel { 215.0 + 85.0 * (n as f64 - 1.0) + 50.0 } else { 480.0 };
+    let l = super::instr::circuit_layout(p);
     let mut out = vec![];
-    out.push(lab(m, (size.0 / 2.0, 22.0), 220.0, "title"));
-    for i in 0..n {
-        let bulb = p.s(RKIND[i]) == "Bulb";
-        let len: f64 = if bulb { 40.0 } else if n >= 4 && !parallel { 56.0 } else { 64.0 };
+    out.push(lab(m, (size.0 / 2.0, 26.0), 220.0, "title"));
+    for (i, &(cx, cy, len)) in l.comps.iter().enumerate() {
         let toggle = move |p: &mut Params| cycle(p, RKIND[i], &["Resistor", "Bulb"]);
-        if parallel {
-            let cx = 215.0 + 85.0 * i as f64;
-            let cy = (top_y + bot_y) / 2.0;
-            out.push(Handle::zone(m.p((cx, cy)), (36.0, len.max(60.0)), "Click to switch between resistor and bulb", toggle));
-            out.push(lab(m, (cx + 48.0, cy - 8.0), 50.0, RNAME[i]));
-            out.push(lab(m, (cx + 50.0, cy + 16.0), 56.0, RVAL[i]).with_scroll(move |p, d| {
-                let v = bump(p.s(RVAL[i]), d);
-                p.set_s(RVAL[i], &v);
-            }));
+        let scroll = move |p: &mut Params, d: f64| {
+            let v = bump(p.s(RVAL[i]), d);
+            p.set_s(RVAL[i], &v);
+        };
+        if l.parallel {
+            out.push(Handle::zone(m.p((cx, cy)), (36.0, len.max(44.0)), "Click to switch between resistor and bulb", toggle));
+            out.push(lab(m, (cx + 44.0, cy), 44.0, RNAME[i]));
+            out.push(lab(m, (cx - 50.0, cy), 56.0, RVAL[i]).with_scroll(scroll));
         } else {
-            let span = rx - 30.0 - (lx + 80.0);
-            let cx = lx + 80.0 + span * (i as f64 + 0.5) / n as f64;
-            out.push(Handle::zone(m.p((cx, top_y)), (len, 34.0), "Click to switch between resistor and bulb", toggle));
-            out.push(lab(m, (cx, top_y - 36.0), 56.0, RNAME[i]));
-            out.push(lab(m, (cx, top_y + 34.0), 56.0, RVAL[i]).with_scroll(move |p, d| {
-                let v = bump(p.s(RVAL[i]), d);
-                p.set_s(RVAL[i], &v);
-            }));
+            out.push(Handle::zone(m.p((cx, l.top_y)), (len, 34.0), "Click to switch between resistor and bulb", toggle));
+            out.push(lab(m, (cx, l.top_y - 32.0), 56.0, RNAME[i]));
+            out.push(lab(m, (cx, l.top_y + 33.0), 56.0, RVAL[i]).with_scroll(scroll));
         }
     }
-    let sw_mid = if parallel { 150.0 } else { 270.0 };
-    if p.s("switch") != "None" {
-        out.push(Handle::zone(m.p((sw_mid, bot_y - 12.0)), (70.0, 44.0), "Click to open or close the switch", |p| {
+    if let Some((a, b)) = l.sw {
+        out.push(Handle::zone(m.p(((a.0 + b.0) / 2.0 + 10.0, (a.1 + b.1) / 2.0)), (44.0, 60.0), "Click to open or close the switch", |p| {
             let next = if p.s("switch") == "Closed" { "Open" } else { "Closed" };
             p.set_s("switch", next);
         }));
     }
-    let cells = match p.s("cell") { "One cell" => 1, "Battery of three cells" => 3, _ => 2 };
-    let by = (top_y + bot_y) / 2.0;
-    out.push(Handle::zone(m.p((lx, by)), (54.0, 12.0 * (cells * 2) as f64 + 10.0), "Click to add a cell to the battery", |p| {
+    let bh = super::instr::PITCH * l.plates as f64 + 10.0;
+    out.push(Handle::zone(m.p((l.lx, l.by)), (54.0, bh), "Click to add a cell to the battery", |p| {
         cycle(p, "cell", &["One cell", "Battery of two cells", "Battery of three cells"]);
     }));
-    let named = !p.s("cell_name").trim().is_empty();
-    out.push(lab(m, (lx + 36.0 + 28.0, by + if named { 14.0 } else { 1.0 }), 60.0, "cell_val").with_scroll(|p, d| {
+    out.push(lab(m, (l.lx + 34.0 + 28.0, l.by), 60.0, "cell_val").with_scroll(|p, d| {
         let v = bump(p.s("cell_val"), d);
         p.set_s("cell_val", &v);
     }));

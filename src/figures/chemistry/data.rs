@@ -1,43 +1,264 @@
 //! Small chemistry data tables shared by the generators.
 
-/// (symbol, name, standard atomic mass) for Z = 1..=36.
-pub const ELEMENTS: [(&str, &str, f64); 36] = [
-    ("H", "Hydrogen", 1.008), ("He", "Helium", 4.003), ("Li", "Lithium", 6.94), ("Be", "Beryllium", 9.012),
-    ("B", "Boron", 10.81), ("C", "Carbon", 12.011), ("N", "Nitrogen", 14.007), ("O", "Oxygen", 15.999),
-    ("F", "Fluorine", 18.998), ("Ne", "Neon", 20.180), ("Na", "Sodium", 22.990), ("Mg", "Magnesium", 24.305),
-    ("Al", "Aluminum", 26.982), ("Si", "Silicon", 28.085), ("P", "Phosphorus", 30.974), ("S", "Sulfur", 32.06),
-    ("Cl", "Chlorine", 35.45), ("Ar", "Argon", 39.948), ("K", "Potassium", 39.098), ("Ca", "Calcium", 40.078),
-    ("Sc", "Scandium", 44.956), ("Ti", "Titanium", 47.867), ("V", "Vanadium", 50.942), ("Cr", "Chromium", 51.996),
-    ("Mn", "Manganese", 54.938), ("Fe", "Iron", 55.845), ("Co", "Cobalt", 58.933), ("Ni", "Nickel", 58.693),
-    ("Cu", "Copper", 63.546), ("Zn", "Zinc", 65.38), ("Ga", "Gallium", 69.723), ("Ge", "Germanium", 72.630),
-    ("As", "Arsenic", 74.922), ("Se", "Selenium", 78.971), ("Br", "Bromine", 79.904), ("Kr", "Krypton", 83.798),
+/// (symbol, name, standard atomic mass; mass number of the longest-lived isotope when unstable)
+/// for Z = 1..=118.
+pub const ELEMENTS: [(&str, &str, f64); 118] = [
+    ("H", "Hydrogen", 1.008),
+    ("He", "Helium", 4.0026),
+    ("Li", "Lithium", 6.94),
+    ("Be", "Beryllium", 9.0122),
+    ("B", "Boron", 10.81),
+    ("C", "Carbon", 12.011),
+    ("N", "Nitrogen", 14.007),
+    ("O", "Oxygen", 15.999),
+    ("F", "Fluorine", 18.998),
+    ("Ne", "Neon", 20.180),
+    ("Na", "Sodium", 22.990),
+    ("Mg", "Magnesium", 24.305),
+    ("Al", "Aluminum", 26.982),
+    ("Si", "Silicon", 28.085),
+    ("P", "Phosphorus", 30.974),
+    ("S", "Sulfur", 32.06),
+    ("Cl", "Chlorine", 35.45),
+    ("Ar", "Argon", 39.948),
+    ("K", "Potassium", 39.098),
+    ("Ca", "Calcium", 40.078),
+    ("Sc", "Scandium", 44.956),
+    ("Ti", "Titanium", 47.867),
+    ("V", "Vanadium", 50.942),
+    ("Cr", "Chromium", 51.996),
+    ("Mn", "Manganese", 54.938),
+    ("Fe", "Iron", 55.845),
+    ("Co", "Cobalt", 58.933),
+    ("Ni", "Nickel", 58.693),
+    ("Cu", "Copper", 63.546),
+    ("Zn", "Zinc", 65.38),
+    ("Ga", "Gallium", 69.723),
+    ("Ge", "Germanium", 72.630),
+    ("As", "Arsenic", 74.922),
+    ("Se", "Selenium", 78.971),
+    ("Br", "Bromine", 79.904),
+    ("Kr", "Krypton", 83.798),
+    ("Rb", "Rubidium", 85.468),
+    ("Sr", "Strontium", 87.62),
+    ("Y", "Yttrium", 88.906),
+    ("Zr", "Zirconium", 91.224),
+    ("Nb", "Niobium", 92.906),
+    ("Mo", "Molybdenum", 95.95),
+    ("Tc", "Technetium", 98.0),
+    ("Ru", "Ruthenium", 101.07),
+    ("Rh", "Rhodium", 102.91),
+    ("Pd", "Palladium", 106.42),
+    ("Ag", "Silver", 107.87),
+    ("Cd", "Cadmium", 112.41),
+    ("In", "Indium", 114.82),
+    ("Sn", "Tin", 118.71),
+    ("Sb", "Antimony", 121.76),
+    ("Te", "Tellurium", 127.60),
+    ("I", "Iodine", 126.90),
+    ("Xe", "Xenon", 131.29),
+    ("Cs", "Cesium", 132.91),
+    ("Ba", "Barium", 137.33),
+    ("La", "Lanthanum", 138.91),
+    ("Ce", "Cerium", 140.12),
+    ("Pr", "Praseodymium", 140.91),
+    ("Nd", "Neodymium", 144.24),
+    ("Pm", "Promethium", 145.0),
+    ("Sm", "Samarium", 150.36),
+    ("Eu", "Europium", 151.96),
+    ("Gd", "Gadolinium", 157.25),
+    ("Tb", "Terbium", 158.93),
+    ("Dy", "Dysprosium", 162.50),
+    ("Ho", "Holmium", 164.93),
+    ("Er", "Erbium", 167.26),
+    ("Tm", "Thulium", 168.93),
+    ("Yb", "Ytterbium", 173.05),
+    ("Lu", "Lutetium", 174.97),
+    ("Hf", "Hafnium", 178.49),
+    ("Ta", "Tantalum", 180.95),
+    ("W", "Tungsten", 183.84),
+    ("Re", "Rhenium", 186.21),
+    ("Os", "Osmium", 190.23),
+    ("Ir", "Iridium", 192.22),
+    ("Pt", "Platinum", 195.08),
+    ("Au", "Gold", 196.97),
+    ("Hg", "Mercury", 200.59),
+    ("Tl", "Thallium", 204.38),
+    ("Pb", "Lead", 207.2),
+    ("Bi", "Bismuth", 208.98),
+    ("Po", "Polonium", 209.0),
+    ("At", "Astatine", 210.0),
+    ("Rn", "Radon", 222.0),
+    ("Fr", "Francium", 223.0),
+    ("Ra", "Radium", 226.0),
+    ("Ac", "Actinium", 227.0),
+    ("Th", "Thorium", 232.04),
+    ("Pa", "Protactinium", 231.04),
+    ("U", "Uranium", 238.03),
+    ("Np", "Neptunium", 237.0),
+    ("Pu", "Plutonium", 244.0),
+    ("Am", "Americium", 243.0),
+    ("Cm", "Curium", 247.0),
+    ("Bk", "Berkelium", 247.0),
+    ("Cf", "Californium", 251.0),
+    ("Es", "Einsteinium", 252.0),
+    ("Fm", "Fermium", 257.0),
+    ("Md", "Mendelevium", 258.0),
+    ("No", "Nobelium", 259.0),
+    ("Lr", "Lawrencium", 266.0),
+    ("Rf", "Rutherfordium", 267.0),
+    ("Db", "Dubnium", 268.0),
+    ("Sg", "Seaborgium", 269.0),
+    ("Bh", "Bohrium", 270.0),
+    ("Hs", "Hassium", 269.0),
+    ("Mt", "Meitnerium", 278.0),
+    ("Ds", "Darmstadtium", 281.0),
+    ("Rg", "Roentgenium", 282.0),
+    ("Cn", "Copernicium", 285.0),
+    ("Nh", "Nihonium", 286.0),
+    ("Fl", "Flerovium", 289.0),
+    ("Mc", "Moscovium", 290.0),
+    ("Lv", "Livermorium", 293.0),
+    ("Ts", "Tennessine", 294.0),
+    ("Og", "Oganesson", 294.0),
 ];
 
 /// Dropdown labels like "6 C - Carbon" for the element choice.
-pub const ELEMENT_CHOICES: [&str; 36] = [
-    "1 H - Hydrogen", "2 He - Helium", "3 Li - Lithium", "4 Be - Beryllium", "5 B - Boron", "6 C - Carbon",
-    "7 N - Nitrogen", "8 O - Oxygen", "9 F - Fluorine", "10 Ne - Neon", "11 Na - Sodium", "12 Mg - Magnesium",
-    "13 Al - Aluminum", "14 Si - Silicon", "15 P - Phosphorus", "16 S - Sulfur", "17 Cl - Chlorine", "18 Ar - Argon",
-    "19 K - Potassium", "20 Ca - Calcium", "21 Sc - Scandium", "22 Ti - Titanium", "23 V - Vanadium",
-    "24 Cr - Chromium", "25 Mn - Manganese", "26 Fe - Iron", "27 Co - Cobalt", "28 Ni - Nickel", "29 Cu - Copper",
-    "30 Zn - Zinc", "31 Ga - Gallium", "32 Ge - Germanium", "33 As - Arsenic", "34 Se - Selenium",
-    "35 Br - Bromine", "36 Kr - Krypton",
+pub const ELEMENT_CHOICES: [&str; 118] = [
+    "1 H - Hydrogen",
+    "2 He - Helium",
+    "3 Li - Lithium",
+    "4 Be - Beryllium",
+    "5 B - Boron",
+    "6 C - Carbon",
+    "7 N - Nitrogen",
+    "8 O - Oxygen",
+    "9 F - Fluorine",
+    "10 Ne - Neon",
+    "11 Na - Sodium",
+    "12 Mg - Magnesium",
+    "13 Al - Aluminum",
+    "14 Si - Silicon",
+    "15 P - Phosphorus",
+    "16 S - Sulfur",
+    "17 Cl - Chlorine",
+    "18 Ar - Argon",
+    "19 K - Potassium",
+    "20 Ca - Calcium",
+    "21 Sc - Scandium",
+    "22 Ti - Titanium",
+    "23 V - Vanadium",
+    "24 Cr - Chromium",
+    "25 Mn - Manganese",
+    "26 Fe - Iron",
+    "27 Co - Cobalt",
+    "28 Ni - Nickel",
+    "29 Cu - Copper",
+    "30 Zn - Zinc",
+    "31 Ga - Gallium",
+    "32 Ge - Germanium",
+    "33 As - Arsenic",
+    "34 Se - Selenium",
+    "35 Br - Bromine",
+    "36 Kr - Krypton",
+    "37 Rb - Rubidium",
+    "38 Sr - Strontium",
+    "39 Y - Yttrium",
+    "40 Zr - Zirconium",
+    "41 Nb - Niobium",
+    "42 Mo - Molybdenum",
+    "43 Tc - Technetium",
+    "44 Ru - Ruthenium",
+    "45 Rh - Rhodium",
+    "46 Pd - Palladium",
+    "47 Ag - Silver",
+    "48 Cd - Cadmium",
+    "49 In - Indium",
+    "50 Sn - Tin",
+    "51 Sb - Antimony",
+    "52 Te - Tellurium",
+    "53 I - Iodine",
+    "54 Xe - Xenon",
+    "55 Cs - Cesium",
+    "56 Ba - Barium",
+    "57 La - Lanthanum",
+    "58 Ce - Cerium",
+    "59 Pr - Praseodymium",
+    "60 Nd - Neodymium",
+    "61 Pm - Promethium",
+    "62 Sm - Samarium",
+    "63 Eu - Europium",
+    "64 Gd - Gadolinium",
+    "65 Tb - Terbium",
+    "66 Dy - Dysprosium",
+    "67 Ho - Holmium",
+    "68 Er - Erbium",
+    "69 Tm - Thulium",
+    "70 Yb - Ytterbium",
+    "71 Lu - Lutetium",
+    "72 Hf - Hafnium",
+    "73 Ta - Tantalum",
+    "74 W - Tungsten",
+    "75 Re - Rhenium",
+    "76 Os - Osmium",
+    "77 Ir - Iridium",
+    "78 Pt - Platinum",
+    "79 Au - Gold",
+    "80 Hg - Mercury",
+    "81 Tl - Thallium",
+    "82 Pb - Lead",
+    "83 Bi - Bismuth",
+    "84 Po - Polonium",
+    "85 At - Astatine",
+    "86 Rn - Radon",
+    "87 Fr - Francium",
+    "88 Ra - Radium",
+    "89 Ac - Actinium",
+    "90 Th - Thorium",
+    "91 Pa - Protactinium",
+    "92 U - Uranium",
+    "93 Np - Neptunium",
+    "94 Pu - Plutonium",
+    "95 Am - Americium",
+    "96 Cm - Curium",
+    "97 Bk - Berkelium",
+    "98 Cf - Californium",
+    "99 Es - Einsteinium",
+    "100 Fm - Fermium",
+    "101 Md - Mendelevium",
+    "102 No - Nobelium",
+    "103 Lr - Lawrencium",
+    "104 Rf - Rutherfordium",
+    "105 Db - Dubnium",
+    "106 Sg - Seaborgium",
+    "107 Bh - Bohrium",
+    "108 Hs - Hassium",
+    "109 Mt - Meitnerium",
+    "110 Ds - Darmstadtium",
+    "111 Rg - Roentgenium",
+    "112 Cn - Copernicium",
+    "113 Nh - Nihonium",
+    "114 Fl - Flerovium",
+    "115 Mc - Moscovium",
+    "116 Lv - Livermorium",
+    "117 Ts - Tennessine",
+    "118 Og - Oganesson",
 ];
 
 /// Atomic number from a choice string ("6 C - Carbon") or a bare symbol.
 pub fn z_of(choice: &str) -> usize {
     if let Some(n) = choice.split_whitespace().next().and_then(|t| t.parse::<usize>().ok()) {
-        return n.clamp(1, 36);
+        return n.clamp(1, 118);
     }
     ELEMENTS.iter().position(|e| e.0 == choice).map(|i| i + 1).unwrap_or(6)
 }
 
-pub fn symbol(z: usize) -> &'static str { ELEMENTS[z.clamp(1, 36) - 1].0 }
-pub fn name(z: usize) -> &'static str { ELEMENTS[z.clamp(1, 36) - 1].1 }
-pub fn mass_number(z: usize) -> usize { ELEMENTS[z.clamp(1, 36) - 1].2.round() as usize }
+pub fn symbol(z: usize) -> &'static str { ELEMENTS[z.clamp(1, 118) - 1].0 }
+pub fn name(z: usize) -> &'static str { ELEMENTS[z.clamp(1, 118) - 1].1 }
+pub fn mass_number(z: usize) -> usize { ELEMENTS[z.clamp(1, 118) - 1].2.round() as usize }
 
 /// Aufbau filling order as (n, l).
-pub const AUFBAU: [(u8, u8); 10] = [(1, 0), (2, 0), (2, 1), (3, 0), (3, 1), (4, 0), (3, 2), (4, 1), (5, 0), (4, 2)];
+pub const AUFBAU: [(u8, u8); 19] = [(1, 0), (2, 0), (2, 1), (3, 0), (3, 1), (4, 0), (3, 2), (4, 1), (5, 0), (4, 2), (5, 1), (6, 0), (4, 3), (5, 2), (6, 1), (7, 0), (5, 3), (6, 2), (7, 1)];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sub { pub n: u8, pub l: u8, pub e: u8 }
@@ -59,18 +280,39 @@ fn fill(e: i64) -> Vec<Sub> {
     out
 }
 
-/// Ground-state configuration (aufbau order) of the species with atomic number `z` and `charge`.
-pub fn config(z: usize, charge: i64) -> Vec<Sub> {
+/// Ground-state configuration (aufbau order) of the species with atomic number `z` and `charge`,
+/// with the real (measured) exceptions such as Cr and Cu.
+pub fn config(z: usize, charge: i64) -> Vec<Sub> { config_ex(z, charge, true) }
+
+/// Known exceptions: (Z, [(n, l, electrons)]) overriding the aufbau filling.
+const EXCEPTIONS: [(usize, &[(u8, u8, u8)]); 19] = [
+    (24, &[(4, 0, 1), (3, 2, 5)]), (29, &[(4, 0, 1), (3, 2, 10)]),
+    (41, &[(5, 0, 1), (4, 2, 4)]), (42, &[(5, 0, 1), (4, 2, 5)]), (44, &[(5, 0, 1), (4, 2, 7)]),
+    (45, &[(5, 0, 1), (4, 2, 8)]), (46, &[(5, 0, 0), (4, 2, 10)]), (47, &[(5, 0, 1), (4, 2, 10)]),
+    (57, &[(4, 3, 0), (5, 2, 1)]), (58, &[(4, 3, 1), (5, 2, 1)]), (64, &[(4, 3, 7), (5, 2, 1)]),
+    (78, &[(6, 0, 1), (5, 2, 9)]), (79, &[(6, 0, 1), (5, 2, 10)]),
+    (89, &[(5, 3, 0), (6, 2, 1)]), (90, &[(5, 3, 0), (6, 2, 2)]), (91, &[(5, 3, 2), (6, 2, 1)]),
+    (92, &[(5, 3, 3), (6, 2, 1)]), (93, &[(5, 3, 4), (6, 2, 1)]), (96, &[(5, 3, 7), (6, 2, 1)]),
+];
+
+/// As `config`; `real = false` keeps the plain filling order (no exceptions).
+pub fn config_ex(z: usize, charge: i64, real: bool) -> Vec<Sub> {
     let mut subs = fill(z as i64);
-    // Known 4th-period exceptions.
-    let set = |subs: &mut Vec<Sub>, s4: u8, d3: u8| {
-        for s in subs.iter_mut() {
-            if s.n == 4 && s.l == 0 { s.e = s4; }
-            if s.n == 3 && s.l == 2 { s.e = d3; }
+    if real {
+        if let Some((_, ex)) = EXCEPTIONS.iter().find(|e| e.0 == z) {
+            for &(n, l, e) in ex.iter() {
+                match subs.iter_mut().find(|s| s.n == n && s.l == l) {
+                    Some(s) => s.e = e,
+                    None => {
+                        let pos = AUFBAU.iter().position(|&a| a == (n, l)).unwrap_or(0);
+                        let at = subs.iter().position(|s| AUFBAU.iter().position(|&a| a == (s.n, s.l)).unwrap_or(0) > pos).unwrap_or(subs.len());
+                        subs.insert(at, Sub { n, l, e });
+                    }
+                }
+            }
+            subs.retain(|s| s.e > 0);
         }
-    };
-    if z == 24 { set(&mut subs, 1, 5); }
-    if z == 29 { set(&mut subs, 1, 10); }
+    }
     if charge > 0 {
         for _ in 0..charge {
             // remove from the highest n, then highest l
@@ -100,7 +342,7 @@ pub fn shells(z: usize, charge: i64) -> Vec<u32> {
 }
 
 pub fn noble_core(z: usize) -> Option<(usize, &'static str)> {
-    [(36, "Kr"), (18, "Ar"), (10, "Ne"), (2, "He")].into_iter().find(|&(c, _)| z > c)
+    [(86, "Rn"), (54, "Xe"), (36, "Kr"), (18, "Ar"), (10, "Ne"), (2, "He")].into_iter().find(|&(c, _)| z > c)
 }
 
 pub fn sup(n: u32) -> String {
@@ -131,28 +373,113 @@ pub fn atom_info(sym: &str) -> Option<(i32, f64, i32)> {
     })
 }
 
-/// Isotopes (mass number, abundance %) for the mass-spectrum generator.
-pub const ISOTOPES: [(&str, &[(u32, f64)]); 17] = [
-    ("Lithium", &[(6, 7.59), (7, 92.41)]),
-    ("Boron", &[(10, 19.9), (11, 80.1)]),
-    ("Carbon", &[(12, 98.93), (13, 1.07)]),
-    ("Nitrogen", &[(14, 99.64), (15, 0.36)]),
-    ("Oxygen", &[(16, 99.76), (17, 0.04), (18, 0.20)]),
-    ("Neon", &[(20, 90.48), (21, 0.27), (22, 9.25)]),
-    ("Magnesium", &[(24, 78.99), (25, 10.00), (26, 11.01)]),
-    ("Silicon", &[(28, 92.23), (29, 4.68), (30, 3.09)]),
-    ("Sulfur", &[(32, 94.99), (33, 0.75), (34, 4.25), (36, 0.01)]),
-    ("Chlorine", &[(35, 75.76), (37, 24.24)]),
-    ("Argon", &[(36, 0.34), (38, 0.06), (40, 99.60)]),
-    ("Potassium", &[(39, 93.26), (40, 0.01), (41, 6.73)]),
-    ("Calcium", &[(40, 96.94), (42, 0.65), (43, 0.14), (44, 2.09), (46, 0.004), (48, 0.19)]),
-    ("Copper", &[(63, 69.15), (65, 30.85)]),
-    ("Zinc", &[(64, 49.2), (66, 27.7), (67, 4.0), (68, 18.5), (70, 0.6)]),
-    ("Bromine", &[(79, 50.69), (81, 49.31)]),
-    ("Silver", &[(107, 51.84), (109, 48.16)]),
+/// Isotopes for the mass-spectrum generator: (name, symbol, standard atomic weight,
+/// [(mass number, abundance %)]). IUPAC representative compositions (2009 single values where
+/// IUPAC now gives a range); the weights are the standard atomic weights.
+pub const ISOTOPES: [(&str, &str, f64, &[(u32, f64)]); 58] = [
+    ("Hydrogen", "H", 1.008, &[(1, 99.9885), (2, 0.0115)]),
+    ("Helium", "He", 4.0026, &[(3, 0.000134), (4, 99.999866)]),
+    ("Lithium", "Li", 6.94, &[(6, 7.59), (7, 92.41)]),
+    ("Beryllium", "Be", 9.0122, &[(9, 100.0)]),
+    ("Boron", "B", 10.81, &[(10, 19.9), (11, 80.1)]),
+    ("Carbon", "C", 12.011, &[(12, 98.93), (13, 1.07)]),
+    ("Nitrogen", "N", 14.007, &[(14, 99.636), (15, 0.364)]),
+    ("Oxygen", "O", 15.999, &[(16, 99.757), (17, 0.038), (18, 0.205)]),
+    ("Fluorine", "F", 18.998, &[(19, 100.0)]),
+    ("Neon", "Ne", 20.180, &[(20, 90.48), (21, 0.27), (22, 9.25)]),
+    ("Sodium", "Na", 22.990, &[(23, 100.0)]),
+    ("Magnesium", "Mg", 24.305, &[(24, 78.99), (25, 10.00), (26, 11.01)]),
+    ("Aluminum", "Al", 26.982, &[(27, 100.0)]),
+    ("Silicon", "Si", 28.085, &[(28, 92.223), (29, 4.685), (30, 3.092)]),
+    ("Phosphorus", "P", 30.974, &[(31, 100.0)]),
+    ("Sulfur", "S", 32.06, &[(32, 94.99), (33, 0.75), (34, 4.25), (36, 0.01)]),
+    ("Chlorine", "Cl", 35.45, &[(35, 75.76), (37, 24.24)]),
+    ("Argon", "Ar", 39.95, &[(36, 0.3336), (38, 0.0629), (40, 99.6035)]),
+    ("Potassium", "K", 39.098, &[(39, 93.2581), (40, 0.0117), (41, 6.7302)]),
+    ("Calcium", "Ca", 40.078, &[(40, 96.941), (42, 0.647), (43, 0.135), (44, 2.086), (46, 0.004), (48, 0.187)]),
+    ("Scandium", "Sc", 44.956, &[(45, 100.0)]),
+    ("Titanium", "Ti", 47.867, &[(46, 8.25), (47, 7.44), (48, 73.72), (49, 5.41), (50, 5.18)]),
+    ("Vanadium", "V", 50.942, &[(50, 0.250), (51, 99.750)]),
+    ("Chromium", "Cr", 51.996, &[(50, 4.345), (52, 83.789), (53, 9.501), (54, 2.365)]),
+    ("Manganese", "Mn", 54.938, &[(55, 100.0)]),
+    ("Iron", "Fe", 55.845, &[(54, 5.845), (56, 91.754), (57, 2.119), (58, 0.282)]),
+    ("Cobalt", "Co", 58.933, &[(59, 100.0)]),
+    ("Nickel", "Ni", 58.693, &[(58, 68.077), (60, 26.223), (61, 1.1399), (62, 3.6346), (64, 0.9255)]),
+    ("Copper", "Cu", 63.546, &[(63, 69.15), (65, 30.85)]),
+    ("Zinc", "Zn", 65.38, &[(64, 49.17), (66, 27.73), (67, 4.04), (68, 18.45), (70, 0.61)]),
+    ("Gallium", "Ga", 69.723, &[(69, 60.108), (71, 39.892)]),
+    ("Germanium", "Ge", 72.630, &[(70, 20.52), (72, 27.45), (73, 7.76), (74, 36.52), (76, 7.75)]),
+    ("Arsenic", "As", 74.922, &[(75, 100.0)]),
+    ("Selenium", "Se", 78.971, &[(74, 0.86), (76, 9.23), (77, 7.60), (78, 23.69), (80, 49.80), (82, 8.82)]),
+    ("Bromine", "Br", 79.904, &[(79, 50.69), (81, 49.31)]),
+    ("Krypton", "Kr", 83.798, &[(78, 0.355), (80, 2.286), (82, 11.593), (83, 11.500), (84, 56.987), (86, 17.279)]),
+    ("Rubidium", "Rb", 85.468, &[(85, 72.17), (87, 27.83)]),
+    ("Strontium", "Sr", 87.62, &[(84, 0.56), (86, 9.86), (87, 7.00), (88, 82.58)]),
+    ("Yttrium", "Y", 88.906, &[(89, 100.0)]),
+    ("Zirconium", "Zr", 91.224, &[(90, 51.45), (91, 11.22), (92, 17.15), (94, 17.38), (96, 2.80)]),
+    ("Niobium", "Nb", 92.906, &[(93, 100.0)]),
+    ("Molybdenum", "Mo", 95.95, &[(92, 14.53), (94, 9.15), (95, 15.84), (96, 16.67), (97, 9.60), (98, 24.39), (100, 9.82)]),
+    ("Ruthenium", "Ru", 101.07, &[(96, 5.54), (98, 1.87), (99, 12.76), (100, 12.60), (101, 17.06), (102, 31.55), (104, 18.62)]),
+    ("Rhodium", "Rh", 102.91, &[(103, 100.0)]),
+    ("Palladium", "Pd", 106.42, &[(102, 1.02), (104, 11.14), (105, 22.33), (106, 27.33), (108, 26.46), (110, 11.72)]),
+    ("Silver", "Ag", 107.87, &[(107, 51.839), (109, 48.161)]),
+    ("Cadmium", "Cd", 112.41, &[(106, 1.25), (108, 0.89), (110, 12.49), (111, 12.80), (112, 24.13), (113, 12.22), (114, 28.73), (116, 7.49)]),
+    ("Indium", "In", 114.82, &[(113, 4.29), (115, 95.71)]),
+    ("Tin", "Sn", 118.71, &[(112, 0.97), (114, 0.66), (115, 0.34), (116, 14.54), (117, 7.68), (118, 24.22), (119, 8.59), (120, 32.58), (122, 4.63), (124, 5.79)]),
+    ("Antimony", "Sb", 121.76, &[(121, 57.21), (123, 42.79)]),
+    ("Tellurium", "Te", 127.60, &[(120, 0.09), (122, 2.55), (123, 0.89), (124, 4.74), (125, 7.07), (126, 18.84), (128, 31.74), (130, 34.08)]),
+    ("Iodine", "I", 126.90, &[(127, 100.0)]),
+    ("Xenon", "Xe", 131.29, &[(124, 0.0952), (126, 0.0890), (128, 1.9102), (129, 26.4006), (130, 4.0710), (131, 21.2324), (132, 26.9086), (134, 10.4357), (136, 8.8573)]),
+    ("Platinum", "Pt", 195.08, &[(190, 0.012), (192, 0.782), (194, 32.86), (195, 33.78), (196, 25.21), (198, 7.36)]),
+    ("Gold", "Au", 196.97, &[(197, 100.0)]),
+    ("Mercury", "Hg", 200.59, &[(196, 0.15), (198, 9.97), (199, 16.87), (200, 23.10), (201, 13.18), (202, 29.86), (204, 6.87)]),
+    ("Lead", "Pb", 207.2, &[(204, 1.4), (206, 24.1), (207, 22.1), (208, 52.4)]),
+    ("Uranium", "U", 238.03, &[(234, 0.0054), (235, 0.7204), (238, 99.2742)]),
 ];
 
-/// Binding energies (MJ/mol) per subshell, for Z = 1..=18, in order 1s,2s,2p,3s,3p.
+/// Binding energies (MJ/mol) per subshell for Z = 19..=54 as (n*10 + l, energy), from X-ray
+/// core-level binding energies (outer levels near the ionization energies), converted from eV.
+const PES_HEAVY: [&[(u8, f64)]; 36] = [
+        &[(10, 348.1), (20, 36.53), (21, 28.42), (30, 3.358), (31, 1.766), (40, 0.4187)], // K
+        &[(10, 389.6), (20, 42.3), (21, 33.4), (30, 4.274), (31, 2.451), (40, 0.5895)], // Ca
+        &[(10, 433.4), (20, 48.05), (21, 38.47), (30, 4.93), (31, 2.731), (32, 0.7719), (40, 0.6329)], // Sc
+        &[(10, 479.1), (20, 54.12), (21, 43.78), (30, 5.664), (31, 3.145), (32, 0.8201), (40, 0.659)], // Ti
+        &[(10, 527.3), (20, 60.47), (21, 49.41), (30, 6.397), (31, 3.589), (32, 0.8684), (40, 0.6513)], // V
+        &[(10, 577.8), (20, 67.15), (21, 55.39), (30, 7.15), (31, 4.072), (32, 0.9166), (40, 0.6532)], // Cr
+        &[(10, 630.9), (20, 74.21), (21, 61.62), (30, 7.941), (31, 4.554), (32, 0.9648), (40, 0.7169)], // Mn
+        &[(10, 686.2), (20, 81.49), (21, 68.2), (30, 8.809), (31, 5.085), (32, 1.013), (40, 0.7622)], // Fe
+        &[(10, 743.8), (20, 89.26), (21, 75.07), (30, 9.745), (31, 5.683), (32, 1.061), (40, 0.7603)], // Co
+        &[(10, 804.0), (20, 97.31), (21, 82.27), (30, 10.69), (31, 6.561), (32, 1.11), (40, 0.7371)], // Ni
+        &[(10, 866.3), (20, 105.8), (21, 89.99), (30, 11.82), (31, 7.246), (32, 1.158), (40, 0.7458)], // Cu
+        &[(10, 931.9), (20, 115.4), (21, 98.59), (30, 13.49), (31, 8.549), (32, 1.66), (40, 0.906)], // Zn
+        &[(10, 1000.0), (20, 125.3), (21, 107.7), (30, 15.39), (31, 9.986), (32, 1.804), (40, 1.216), (41, 0.5789)], // Ga
+        &[(10, 1071.0), (20, 136.5), (21, 117.4), (30, 17.38), (31, 12.05), (32, 2.875), (40, 1.447), (41, 0.7622)], // Ge
+        &[(10, 1145.0), (20, 147.3), (21, 127.7), (30, 19.75), (31, 14.11), (32, 4.023), (40, 1.64), (41, 0.9456)], // As
+        &[(10, 1221.0), (20, 159.4), (21, 138.3), (30, 22.15), (31, 16.06), (32, 5.355), (40, 2.026), (41, 0.9407)], // Se
+        &[(10, 1300.0), (20, 171.9), (21, 149.6), (30, 24.8), (31, 18.24), (32, 6.754), (40, 2.316), (41, 1.139)], // Br
+        &[(10, 1382.0), (20, 185.3), (21, 161.9), (30, 28.25), (31, 21.44), (32, 9.05), (40, 2.653), (41, 1.351)], // Kr
+        &[(10, 1467.0), (20, 199.2), (21, 174.1), (30, 31.52), (31, 24.0), (32, 10.9), (40, 2.943), (41, 1.476), (50, 0.4033)], // Rb
+        &[(10, 1554.0), (20, 213.8), (21, 187.2), (30, 34.61), (31, 27.04), (32, 13.12), (40, 3.753), (41, 1.939), (50, 0.549)], // Sr
+        &[(10, 1644.0), (20, 229.0), (21, 200.7), (30, 37.82), (31, 29.97), (32, 15.22), (40, 4.226), (41, 2.47), (42, 0.6175), (50, 0.5982)], // Y
+        &[(10, 1737.0), (20, 244.3), (21, 214.5), (30, 41.52), (31, 33.21), (32, 17.47), (40, 4.882), (41, 2.75), (42, 0.6561), (50, 0.6368)], // Zr
+        &[(10, 1832.0), (20, 260.3), (21, 228.8), (30, 45.02), (31, 36.18), (32, 19.78), (40, 5.442), (41, 2.972), (42, 0.6657), (50, 0.6522)], // Nb
+        &[(10, 1930.0), (20, 276.5), (21, 243.1), (30, 48.85), (31, 39.71), (32, 22.3), (40, 6.098), (41, 3.425), (42, 0.685), (50, 0.6841)], // Mo
+        &[(10, 2030.0), (20, 293.6), (21, 258.3), (30, 52.49), (31, 43.19), (32, 24.8), (40, 6.706), (41, 3.85), (42, 0.7043), (50, 0.7024)], // Tc
+        &[(10, 2134.0), (20, 311.1), (21, 273.8), (30, 56.55), (31, 46.65), (32, 27.42), (40, 7.236), (41, 4.168), (42, 0.714), (50, 0.7101)], // Ru
+        &[(10, 2240.0), (20, 329.2), (21, 289.8), (30, 60.6), (31, 50.3), (32, 30.09), (40, 7.854), (41, 4.631), (42, 0.7236), (50, 0.7198)], // Rh
+        &[(10, 2349.0), (20, 347.7), (21, 306.1), (30, 64.8), (31, 54.02), (32, 32.85), (40, 8.404), (41, 4.93), (42, 0.8008)], // Pd
+        &[(10, 2462.0), (20, 367.2), (21, 323.3), (30, 69.37), (31, 58.26), (32, 36.09), (40, 9.359), (41, 5.625), (42, 0.8684), (50, 0.7314)], // Ag
+        &[(10, 2577.0), (20, 387.7), (21, 341.4), (30, 74.49), (31, 62.97), (32, 39.74), (40, 10.59), (41, 6.165), (42, 1.129), (50, 0.8674)], // Cd
+        &[(10, 2696.0), (20, 408.9), (21, 359.9), (30, 79.81), (31, 67.85), (32, 43.55), (40, 11.86), (41, 7.092), (42, 1.708), (50, 0.9648), (51, 0.5586)], // In
+        &[(10, 2817.0), (20, 430.8), (21, 379.1), (30, 85.36), (31, 72.99), (32, 47.59), (40, 13.23), (41, 8.066), (42, 2.402), (50, 1.158), (51, 0.7082)], // Sn
+        &[(10, 2942.0), (20, 453.3), (21, 398.7), (30, 91.27), (31, 78.41), (32, 51.86), (40, 14.78), (41, 9.224), (42, 3.213), (50, 1.351), (51, 0.8307)], // Sb
+        &[(10, 3070.0), (20, 476.5), (21, 418.8), (30, 97.06), (31, 84.02), (32, 56.29), (40, 16.34), (41, 9.967), (42, 4.043), (50, 1.544), (51, 0.8693)], // Te
+        &[(10, 3200.0), (20, 500.6), (21, 439.7), (30, 103.4), (31, 89.83), (32, 60.86), (40, 17.95), (41, 11.87), (42, 4.882), (50, 1.737), (51, 1.008)], // I
+        &[(10, 3335.0), (20, 526.1), (21, 461.8), (30, 110.8), (31, 96.39), (32, 66.48), (40, 20.57), (41, 14.15), (42, 6.706), (50, 2.248), (51, 1.17)], // Xe
+
+];
+
+/// Binding energies (MJ/mol) per subshell, for Z = 1..=54, as (n*10 + l, electrons, energy).
 pub fn pes_energies(z: usize) -> Vec<(u8, u8, f64)> {
     let t: [&[f64]; 18] = [
         &[1.31], &[2.37], &[6.26, 0.52], &[11.5, 0.90], &[19.3, 1.36, 0.80], &[28.6, 1.72, 1.09],
@@ -161,7 +488,16 @@ pub fn pes_energies(z: usize) -> Vec<(u8, u8, f64)> {
         &[177.0, 15.1, 12.1, 1.46, 0.79], &[208.0, 18.7, 15.7, 1.95, 1.06], &[239.0, 22.7, 19.6, 2.05, 1.00],
         &[273.0, 26.8, 23.8, 2.44, 1.25], &[309.0, 31.5, 28.5, 2.82, 1.52],
     ];
-    let z = z.clamp(1, 18);
+    let z = z.clamp(1, 54);
     let cfg = config(z, 0);
-    cfg.iter().zip(t[z - 1].iter()).map(|(s, &en)| (s.n * 10 + s.l, s.e, en)).collect()
+    if z <= 18 {
+        return cfg.iter().zip(t[z - 1].iter()).map(|(s, &en)| (s.n * 10 + s.l, s.e, en)).collect();
+    }
+    let row = PES_HEAVY[z - 19];
+    let mut v: Vec<(u8, u8, f64)> = cfg.iter().filter(|s| s.e > 0).filter_map(|s| {
+        let code = s.n * 10 + s.l;
+        row.iter().find(|r| r.0 == code).map(|r| (code, s.e, r.1))
+    }).collect();
+    v.sort_by(|a, b| b.2.total_cmp(&a.2));
+    v
 }

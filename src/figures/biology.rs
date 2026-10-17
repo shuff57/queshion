@@ -13,6 +13,19 @@ mod popdyn;
 mod punnett;
 
 /// Direct-manipulation handles for this subject's figures (None = not one of ours).
+/// "Start from an example" entries for this subject's figures.
+pub fn examples(id: &str) -> Option<Vec<super::Example>> {
+    match id {
+        "gel-electrophoresis" => Some(gel::examples()),
+        "population-growth" => Some(popdyn::growth_examples()),
+        "punnett-square" => Some(punnett::examples()),
+        "predator-prey" => Some(popdyn::pp_examples()),
+        "pedigree" => Some(pedigree::examples()),
+        "micropipette-reading" => Some(pipette::examples()),
+        _ => None,
+    }
+}
+
 pub fn handles(id: &str, p: &Params, size: (f64, f64)) -> Option<Vec<interact::Handle>> {
     handles::handles(id, p, size)
 }

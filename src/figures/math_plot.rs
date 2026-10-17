@@ -3,7 +3,7 @@
 //! renderers in `math.rs` (layout constants are repeated here on purpose; keep them in sync).
 #![allow(dead_code)]
 use super::interact::{Handle, Pt};
-use super::math::{ell, eval, five_number, nice_step, nums, parse_ineq, preset_spec, summary_for, Interval, Map};
+use super::math::{ell, eval, nums, parse_ineq, preset_spec, Interval, Map};
 use super::Params;
 
 fn fmt_n(v: f64) -> String {
@@ -32,15 +32,9 @@ pub fn handles(id: &str, p: &Params, size: (f64, f64)) -> Option<Vec<Handle>> {
 struct Cg { x0: f64, x1: f64, y0: f64, y1: f64, ux: f64, uy: f64, ml: f64, mt: f64, pw: f64, ph: f64, rx: f64, ry: f64 }
 impl Cg {
     fn new(p: &Params) -> Cg {
-        let (x0, mut x1, y0, mut y1) = (p.f("xmin"), p.f("xmax"), p.f("ymin"), p.f("ymax"));
-        if x1 <= x0 { x1 = x0 + 1.0; }
-        if y1 <= y0 { y1 = y0 + 1.0; }
-        let (maxw, maxh) = (440.0, 400.0);
-        let (ux, uy) = if p.b("square") { let u = (maxw / (x1 - x0)).min(maxh / (y1 - y0)); (u, u) } else { (maxw / (x1 - x0), maxh / (y1 - y0)) };
-        let (pw, ph) = ((x1 - x0) * ux, (y1 - y0) * uy);
-        let mt = if p.s("title").is_empty() { 30.0 } else { 62.0 };
+        let l = super::math::grid_layout(p);
         let minor = p.i("minor").max(1) as f64;
-        Cg { x0, x1, y0, y1, ux, uy, ml: 52.0, mt, pw, ph, rx: p.f("xstep").max(1e-6) / minor, ry: p.f("ystep").max(1e-6) / minor }
+        Cg { x0: l.x0, x1: l.x1, y0: l.y0, y1: l.y1, ux: l.ux, uy: l.uy, ml: l.ml, mt: l.mt, pw: l.pw, ph: l.ph, rx: l.xs / minor, ry: l.ys / minor }
     }
     fn sx(&self, x: f64) -> f64 { self.ml + (x - self.x0) * self.ux }
     fn sy(&self, y: f64) -> f64 { self.mt + self.ph - (y - self.y0) * self.uy }
@@ -82,7 +76,8 @@ fn grid(p: &Params) -> Vec<Handle> {
     // Equations.
     for (ci, eq) in p.s("equations").split(';').enumerate() {
         let eq = eq.trim();
-        if eq.is_empty() { continue; }
+        // inequalities and pieces with a domain have no drag handles (rewriting would drop them)
+        if eq.is_empty() || eq.contains(['<', '>', ',', '\u{2264}', '\u{2265}']) { continue; }
         let (lhs, rhs) = match eq.find('=') { Some(i) => (eq[..i].trim().to_lowercase(), eq[i + 1..].trim().to_string()), None => ("y".to_string(), eq.to_string()) };
         if lhs == "x" {
             if let Some(v) = eval(&rhs, 0.0).filter(|v| v.is_finite()) {
@@ -144,9 +139,9 @@ fn grid(p: &Params) -> Vec<Handle> {
     let (w, ext) = (g.pw + g.ml + 34.0, if p.b("arrows") { 16.0 } else { 0.0 });
     let ax_y = if g.y0 <= 0.0 && g.y1 >= 0.0 { 0.0 } else { g.y0 };
     let ax_x = if g.x0 <= 0.0 && g.x1 >= 0.0 { 0.0 } else { g.x0 };
-    if !p.s("title").is_empty() { hs.push(Handle::label((w / 2.0, 18.0), (180.0, 24.0), "title", "Double-click to edit the title")); }
-    hs.push(Handle::label((g.ml + g.pw + ext + 14.0, g.sy(ax_y)), (28.0, 22.0), "xlabel", "Double-click to edit the x-axis label"));
-    hs.push(Handle::label((g.sx(ax_x), g.mt - ext - 9.0), (28.0, 22.0), "ylabel", "Double-click to edit the y-axis label"));
+    if !p.s("title").is_empty() && p.s("title_mode") != "None" && p.s("title_mode") != "Blank line" { hs.push(Handle::label((w / 2.0, 18.0), (180.0, 24.0), "title", "Double-click to edit the title")); }
+    if !p.s("xlabel").is_empty() { hs.push(Handle::label((g.ml + g.pw + ext + 14.0, g.sy(ax_y)), (28.0, 22.0), "xlabel", "Double-click to edit the x-axis label")); }
+    if !p.s("ylabel").is_empty() { hs.push(Handle::label((g.sx(ax_x), g.mt - ext - 9.0), (28.0, 22.0), "ylabel", "Double-click to edit the y-axis label")); }
     hs
 }
 
@@ -156,7 +151,7 @@ struct Nl { lo: f64, hi: f64, x0: f64, x1: f64, y: f64, r: f64 }
 fn nl(p: &Params) -> Nl {
     let (lo, mut hi) = (p.f("min"), p.f("max"));
     if hi <= lo { hi = lo + 1.0; }
-    Nl { lo, hi, x0: 40.0, x1: 640.0, y: 64.0, r: p.f("step").max(1e-6) / (p.i("minor") + 1) as f64 }
+    Nl { lo, hi, x0: 40.0, x1: 640.0, y: 64.0, r: super::math::nl_step(p).0 / (p.i("minor") + 1) as f64 }
 }
 fn ineq_str(ivs: &[Interval]) -> String {
     let op = |c: bool| if c { "<=" } else { "<" };
@@ -224,47 +219,21 @@ fn number_line(p: &Params) -> Vec<Handle> {
 
 // ───────────────────────── box plot ─────────────────────────
 
-struct BoxL { sets: Vec<(u8, [f64; 5])>, amin: f64, amax: f64, step: f64, x0: f64, x1: f64, top: f64, rowh: f64, w: f64, named: bool, ay: f64 }
-fn box_layout(p: &Params) -> Option<BoxL> {
-    let mut sets = vec![];
-    if let Some((f, _)) = summary_for(p.s("data"), p.s("summary"), p.b("outliers")) { sets.push((1u8, f)); }
-    if let Some((f, _)) = summary_for(p.s("data2"), p.s("summary2"), p.b("outliers")) { sets.push((2u8, f)); }
-    if sets.is_empty() { return None; }
-    let (mut lo, mut hi) = (f64::MAX, f64::MIN);
-    let mut all: Vec<f64> = vec![];
-    for (n, k) in [(1u8, ("data", "summary")), (2, ("data2", "summary2"))] {
-        if let Some((f, o)) = summary_for(p.s(k.0), p.s(k.1), p.b("outliers")) {
-            let _ = n;
-            all.extend(f.iter().chain(o.iter()));
-        }
-    }
-    for v in &all { lo = lo.min(*v); hi = hi.max(*v); }
-    let (amin, amax, step) = if p.b("auto") {
-        let st = nice_step((hi - lo).max(1e-6));
-        ((lo / st).floor() * st - if lo % st == 0.0 { st } else { 0.0 }, (hi / st).ceil() * st + if hi % st == 0.0 { st } else { 0.0 }, st)
-    } else { (p.f("axis_min"), p.f("axis_max").max(p.f("axis_min") + 1e-3), p.f("axis_step").max(1e-3)) };
-    let named = !p.s("name1").is_empty() && sets.iter().any(|s| s.0 == 1) || !p.s("name2").is_empty() && sets.iter().any(|s| s.0 == 2);
-    let top = if p.s("title").is_empty() { 20.0 } else { 46.0 };
-    let rowh = 84.0;
-    let ay = top + rowh * sets.len() as f64 + 6.0;
-    Some(BoxL { sets, amin, amax, step, x0: if named { 110.0 } else { 40.0 }, x1: 680.0 - 36.0, top, rowh, w: 680.0, named, ay })
-}
-
 fn box_plot(p: &Params) -> Vec<Handle> {
-    let Some(l) = box_layout(p) else { return vec![] };
+    let Some(l) = super::math::box_geom(p) else { return vec![] };
     let (amin, amax, step, x0, x1) = (l.amin, l.amax, l.step, l.x0, l.x1);
     let sx = move |v: f64| x0 + (v - amin) / (amax - amin) * (x1 - x0);
     let mut hs = vec![];
-    for (row, (which, f)) in l.sets.iter().enumerate() {
+    for (row, (which, f, _)) in l.sets.iter().enumerate() {
         let cy = l.top + l.rowh * (row as f64 + 0.5) + 6.0;
         let (which, f) = (*which, *f);
+        let (_, sk, nk) = super::math::BOX_SETS[which];
         for j in 0..5usize {
             let pos = (sx(f[j]), cy);
             let tip = ["Drag the minimum", "Drag Q1", "Drag the median", "Drag Q3", "Drag the maximum"][j];
             let drag = move |p: &mut Params, t: Pt| {
                 if near(t, pos) { return; }
-                let (dk, sk) = if which == 1 { ("data", "summary") } else { ("data2", "summary2") };
-                let Some((mut cur, _)) = summary_for(p.s(dk), p.s(sk), p.b("outliers")) else { return };
+                let Some((mut cur, _)) = super::math::box_set(p, which) else { return };
                 let v = snap(amin + (t.0 - x0) / (x1 - x0) * (amax - amin), step / 2.0);
                 let lo = if j > 0 { cur[j - 1] } else { amin };
                 let hi = if j < 4 { cur[j + 1] } else { amax };
@@ -284,12 +253,10 @@ fn box_plot(p: &Params) -> Vec<Handle> {
                 _ => Handle::knob(pos, tip, drag),
             });
         }
-        let nk = if which == 1 { "name1" } else { "name2" };
-        if !p.s(nk).is_empty() { hs.push(Handle::label((x0 - 14.0 - 30.0, cy), (90.0, 22.0), if which == 1 { "name1" } else { "name2" }, "Double-click to rename this set")); }
+        if !p.s(nk).is_empty() { hs.push(Handle::label((x0 - 14.0 - 30.0, cy), (90.0, 22.0), nk, "Double-click to rename this set")); }
     }
-    if !p.s("title").is_empty() { hs.push(Handle::label((l.w / 2.0, 22.0), (200.0, 24.0), "title", "Double-click to edit the title")); }
-    if !p.s("axis_title").is_empty() { hs.push(Handle::label(((x0 + x1) / 2.0, l.ay + 46.0), (200.0, 22.0), "axis_title", "Double-click to edit the label")); }
-    let _ = (l.named, five_number as fn(&[f64]) -> [f64; 5]);
+    if !p.s("title").is_empty() && p.s("title_mode") != "None" && p.s("title_mode") != "Blank line" { hs.push(Handle::label((l.w / 2.0, 22.0), (200.0, 24.0), "title", "Double-click to edit the title")); }
+    if !p.s("axis_title").is_empty() && p.s("axis_title_mode") != "None" && p.s("axis_title_mode") != "Blank line" { hs.push(Handle::label(((x0 + x1) / 2.0, l.ay + 46.0), (200.0, 22.0), "axis_title", "Double-click to edit the label")); }
     hs
 }
 
@@ -337,9 +304,10 @@ fn mapping(p: &Params, _size: (f64, f64)) -> Vec<Handle> {
     if ins.is_empty() && outs.is_empty() { return vec![]; }
     let rows = ins.len().max(outs.len()).max(1) as f64;
     let spacing = 42.0;
-    let cy = 66.0 + rows * spacing / 2.0;
+    let top = if matches!(p.s("title_mode"), "Text" | "Blank line") { 40.0 } else { 0.0 };
+    let cy = top + 66.0 + rows * spacing / 2.0;
     let (lx, rx) = (130.0, 350.0);
-    let ypos = move |i: usize, n: usize| cy - (n as f64 - 1.0) * spacing / 2.0 + i as f64 * spacing;
+    let ypos = move |i: usize, n: usize| { let g = rows * spacing / n.max(1) as f64; cy + (i as f64 - (n as f64 - 1.0) / 2.0) * g };
     let nout = outs.len();
     let mut hs = vec![];
     for (k, pr) in pairs.iter().enumerate() {
@@ -351,7 +319,8 @@ fn mapping(p: &Params, _size: (f64, f64)) -> Vec<Handle> {
             let Some(pr) = pairs.get(k) else { return };
             if outs.is_empty() { return; }
             let first = ypos(0, outs.len());
-            let nj = (((t.1 - first) / spacing).round().max(0.0) as usize).min(outs.len() - 1);
+            let gap = if outs.len() > 1 { ypos(1, outs.len()) - first } else { spacing };
+            let nj = (((t.1 - first) / gap).round().max(0.0) as usize).min(outs.len() - 1);
             if outs[nj] == pr.b { return; }
             let mut s = p.s("pairs").to_string();
             if pr.b_span.1 <= s.len() && s.is_char_boundary(pr.b_span.0) && s.is_char_boundary(pr.b_span.1) {
@@ -360,8 +329,9 @@ fn mapping(p: &Params, _size: (f64, f64)) -> Vec<Handle> {
             }
         }).with_cursor(super::interact::Cursor::ResizeV));
     }
-    hs.push(Handle::label((lx, 28.0), (110.0, 24.0), "title_in", "Double-click to edit the input title"));
-    hs.push(Handle::label((rx, 28.0), (110.0, 24.0), "title_out", "Double-click to edit the output title"));
+    if p.s("in_mode") != "None" && p.s("in_mode") != "Blank line" { hs.push(Handle::label((lx, top + 28.0), (110.0, 24.0), "title_in", "Double-click to edit the input title")); }
+    if p.s("out_mode") != "None" && p.s("out_mode") != "Blank line" { hs.push(Handle::label((rx, top + 28.0), (110.0, 24.0), "title_out", "Double-click to edit the output title")); }
+    if p.s("title_mode") == "Text" { hs.push(Handle::label((240.0, 26.0), (200.0, 26.0), "title", "Double-click to edit the diagram title")); }
     hs
 }
 
@@ -369,13 +339,13 @@ fn mapping(p: &Params, _size: (f64, f64)) -> Vec<Handle> {
 
 fn ruler(p: &Params) -> Vec<Handle> {
     if p.s("object") == "None" { return vec![]; }
-    let len = p.i("ruler").max(1) as f64;
-    let (x0, x1) = (30.0, 650.0);
-    let ppu = (x1 - x0) / len;
-    let (s, l) = (p.f("start"), p.f("length"));
+    let lay = super::math::ruler_layout(p);
+    let (x0, x1, ppu) = (lay.x0, lay.x1, lay.ppu);
+    let (s, l) = super::math::ruler_values(p);
     let (ox0, ox1) = (x0 + s * ppu, (x0 + (s + l) * ppu).min(x1 + 8.0));
     let end = s + l;
-    let (lp, rp, mp) = ((ox0, 55.0), (ox1, 55.0), ((ox0 + ox1) / 2.0, 42.0));
+    let ym = (lay.top + lay.bot) / 2.0;
+    let (lp, rp, mp) = ((ox0, ym), (ox1, ym), ((ox0 + ox1) / 2.0, lay.top));
     vec![
         Handle::knob(lp, "Drag the left end of the object", move |p, t| {
             if near(t, lp) { return; }

@@ -234,6 +234,32 @@ pub struct Workspace {
     /// Inline label edit: (param key, buffer, just-opened).
     editing: Option<(&'static str, String, bool)>,
     qa_init: bool,
+    /// Undo/redo of parameter edits: settled snapshots, plus the edit currently in flight.
+    undo: Vec<Params>,
+    redo: Vec<Params>,
+    hist_hash: u64,
+    hist_snap: Params,
+    hist_base: Option<Params>,
+    hist_t: Option<Instant>,
+    preset_name: String,
+    spec_text: String,
+    spec_err: Option<String>,
+}
+
+/// A saved parameter set for one figure ("Save preset"), kept in `figure-presets.json`.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct PresetEntry {
+    name: String,
+    params: BTreeMap<String, serde_json::Value>,
+}
+type PresetFile = BTreeMap<String, Vec<PresetEntry>>;
+
+fn load_presets() -> PresetFile {
+    crate::store::load_json("figure-presets.json").unwrap_or_default()
+}
+
+fn save_presets(f: &PresetFile) {
+    let _ = crate::store::save_json("figure-presets.json", f);
 }
 
 impl Workspace {
@@ -251,7 +277,101 @@ impl Workspace {
         Some(Workspace { modal, sel: Some(i), params: params_from_spec(def, spec), ..Default::default() })
     }
 
+    fn reset_history(&mut self) {
+        self.undo.clear();
+        self.redo.clear();
+        self.hist_hash = 0;
+        self.hist_base = None;
+        self.hist_t = None;
+    }
+
+    /// Records parameter edits as undo steps: a burst of changes (a slider drag, typing)
+    /// settles into one step once input pauses and the pointer is up.
+    fn track_history(&mut self, ctx: &egui::Context) {
+        let Some(si) = self.sel else { return };
+        let h = hash_params(reg()[si].id, &self.params);
+        if self.hist_hash == 0 {
+            self.hist_hash = h;
+            self.hist_snap = self.params.clone();
+            return;
+        }
+        if h != self.hist_hash {
+            if self.hist_base.is_none() {
+                self.hist_base = Some(self.hist_snap.clone());
+            }
+            self.hist_hash = h;
+            self.hist_snap = self.params.clone();
+            self.hist_t = Some(Instant::now());
+            ctx.request_repaint_after(Duration::from_millis(450));
+        } else if self.hist_base.is_some()
+            && self.hist_t.is_some_and(|t| t.elapsed() > Duration::from_millis(400))
+            && !ctx.input(|i| i.pointer.any_down())
+        {
+            self.flush_history();
+        } else if self.hist_base.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(200));
+        }
+    }
+
+    fn flush_history(&mut self) {
+        if let Some(base) = self.hist_base.take() {
+            self.undo.push(base);
+            self.redo.clear();
+            if self.undo.len() > 200 {
+                self.undo.remove(0);
+            }
+        }
+    }
+
+    fn set_params_with_history(&mut self, p: Params) {
+        self.flush_history();
+        self.hist_base = Some(self.params.clone());
+        self.hist_t = Some(Instant::now() - Duration::from_secs(1));
+        self.params = p;
+        self.flush_history();
+        if let Some(si) = self.sel {
+            self.hist_hash = hash_params(reg()[si].id, &self.params);
+            self.hist_snap = self.params.clone();
+        }
+    }
+
+    fn step_history(&mut self, back: bool) {
+        self.flush_history();
+        let next = if back { self.undo.pop() } else { self.redo.pop() };
+        let Some(p) = next else { return };
+        let cur = std::mem::replace(&mut self.params, p);
+        if back { self.redo.push(cur) } else { self.undo.push(cur) }
+        if let Some(si) = self.sel {
+            self.hist_hash = hash_params(reg()[si].id, &self.params);
+            self.hist_snap = self.params.clone();
+        }
+    }
+
+    /// Spec text others can paste back in: {"queshion":"figure","id":..,"params":{..}}.
+    fn spec_json(&self) -> Option<String> {
+        let def = &reg()[self.sel?];
+        let spec = spec_for(def.id, &self.params);
+        serde_json::to_string(&serde_json::json!({"queshion": "figure", "id": spec.id, "params": spec.params})).ok()
+    }
+
+    fn apply_spec_text(&mut self, text: &str) -> Result<(), String> {
+        let v: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| format!("not valid JSON ({e})"))?;
+        let id = v.get("id").and_then(|x| x.as_str()).ok_or("no \"id\" in the pasted spec")?;
+        let (i, def) = find_def(id).ok_or_else(|| format!("unknown figure \"{id}\""))?;
+        let spec = FigureSpec {
+            id: id.to_string(),
+            params: v.get("params").and_then(|p| p.as_object()).map(|o| o.iter().map(|(k, v)| (k.clone(), v.clone())).collect()).unwrap_or_default(),
+        };
+        let p = params_from_spec(def, &spec);
+        if self.sel != Some(i) {
+            self.select(i);
+        }
+        self.set_params_with_history(p);
+        Ok(())
+    }
+
     fn select(&mut self, i: usize) {
+        self.reset_history();
         self.sel = Some(i);
         self.params = Params::defaults(&(reg()[i].params)());
         self.editing = None;
@@ -261,6 +381,7 @@ impl Workspace {
     }
 
     fn back(&mut self) {
+        self.reset_history();
         self.sel = None;
         self.imp = None;
         self.shown = None;
@@ -480,6 +601,20 @@ impl Workspace {
         });
         ui.add_space(8.0);
 
+        if self.imp.is_none() && self.sel.is_some() {
+            if !ctx.egui_wants_keyboard_input() {
+                use egui::{Key, Modifiers};
+                if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z))
+                    || ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Y))
+                {
+                    self.step_history(false);
+                } else if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Z)) {
+                    self.step_history(true);
+                }
+            }
+            self.track_history(&ctx);
+        }
+
         // Resolve the preview texture (debounced re-render for generated figures).
         let mut preview: Option<TextureHandle> = self.imp.as_ref().map(|i| i.tex.clone());
         if self.imp.is_none()
@@ -596,6 +731,9 @@ impl Workspace {
                     None => Act::Toast("Couldn't render the figure".into(), true),
                 };
             }
+            if generated && self.sel.is_some() {
+                self.history_and_presets_ui(ui);
+            }
             if generated && chip_handles(ui, !self.hide_handles) {
                 self.hide_handles = !self.hide_handles;
             }
@@ -604,6 +742,106 @@ impl Workspace {
             }
         });
         act
+    }
+
+    /// Undo / Redo, "Examples" and "Presets" (saved parameter sets + copy/paste spec).
+    fn history_and_presets_ui(&mut self, ui: &mut Ui) {
+        let Some(si) = self.sel else { return };
+        let def = &reg()[si];
+        let can_undo = !self.undo.is_empty() || self.hist_base.is_some();
+        let can_redo = !self.redo.is_empty();
+        if ui.add_enabled(can_undo, Button::new(RichText::new("Undo").size(13.0))).on_hover_text("Undo the last change (Ctrl+Z)").clicked() {
+            self.step_history(true);
+        }
+        if ui.add_enabled(can_redo, Button::new(RichText::new("Redo").size(13.0))).on_hover_text("Redo (Ctrl+Shift+Z)").clicked() {
+            self.step_history(false);
+        }
+        ui.menu_button("Examples", |ui| {
+            let ex = figures::examples_for(def.id);
+            if ex.is_empty() {
+                ui.label(theme::muted("No examples for this figure yet."));
+            }
+            for e in ex {
+                if ui.button(e.name).clicked() {
+                    let mut p = Params::defaults(&(def.params)());
+                    for (k, v) in &e.params {
+                        p.0.insert((*k).to_string(), v.clone());
+                    }
+                    p.normalize(&(def.params)(), false);
+                    self.set_params_with_history(p);
+                    ui.close();
+                }
+            }
+        });
+        ui.menu_button("Presets", |ui| {
+            ui.set_min_width(230.0);
+            let mut file = load_presets();
+            let mut changed = false;
+            let mut apply: Option<Params> = None;
+            let list = file.entry(def.id.to_string()).or_default();
+            if list.is_empty() {
+                ui.label(theme::muted("No saved presets for this figure."));
+            }
+            let mut remove: Option<usize> = None;
+            for (i, pr) in list.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    if ui.button(&pr.name).clicked() {
+                        let spec = FigureSpec { id: def.id.to_string(), params: pr.params.clone() };
+                        apply = Some(params_from_spec(def, &spec));
+                    }
+                    if ui.add(Button::new(theme::muted("Delete").size(11.0)).frame(false)).clicked() {
+                        remove = Some(i);
+                    }
+                });
+            }
+            if let Some(i) = remove {
+                list.remove(i);
+                changed = true;
+            }
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.add(TextEdit::singleline(&mut self.preset_name).hint_text("Name this preset").desired_width(130.0));
+                if ui.button("Save preset").clicked() && !self.preset_name.trim().is_empty() {
+                    let spec = spec_for(def.id, &self.params);
+                    let name = self.preset_name.trim().to_string();
+                    list.retain(|p| p.name != name);
+                    list.push(PresetEntry { name, params: spec.params });
+                    self.preset_name.clear();
+                    changed = true;
+                }
+            });
+            ui.label(theme::muted("Presets stay on this computer.").size(11.0));
+            ui.separator();
+            ui.horizontal(|ui| {
+                if ui.button("Copy spec").on_hover_text("Copy this figure's settings as text to share or paste back later").clicked() {
+                    if let Some(t) = self.spec_json() {
+                        ui.ctx().copy_text(t);
+                    }
+                }
+            });
+            ui.add(TextEdit::singleline(&mut self.spec_text).hint_text("Paste a copied spec here").desired_width(210.0));
+            if ui.button("Apply pasted spec").clicked() {
+                let t = self.spec_text.clone();
+                match self.apply_spec_text(&t) {
+                    Ok(()) => {
+                        self.spec_text.clear();
+                        self.spec_err = None;
+                        ui.close();
+                    }
+                    Err(e) => self.spec_err = Some(e),
+                }
+            }
+            if let Some(e) = &self.spec_err {
+                ui.label(RichText::new(e).color(theme::red()).size(11.0));
+            }
+            if changed {
+                save_presets(&file);
+            }
+            if let Some(p) = apply {
+                self.set_params_with_history(p);
+                ui.close();
+            }
+        });
     }
 
     /// The preview with its interaction layer: draws the texture fitted into the frame, then
@@ -1395,5 +1633,42 @@ mod tests {
             assert!(ws.shown.is_some(), "{} did not render", d.id);
             assert!(ws.canvas.0 > 50.0, "{} canvas unknown", d.id);
         }
+    }
+
+    #[test]
+    fn undo_redo_round_trips_a_pasted_spec() {
+        let mut ws = Workspace::new(false);
+        let id = "lewis-structures";
+        let (i, _) = find_def(id).unwrap();
+        ws.select(i);
+        let before = hash_params(id, &ws.params);
+        ws.apply_spec_text(&format!(r#"{{"queshion":"figure","id":"{id}","params":{{"formula":"NH3"}}}}"#)).unwrap_or_else(|e| panic!("{e}"));
+        let after = hash_params(id, &ws.params);
+        assert_ne!(before, after, "the pasted formula must change the params");
+        ws.step_history(true);
+        assert_eq!(hash_params(id, &ws.params), before, "undo restores the previous params");
+        ws.step_history(false);
+        assert_eq!(hash_params(id, &ws.params), after, "redo reapplies the pasted params");
+    }
+
+    #[test]
+    fn pasted_spec_rejects_garbage_and_unknown_figures() {
+        let mut ws = Workspace::new(false);
+        assert!(ws.apply_spec_text("not json").is_err());
+        assert!(ws.apply_spec_text(r#"{"id":"nope"}"#).is_err());
+        assert!(ws.apply_spec_text(r#"{"params":{}}"#).is_err());
+    }
+
+    #[test]
+    fn spec_json_copies_what_apply_reads() {
+        let mut ws = Workspace::new(false);
+        let (i, _) = find_def("lewis-structures").unwrap();
+        ws.select(i);
+        ws.params.set_s("formula", "NH3");
+        let text = ws.spec_json().unwrap();
+        let mut other = Workspace::new(false);
+        other.apply_spec_text(&text).unwrap();
+        assert_eq!(other.params.s("formula"), "NH3");
+        assert_eq!(other.sel, Some(i));
     }
 }

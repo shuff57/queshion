@@ -6,6 +6,13 @@ mod common;
 mod graphs;
 mod instr;
 mod mech;
+mod pulley;
+mod examples;
+
+/// "Start from an example" entries for this subject's figures.
+pub fn examples(id: &str) -> Option<Vec<super::Example>> {
+    examples::examples(id)
+}
 
 /// Direct-manipulation handles for this subject's figures (None = not one of ours).
 pub fn handles(id: &str, p: &Params, size: (f64, f64)) -> Option<Vec<interact::Handle>> {
@@ -114,5 +121,43 @@ mod tests {
         let d = get("circuit-diagram");
         check(&d, &with(&d, &[("switch", s("Open")), ("ammeter", Value::B(true)), ("voltmeter", s("Across component 2")), ("polarity", Value::B(true))]), "show1");
         check(&d, &with(&d, &[("layout", s("In parallel")), ("n", Value::I(3)), ("r2_kind", s("Bulb")), ("ammeter", Value::B(true)), ("switch", s("Closed")), ("voltmeter", s("Across the battery"))]), "show2");
+    }
+}
+#[cfg(test)]
+mod dbg_svg {
+    #[test]
+    fn dump_svg() {
+        let Ok(spec) = std::env::var("PHYS_SVG") else { return };
+        let (id, js) = spec.split_once('|').unwrap();
+        let def = super::defs().into_iter().find(|d| d.id == id).unwrap();
+        let p = crate::figures::params_from_json(&def, &serde_json::from_str(js).unwrap());
+        println!("{}", (def.render)(&p));
+    }
+}
+#[cfg(test)]
+mod dbg_examples {
+    use super::*;
+    /// Every example applies only known keys and renders; with PHYS_EX_DIR set the renders
+    /// are written there as <id>_ex<k>.png for eyeballing.
+    #[test]
+    fn physics_examples_render() {
+        let dir = std::env::var("PHYS_EX_DIR").ok();
+        for d in defs() {
+            let defs_ = (d.params)();
+            let ex = examples(d.id).unwrap_or_default();
+            for (k, e) in ex.iter().enumerate() {
+                let mut p = Params::defaults(&defs_);
+                for (key, v) in &e.params {
+                    assert!(defs_.iter().any(|pd| pd.key == *key), "{}: example '{}' uses unknown key {key}", d.id, e.name);
+                    p.0.insert((*key).into(), v.clone());
+                }
+                p.normalize(&defs_, false);
+                let png = to_png(&(d.render)(&p), 1.0).unwrap();
+                if let Some(dir) = &dir {
+                    let _ = std::fs::create_dir_all(dir);
+                    std::fs::write(format!("{dir}/{}_ex{k}.png", d.id), png).unwrap();
+                }
+            }
+        }
     }
 }

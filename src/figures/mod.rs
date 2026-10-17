@@ -156,6 +156,22 @@ pub fn registry() -> Vec<FigureDef> {
     v
 }
 
+/// A named starting point for a figure ("Start from an example"): parameter overrides on top of
+/// the defaults. Each subject module contributes via `examples(id) -> Option<Vec<Example>>`.
+#[derive(Clone, Debug)]
+pub struct Example {
+    pub name: &'static str,
+    pub params: Vec<(&'static str, Value)>,
+}
+
+pub fn examples_for(id: &str) -> Vec<Example> {
+    physics::examples(id)
+        .or_else(|| biology::examples(id))
+        .or_else(|| chemistry::examples(id))
+        .or_else(|| math::examples(id))
+        .unwrap_or_default()
+}
+
 /// Params for `def`: its defaults overridden by a JSON object of strings, bools and numbers
 /// (used by the headless figure hooks).
 pub fn params_from_json(def: &FigureDef, over: &serde_json::Value) -> Params {

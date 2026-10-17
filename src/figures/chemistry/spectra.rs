@@ -22,40 +22,97 @@ pub fn defs() -> Vec<FigureDef> {
 // ---------------------------------------------------------------------------------------------
 
 type Lines = &'static [(f64, f64)];
-const LINE_DATA: [(&str, &str, Lines); 7] = [
-    ("hydrogen", "Hydrogen", &[(410.2, 0.3), (434.0, 0.45), (486.1, 0.8), (656.3, 1.0)]),
-    ("helium", "Helium", &[(447.1, 0.6), (471.3, 0.3), (492.2, 0.3), (501.6, 0.8), (587.6, 1.0), (667.8, 0.5)]),
-    ("neon", "Neon", &[(585.2, 0.7), (588.2, 0.5), (603.0, 0.4), (614.3, 0.6), (626.6, 0.5), (640.2, 1.0), (650.6, 0.6), (692.9, 0.5)]),
-    ("sodium", "Sodium", &[(498.3, 0.2), (568.8, 0.3), (589.0, 1.0), (589.6, 1.0), (615.4, 0.2), (616.1, 0.2)]),
-    ("mercury", "Mercury", &[(404.7, 0.6), (435.8, 1.0), (546.1, 1.0), (577.0, 0.6), (579.1, 0.6)]),
-    ("lithium", "Lithium", &[(460.3, 0.3), (610.4, 0.4), (670.8, 1.0)]),
-    ("calcium", "Calcium", &[(422.7, 1.0), (445.5, 0.3), (558.9, 0.3), (616.2, 0.5), (643.9, 0.6)]),
+/// (bool key for the old per-element toggles, name, symbol, visible lines (nm, relative brightness)).
+const SPECTRA: [(&str, &str, &str, Lines); 15] = [
+    ("hydrogen", "Hydrogen", "H", &[(410.2, 0.3), (434.0, 0.45), (486.1, 0.8), (656.3, 1.0)]),
+    ("helium", "Helium", "He", &[(447.1, 0.6), (471.3, 0.3), (492.2, 0.3), (501.6, 0.8), (587.6, 1.0), (667.8, 0.5)]),
+    ("lithium", "Lithium", "Li", &[(460.3, 0.3), (610.4, 0.4), (670.8, 1.0)]),
+    ("sodium", "Sodium", "Na", &[(568.8, 0.3), (589.0, 1.0), (589.6, 1.0), (615.4, 0.2), (616.1, 0.2)]),
+    ("potassium", "Potassium", "K", &[(404.4, 0.3), (404.7, 0.3), (691.1, 0.4), (693.9, 0.5), (766.5, 1.0), (769.9, 0.9)]),
+    ("calcium", "Calcium", "Ca", &[(422.7, 1.0), (445.5, 0.3), (558.9, 0.3), (616.2, 0.5), (643.9, 0.6)]),
+    ("strontium", "Strontium", "Sr", &[(460.7, 1.0), (483.2, 0.3), (496.2, 0.4), (548.0, 0.3), (640.8, 0.5), (650.4, 0.4), (687.8, 0.4), (707.0, 0.4)]),
+    ("barium", "Barium", "Ba", &[(455.4, 1.0), (493.4, 0.8), (553.5, 1.0), (577.8, 0.4), (614.2, 0.6), (649.7, 0.5), (652.7, 0.3), (659.5, 0.4)]),
+    ("copper", "Copper", "Cu", &[(465.1, 0.4), (510.6, 0.7), (515.3, 0.8), (521.8, 1.0), (570.0, 0.3), (578.2, 0.5)]),
+    ("zinc", "Zinc", "Zn", &[(468.0, 0.5), (472.2, 0.6), (481.1, 0.8), (518.2, 0.3), (636.2, 1.0)]),
+    ("cadmium", "Cadmium", "Cd", &[(467.8, 0.6), (480.0, 0.8), (508.6, 1.0), (643.8, 1.0)]),
+    ("mercury", "Mercury", "Hg", &[(404.7, 0.6), (435.8, 1.0), (546.1, 1.0), (577.0, 0.6), (579.1, 0.6)]),
+    ("neon", "Neon", "Ne", &[(585.2, 0.7), (588.2, 0.5), (603.0, 0.4), (614.3, 0.6), (626.6, 0.5), (640.2, 1.0), (650.6, 0.6), (692.9, 0.5)]),
+    ("argon", "Argon", "Ar", &[(415.9, 0.4), (420.1, 0.4), (427.2, 0.3), (434.8, 0.5), (451.1, 0.3), (696.5, 0.6), (706.7, 0.5), (738.4, 0.5), (750.4, 1.0), (763.5, 0.8)]),
+    ("krypton", "Krypton", "Kr", &[(427.4, 0.4), (431.9, 0.4), (436.3, 0.3), (446.4, 0.3), (557.0, 0.8), (587.1, 1.0), (645.6, 0.3), (758.7, 0.5), (760.2, 0.6)]),
 ];
+/// The per-element toggles that existed before the strip list (kept for saved figures).
+const OLD_KEYS: [(&str, &str); 7] = [("hydrogen", "Hydrogen"), ("helium", "Helium"), ("neon", "Neon"), ("sodium", "Sodium"), ("mercury", "Mercury"), ("lithium", "Lithium"), ("calcium", "Calcium")];
 
 fn line_params() -> Vec<ParamDef> {
     let mut v = vec![
         ParamDef::choice("style", "Style", &["Emission", "Absorption", "Print"], "Emission"),
         ParamDef::choice("brightness", "Brightness", &["All equal", "Relative"], "All equal"),
         ParamDef::bool("labels", "Label wavelengths", false),
-        ParamDef::text("title", "Title (optional)", ""),
+        ParamDef::text("title", "Chart title text", ""),
         ParamDef::list("custom", "Extra custom row: wavelengths in nm (nm or nm:brightness)", ""),
     ];
-    let labels: [&'static str; 7] = ["Hydrogen", "Helium", "Neon", "Sodium", "Mercury", "Lithium", "Calcium"];
-    for (i, (k, _, _)) in LINE_DATA.iter().enumerate() { v.push(ParamDef::bool(k, labels[i], *k == "hydrogen")); }
+    for (k, l) in OLD_KEYS { v.push(ParamDef::bool(k, l, k == "hydrogen")); }
+    v.extend([
+        ParamDef::list("strips", "Strips, one per row (overrides the ticks above): Hydrogen | Unknown = Hydrogen + Sodium | Element X: 425 510:0.5 630", ""),
+        ParamDef::choice("label_style", "Labels", &["Names", "Symbols", "Blank", "None"], "Names"),
+        ParamDef::float("nm_from", "Wavelength axis from (nm)", 300.0, 900.0, 5.0, 400.0),
+        ParamDef::float("nm_to", "Wavelength axis to (nm)", 300.0, 900.0, 5.0, 700.0),
+        ParamDef::choice("tick_every", "Small ticks every", &["No small ticks", "5 nm", "10 nm", "20 nm", "25 nm", "50 nm"], "10 nm"),
+        ParamDef::choice("num_every", "Number every", &["10 nm", "20 nm", "25 nm", "50 nm", "100 nm"], "50 nm"),
+        ParamDef::choice("axis_pos", "Axis", &["Under the last", "Under each", "None"], "Under the last"),
+        ParamDef::choice("axis_title_style", "Axis title", &TITLE2, "Text"),
+        ParamDef::text("axis_title", "Axis title text", "Wavelength (nm)"),
+        title_style(false),
+        answer_param("Answer key (what each mixture contains)"),
+    ]);
     v
 }
 
-/// Rows drawn: the ticked elements, then an optional custom row.
-fn line_rows(p: &Params) -> Vec<(String, Vec<(f64, f64)>)> {
-    let mut rows: Vec<(String, Vec<(f64, f64)>)> = LINE_DATA.iter().filter(|e| p.b(e.0)).map(|e| (e.1.to_string(), e.2.to_vec())).collect();
-    let custom = custom_lines(p.s("custom"));
-    if !custom.is_empty() { rows.push(("Custom".to_string(), custom)); }
+fn spectrum_of(name: &str) -> Option<&'static (&'static str, &'static str, &'static str, Lines)> {
+    let n = name.trim();
+    SPECTRA.iter().find(|e| e.1.eq_ignore_ascii_case(n) || e.2 == n || e.0.eq_ignore_ascii_case(n))
+}
+
+struct Strip { name: String, sym: String, lines: Vec<(f64, f64)>, parts: Vec<String>, custom: bool }
+
+/// Rows drawn: the strip list if given, else the ticked elements and the optional custom row.
+fn line_rows(p: &Params) -> Vec<Strip> {
+    let spec = p.s("strips").trim();
+    if spec.is_empty() {
+        let mut rows: Vec<Strip> = OLD_KEYS.iter().filter(|k| p.b(k.0)).filter_map(|k| spectrum_of(k.1)).map(|e| Strip { name: e.1.into(), sym: e.2.into(), lines: e.3.to_vec(), parts: vec![], custom: false }).collect();
+        let custom = custom_lines(p.s("custom"));
+        if !custom.is_empty() { rows.push(Strip { name: "Custom".into(), sym: "?".into(), lines: custom, parts: vec![], custom: true }); }
+        return rows;
+    }
+    let mut rows: Vec<Strip> = Vec::new();
+    for raw in spec.split(|c| c == ';' || c == '\n') {
+        let t = raw.trim();
+        if t.is_empty() { continue; }
+        if let Some((name, rest)) = t.split_once('=') {
+            let mut lines: Vec<(f64, f64)> = Vec::new();
+            let mut parts = Vec::new();
+            for comp in rest.split(|c| c == '+' || c == ',' || c == '&').flat_map(|c| c.split(" and ")) {
+                let c = comp.trim();
+                if c.is_empty() { continue; }
+                let found = rows.iter().find(|r| r.name.eq_ignore_ascii_case(c)).map(|r| (r.name.clone(), r.lines.clone()))
+                    .or_else(|| spectrum_of(c).map(|e| (e.1.to_string(), e.3.to_vec())));
+                if let Some((n, l)) = found { parts.push(n); lines.extend(l); }
+            }
+            rows.push(Strip { name: name.trim().into(), sym: "?".into(), lines, parts, custom: false });
+        } else if let Some((name, rest)) = t.split_once(':') {
+            rows.push(Strip { name: name.trim().into(), sym: name.split_whitespace().last().filter(|w| w.chars().count() <= 2).map(String::from).unwrap_or_else(|| name.trim().chars().take(2).collect()), lines: custom_lines(rest), parts: vec![], custom: true });
+        } else if let Some(e) = spectrum_of(t) {
+            rows.push(Strip { name: e.1.into(), sym: e.2.into(), lines: e.3.to_vec(), parts: vec![], custom: false });
+        } else {
+            rows.push(Strip { name: t.into(), sym: "?".into(), lines: vec![], parts: vec![], custom: true });
+        }
+    }
     rows
 }
 
-/// "656.3, 486:0.5" -> [(nm, brightness)].
+/// "656.3, 486:0.5" (commas or spaces) -> [(nm, brightness)].
 fn custom_lines(s: &str) -> Vec<(f64, f64)> {
-    s.split(|c| c == ',' || c == ';').filter_map(|t| {
+    s.split(|c: char| c == ',' || c == ';' || c.is_whitespace()).filter_map(|t| {
         let mut it = t.trim().split(':');
         let nm = it.next()?.trim().parse::<f64>().ok()?;
         let b = it.next().and_then(|b| b.trim().parse::<f64>().ok()).unwrap_or(1.0);
@@ -63,78 +120,147 @@ fn custom_lines(s: &str) -> Vec<(f64, f64)> {
     }).collect()
 }
 
+/// Layout: (label column x of the strip start, strip end, first strip top, strip height, pitch, axis under each).
+struct LineLay { x0: f64, x1: f64, top: f64, sh: f64, pitch: f64, each: bool, lo: f64, hi: f64, w: f64, h: f64 }
+
+fn line_lay(p: &Params, rows: &[Strip]) -> LineLay {
+    let labw = match p.s("label_style") {
+        "Symbols" => 56.0,
+        "Blank" => 140.0,
+        "None" => 12.0,
+        _ => rows.iter().map(|r| r.name.chars().count()).max().unwrap_or(6) as f64 * 11.0 + 26.0,
+    };
+    let x0 = 14.0 + labw;
+    let x1 = x0 + 620.0;
+    let axis = p.s("axis_pos");
+    let each = axis == "Under each";
+    let ax_h = if axis == "None" { 0.0 } else { 30.0 + if p.s("axis_title_style") == "None" { 0.0 } else { 26.0 } };
+    let lab_extra = if p.b("labels") { 30.0 } else { 0.0 };
+    let sh = 46.0;
+    let pitch = sh + 16.0 + lab_extra + if each { ax_h } else { 0.0 };
+    let top = 14.0 + lab_extra;
+    let n = rows.len().max(1) as f64;
+    let h = top + pitch * n - 16.0 - if each { ax_h } else { 0.0 } + ax_h + 18.0;
+    let (mut lo, mut hi) = (p.f("nm_from"), p.f("nm_to"));
+    if hi <= lo + 10.0 { lo = 400.0; hi = 700.0; }
+    LineLay { x0, x1, top, sh, pitch, each, lo, hi, w: x1 + 30.0, h }
+}
+
 fn line_render(p: &Params) -> String {
     let rows = line_rows(p);
+    let lay = line_lay(p, &rows);
+    let (x0, x1, sh, lo, hi) = (lay.x0, lay.x1, lay.sh, lay.lo, lay.hi);
     let style = p.s("style");
     let rel = p.s("brightness") == "Relative";
-    let (x0, x1) = (110.0, 650.0);
-    let rowh = 52.0;
-    let n = rows.len().max(1);
-    let w = 700.0;
-    let h = 40.0 + rowh * n as f64 + 60.0;
-    let mut d = Doc::new(w, h);
-    title_at(&mut d, p, w / 2.0, 18.0, 15.0);
-    let px = |nm: f64| x0 + (nm - 400.0) / 300.0 * (x1 - x0);
-    let top0 = 30.0;
+    let mut d = Doc::new(lay.w, lay.h);
+    let px = |nm: f64| x0 + (nm - lo) / (hi - lo) * (x1 - x0);
+    let nmv = |s: &str| s.trim_end_matches(" nm").parse::<f64>().unwrap_or(0.0);
+    let tick_every = nmv(p.s("tick_every"));
+    let num_every = nmv(p.s("num_every")).max(5.0);
+    let axis = |d: &mut Doc, ay: f64| {
+        d.line(x0, ay, x1, ay, INK, 1.4);
+        if tick_every > 0.0 {
+            let mut v = (lo / tick_every).ceil() * tick_every;
+            while v <= hi + 1e-9 { d.line(px(v), ay, px(v), ay + 5.0, INK, 1.0); v += tick_every; }
+        }
+        let mut v = (lo / num_every).ceil() * num_every;
+        while v <= hi + 1e-9 {
+            d.line(px(v), ay, px(v), ay + 9.0, INK, 1.4);
+            tx(d, px(v), ay + 24.0, 14.0, "middle", INK, false, &tick(v));
+            v += num_every;
+        }
+        if p.s("axis_title_style") != "None" && !p.s("axis_title").trim().is_empty() {
+            tx(d, (x0 + x1) / 2.0, ay + 48.0, 15.0, "middle", INK, true, p.s("axis_title"));
+        }
+    };
     for (r, e) in rows.iter().enumerate() {
-        let y = top0 + r as f64 * rowh;
-        let sh = 38.0;
-        tx(&mut d, x0 - 12.0, y + sh / 2.0 + 5.0, 14.0, "end", INK, false, &e.0);
+        let y = lay.top + r as f64 * lay.pitch;
+        match p.s("label_style") {
+            "Symbols" => { tx(&mut d, x0 - 12.0, y + sh / 2.0 + 6.0, 18.0, "end", INK, true, &e.sym); }
+            "Blank" => { d.line(16.0, y + sh / 2.0 + 6.0, x0 - 14.0, y + sh / 2.0 + 6.0, INK, 1.4); }
+            "None" => {}
+            _ => { tx(&mut d, x0 - 12.0, y + sh / 2.0 + 6.0, 18.0, "end", INK, true, &e.name); }
+        }
         match style {
-            "Emission" => { d.rect(x0, y, x1 - x0, sh, "#000", "#000", 1.0); }
+            "Emission" => { d.rect(x0, y, x1 - x0, sh, "#000", "#333", 1.0); }
             "Absorption" => {
-                let steps = 270;
+                let steps = 300;
                 for k in 0..steps {
-                    let nm = 400.0 + 300.0 * (k as f64 + 0.5) / steps as f64;
+                    let nm = lo + (hi - lo) * (k as f64 + 0.5) / steps as f64;
                     let wpx = (x1 - x0) / steps as f64;
                     d.rect(x0 + k as f64 * wpx, y, wpx + 0.6, sh, &hex(wavelength_rgb(nm)), "none", 0.0);
                 }
+                d.rect(x0, y, x1 - x0, sh, "none", "#333", 1.0);
             }
-            _ => { d.rect(x0, y, x1 - x0, sh, "#fff", INK, 1.2); }
+            _ => { d.rect(x0, y, x1 - x0, sh, "#fff", INK, 1.4); }
         }
         let mut last_label = -100.0;
-        for &(nm, inten) in e.1.iter() {
-            if !(400.0..=700.0).contains(&nm) { continue; }
+        let mut ls = e.lines.clone();
+        ls.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for &(nm, inten) in ls.iter() {
+            if !(lo..=hi).contains(&nm) { continue; }
             let x = px(nm);
             let o = if rel { 0.25 + 0.75 * inten } else { 1.0 };
             let col = match style { "Emission" => hex(wavelength_rgb(nm)), _ => "#000000".into() };
-            d.raw(&format!(r#"<line x1="{x:.2}" y1="{y:.2}" x2="{x:.2}" y2="{:.2}" stroke="{col}" stroke-width="{}" stroke-opacity="{o:.2}"/>"#, y + sh, if style == "Print" { 1.6 } else { 2.0 }));
-            if p.b("labels") && nm - last_label > 4.5 {
-                tr(&mut d, x + 3.0, y - 3.0, 9.0, -90.0, "start", &format!("{nm}"));
+            d.raw(&format!(r#"<line x1="{x:.2}" y1="{y:.2}" x2="{x:.2}" y2="{:.2}" stroke="{col}" stroke-width="{}" stroke-opacity="{o:.2}"/>"#, y + sh, if style == "Print" { 2.2 } else { 2.6 }));
+            if p.b("labels") && px(nm) - px(last_label) > 11.0 {
+                tr(&mut d, x + 4.0, y - 4.0, 10.0, -90.0, "start", &format!("{nm}"));
                 last_label = nm;
             }
         }
-        if style == "Print" { }
+        if lay.each { axis(&mut d, y + sh); }
     }
-    // axis
-    let ay = top0 + rowh * n as f64 + 4.0;
-    d.line(x0, ay, x1, ay, INK, 1.6);
-    for k in 0..=6 {
-        let nm = 400.0 + 50.0 * k as f64;
-        d.line(px(nm), ay, px(nm), ay + 6.0, INK, 1.4);
-        tx(&mut d, px(nm), ay + 22.0, 13.0, "middle", INK, false, &format!("{}", nm as i64));
+    if p.s("axis_pos") == "Under the last" && !rows.is_empty() {
+        axis(&mut d, lay.top + (rows.len() - 1) as f64 * lay.pitch + sh);
     }
-    for k in 0..30 { let nm = 400.0 + 10.0 * k as f64; if k % 5 != 0 { d.line(px(nm), ay, px(nm), ay + 3.0, INK, 0.8); } }
-    tx(&mut d, (x0 + x1) / 2.0, ay + 44.0, 14.0, "middle", INK, false, "Wavelength (nm)");
-    d.finish()
+    let mut foot = Vec::new();
+    if p.b("answer") {
+        for r in rows.iter().filter(|r| !r.parts.is_empty()) {
+            let names: Vec<String> = r.parts.iter().map(|n| if spectrum_of(n).is_some() { n.to_lowercase() } else { n.clone() }).collect();
+            let list = match names.len() { 1 => names[0].clone(), n => format!("{} and {}", names[..n - 1].join(", "), names[n - 1]) };
+            foot.push(format!("{}: {list}", r.name));
+        }
+    }
+    wrap(p, d.finish(), &foot)
 }
 
 // ---------------------------------------------------------------------------------------------
 // PES
 // ---------------------------------------------------------------------------------------------
 
+const PES_COMPARE: [&str; 55] = ["None", "1 H - Hydrogen", "2 He - Helium", "3 Li - Lithium", "4 Be - Beryllium", "5 B - Boron", "6 C - Carbon",
+    "7 N - Nitrogen", "8 O - Oxygen", "9 F - Fluorine", "10 Ne - Neon", "11 Na - Sodium", "12 Mg - Magnesium",
+    "13 Al - Aluminum", "14 Si - Silicon", "15 P - Phosphorus", "16 S - Sulfur", "17 Cl - Chlorine", "18 Ar - Argon",
+    "19 K - Potassium", "20 Ca - Calcium", "21 Sc - Scandium", "22 Ti - Titanium", "23 V - Vanadium", "24 Cr - Chromium",
+    "25 Mn - Manganese", "26 Fe - Iron", "27 Co - Cobalt", "28 Ni - Nickel", "29 Cu - Copper", "30 Zn - Zinc",
+    "31 Ga - Gallium", "32 Ge - Germanium", "33 As - Arsenic", "34 Se - Selenium", "35 Br - Bromine", "36 Kr - Krypton",
+    "37 Rb - Rubidium", "38 Sr - Strontium", "39 Y - Yttrium", "40 Zr - Zirconium", "41 Nb - Niobium", "42 Mo - Molybdenum",
+    "43 Tc - Technetium", "44 Ru - Ruthenium", "45 Rh - Rhodium", "46 Pd - Palladium", "47 Ag - Silver", "48 Cd - Cadmium",
+    "49 In - Indium", "50 Sn - Tin", "51 Sb - Antimony", "52 Te - Tellurium", "53 I - Iodine", "54 Xe - Xenon"];
+
 fn pes_params() -> Vec<ParamDef> {
     vec![
-        ParamDef::choice("element", "Element (Z = 1-18)", &ELEMENT_CHOICES[..18], "6 C - Carbon"),
-        ParamDef::bool("labels", "Label peaks with subshells", true),
-        ParamDef::bool("counts", "Show electrons per peak", false),
+        ParamDef::choice("element", "Element (Z = 1-54)", &ELEMENT_CHOICES[..54], "6 C - Carbon"),
+        ParamDef::bool("labels", "Sublevel labels on the peaks", true),
+        ParamDef::bool("counts", "Electron counts over the peaks (like 2p⁶)", false),
         ParamDef::choice("source", "Peaks from", &["Element", "Custom peaks"], "Element"),
         ParamDef::list("custom", "Custom peaks (energy MJ/mol : electrons : label)", "28.6:2:1s, 1.72:2:2s, 1.09:2:2p"),
-        ParamDef::text("title", "Title (optional)", ""),
+        ParamDef::text("title", "Chart title text", ""),
+        ParamDef::choice("compare", "Compare with (drawn dashed behind it)", &PES_COMPARE, "None"),
+        ParamDef::choice("scale", "Energy axis scale", &["Logarithmic", "Broken", "Linear"], "Logarithmic"),
+        ParamDef::choice("units", "Energy units", &["MJ/mol", "eV"], "MJ/mol"),
+        ParamDef::bool("gridlines", "Gridlines at each number of electrons", true),
+        ParamDef::choice("drawn", "Drawn as", &["Peaks", "Bars"], "Peaks"),
+        ParamDef::choice("sublabel_style", "Sublevel labels as", &["Shown", "Blank lines", "None"], "Shown"),
+        ParamDef::bool("energies", "Binding energies over the peaks", false),
+        ParamDef::bool("names", "Element name over the spectrum", true),
+        ParamDef::bool("numbered", "Numbered electrons axis", true),
+        title_style(false),
+        answer_param("Answer key (electron configuration)"),
     ]
 }
 
-/// Peaks as (label, electrons, binding energy).
+/// Peaks as (label, electrons, binding energy MJ/mol).
 fn pes_peaks(p: &Params) -> Vec<(String, u8, f64)> {
     if p.s("source") == "Custom peaks" {
         let v: Vec<(String, u8, f64)> = p.s("custom").split(|c| c == ',' || c == ';').filter_map(|t| {
@@ -145,65 +271,204 @@ fn pes_peaks(p: &Params) -> Vec<(String, u8, f64)> {
         }).collect();
         if !v.is_empty() { return v; }
     }
-    let z = z_of(p.s("element")).min(18);
+    element_peaks(z_of(p.s("element")).min(54))
+}
+
+fn element_peaks(z: usize) -> Vec<(String, u8, f64)> {
     pes_energies(z).into_iter().map(|(code, e, en)| (format!("{}{}", code / 10, ['s', 'p', 'd', 'f'][(code % 10) as usize]), e, en)).collect()
 }
 
-const PES_X0: f64 = 70.0;
-const PES_X1: f64 = 640.0;
-const PES_Y0: f64 = 40.0;
-const PES_Y1: f64 = 320.0;
+const PES_W: f64 = 720.0;
+const PES_H: f64 = 470.0;
 
-/// (lo, hi, unit): log-axis bounds and pixels per electron.
-fn pes_frame(peaks: &[(String, u8, f64)]) -> (f64, f64, f64) {
-    let emax = peaks.iter().map(|x| x.2).fold(0.0, f64::max);
-    let emin = peaks.iter().map(|x| x.2).fold(f64::MAX, f64::min);
-    let (lo, hi) = ((emin / 2.2).min(0.3), emax * 2.2);
-    let maxe = peaks.iter().map(|x| x.1).max().unwrap_or(1) as f64;
-    (lo, hi, (PES_Y1 - PES_Y0 - 30.0) / maxe.max(4.0))
+#[derive(Clone)]
+enum PesScale { Log(f64, f64), Lin(f64, f64), Broken(Vec<(f64, f64, f64, f64)>) }
+
+/// Axis geometry; energies are in display units (MJ/mol or eV).
+#[derive(Clone)]
+struct PesGeom { x0: f64, x1: f64, y0: f64, y1: f64, ymax: f64, k: f64, scale: PesScale }
+
+impl PesGeom {
+    fn px(&self, e: f64) -> f64 {
+        match &self.scale {
+            PesScale::Log(lo, hi) => self.x0 + (hi.ln() - e.max(1e-9).ln()) / (hi.ln() - lo.ln()) * (self.x1 - self.x0),
+            PesScale::Lin(lo, hi) => self.x0 + (hi - e) / (hi - lo) * (self.x1 - self.x0),
+            PesScale::Broken(g) => {
+                for &(lo, hi, xa, xb) in g { if e >= lo && e <= hi { return xa + (hi - e) / (hi - lo) * (xb - xa); } }
+                -1000.0
+            }
+        }
+    }
+    fn inv(&self, x: f64) -> Option<f64> {
+        match &self.scale {
+            PesScale::Log(lo, hi) => Some((hi.ln() - (x - self.x0) / (self.x1 - self.x0) * (hi.ln() - lo.ln())).exp()),
+            PesScale::Lin(lo, hi) => Some(hi - (x - self.x0) / (self.x1 - self.x0) * (hi - lo)),
+            PesScale::Broken(_) => None,
+        }
+    }
+    fn py(&self, n: f64) -> f64 { self.y1 - n / self.ymax * (self.y1 - self.y0) }
+}
+
+fn pes_geom(p: &Params, peaks: &[(String, u8, f64)], extra: &[(String, u8, f64)]) -> PesGeom {
+    let k = if p.s("units") == "eV" { 1.0 / 0.096485 } else { 1.0 };
+    let all: Vec<f64> = peaks.iter().chain(extra.iter()).map(|x| x.2 * k).collect();
+    let emax = all.iter().cloned().fold(0.0, f64::max);
+    let emin = all.iter().cloned().fold(f64::MAX, f64::min);
+    let maxe = peaks.iter().chain(extra.iter()).map(|x| x.1).max().unwrap_or(2) as f64;
+    let ymax = (((maxe + 2.0) / 2.0).ceil() * 2.0).max(8.0);
+    let (x0, x1, y0, y1) = (if p.b("numbered") { 80.0 } else { 62.0 }, PES_W - 30.0, 60.0, PES_H - 90.0);
+    let scale = match p.s("scale") {
+        "Linear" => { let st = super::frame::nice(emax * 1.08, 8.0); PesScale::Lin(0.0, (emax * 1.08 / st).ceil() * st) }
+        "Broken" => {
+            let mut es = all.clone();
+            es.sort_by(|a, b| b.total_cmp(a));
+            es.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+            let mut groups: Vec<Vec<f64>> = Vec::new();
+            for e in es {
+                match groups.last_mut() { Some(g) if e > g.last().unwrap() / 2.2 => g.push(e), _ => groups.push(vec![e]) }
+            }
+            let n = groups.len().max(1) as f64;
+            let gap = 30.0;
+            let gw = (x1 - x0 - gap * (n - 1.0)) / n;
+            PesScale::Broken(groups.iter().enumerate().map(|(i, g)| {
+                let (hi, lo) = (g[0], *g.last().unwrap());
+                let pad = ((hi - lo) * 0.3).max(hi * 0.06);
+                let xa = x0 + i as f64 * (gw + gap);
+                (lo - pad, hi + pad, xa, xa + gw)
+            }).collect())
+        }
+        _ => PesScale::Log(10f64.powf((emin / 1.5).log10().floor()), 10f64.powf((emax * 1.5).log10().ceil())),
+    };
+    PesGeom { x0, x1, y0, y1, ymax, k, scale }
+}
+
+fn thousands(v: f64) -> String {
+    let t = tick(v);
+    if v >= 1000.0 && !t.contains('.') {
+        let b: Vec<char> = t.chars().collect();
+        let mut out = String::new();
+        for (i, c) in b.iter().enumerate() { if i > 0 && (b.len() - i) % 3 == 0 { out.push(','); } out.push(*c); }
+        out
+    } else { t }
+}
+
+fn pes_curve(g: &PesGeom, peaks: &[(String, u8, f64)]) -> Vec<(f64, f64)> {
+    let sigma = 5.5;
+    let samples = 900;
+    (0..=samples).map(|i| {
+        let x = g.x0 + (g.x1 - g.x0) * i as f64 / samples as f64;
+        // max (not sum) so peaks that crowd together on a linear axis never stack past their heights
+        let yv: f64 = peaks.iter().map(|(_, e, en)| *e as f64 * (-((x - g.px(en * g.k)).powi(2)) / (2.0 * sigma * sigma)).exp()).fold(0.0, f64::max);
+        (x, g.py(yv))
+    }).collect()
 }
 
 fn pes_render(p: &Params) -> String {
     let peaks = pes_peaks(p);
-    let (lo, hi, unit) = pes_frame(&peaks);
-    let (x0, x1, y0, y1) = (PES_X0, PES_X1, PES_Y0, PES_Y1);
-    let px = |e: f64| x0 + ((hi.ln() - e.ln()) / (hi.ln() - lo.ln())) * (x1 - x0);
-    let mut d = Doc::new(700.0, 420.0);
-    title_at(&mut d, p, 355.0, 22.0, 16.0);
-    d.line(x0, y1, x1, y1, INK, 1.8);
-    d.line(x0, y0 - 10.0, x0, y1, INK, 1.8);
-    let ticks = [0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0];
-    for &t in ticks.iter().filter(|&&t| t >= lo && t <= hi) {
-        d.line(px(t), y1, px(t), y1 + 6.0, INK, 1.4);
-        tx(&mut d, px(t), y1 + 22.0, 12.0, "middle", INK, false, &if t < 1.0 { num(t, 1) } else { format!("{}", t as i64) });
-    }
-    tx(&mut d, (x0 + x1) / 2.0, y1 + 50.0, 14.0, "middle", INK, false, "Binding energy (MJ/mol)");
-    tr(&mut d, 22.0, (y0 + y1) / 2.0, 14.0, -90.0, "middle", "Relative number of electrons");
-    // curve: sum of gaussians on the log axis
-    let sigma = 5.5;
-    let samples = 600;
-    let mut pts = Vec::new();
-    for i in 0..=samples {
-        let x = x0 + (x1 - x0) * i as f64 / samples as f64;
-        let mut yv = 0.0;
-        for (_, e, en) in &peaks {
-            let (e, en) = (*e, *en);
-            let c = px(en);
-            yv += e as f64 * unit * (-((x - c).powi(2)) / (2.0 * sigma * sigma)).exp();
+    let cmp_z = if p.s("compare") == "None" || p.s("compare").is_empty() { None } else { Some(z_of(p.s("compare")).min(54)) };
+    let cmp = cmp_z.map(element_peaks).unwrap_or_default();
+    let g = pes_geom(p, &peaks, &cmp);
+    let (x0, x1, y0, y1) = (g.x0, g.x1, g.y0, g.y1);
+    let mut d = Doc::new(PES_W, PES_H);
+    for n in 0..=(g.ymax as i64) {
+        let y = g.py(n as f64);
+        if p.b("gridlines") && n > 0 { d.line(x0, y, x1, y, "#c9ccd6", 1.0); }
+        if p.b("numbered") {
+            d.line(x0 - 5.0, y, x0, y, INK, 1.4);
+            tx(&mut d, x0 - 9.0, y + 5.0, 14.0, "end", INK, false, &n.to_string());
         }
-        pts.push((x, y1 - yv));
     }
-    d.polyline(&pts, "#1f5fa8", 2.4);
+    d.line(x0, y0 - 8.0, x0, y1, INK, 2.0);
+    // x axis + ticks
+    match &g.scale {
+        PesScale::Log(lo, hi) => {
+            d.line(x0, y1, x1, y1, INK, 2.0);
+            let mut dec = *lo;
+            while dec <= hi * 1.0001 {
+                d.line(g.px(dec), y1, g.px(dec), y1 + 8.0, INK, 1.4);
+                tx(&mut d, g.px(dec), y1 + 24.0, 14.0, "middle", INK, false, &thousands(dec));
+                if dec < *hi { for m in 2..10 { let v = dec * m as f64; d.line(g.px(v), y1, g.px(v), y1 + 4.0, INK, 1.0); } }
+                dec *= 10.0;
+            }
+        }
+        PesScale::Lin(lo, hi) => {
+            d.line(x0, y1, x1, y1, INK, 2.0);
+            let st = super::frame::nice(hi - lo, 8.0);
+            let mut v = *lo;
+            while v <= hi + 1e-9 { d.line(g.px(v), y1, g.px(v), y1 + 7.0, INK, 1.4); tx(&mut d, g.px(v), y1 + 24.0, 14.0, "middle", INK, false, &thousands(v)); v += st; }
+        }
+        PesScale::Broken(gs) => {
+            for (i, &(lo, hi, xa, xb)) in gs.iter().enumerate() {
+                let (sa, sb) = (if i == 0 { x0 } else { xa - 8.0 }, if i + 1 == gs.len() { x1 } else { xb + 8.0 });
+                d.line(sa, y1, sb, y1, INK, 2.0);
+                if i + 1 < gs.len() {
+                    for bx in [xb + 8.0, xb + 22.0] { d.line(bx - 4.0, y1 + 8.0, bx + 4.0, y1 - 8.0, INK, 1.6); }
+                }
+                let st = super::frame::nice(hi - lo, 3.0);
+                let mut v = (lo / st).ceil() * st;
+                while v <= hi + 1e-9 { d.line(g.px(v), y1, g.px(v), y1 + 7.0, INK, 1.4); tx(&mut d, g.px(v), y1 + 24.0, 14.0, "middle", INK, false, &thousands((v * 1000.0).round() / 1000.0)); v += st; }
+            }
+        }
+    }
+    tx(&mut d, (x0 + x1) / 2.0, y1 + 56.0, 17.0, "middle", INK, true, &format!("Binding energy ({})", if p.s("units") == "eV" { "eV" } else { "MJ/mol" }));
+    d.raw(&format!(r##"<text x="22" y="{:.2}" font-size="16" text-anchor="middle" font-family="{FONT}" font-weight="bold" fill="{INK}" transform="rotate(-90 22 {:.2})">Relative number of electrons</text>"##, (y0 + y1) / 2.0, (y0 + y1) / 2.0));
+    let bars = p.s("drawn") == "Bars";
+    let draw_set = |d: &mut Doc, set: &[(String, u8, f64)], dashed_: bool| {
+        if bars {
+            for (_, e, en) in set {
+                let x = g.px(en * g.k) + if dashed_ { 9.0 } else { 0.0 };
+                let top = g.py(*e as f64);
+                if dashed_ { d.raw(&format!(r##"<rect x="{:.2}" y="{top:.2}" width="10" height="{:.2}" fill="none" stroke="#6b7080" stroke-width="2" stroke-dasharray="5 4"/>"##, x - 5.0, y1 - top)); }
+                else { d.rect(x - 6.0, top, 12.0, y1 - top, "#141414", "#141414", 1.0); }
+            }
+        } else {
+            let pts = pes_curve(&g, set);
+            if dashed_ {
+                let pp: Vec<String> = pts.iter().map(|(x, y)| format!("{x:.2},{y:.2}")).collect();
+                d.raw(&format!(r##"<polyline points="{}" fill="none" stroke="#6b7080" stroke-width="2.6" stroke-dasharray="7 5"/>"##, pp.join(" ")));
+            } else { d.polyline(&pts, "#141414", 2.6); }
+        }
+    };
+    if !cmp.is_empty() { draw_set(&mut d, &cmp, true); }
+    draw_set(&mut d, &peaks, false);
     for (l, e, en) in &peaks {
-        let (e, en) = (*e, *en);
-        let c = px(en);
-        let top = y1 - e as f64 * unit;
-        if p.b("labels") {
-            tx(&mut d, c, top - 8.0 - if p.b("counts") { 14.0 } else { 0.0 }, 13.0, "middle", INK, true, l);
+        let c = g.px(en * g.k);
+        let mut y = g.py(*e as f64) - 10.0;
+        if p.b("energies") {
+            let v = en * g.k;
+            let t = if v >= 100.0 { thousands(v.round()) } else if v >= 10.0 { num(v, 1) } else { num(v, 2) };
+            tx(&mut d, c, y, 13.0, "middle", "#333", false, &t);
+            y -= 17.0;
         }
-        if p.b("counts") { tx(&mut d, c, top - 8.0, 12.0, "middle", "#555", false, &format!("({e})")); }
+        let lab = if p.b("counts") { format!("{l}{}", sup(*e as u32)) } else { l.clone() };
+        if p.b("labels") || p.b("counts") {
+            match p.s("sublabel_style") {
+                "None" if !p.b("counts") => {}
+                "Blank lines" => { d.line(c - 16.0, y + 2.0, c + 16.0, y + 2.0, INK, 1.3); }
+                _ => { tx(&mut d, c, y, 16.0, "middle", INK, true, &lab); }
+            }
+        }
     }
-    d.finish()
+    let z = z_of(p.s("element")).min(54);
+    let custom = p.s("source") == "Custom peaks";
+    if let Some(cz) = cmp_z {
+        let lx = x1 - 210.0;
+        d.line(lx, 30.0, lx + 40.0, 30.0, "#141414", 2.6);
+        tx(&mut d, lx + 48.0, 36.0, 17.0, "start", INK, true, if custom { "Custom" } else { symbol(z) });
+        d.raw(&format!(r##"<line x1="{:.2}" y1="30" x2="{:.2}" y2="30" stroke="#6b7080" stroke-width="2.6" stroke-dasharray="7 5"/>"##, lx + 110.0, lx + 150.0));
+        tx(&mut d, lx + 158.0, 36.0, 17.0, "start", INK, true, symbol(cz));
+    } else if p.b("names") && !custom {
+        tx(&mut d, x1, 36.0, 18.0, "end", INK, true, symbol(z));
+    }
+    let mut foot = Vec::new();
+    if p.b("answer") {
+        if custom {
+            foot.push(peaks.iter().map(|(l, e, _)| format!("{l}{}", sup(*e as u32))).collect::<Vec<_>>().join(" "));
+        } else {
+            foot.push(format!("{} ({}): {}", name(z), symbol(z), config_text(&config(z, 0), None)));
+        }
+    }
+    wrap(p, d.finish(), &foot)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -212,15 +477,33 @@ fn pes_render(p: &Params) -> String {
 
 fn ms_params() -> Vec<ParamDef> {
     let names: Vec<&'static str> = ISOTOPES.iter().map(|e| e.0).collect();
-    vec![
-        ParamDef::choice("source", "Isotopes from", &["Element", "Custom isotopes"], "Element"),
+    let mut v = vec![
+        ParamDef::choice("source", "Peaks from", &["Element", "Custom isotopes"], "Element"),
         ParamDef::choice("element", "Element", &names, "Chlorine"),
-        ParamDef::text("custom", "Custom isotopes (mass:abundance, ...)", "35:75.8, 37:24.2"),
+        ParamDef::text("custom", "Custom isotopes (mass:abundance %, up to 6)", "35:75.8, 37:24.2"),
         ParamDef::bool("molecule", "Diatomic molecule (X2)", false),
-        ParamDef::bool("relative", "Scale tallest peak to 100", true),
-        ParamDef::bool("values", "Print the value above each bar", false),
-        ParamDef::text("title", "Title (optional)", ""),
-    ]
+        ParamDef::bool("relative", "Peak heights relative to the tallest (off = percent)", true),
+        ParamDef::bool("values", "Abundances over the peaks", false),
+        ParamDef::text("title", "Chart title text", ""),
+        ParamDef::text("custom_name", "Custom element name", "Element X"),
+        ParamDef::bool("show_name", "Element name over the spectrum", true),
+        ParamDef::int("leave_out", "Leave a peak out (0 = none, 1 = lightest, 2 = next...)", 0, 10, 0),
+        answer_param("Answer key (relative atomic mass, missing peak)"),
+        title_style(true),
+        ParamDef::choice("xtitle_style", "x-axis title", &TITLE3, "Text"),
+        ParamDef::text("xtitle", "x-axis title text", "Mass-to-charge ratio (m/z)"),
+        ParamDef::choice("ytitle_style", "y-axis title", &TITLE3, "Text"),
+        ParamDef::text("ytitle", "y-axis title text", "Abundance (%)"),
+        ParamDef::bool("xaxis_fit", "x-axis: fit to the peaks", true),
+    ];
+    v.extend(xaxis_params(AxisDefaults { from: 22.0, to: 28.0, by: 0.5, num: "Every 2nd line" }, 400.0));
+    v.extend(yaxis_params(AxisDefaults { from: 0.0, to: 100.0, by: 10.0, num: "Every line" }, 1000.0));
+    v.push(minor_param());
+    v
+}
+
+fn ms_element(p: &Params) -> Option<&'static (&'static str, &'static str, f64, &'static [(u32, f64)])> {
+    if p.s("source") == "Custom isotopes" { None } else { ISOTOPES.iter().find(|e| e.0 == p.s("element")) }
 }
 
 /// Raw isotopes (mass, abundance) of the chosen source, sorted by mass.
@@ -230,11 +513,13 @@ fn ms_iso(p: &Params) -> Vec<(u32, f64)> {
         for tok in p.s("custom").split(|c| c == ',' || c == ';' || c == '\n') {
             let mut it = tok.split(|c| c == ':' || c == '=');
             if let (Some(a), Some(b)) = (it.next(), it.next()) {
-                if let (Ok(m), Ok(ab)) = (a.trim().parse::<u32>(), b.trim().trim_end_matches('%').parse::<f64>()) { if ab > 0.0 { iso.push((m, ab)); } }
+                if let (Ok(m), Ok(ab)) = (a.trim().parse::<u32>(), b.trim().trim_end_matches('%').parse::<f64>()) {
+                    if ab > 0.0 && m > 0 && !iso.iter().any(|x| x.0 == m) && iso.len() < 6 { iso.push((m, ab)); }
+                }
             }
         }
-    } else if let Some(e) = ISOTOPES.iter().find(|e| e.0 == p.s("element")) {
-        iso = e.1.to_vec();
+    } else if let Some(e) = ms_element(p) {
+        iso = e.3.to_vec();
     }
     iso.sort_by_key(|x| x.0);
     iso
@@ -244,6 +529,9 @@ fn ms_iso(p: &Params) -> Vec<(u32, f64)> {
 fn ms_bars(p: &Params, iso: &[(u32, f64)]) -> Vec<(u32, f64)> {
     let tot: f64 = iso.iter().map(|x| x.1).sum();
     let mut bars: Vec<(u32, f64)> = iso.iter().map(|&(m, a)| (m, a / tot * 100.0)).collect();
+    if p.s("source") == "Custom isotopes" && !p.b("molecule") && (tot - 100.0).abs() < 0.05 {
+        bars = iso.to_vec();
+    }
     if p.b("molecule") {
         let mut v: Vec<(u32, f64)> = Vec::new();
         for (i, &(m1, a1)) in bars.iter().enumerate() {
@@ -262,54 +550,90 @@ fn ms_bars(p: &Params, iso: &[(u32, f64)]) -> Vec<(u32, f64)> {
     bars
 }
 
-const MS_X0: f64 = 80.0;
-const MS_X1: f64 = 650.0;
-const MS_Y0: f64 = 40.0;
-const MS_Y1: f64 = 340.0;
+const MS_W: f64 = 700.0;
+const MS_H: f64 = 520.0;
+
+/// Graph frame + bars shared by the renderer and its handles.
+fn ms_layout(p: &Params) -> Option<(Graph, Vec<(u32, f64)>)> {
+    let iso = ms_iso(p);
+    if iso.is_empty() { return None; }
+    let bars = ms_bars(p, &iso);
+    let mut x = Axis::read(p, "xaxis");
+    if p.b("xaxis_fit") {
+        x.from = bars.first()?.0 as f64 - 2.0;
+        x.to = bars.last()?.0 as f64 + 2.0;
+        x.fix();
+    }
+    let y = Axis::read(p, "yaxis");
+    let xt = axis_title(p, "xtitle_style", p.s("xtitle")).is_some();
+    let yt = axis_title(p, "ytitle_style", p.s("ytitle")).is_some();
+    let top_extra = if p.b("show_name") { 26.0 } else { 0.0 };
+    let (x0, x1, y0, y1) = plot_rect(MS_W, MS_H, &x, &y, xt, yt, top_extra);
+    let minor = match p.s("minor_grid") { "2 per block" => 2, "4 per block" => 4, "5 per block" => 5, _ => 0 };
+    Some((Graph { x, y, minor, x0, x1, y0, y1 }, bars))
+}
+
+/// Value printed over a peak.
+fn ms_value(p: &Params, v: f64) -> String {
+    if p.b("relative") { if (v - 100.0).abs() < 1e-9 { "100".into() } else { format!("{v:.2}") } }
+    else if p.s("source") == "Custom isotopes" && !p.b("molecule") { format!("{}%", tick((v * 100.0).round() / 100.0)) }
+    else { format!("{v:.2}%") }
+}
+
+/// Name over the spectrum and in the answer key.
+fn ms_name(p: &Params) -> (String, String) {
+    match ms_element(p) {
+        Some(e) if p.b("molecule") => (e.0.to_string(), format!("{}{}", e.1, sub(2))),
+        Some(e) => (e.0.to_string(), e.1.to_string()),
+        None => (p.s("custom_name").trim().to_string(), String::new()),
+    }
+}
 
 fn ms_render(p: &Params) -> String {
-    let iso = ms_iso(p);
-    if iso.is_empty() {
-        let mut d = Doc::new(420.0, 120.0);
-        tx(&mut d, 210.0, 66.0, 15.0, "middle", "#b03030", false, "Enter isotopes as mass:abundance, e.g. 35:75.8, 37:24.2");
+    let Some((g, bars)) = ms_layout(p) else {
+        let mut d = Doc::new(460.0, 120.0);
+        tx(&mut d, 230.0, 66.0, 15.0, "middle", "#b03030", false, "Enter isotopes as mass:abundance, e.g. 35:75.8, 37:24.2");
         return d.finish();
-    }
-    let bars = ms_bars(p, &iso);
+    };
     let relative = p.b("relative");
-    let (mlo, mhi) = (bars.first().unwrap().0 as f64 - 2.0, bars.last().unwrap().0 as f64 + 2.0);
-    let (x0, x1, y0, y1) = (MS_X0, MS_X1, MS_Y0, MS_Y1);
-    let px = |m: f64| x0 + (m - mlo) / (mhi - mlo) * (x1 - x0);
-    let py = |v: f64| y1 - v / 100.0 * (y1 - y0);
-    let mut d = Doc::new(700.0, 430.0);
-    title_at(&mut d, p, 365.0, 22.0, 16.0);
-    for k in 0..=5 {
-        let v = 20.0 * k as f64;
-        d.line(x0 - 5.0, py(v), x0, py(v), INK, 1.2);
-        tx(&mut d, x0 - 10.0, py(v) + 4.5, 12.0, "end", INK, false, &format!("{}", v as i64));
-        if k > 0 { d.line(x0, py(v), x1, py(v), "#e6e6e6", 0.8); }
-    }
-    d.line(x0, y0 - 10.0, x0, y1, INK, 1.8);
-    d.line(x0, y1, x1, y1, INK, 1.8);
-    let span = mhi - mlo;
-    let step = if span <= 16.0 { 1.0 } else if span <= 40.0 { 2.0 } else if span <= 100.0 { 5.0 } else { 10.0 };
-    let mut m = (mlo / step).ceil() * step;
-    while m <= mhi {
-        d.line(px(m), y1, px(m), y1 + 6.0, INK, 1.3);
-        tx(&mut d, px(m), y1 + 22.0, 12.0, "middle", INK, false, &format!("{}", m as i64));
-        m += step;
-    }
-    tx(&mut d, (x0 + x1) / 2.0, y1 + 52.0, 14.0, "middle", INK, false, if p.b("molecule") { "m/z (molecular ion)" } else { "Mass number (m/z)" });
-    tr(&mut d, 24.0, (y0 + y1) / 2.0, 14.0, -90.0, "middle", if relative { "Relative abundance" } else { "Abundance (%)" });
-    for &(mass, v) in &bars {
-        let x = px(mass as f64);
-        let bw = ((x1 - x0) / span * 0.5).clamp(4.0, 16.0);
-        d.rect(x - bw / 2.0, py(v), bw, y1 - py(v), "#1f5fa8", "#12396b", 1.0);
+    let mut d = Doc::new(MS_W, MS_H);
+    let xt = axis_title(p, "xtitle_style", p.s("xtitle"));
+    let ytxt = if relative && p.s("ytitle") == "Abundance (%)" { "Relative abundance" } else { p.s("ytitle") };
+    let yt = axis_title(p, "ytitle_style", ytxt);
+    draw_graph(&mut d, &g, xt, yt);
+    let leave = p.i("leave_out").max(0) as usize;
+    let bw = ((g.x1 - g.x0) / (g.x.to - g.x.from) * 0.28).clamp(5.0, 18.0);
+    for (k, &(mass, v)) in bars.iter().enumerate() {
+        if leave == k + 1 { continue; }
+        let x = g.px(mass as f64);
+        if x < g.x0 - 0.5 || x > g.x1 + 0.5 || v <= g.y.from { continue; }
+        let top = g.py(v.min(g.y.to));
+        d.rect(x - bw / 2.0, top, bw, g.y1 - top, "#141a29", "#141a29", 1.0);
         if p.b("values") {
-            let t = if v >= 10.0 { num(v, 1) } else { num(v, 2) };
-            tx(&mut d, x, py(v) - 6.0, 11.0, "middle", INK, false, &t);
+            tx(&mut d, x, top - 8.0, 15.0, "middle", INK, true, &ms_value(p, v));
         }
     }
-    d.finish()
+    let (name, sym) = ms_name(p);
+    if p.b("show_name") && !name.is_empty() {
+        let shown = if p.b("molecule") { format!("{name} ({sym})") } else { name.clone() };
+        let up = if g.y.lab.is_some() { 22.0 } else { 0.0 };
+        tx(&mut d, g.x1, g.y0 - 14.0 - up, 20.0, "end", INK, true, &shown);
+    }
+    let mut foot = Vec::new();
+    if p.b("answer") {
+        let iso = ms_iso(p);
+        let ram = match ms_element(p) {
+            Some(e) => e.2,
+            None => { let t: f64 = iso.iter().map(|x| x.1).sum(); iso.iter().map(|x| x.0 as f64 * x.1).sum::<f64>() / t }
+        };
+        let what = if p.b("molecule") { "relative molecular mass" } else { "relative atomic mass" };
+        let r = if p.b("molecule") { 2.0 * ram } else { ram };
+        foot.push(if sym.is_empty() { format!("{name}: {what} {r:.2}") } else { format!("{name} ({sym}): {what} {r:.2}") });
+        if let Some(&(m, v)) = bars.get(leave.wrapping_sub(1)) {
+            foot.push(format!("Missing peak: m/z {m}, {}", ms_value(p, v)));
+        }
+    }
+    wrap(p, d.finish(), &foot)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -328,24 +652,25 @@ pub(super) fn handles(id: &str, p: &Params, _size: (f64, f64)) -> Option<Vec<Han
 }
 
 fn line_handles(p: &Params) -> Vec<Handle> {
-    let (x0, x1, rowh, top0, sh) = (110.0, 650.0, 52.0, 30.0, 38.0);
+    let rows = line_rows(p);
+    let l = line_lay(p, &rows);
+    let (x0, x1, lo, hi) = (l.x0, l.x1, l.lo, l.hi);
     let mut v = Vec::new();
-    let mut r = 0;
-    for e in LINE_DATA.iter().filter(|e| p.b(e.0)) {
-        let y = top0 + r as f64 * rowh;
-        let key = e.0;
-        v.push(Handle::zone((x0 - 50.0, y + sh / 2.0), (96.0, 26.0), "Click to hide this element's spectrum", move |q| q.set_b(key, false)));
-        r += 1;
-    }
-    let custom = custom_lines(p.s("custom"));
-    if !custom.is_empty() {
-        let y = top0 + r as f64 * rowh + sh / 2.0;
-        for (i, &(nm, _)) in custom.iter().enumerate() {
-            if !(400.0..=700.0).contains(&nm) { continue; }
-            v.push(Handle::knob((x0 + (nm - 400.0) / 300.0 * (x1 - x0), y), "Drag to change this line's wavelength", move |q, t| {
-                let new = (400.0 + (t.0 - x0) / (x1 - x0) * 300.0).clamp(400.0, 700.0);
+    if !p.s("strips").trim().is_empty() { return v; }
+    for (r, e) in rows.iter().enumerate() {
+        let y = l.top + r as f64 * l.pitch + l.sh / 2.0;
+        if !e.custom {
+            if let Some(&(key, _)) = OLD_KEYS.iter().find(|k| k.1 == e.name) {
+                v.push(Handle::zone((x0 / 2.0, y), (x0 - 10.0, 26.0), "Click to hide this element's spectrum", move |q| q.set_b(key, false)));
+            }
+            continue;
+        }
+        for (i, &(nm, _)) in e.lines.iter().enumerate() {
+            if !(lo..=hi).contains(&nm) { continue; }
+            v.push(Handle::knob((x0 + (nm - lo) / (hi - lo) * (x1 - x0), y), "Drag to change this line's wavelength", move |q, t| {
+                let new = (lo + (t.0 - x0) / (x1 - x0) * (hi - lo)).clamp(lo, hi);
                 let new = (new * 2.0).round() / 2.0;
-                let mut toks: Vec<String> = q.s("custom").split(|c| c == ',' || c == ';').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
+                let mut toks: Vec<String> = q.s("custom").split(|c: char| c == ',' || c == ';' || c.is_whitespace()).map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
                 let Some(tok) = toks.iter_mut().filter(|t| t.split(':').next().and_then(|n| n.trim().parse::<f64>().ok()).is_some()).nth(i) else { return };
                 let mut parts = tok.split(':');
                 let old: f64 = parts.next().and_then(|n| n.trim().parse().ok()).unwrap_or(0.0);
@@ -363,22 +688,24 @@ fn line_handles(p: &Params) -> Vec<Handle> {
 fn pes_handles(p: &Params) -> Vec<Handle> {
     let mut v = Vec::new();
     let peaks = pes_peaks(p);
-    let (lo, hi, unit) = pes_frame(&peaks);
-    let px = move |e: f64| PES_X0 + ((hi.ln() - e.ln()) / (hi.ln() - lo.ln())) * (PES_X1 - PES_X0);
-    if p.s("source") == "Custom peaks" {
+    let cmp: Vec<(String, u8, f64)> = if p.s("compare") == "None" || p.s("compare").is_empty() { vec![] } else { element_peaks(z_of(p.s("compare")).min(54)) };
+    let g = pes_geom(p, &peaks, &cmp);
+    if p.s("source") == "Custom peaks" && g.inv(0.0).is_some() {
         let n_ok = p.s("custom").split(|c| c == ',' || c == ';').filter(|t| {
             let parts: Vec<&str> = t.trim().split(':').collect();
             parts.len() >= 2 && parts[0].trim().parse::<f64>().is_ok() && parts[1].trim().parse::<f64>().is_ok()
         }).count();
         if n_ok > 0 {
             for (i, (_, e, en)) in peaks.iter().enumerate() {
-                v.push(Handle::knob((px(*en), PES_Y1 - *e as f64 * unit), "Drag: sideways = binding energy, up/down = electrons", move |q, t| {
+                v.push(Handle::knob((g.px(en * g.k), g.py(*e as f64)), "Drag: sideways = binding energy, up/down = electrons", move |q, t| {
                     let mut toks: Vec<String> = q.s("custom").split(|c| c == ',' || c == ';').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
                     let peaks = pes_peaks(q);
-                    let (lo, hi, unit) = pes_frame(&peaks);
-                    let Some(&(_, e_old, en_old)) = peaks.get(i) else { return };
-                    let en_new = (hi.ln() - (t.0 - PES_X0) / (PES_X1 - PES_X0) * (hi.ln() - lo.ln())).exp().clamp(0.05, 2000.0);
-                    let e_new = ((PES_Y1 - t.1) / unit).round().clamp(1.0, 14.0) as u8;
+                    let cmp: Vec<(String, u8, f64)> = if q.s("compare") == "None" || q.s("compare").is_empty() { vec![] } else { element_peaks(z_of(q.s("compare")).min(54)) };
+                    let g = pes_geom(q, &peaks, &cmp);
+                    let Some((e_old, en_old)) = peaks.get(i).map(|x| (x.1, x.2)) else { return };
+                    let Some(disp) = g.inv(t.0) else { return };
+                    let en_new = (disp / g.k).clamp(0.05, 2000.0);
+                    let e_new = ((g.y1 - t.1) / (g.y1 - g.y0) * g.ymax).round().clamp(1.0, 14.0) as u8;
                     if e_new == e_old && (en_new / en_old - 1.0).abs() < 0.01 { return; }
                     let Some(tok) = toks.get_mut(i) else { return };
                     let label = tok.split(':').nth(2).map(|l| l.trim().to_string());
@@ -388,11 +715,11 @@ fn pes_handles(p: &Params) -> Vec<Handle> {
                 }));
             }
         }
-    } else {
+    } else if p.s("source") != "Custom peaks" {
         v.push(
-            Handle::zone(((PES_X0 + PES_X1) / 2.0, (PES_Y0 + PES_Y1) / 2.0), (PES_X1 - PES_X0, PES_Y1 - PES_Y0), "Scroll to change the element", |_| {}).with_scroll(|q, dy| {
+            Handle::zone(((g.x0 + g.x1) / 2.0, (g.y0 + g.y1) / 2.0), (g.x1 - g.x0, g.y1 - g.y0), "Scroll to change the element", |_| {}).with_scroll(|q, dy| {
                 let z = z_of(q.s("element")) as i64;
-                let nz = (z - 1 + if dy > 0.0 { 1 } else { -1 }).rem_euclid(18) + 1;
+                let nz = (z.min(54) - 1 + if dy > 0.0 { 1 } else { -1 }).rem_euclid(54) + 1;
                 q.set_s("element", ELEMENT_CHOICES[(nz - 1) as usize]);
             }),
         );
@@ -408,23 +735,18 @@ fn sig(x: f64) -> String {
 
 fn ms_handles(p: &Params) -> Vec<Handle> {
     if p.b("molecule") { return Vec::new(); }
-    let iso = ms_iso(p);
-    if iso.is_empty() { return Vec::new(); }
-    let bars = ms_bars(p, &iso);
-    let (mlo, mhi) = (bars.first().unwrap().0 as f64 - 2.0, bars.last().unwrap().0 as f64 + 2.0);
-    let span = mhi - mlo;
-    bars.iter().enumerate().map(|(i, &(mass, h))| {
-        let x = MS_X0 + (mass as f64 - mlo) / span * (MS_X1 - MS_X0);
-        let y = MS_Y1 - h / 100.0 * (MS_Y1 - MS_Y0);
-        Handle::knob((x, y), "Drag: sideways = mass number, up/down = abundance", move |q, t| {
+    let Some((g, bars)) = ms_layout(p) else { return Vec::new() };
+    let leave = p.i("leave_out").max(0) as usize;
+    bars.iter().enumerate().filter(|&(k, &(m, h))| {
+        let x = g.px(m as f64);
+        k + 1 != leave && h <= g.y.to && h > g.y.from && x >= g.x0 && x <= g.x1
+    }).map(|(i, &(mass, h))| {
+        Handle::knob((g.px(mass as f64), g.py(h)), "Drag: sideways = mass number, up/down = abundance", move |q, t| {
             let iso = ms_iso(q);
-            let bars = ms_bars(q, &iso);
-            let (Some(&(m_old, h_old)), Some(&(m0, _))) = (bars.get(i), bars.first()) else { return };
-            let _ = m0;
-            let mlo = bars.first().unwrap().0 as f64 - 2.0;
-            let mhi = bars.last().unwrap().0 as f64 + 2.0;
-            let m_new = (mlo + (t.0 - MS_X0) / (MS_X1 - MS_X0) * (mhi - mlo)).round().clamp(1.0, 300.0) as u32;
-            let h_new = ((MS_Y1 - t.1) / (MS_Y1 - MS_Y0) * 100.0).clamp(0.5, 100.0);
+            let Some((g, bars)) = ms_layout(q) else { return };
+            let Some(&(m_old, h_old)) = bars.get(i) else { return };
+            let m_new = g.vx(t.0).round().clamp(1.0, 300.0) as u32;
+            let h_new = g.vy(t.1).clamp(0.5, 100.0);
             let m_new = if iso.iter().enumerate().any(|(k, x)| k != i && x.0 == m_new) { m_old } else { m_new };
             if m_new == m_old && (h_new - h_old).abs() < 0.8 { return; }
             let others: Vec<f64> = iso.iter().enumerate().filter(|(k, _)| *k != i).map(|(_, x)| x.1).collect();
@@ -441,8 +763,54 @@ fn ms_handles(p: &Params) -> Vec<Handle> {
             list[i] = (m_new, ab_new);
             list.sort_by_key(|x| x.0);
             let text = list.iter().map(|(m, a)| format!("{m}:{}", sig(*a))).collect::<Vec<_>>().join(", ");
+            if q.s("source") != "Custom isotopes" {
+                let nm = q.s("element").to_string();
+                q.set_s("custom_name", &nm);
+            }
             q.set_s("source", "Custom isotopes");
             q.set_s("custom", &text);
         })
     }).collect()
+}
+
+// ---------------------------------------------------------------------------------------------
+// Examples
+// ---------------------------------------------------------------------------------------------
+
+use crate::figures::{Example, Value};
+
+fn ex(name: &'static str, params: Vec<(&'static str, Value)>) -> Example { Example { name, params } }
+fn s(v: &str) -> Value { Value::S(v.into()) }
+fn b(v: bool) -> Value { Value::B(v) }
+fn i(v: i64) -> Value { Value::I(v) }
+fn f(v: f64) -> Value { Value::F(v) }
+
+pub(super) fn examples(id: &str) -> Option<Vec<Example>> {
+    Some(match id {
+        "mass-spectrum" => vec![
+            ex("Mass spectrum of magnesium", vec![("element", s("Magnesium")), ("relative", b(false)), ("values", b(true))]),
+            ex("Mass spectrum of chlorine with its relative atomic mass", vec![("element", s("Chlorine")), ("relative", b(false)), ("values", b(true)), ("answer", b(true))]),
+            ex("Identify the element from its mass spectrum", vec![("element", s("Bromine")), ("relative", b(false)), ("values", b(true)), ("show_name", b(false)), ("xaxis_by", f(1.0)), ("xaxis_num", s("Every line"))]),
+            ex("Draw the missing peak: silicon", vec![("element", s("Silicon")), ("relative", b(false)), ("values", b(true)), ("leave_out", i(2)), ("answer", b(true))]),
+            ex("Mass spectrum of a made-up element", vec![("source", s("Custom isotopes")), ("custom", s("20:90, 22:10")), ("custom_name", s("Element Q")), ("relative", b(false)), ("values", b(true)), ("answer", b(true))]),
+            ex("Mass spectrum of zirconium (relative abundance)", vec![("element", s("Zirconium")), ("relative", b(true)), ("values", b(true)), ("xaxis_by", f(1.0)), ("xaxis_num", s("Every line"))]),
+        ],
+        "photoelectron-spectrum" => vec![
+            ex("Photoelectron spectrum of sodium", vec![("element", s("11 Na - Sodium"))]),
+            ex("Photoelectron spectrum of neon with binding energies", vec![("element", s("10 Ne - Neon")), ("energies", b(true))]),
+            ex("PES comparing sodium and magnesium", vec![("element", s("12 Mg - Magnesium")), ("compare", s("11 Na - Sodium"))]),
+            ex("Identify the element from its photoelectron spectrum", vec![("element", s("15 P - Phosphorus")), ("names", b(false)), ("sublabel_style", s("Blank lines")), ("answer", b(true))]),
+            ex("Photoelectron spectrum of calcium (broken axis, eV)", vec![("element", s("20 Ca - Calcium")), ("scale", s("Broken")), ("units", s("eV")), ("drawn", s("Bars"))]),
+            ex("Photoelectron spectrum of iron", vec![("element", s("26 Fe - Iron")), ("counts", b(true))]),
+        ],
+        "line-spectrum" => vec![
+            ex("Emission spectra: hydrogen, helium, sodium and an unknown mixture", vec![("strips", s("Hydrogen; Helium; Sodium; Unknown = Hydrogen + Sodium")), ("answer", b(true))]),
+            ex("Hydrogen emission spectrum (Balmer series)", vec![("strips", s("Hydrogen")), ("labels", b(true))]),
+            ex("Absorption spectra: hydrogen and helium", vec![("strips", s("Hydrogen; Helium")), ("style", s("Absorption"))]),
+            ex("Flame test metals: lithium, sodium, strontium, copper", vec![("strips", s("Lithium; Sodium; Strontium; Copper"))]),
+            ex("Identify the element (black and white)", vec![("strips", s("Mercury; Neon; Helium")), ("style", s("Print")), ("label_style", s("Blank"))]),
+            ex("Made-up elements and an unknown mixture", vec![("strips", s("Element X: 425 510 630; Element Y: 455 545 600; Element Z: 480 575 665; Unknown = Element X + Element Z")), ("answer", b(true))]),
+        ],
+        _ => return None,
+    })
 }
