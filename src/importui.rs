@@ -206,6 +206,10 @@ fn add_bytes(app: &mut crate::App, st: &mut State, name: &str, bytes: Vec<u8>, h
             app.toast_err(format!("{name}: old .doc files can't be read. Save it as .docx and add it again."));
             return;
         }
+        "xls" => {
+            app.toast_err(format!("{name}: old .xls files can't be read. Save it as .xlsx (or CSV) and add it again."));
+            return;
+        }
         _ => {}
     }
     let (text_bytes, kind, icon): (Vec<u8>, String, Ic) = if ext == "docx" {
@@ -221,7 +225,9 @@ fn add_bytes(app: &mut crate::App, st: &mut State, name: &str, bytes: Vec<u8>, h
         return;
     } else {
         let head = String::from_utf8_lossy(&bytes[..bytes.len().min(4000)]).to_string();
-        let k = text_kind(name, &ext, &head).to_string();
+        // Zips (.xlsx, QTI/Canvas exports) and the newer text formats name themselves;
+        // the rest keep the original Blackboard/Aiken/CSV/Test Parrot labels.
+        let k = crate::formats::format_label(&bytes, name).map(str::to_string).unwrap_or_else(|| text_kind(name, &ext, &head).to_string());
         (bytes, k, if how == "paste" { Ic::Clip } else { Ic::File })
     };
     match crate::formats::detect_and_parse(&text_bytes, name) {
@@ -529,7 +535,10 @@ fn drop_area(app: &mut crate::App, ui: &mut egui::Ui, st: &mut State) {
                         if let Some(paths) = rfd::FileDialog::new()
                             .add_filter(
                                 "Question files",
-                                &["txt", "csv", "json", "docx", "pdf", "png", "jpg", "jpeg", "gif", "webp"],
+                                &[
+                                    "txt", "csv", "tsv", "json", "docx", "xlsx", "gift", "xml", "qti", "zip", "imscc", "md", "pdf", "png", "jpg",
+                                    "jpeg", "gif", "webp",
+                                ],
                             )
                             .pick_files()
                         {

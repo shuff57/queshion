@@ -2759,6 +2759,7 @@ dependencies = [
  "image",
  "resvg",
  "rfd",
+ "roxmltree",
  "serde",
  "serde_json",
  "sha2",

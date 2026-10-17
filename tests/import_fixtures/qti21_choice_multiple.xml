@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<assessmentItem xmlns="http://www.imsglobal.org/xsd/imsqti_v2p1" identifier="ma1" title="Metals" adaptive="false" timeDependent="false">
+  <responseDeclaration identifier="RESPONSE" cardinality="multiple" baseType="identifier"><correctResponse><value>A</value><value>C</value></correctResponse></responseDeclaration>
+  <outcomeDeclaration identifier="SCORE" cardinality="single" baseType="float"/>
+  <outcomeDeclaration identifier="MAXSCORE" cardinality="single" baseType="float"><defaultValue><value>3</value></defaultValue></outcomeDeclaration>
+  <itemBody>
+
+    <p>Which of these are <b>metals</b>?</p>
+    <choiceInteraction responseIdentifier="RESPONSE" shuffle="false" maxChoices="0">
+      <simpleChoice identifier="A">Copper</simpleChoice>
+      <simpleChoice identifier="B">Sulfur</simpleChoice>
+      <simpleChoice identifier="C">Zinc</simpleChoice>
+    </choiceInteraction>
+  </itemBody>
+  <responseProcessing template="http://www.imsglobal.org/question/qti_v2p1/rptemplates/match_correct"/>
+</assessmentItem>

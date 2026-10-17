@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<questestinterop>
+  <assessment title="Blackboard pool">
+    <section>
+      <item title="MC 1" maxattempts="0">
+        <itemmetadata><bbmd_questiontype>Multiple Choice</bbmd_questiontype></itemmetadata>
+        <presentation>
+          <flow class="Block">
+            <flow class="QUESTION_BLOCK"><flow class="FORMATTED_TEXT_BLOCK"><material><mat_extension><mat_formattedtext type="HTML">&lt;p&gt;What is H&lt;sub&gt;2&lt;/sub&gt;O?&lt;/p&gt;</mat_formattedtext></mat_extension></material></flow></flow>
+            <flow class="RESPONSE_BLOCK">
+              <response_lid ident="response" rcardinality="Single" rtiming="No">
+                <render_choice shuffle="No" minnumber="0" maxnumber="0">
+                  <flow_label class="Block"><response_label ident="a1" shuffle="Yes" rarea="Ellipse" rrange="Exact"><flow_mat class="FORMATTED_TEXT_BLOCK"><material><mat_extension><mat_formattedtext type="HTML">Water</mat_formattedtext></mat_extension></material></flow_mat></response_label></flow_label>
+                  <flow_label class="Block"><response_label ident="a2" shuffle="Yes" rarea="Ellipse" rrange="Exact"><flow_mat class="FORMATTED_TEXT_BLOCK"><material><mat_extension><mat_formattedtext type="HTML">Salt</mat_formattedtext></mat_extension></material></flow_mat></response_label></flow_label>
+                </render_choice>
+              </response_lid>
+            </flow>
+          </flow>
+        </presentation>
+        <resprocessing scoremodel="SumOfScores">
+          <outcomes><decvar varname="SCORE" vartype="Decimal" defaultval="0" minvalue="0"/></outcomes>
+          <respcondition title="correct"><conditionvar><varequal respident="response" case="No">a1</varequal></conditionvar><setvar variablename="SCORE" action="Set">SCORE.max</setvar><displayfeedback linkrefid="correct" feedbacktype="Response"/></respcondition>
+          <respcondition title="incorrect"><conditionvar><other/></conditionvar><setvar variablename="SCORE" action="Set">0</setvar><displayfeedback linkrefid="incorrect" feedbacktype="Response"/></respcondition>
+        </resprocessing>
+      </item>
+      <item title="Generic TF">
+        <presentation>
+          <material><mattext>The ocean is salty.</mattext></material>
+          <response_lid ident="tf" rcardinality="Single"><render_choice>
+            <response_label ident="t"><material><mattext>True</mattext></material></response_label>
+            <response_label ident="f"><material><mattext>False</mattext></material></response_label>
+          </render_choice></response_lid>
+        </presentation>
+        <resprocessing><respcondition><conditionvar><varequal respident="tf">t</varequal></conditionvar><setvar action="Set">1</setvar></respcondition></resprocessing>
+      </item>
+      <item title="Generic numeric">
+        <presentation>
+          <material><mattext>How many legs does a spider have?</mattext></material>
+          <response_num ident="n" rcardinality="Single"><render_fib fibtype="Integer"/></response_num>
+        </presentation>
+        <resprocessing><respcondition><conditionvar><varequal respident="n">8</varequal></conditionvar><setvar action="Set">1</setvar></respcondition></resprocessing>
+      </item>
+    </section>
+  </assessment>
+</questestinterop>

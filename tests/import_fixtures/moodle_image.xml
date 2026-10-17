@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<quiz>
+  <question type="truefalse">
+    <name><text>Leaf</text></name>
+    <questiontext format="html">
+      <text><![CDATA[<p>This leaf is green.</p><p><img src="@@PLUGINFILE@@/leaf%20photo.png" alt="leaf"></p>]]></text>
+      <file name="leaf photo.png" path="/" encoding="base64">iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAEElEQVR4nGPgWmADRww4OQDQCwrJvS0I/gAAAABJRU5ErkJggg==</file>
+    </questiontext>
+    <answer fraction="100"><text>true</text></answer>
+    <answer fraction="0"><text>false</text></answer>
+  </question>
+</quiz>

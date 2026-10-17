@@ -13,7 +13,10 @@ question banks, printable exams, and one-shot AI conversion, all local-first.
   shuffle question/answer order into named Versions; every export is snapshotted and re-exportable
   from Export History.
 - **Imports**: Blackboard test-generator text (`MC/MA/TF/ESS/NUM/MAT/FIB/ORD`, `*` = correct), Aiken,
-  CSV, and real `.parrot.json` Test Parrot packages; paste or file.
+  CSV and Excel `.xlsx`, Moodle GIFT and Moodle XML, QTI 1.2/2.x/3.0 files and Canvas / Common
+  Cartridge / LMS export `.zip`s, Respondus and text2qti text, Quizlet/Anki term lists, Kahoot and
+  Brightspace sheets, and real `.parrot.json` Test Parrot packages; paste or file. Grammar and
+  mappings: `src/formats.rs` module docs; `QUESHION_PARSE=<file>` prints any file's parse as JSON.
 - **AI conversion**: a photo/scan/screenshot is transcribed to import text by
   **Ollama Cloud** (`gemma4:31b` — default), local **Ollama**, **OpenRouter**, or any custom
   OpenAI-compatible endpoint. Keys are read from the environment or the ollama-cloud credentials

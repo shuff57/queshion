@@ -1,0 +1,48 @@
+// Moodle GIFT sample: one question of every type queShion maps.
+// Lines that start with two slashes are comments.
+$CATEGORY: $course$/top/Unit 3 Chemistry
+
+::Q1 MC:: Which gas makes up most of Earth's atmosphere? {
+  =Nitrogen#Right, about 78%.
+  ~Oxygen#No, about 21%.
+  ~Carbon dioxide
+  ~Argon
+}
+
+::Q2 MA:: Which of these are noble gases? {~%50%Helium ~%50%Neon ~%-100%Oxygen ~%-100%Nitrogen}
+
+::Q3 TF:: Water boils at 100 degrees Celsius at sea level.{T}
+
+::Q4 TF:: The Sun orbits the Earth.{FALSE#It is the other way round.}
+
+::Q5 Short answer:: Who wrote Romeo and Juliet?{=Shakespeare =William Shakespeare =%50%Bill}
+
+::Q6 Missing word:: The chemical symbol for sodium is {=Na} on the periodic table.
+
+::Q7 Numeric:: What is the value of pi to two decimal places?{#3.14:0.005}
+
+::Q8 Numeric range:: Name a number between 1 and 5.{#1..5}
+
+::Q9 Numeric multi:: When was Ulysses S. Grant born?{#
+  =1822:0
+  =%50%1822:2
+}
+
+::Q10 Matching:: Match each country with its capital. {
+  =Canada -> Ottawa
+  =Italy -> Rome
+  =Japan -> Tokyo
+  = -> Lima
+}
+
+::Q11 Essay:: Explain photosynthesis in your own words.{}
+
+::Q12 Escapes:: In GIFT, what does \= mean inside \{ braces \}? {=a literal equals sign ~the correct answer####A backslash escapes GIFT's special characters\: ~ = # \{ \}.}
+
+::Q13 HTML::[html]<p>Water is H<sub>2</sub>O and it is <b>essential</b>.</p><p>Which state of water is ice?</p>{=solid ~liquid ~gas}
+
+$CATEGORY: $course$/top/Unit 4
+
+This paragraph has no answer block, so GIFT treats it as a description and it is skipped.
+
+What is 2 + 2?{=4 ~3 ~5}

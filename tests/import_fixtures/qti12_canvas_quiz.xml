@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<questestinterop xmlns="http://www.imsglobal.org/xsd/ims_qtiasiv1p2">
+ <assessment ident="gquiz1" title="Atoms quiz">
+  <section ident="root_section">
+  <item ident="q1" title="Question">
+    <itemmetadata><qtimetadata>
+      <qtimetadatafield><fieldlabel>question_type</fieldlabel><fieldentry>multiple_choice_question</fieldentry></qtimetadatafield>
+      <qtimetadatafield><fieldlabel>points_possible</fieldlabel><fieldentry>2.0</fieldentry></qtimetadatafield>
+    </qtimetadata></itemmetadata>
+    <presentation><material><mattext texttype="text/html">&lt;div&gt;&lt;p&gt;Which particle has a &lt;strong&gt;negative&lt;/strong&gt; charge?&lt;/p&gt;&lt;p&gt;&lt;img src="$IMS-CC-FILEBASE$/Quiz%20Files/atom.png" alt="atom.png"&gt;&lt;/p&gt;&lt;/div&gt;</mattext></material><response_lid ident="response1" rcardinality="Single"><render_choice><response_label ident="1001"><material><mattext texttype="text/plain">Proton</mattext></material></response_label><response_label ident="1002"><material><mattext texttype="text/plain">Electron</mattext></material></response_label><response_label ident="1003"><material><mattext texttype="text/plain">Neutron</mattext></material></response_label></render_choice></response_lid></presentation>
+    <resprocessing><outcomes><decvar maxvalue="100" minvalue="0" varname="SCORE" vartype="Decimal"/></outcomes><respcondition continue="No"><conditionvar><varequal respident="response1">1002</varequal></conditionvar><setvar action="Set" varname="SCORE">100</setvar></respcondition><respcondition continue="Yes"><conditionvar><varequal respident="response1">1001</varequal></conditionvar><displayfeedback feedbacktype="Response" linkrefid="1001_fb"/></respcondition></resprocessing><itemfeedback ident="general_fb"><flow_mat><material><mattext texttype="text/html">&lt;p&gt;Electrons carry the negative charge.&lt;/p&gt;</mattext></material></flow_mat></itemfeedback>
+  </item>
+  <item ident="q2" title="Question">
+    <itemmetadata><qtimetadata>
+      <qtimetadatafield><fieldlabel>question_type</fieldlabel><fieldentry>true_false_question</fieldentry></qtimetadatafield>
+      <qtimetadatafield><fieldlabel>points_possible</fieldlabel><fieldentry>1.0</fieldentry></qtimetadatafield>
+    </qtimetadata></itemmetadata>
+    <presentation><material><mattext texttype="text/html">&lt;p&gt;Neutrons have no charge.&lt;/p&gt;</mattext></material><response_lid ident="response1" rcardinality="Single"><render_choice><response_label ident="2001"><material><mattext texttype="text/plain">True</mattext></material></response_label><response_label ident="2002"><material><mattext texttype="text/plain">False</mattext></material></response_label></render_choice></response_lid></presentation>
+    <resprocessing><outcomes><decvar maxvalue="100" minvalue="0" varname="SCORE" vartype="Decimal"/></outcomes><respcondition continue="No"><conditionvar><varequal respident="response1">2001</varequal></conditionvar><setvar action="Set" varname="SCORE">100</setvar></respcondition></resprocessing>
+  </item>
+  <item ident="q3" title="Question">
+    <itemmetadata><qtimetadata>
+      <qtimetadatafield><fieldlabel>question_type</fieldlabel><fieldentry>multiple_answers_question</fieldentry></qtimetadatafield>
+      <qtimetadatafield><fieldlabel>points_possible</fieldlabel><fieldentry>1.0</fieldentry></qtimetadatafield>
+    </qtimetadata></itemmetadata>
+    <presentation><material><mattext texttype="text/html">&lt;p&gt;Which are found in the nucleus?&lt;/p&gt;</mattext></material><response_lid ident="response1" rcardinality="Multiple"><render_choice><response_label ident="3001"><material><mattext texttype="text/plain">Protons</mattext></material></response_label><response_label ident="3002"><material><mattext texttype="text/plain">Neutrons</mattext></material></response_label><response_label ident="3003"><material><mattext texttype="text/plain">Electrons</mattext></material></response_label></render_choice></response_lid></presentation>
+    <resprocessing><outcomes><decvar maxvalue="100" minvalue="0" varname="SCORE" vartype="Decimal"/></outcomes><respcondition continue="No"><conditionvar><and><varequal respident="response1">3001</varequal><varequal respident="response1">3002</varequal><not><varequal respident="response1">3003</varequal></not></and></conditionvar><setvar action="Set" varname="SCORE">100</setvar></respcondition></resprocessing>
+  </item>
+  <item ident="q4" title="Question">
+    <itemmetadata><qtimetadata>
+      <qtimetadatafield><fieldlabel>question_type</fieldlabel><fieldentry>short_answer_question</fieldentry></qtimetadatafield>
+      <qtimetadatafield><fieldlabel>points_possible</fieldlabel><fieldentry>1.0</fieldentry></qtimetadatafield>
+    </qtimetadata></itemmetadata>
+    <presentation><material><mattext texttype="text/html">&lt;p&gt;What is the symbol for sodium?&lt;/p&gt;</mattext></material><response_str ident="response1" rcardinality="Single"><render_fib><response_label ident="answer1" rshuffle="No"/></render_fib></response_str></presentation>
+    <resprocessing><outcomes><decvar maxvalue="100" minvalue="0" varname="SCORE" vartype="Decimal"/></outcomes><respcondition continue="No"><conditionvar><varequal respident="response1">Na</varequal><varequal respident="response1">na</varequal></conditionvar><setvar action="Set" varname="SCORE">100</setvar></respcondition></resprocessing>
+  </item>
+  <item ident="q5" title="Question">
+    <itemmetadata><qtimetadata>
+      <qtimetadatafield><fieldlabel>question_type</fieldlabel><fieldentry>essay_question</fieldentry></qtimetadatafield>
+      <qtimetadatafield><fieldlabel>points_possible</fieldlabel><fieldentry>1.0</fieldentry></qtimetadatafield>
+    </qtimetadata></itemmetadata>
+    <presentation><material><mattext texttype="text/html">&lt;p&gt;Describe the Bohr model.&lt;/p&gt;</mattext></material><response_str ident="response1" rcardinality="Single"><render_fib><response_label ident="answer1" rshuffle="No"/></render_fib></response_str></presentation>
+    <resprocessing><outcomes><decvar maxvalue="100" minvalue="0" varname="SCORE" vartype="Decimal"/></outcomes><respcondition continue="No"><conditionvar><other/></conditionvar></respcondition></resprocessing>
+  </item>
+  <item ident="q6" title="Question">
+    <itemmetadata><qtimetadata>
+      <qtimetadatafield><fieldlabel>question_type</fieldlabel><fieldentry>matching_question</fieldentry></qtimetadatafield>
+      <qtimetadatafield><fieldlabel>points_possible</fieldlabel><fieldentry>1.0</fieldentry></qtimetadatafield>
+    </qtimetadata></itemmetadata>
+    <presentation><material><mattext texttype="text/html">&lt;p&gt;Match each symbol to its element.&lt;/p&gt;</mattext></material><response_lid ident="response_4001" rcardinality="Single"><material><mattext texttype="text/plain">Fe</mattext></material><render_choice><response_label ident="5001"><material><mattext texttype="text/plain">Iron</mattext></material></response_label><response_label ident="5002"><material><mattext texttype="text/plain">Lead</mattext></material></response_label><response_label ident="5003"><material><mattext texttype="text/plain">Tin</mattext></material></response_label></render_choice></response_lid><response_lid ident="response_4002" rcardinality="Single"><material><mattext texttype="text/plain">Pb</mattext></material><render_choice><response_label ident="5001"><material><mattext texttype="text/plain">Iron</mattext></material></response_label><response_label ident="5002"><material><mattext texttype="text/plain">Lead</mattext></material></response_label><response_label ident="5003"><material><mattext texttype="text/plain">Tin</mattext></material></response_label></render_choice></response_lid></presentation>
+    <resprocessing><outcomes><decvar maxvalue="100" minvalue="0" varname="SCORE" vartype="Decimal"/></outcomes><respcondition continue="No"><conditionvar><varequal respident="response_4001">5001</varequal></conditionvar><setvar action="Add" varname="SCORE">50.00</setvar></respcondition><respcondition continue="No"><conditionvar><varequal respident="response_4002">5002</varequal></conditionvar><setvar action="Add" varname="SCORE">50.00</setvar></respcondition></resprocessing>
+  </item>
+  <item ident="q7" title="Question">
+    <itemmetadata><qtimetadata>
+      <qtimetadatafield><fieldlabel>question_type</fieldlabel><fieldentry>numerical_question</fieldentry></qtimetadatafield>
+      <qtimetadatafield><fieldlabel>points_possible</fieldlabel><fieldentry>1.0</fieldentry></qtimetadatafield>
+    </qtimetadata></itemmetadata>
+    <presentation><material><mattext texttype="text/html">&lt;p&gt;What is g in m/s&lt;sup&gt;2&lt;/sup&gt;?&lt;/p&gt;</mattext></material><response_str ident="response1" rcardinality="Single"><render_fib fibtype="Decimal"><response_label ident="answer1"/></render_fib></response_str></presentation>
+    <resprocessing><outcomes><decvar maxvalue="100" minvalue="0" varname="SCORE" vartype="Decimal"/></outcomes><respcondition continue="No"><conditionvar><or><varequal respident="response1">9.8</varequal><and><vargte respident="response1">9.7</vargte><varlte respident="response1">9.9</varlte></and></or></conditionvar><setvar action="Set" varname="SCORE">100</setvar></respcondition></resprocessing>
+  </item>
+  <item ident="q8" title="Question">
+    <itemmetadata><qtimetadata>
+      <qtimetadatafield><fieldlabel>question_type</fieldlabel><fieldentry>fill_in_multiple_blanks_question</fieldentry></qtimetadatafield>
+      <qtimetadatafield><fieldlabel>points_possible</fieldlabel><fieldentry>1.0</fieldentry></qtimetadatafield>
+    </qtimetadata></itemmetadata>
+    <presentation><material><mattext texttype="text/html">&lt;p&gt;Roses are [color1], violets are [color2].&lt;/p&gt;</mattext></material><response_lid ident="response_color1" rcardinality="Single"><material><mattext texttype="text/plain">color1</mattext></material><render_choice><response_label ident="6001"><material><mattext texttype="text/plain">red</mattext></material></response_label><response_label ident="6002"><material><mattext texttype="text/plain">Red</mattext></material></response_label></render_choice></response_lid><response_lid ident="response_color2" rcardinality="Single"><material><mattext texttype="text/plain">color2</mattext></material><render_choice><response_label ident="6003"><material><mattext texttype="text/plain">blue</mattext></material></response_label></render_choice></response_lid></presentation>
+    <resprocessing><outcomes><decvar maxvalue="100" minvalue="0" varname="SCORE" vartype="Decimal"/></outcomes><respcondition continue="No"><conditionvar><varequal respident="response_color1">6001</varequal></conditionvar><setvar action="Add" varname="SCORE">50.00</setvar></respcondition><respcondition continue="No"><conditionvar><varequal respident="response_color1">6002</varequal></conditionvar><setvar action="Add" varname="SCORE">50.00</setvar></respcondition><respcondition continue="No"><conditionvar><varequal respident="response_color2">6003</varequal></conditionvar><setvar action="Add" varname="SCORE">50.00</setvar></respcondition></resprocessing>
+  </item>
+  <item ident="q9" title="Question">
+    <itemmetadata><qtimetadata>
+      <qtimetadatafield><fieldlabel>question_type</fieldlabel><fieldentry>multiple_dropdowns_question</fieldentry></qtimetadatafield>
+      <qtimetadatafield><fieldlabel>points_possible</fieldlabel><fieldentry>1.0</fieldentry></qtimetadatafield>
+    </qtimetadata></itemmetadata>
+    <presentation><material><mattext texttype="text/html">&lt;p&gt;A cow says [sound] and a cat says [sound2].&lt;/p&gt;</mattext></material><response_lid ident="response_sound" rcardinality="Single"><material><mattext texttype="text/plain">sound</mattext></material><render_choice><response_label ident="7001"><material><mattext texttype="text/plain">moo</mattext></material></response_label><response_label ident="7002"><material><mattext texttype="text/plain">meow</mattext></material></response_label></render_choice></response_lid><response_lid ident="response_sound2" rcardinality="Single"><material><mattext texttype="text/plain">sound2</mattext></material><render_choice><response_label ident="7003"><material><mattext texttype="text/plain">moo</mattext></material></response_label><response_label ident="7004"><material><mattext texttype="text/plain">meow</mattext></material></response_label></render_choice></response_lid></presentation>
+    <resprocessing><outcomes><decvar maxvalue="100" minvalue="0" varname="SCORE" vartype="Decimal"/></outcomes><respcondition continue="No"><conditionvar><varequal respident="response_sound">7001</varequal></conditionvar><setvar action="Add" varname="SCORE">50.00</setvar></respcondition><respcondition continue="No"><conditionvar><varequal respident="response_sound2">7004</varequal></conditionvar><setvar action="Add" varname="SCORE">50.00</setvar></respcondition></resprocessing>
+  </item>
+  <item ident="q10" title="Question">
+    <itemmetadata><qtimetadata>
+      <qtimetadatafield><fieldlabel>question_type</fieldlabel><fieldentry>text_only_question</fieldentry></qtimetadatafield>
+      <qtimetadatafield><fieldlabel>points_possible</fieldlabel><fieldentry>1.0</fieldentry></qtimetadatafield>
+    </qtimetadata></itemmetadata>
+    <presentation><material><mattext texttype="text/html">&lt;p&gt;The next questions are about gases.&lt;/p&gt;</mattext></material></presentation>
+    <resprocessing><outcomes><decvar maxvalue="100" minvalue="0" varname="SCORE" vartype="Decimal"/></outcomes></resprocessing>
+  </item>
+  <item ident="q11" title="Question">
+    <itemmetadata><qtimetadata>
+      <qtimetadatafield><fieldlabel>question_type</fieldlabel><fieldentry>file_upload_question</fieldentry></qtimetadatafield>
+      <qtimetadatafield><fieldlabel>points_possible</fieldlabel><fieldentry>1.0</fieldentry></qtimetadatafield>
+    </qtimetadata></itemmetadata>
+    <presentation><material><mattext texttype="text/html">&lt;p&gt;Upload your lab notebook page.&lt;/p&gt;</mattext></material></presentation>
+    <resprocessing><outcomes><decvar maxvalue="100" minvalue="0" varname="SCORE" vartype="Decimal"/></outcomes></resprocessing>
+  </item>
+  </section>
+ </assessment>
+</questestinterop>

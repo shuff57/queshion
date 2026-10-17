@@ -1,0 +1,6 @@
+#separator:tab
+#html:true
+#tags column:3
+What is the capital of France?	Paris	geography
+What is <b>2 + 2</b>?	4	math
+Which planet is known as the Red Planet?	Mars	astronomy

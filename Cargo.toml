@@ -16,6 +16,7 @@ ureq = "3"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp"] }
 sha2 = "0.10"
 zip = { version = "3", default-features = false, features = ["deflate"] }
+roxmltree = "0.20"  # already in the tree via resvg/usvg; DOM reader for Moodle XML, QTI and .xlsx
 equashion-math = { path = "../equaSHion/crates/math" }
 equashion-layout = { path = "../equaSHion/crates/layout", features = ["extra-fonts"] }
 equashion-render = { path = "../equaSHion/crates/render", features = ["raster", "extra-fonts"] }

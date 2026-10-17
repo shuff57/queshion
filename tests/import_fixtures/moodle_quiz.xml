@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<quiz>
+<!-- question: 0  -->
+  <question type="category">
+    <category><text>$course$/top/Default for Biology/Cells</text></category>
+  </question>
+  <question type="multichoice">
+    <name><text>Powerhouse</text></name>
+    <questiontext format="html">
+      <text><![CDATA[<p>Which organelle is the <strong>powerhouse</strong> of the cell?</p><p><img src="@@PLUGINFILE@@/cell.png" alt="A cell diagram" width="200"></p>]]></text>
+    </questiontext>
+    <generalfeedback format="html"><text><![CDATA[<p>Mitochondria make ATP.</p>]]></text></generalfeedback>
+    <defaultgrade>2.0000000</defaultgrade>
+    <single>true</single>
+    <shuffleanswers>true</shuffleanswers>
+    <answer fraction="100" format="html"><text><![CDATA[<p>Mitochondrion</p>]]></text><feedback format="html"><text>Yes</text></feedback></answer>
+    <answer fraction="0" format="html"><text>Nucleus</text><feedback format="html"><text></text></feedback></answer>
+    <answer fraction="0" format="html"><text>Ribosome</text></answer>
+  </question>
+  <question type="multichoice">
+    <name><text>Prokaryotes</text></name>
+    <questiontext format="html"><text><![CDATA[<p>Which of these are prokaryotes?</p>]]></text></questiontext>
+    <defaultgrade>1.0000000</defaultgrade>
+    <single>false</single>
+    <answer fraction="50"><text>Bacteria</text></answer>
+    <answer fraction="50"><text>Archaea</text></answer>
+    <answer fraction="-100"><text>Fungi</text></answer>
+  </question>
+  <question type="truefalse">
+    <name><text>Plant walls</text></name>
+    <questiontext format="moodle_auto_format"><text>Plant cells have cell walls.</text></questiontext>
+    <answer fraction="100"><text>true</text></answer>
+    <answer fraction="0"><text>false</text></answer>
+  </question>
+  <question type="shortanswer">
+    <name><text>Membrane</text></name>
+    <questiontext format="html"><text>What surrounds every cell?</text></questiontext>
+    <usecase>0</usecase>
+    <answer fraction="100"><text>cell membrane</text></answer>
+    <answer fraction="100"><text>plasma membrane</text></answer>
+    <answer fraction="0"><text>cell wall</text></answer>
+  </question>
+  <question type="category">
+    <category><text>$course$/top/Default for Biology/Math in biology</text></category>
+  </question>
+  <question type="numerical">
+    <name><text>Chromosomes</text></name>
+    <questiontext format="html"><text>How many chromosomes are in a human body cell?</text></questiontext>
+    <answer fraction="100"><text>46</text><tolerance>0</tolerance></answer>
+  </question>
+  <question type="numerical">
+    <name><text>Water</text></name>
+    <questiontext format="html"><text><![CDATA[About what percent of a cell is water? (&plusmn;5)]]></text></questiontext>
+    <answer fraction="100"><text>70</text><tolerance>5</tolerance></answer>
+  </question>
+  <question type="matching">
+    <name><text>Organelles</text></name>
+    <questiontext format="html"><text><![CDATA[<p>Match each organelle with its job.</p>]]></text></questiontext>
+    <subquestion format="html"><text><![CDATA[<p>Ribosome</p>]]></text><answer><text>Makes proteins</text></answer></subquestion>
+    <subquestion format="html"><text>Nucleus</text><answer><text>Holds DNA</text></answer></subquestion>
+    <subquestion format="html"><text></text><answer><text>Digests sugar</text></answer></subquestion>
+  </question>
+  <question type="essay">
+    <name><text>Cell theory</text></name>
+    <questiontext format="html"><text><![CDATA[<p>State the three parts of cell theory.</p><ol><li>All living things&hellip;</li><li>The cell is&hellip;</li></ol>]]></text></questiontext>
+    <graderinfo format="html"><text><![CDATA[<p>All living things are made of cells; the cell is the basic unit of life; cells come from cells.</p>]]></text></graderinfo>
+  </question>
+  <question type="multianswer">
+    <name><text>Cloze</text></name>
+    <questiontext format="html"><text><![CDATA[<p>The {1:SHORTANSWER:=nucleus~%50%nucleous} holds DNA and a cell has {1:NUMERICAL:=1:0} of them. Plants store energy as {1:MULTICHOICE:glucose~=starch~fat}.</p>]]></text></questiontext>
+  </question>
+  <question type="ddwtos">
+    <name><text>Drag words</text></name>
+    <questiontext format="html"><text><![CDATA[<p>Animal cells have [[1]] but no [[2]].</p>]]></text></questiontext>
+    <dragbox><text>mitochondria</text><group>1</group></dragbox>
+    <dragbox><text>chloroplasts</text><group>1</group></dragbox>
+  </question>
+  <question type="multichoice">
+    <name><text>Table</text></name>
+    <questiontext format="html"><text><![CDATA[<p>Use the table.</p><table><thead><tr><th>Element</th><th>Symbol</th></tr></thead><tbody><tr><td>Iron</td><td>Fe</td></tr><tr><td>Lead</td><td>Pb</td></tr></tbody></table><ul><li>Pick the <em>metal</em> with symbol Pb.</li></ul><p>Use \(x^2\) if needed.</p>]]></text></questiontext>
+    <answer fraction="0"><text>Iron</text></answer>
+    <answer fraction="100"><text>Lead</text></answer>
+  </question>
+  <question type="description">
+    <name><text>Intro</text></name>
+    <questiontext format="html"><text>Read the following questions carefully.</text></questiontext>
+  </question>
+  <question type="calculated">
+    <name><text>Calc</text></name>
+    <questiontext format="html"><text>What is {a} + {b}?</text></questiontext>
+  </question>
+</quiz>
