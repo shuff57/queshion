@@ -9,6 +9,7 @@
 use eframe::egui;
 
 pub mod ai;
+pub mod bankops;
 pub mod bankui;
 pub mod ditto;
 pub mod figfit;
@@ -277,7 +278,9 @@ impl eframe::App for App {
         }
         if let Some((_, frames)) = &mut self.qa_shot {
             *frames += 1;
-            if *frames == 60 {
+            // QUESHION_SHOT_FRAME=<n> delays the capture (lets a QUESHION_SCRIPT finish first).
+            let at = std::env::var("QUESHION_SHOT_FRAME").ok().and_then(|v| v.parse().ok()).unwrap_or(60u32);
+            if *frames == at {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
             }
             ctx.request_repaint_after(std::time::Duration::from_millis(16));

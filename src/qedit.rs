@@ -1014,28 +1014,45 @@ fn right_col(
     });
     let mut txt = ctx.data_mut(|d| d.get_temp_mut_or_default::<Temp>(key).topics_text.clone());
     let r = field_line(ui, &mut txt, w, "+ add topic (press Enter)");
+    // Autocomplete: the bank's topics matching what is typed (prefix first); Enter takes
+    // the existing spelling when the typed text names a topic already in the bank.
+    let sugg = crate::bankops::suggest_topics(topic_pool, &txt, &draft.topics, 8);
     let commit = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && !txt.trim().is_empty();
     if commit {
-        let t = txt.trim().to_string();
+        let t = crate::bankops::canonical_topic(topic_pool, &txt);
         if !draft.topics.contains(&t) {
             draft.topics.push(t);
         }
         txt.clear();
         r.request_focus();
     }
-    ctx.data_mut(|d| d.get_temp_mut_or_default::<Temp>(key).topics_text = txt);
-    let sugg: Vec<&String> = topic_pool.iter().filter(|t| !draft.topics.contains(t)).take(8).collect();
-    if !sugg.is_empty() {
+    let typed = txt.trim().to_string();
+    let mut picked: Option<String> = None;
+    if !sugg.is_empty() || !typed.is_empty() {
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
-            for t in sugg {
+            if !typed.is_empty() {
+                let exists = topic_pool.iter().any(|p| p.trim().eq_ignore_ascii_case(&typed));
+                ui.label(
+                    theme::muted(if exists { "Enter adds this topic." } else if sugg.is_empty() { "Enter adds a new topic." } else { "Matching:" })
+                        .size(11.0),
+                );
+            }
+            for t in &sugg {
                 if kit::chip_toggle(ui, t, false).clicked() {
-                    draft.topics.push(t.clone());
+                    picked = Some(t.clone());
                 }
             }
         });
     }
+    if let Some(t) = picked {
+        if !draft.topics.contains(&t) {
+            draft.topics.push(t);
+        }
+        txt.clear();
+    }
+    ctx.data_mut(|d| d.get_temp_mut_or_default::<Temp>(key).topics_text = txt);
     ui.add_space(12.0);
 
     // Explanation.

@@ -4638,6 +4638,34 @@ pub fn format_label(data: &[u8], filename: &str) -> Option<&'static str> {
     None
 }
 
+/// The file format's own version, when it states one: a Test Parrot JSON's `formatVersion`
+/// (or a legacy `version`), or the QTI generation of a QTI XML file. Shown on the import preview.
+pub fn format_version(data: &[u8]) -> Option<String> {
+    let text = decode_text(&data[..data.len().min(1 << 22)]);
+    let t = text.trim_start();
+    if t.starts_with('{') {
+        let v: serde_json::Value = serde_json::from_str(t).ok()?;
+        return match v.get("formatVersion").or_else(|| v.get("version"))? {
+            serde_json::Value::String(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+            serde_json::Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        };
+    }
+    if t.starts_with('<') {
+        let head = &t[..t.len().min(4000)];
+        if head.contains("qti-assessment-item") {
+            return Some("QTI 3.0".to_string());
+        }
+        if head.contains("assessmentItem") {
+            return Some("QTI 2.1".to_string());
+        }
+        if head.contains("questestinterop") {
+            return Some("QTI 1.2".to_string());
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5784,5 +5812,13 @@ mod import_format_tests {
             n += 1;
         }
         assert!(n >= 19, "found only {n} fixtures");
+    }
+
+    #[test]
+    fn format_version_reads_json_and_qti() {
+        assert_eq!(format_version(br#"{"format":"test-parrot/package","formatVersion":"0.5.0"}"#).as_deref(), Some("0.5.0"));
+        assert_eq!(format_version(br#"{"kind":"test-parrot-question-bank","version":1}"#).as_deref(), Some("1"));
+        assert_eq!(format_version(b"<questestinterop><item/></questestinterop>").as_deref(), Some("QTI 1.2"));
+        assert_eq!(format_version(b"MC\nWhat?\n*a\nb\n"), None);
     }
 }

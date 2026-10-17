@@ -40,14 +40,14 @@ type ExamDoc = crate::layout::ExamDoc;
 const FORMAT_POPOVER: bool = false;
 
 /// Paper ink colours: the sheet stays near-white in both modes.
-const PAPER_INK: Color32 = Color32::from_rgb(0x22, 0x22, 0x22);
-const PAPER_SOFT: Color32 = Color32::from_rgb(0x55, 0x55, 0x55);
-const PAPER_RULE: Color32 = Color32::from_rgb(0x9d, 0x8c, 0x7b);
+pub(crate) const PAPER_INK: Color32 = Color32::from_rgb(0x22, 0x22, 0x22);
+pub(crate) const PAPER_SOFT: Color32 = Color32::from_rgb(0x55, 0x55, 0x55);
+pub(crate) const PAPER_RULE: Color32 = Color32::from_rgb(0x9d, 0x8c, 0x7b);
 
 /// Preview scale: px = pt * 0.8; US Letter page.
-const PT: f32 = 0.8;
-const PAGE_W: f32 = 612.0 * PT;
-const PAGE_H: f32 = 792.0 * PT;
+pub(crate) const PT: f32 = 0.8;
+pub(crate) const PAGE_W: f32 = 612.0 * PT;
+pub(crate) const PAGE_H: f32 = 792.0 * PT;
 const SHELF_W: f32 = 340.0;
 const HEAD_PT: [f32; 3] = [15.0, 18.0, 21.0]; // prints at 12 / 14.4 / 16.8 px on screen
 const HEAD_LABELS: [&str; 3] = ["Small", "Medium", "Large"];
@@ -1254,7 +1254,7 @@ fn draw_format_bar(app: &mut crate::App, ui: &mut egui::Ui, exam_id: &Id, st: &E
 // Desk: paper preview
 // ---------------------------------------------------------------------------
 
-fn ptext(s: impl Into<String>, px: f32, bold: bool) -> RichText {
+pub(crate) fn ptext(s: impl Into<String>, px: f32, bold: bool) -> RichText {
     RichText::new(s.into())
         .family(if bold { theme::serif_bold_family() } else { theme::serif_family() })
         .size(px)
@@ -1284,7 +1284,63 @@ fn needs_rich(s: &str) -> bool {
 /// THE stem renderer. Everything that prints a question stem on the preview page goes through
 /// here: structured stems (tables, lists, line breaks, bold/italic, sub/sup, `$math$`) via
 /// `equation::rich_ui`; plain one-line stems exactly as before.
-fn render_stem(ui: &mut egui::Ui, stem: &str, points: Option<f64>, bp: f32) {
+/// `has_image`: the question's attached picture stands in for its first `[picture]` marker
+/// (it is drawn under the stem), so that marker gets no "Picture needed" box.
+fn render_stem(ui: &mut egui::Ui, stem: &str, points: Option<f64>, bp: f32, has_image: bool) {
+    if stem.contains("[picture") {
+        use crate::bankops::StemPart;
+        let parts = crate::bankops::split_pictures(stem);
+        if parts.iter().any(|p| matches!(p, StemPart::Picture(_))) {
+            let mut pts = points;
+            let mut covered = has_image;
+            for (i, part) in parts.iter().enumerate() {
+                match part {
+                    StemPart::Text(t) => render_stem_one(ui, t, pts.take(), bp),
+                    StemPart::Picture(alt) => {
+                        if i == 0 {
+                            if let Some(p) = pts.take() {
+                                render_stem_one(ui, "", Some(p), bp);
+                            }
+                        }
+                        if std::mem::take(&mut covered) {
+                            continue;
+                        }
+                        ui.add_space(bp * 0.35);
+                        picture_needed_box(ui, bp, alt.as_deref());
+                        ui.add_space(bp * 0.35);
+                    }
+                }
+            }
+            return;
+        }
+    }
+    render_stem_one(ui, stem, points, bp);
+}
+
+/// Dashed "Picture needed" box standing in for a `[picture]` marker an importer left in a
+/// stem (the image itself did not come along). Add the picture in the question editor.
+pub(crate) fn picture_needed_box(ui: &mut egui::Ui, bp: f32, alt: Option<&str>) {
+    let w = ui.available_width();
+    let h = (bp * 3.6).max(36.0);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, h), Sense::hover());
+    let p = ui.painter();
+    let red = Color32::from_rgb(0xb0, 0x3a, 0x2e);
+    p.rect_filled(rect, CornerRadius::same(3), Color32::from_rgba_unmultiplied(0xc0, 0x40, 0x30, 22));
+    p.extend(Shape::dashed_line(
+        &[rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom(), rect.left_top()],
+        Stroke::new(1.0, red),
+        4.0,
+        3.0,
+    ));
+    let cy = if alt.is_some() { rect.center().y - bp * 0.45 } else { rect.center().y };
+    p.text(Pos2::new(rect.center().x, cy), Align2::CENTER_CENTER, "Picture needed", FontId::new(bp * 0.95, theme::serif_bold_family()), red);
+    if let Some(a) = alt {
+        let a: String = if a.chars().count() > 70 { a.chars().take(70).chain(std::iter::once('…')).collect() } else { a.to_string() };
+        p.text(Pos2::new(rect.center().x, cy + bp * 1.05), Align2::CENTER_CENTER, a, FontId::new(bp * 0.78, theme::serif_family()), PAPER_SOFT);
+    }
+}
+
+fn render_stem_one(ui: &mut egui::Ui, stem: &str, points: Option<f64>, bp: f32) {
     if needs_rich(stem) {
         let mut o = crate::equation::Rich::new(bp, PAPER_INK).leading(0.32);
         if let Some(p) = points {
@@ -1644,29 +1700,7 @@ fn draw_item(
     side: f32,
 ) -> Rect {
     let wash = ui.painter().add(Shape::Noop);
-    let num_w = (bp * 1.9).max(16.0);
-    let body_w = cw - num_w;
-    let inner = ui.horizontal_top(|ui| {
-        ui.spacing_mut().item_spacing = Vec2::ZERO;
-        let (nr, _) = ui.allocate_exact_size(Vec2::new(num_w, bp * 1.45), Sense::hover());
-        ui.painter().text(
-            nr.left_top(),
-            Align2::LEFT_TOP,
-            format!("{number}."),
-            FontId::new(bp, theme::serif_bold_family()),
-            PAPER_INK,
-        );
-        ui.vertical(|ui| {
-            ui.set_width(body_w);
-            let Some(q) = q else {
-                ui.label(RichText::new("(question missing from its bank)").size(bp).color(PAPER_SOFT));
-                return;
-            };
-            render_stem(ui, &q.stem, q.points, bp);
-            draw_item_body(app, ui, ctx, q, number, body_w, bp);
-        });
-    });
-    let rect = Rect::from_min_size(inner.response.rect.min, Vec2::new(cw, inner.response.rect.height().max(bp * 1.45)));
+    let rect = paper_question(app, ui, ctx, q, number, cw, bp);
 
     // Highlighter wash for a just-added question.
     if let Some((idx, t0)) = st.just_added {
@@ -1737,9 +1771,59 @@ fn draw_item(
     rect
 }
 
+/// One numbered question as it prints (number, stem with picture placeholders, answer
+/// area). Shared by the exam page and the import preview. Returns its rect.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paper_question(
+    app: &mut crate::App,
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    q: Option<&model::Question>,
+    number: u32,
+    cw: f32,
+    bp: f32,
+) -> Rect {
+    let num_w = (bp * 1.9).max(16.0);
+    let body_w = cw - num_w;
+    let inner = ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::ZERO;
+        let (nr, _) = ui.allocate_exact_size(Vec2::new(num_w, bp * 1.45), Sense::hover());
+        ui.painter().text(
+            nr.left_top(),
+            Align2::LEFT_TOP,
+            format!("{number}."),
+            FontId::new(bp, theme::serif_bold_family()),
+            PAPER_INK,
+        );
+        ui.vertical(|ui| {
+            ui.set_width(body_w);
+            let Some(q) = q else {
+                ui.label(RichText::new("(question missing from its bank)").size(bp).color(PAPER_SOFT));
+                return;
+            };
+            render_stem(ui, &q.stem, q.points, bp, q.image.is_some());
+            draw_item_body(app, ui, ctx, q, number, body_w, bp);
+        });
+    });
+    Rect::from_min_size(inner.response.rect.min, Vec2::new(cw, inner.response.rect.height().max(bp * 1.45)))
+}
+
 /// One answer/option line on the paper: plain label, or the structured renderer when it holds
 /// markup or `$..$`.
 fn popt(ui: &mut egui::Ui, s: String, bp: f32) {
+    if s.contains("[picture") {
+        use crate::bankops::StemPart;
+        let parts = crate::bankops::split_pictures(&s);
+        if parts.iter().any(|p| matches!(p, StemPart::Picture(_))) {
+            for part in parts {
+                match part {
+                    StemPart::Text(t) => popt(ui, t, bp),
+                    StemPart::Picture(alt) => picture_needed_box(ui, bp, alt.as_deref()),
+                }
+            }
+            return;
+        }
+    }
     if needs_rich(&s) {
         crate::equation::rich_ui(ui, &s, &crate::equation::Rich::new(bp, PAPER_INK).leading(0.32));
     } else {

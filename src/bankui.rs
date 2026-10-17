@@ -222,6 +222,113 @@ struct BankEditState {
     last_deleted: Option<(Question, usize)>,
     /// Open card seen last frame (scroll into view when it changes).
     last_open: Option<String>,
+    /// Topic rename / merge / delete dialog.
+    topic_edit: Option<TopicEdit>,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum TopicMode {
+    Rename,
+    Merge,
+    Delete,
+}
+
+/// The topic dialog: which topic, what to do, the typed / chosen target.
+#[derive(Clone, Debug)]
+struct TopicEdit {
+    from: String,
+    mode: TopicMode,
+    text: String,
+}
+
+/// "Used in N exams" list dialog: title + exam ids (shared by banks list and editor).
+#[derive(Clone, Default)]
+struct UsageDialog {
+    open: Option<(String, Vec<Id>)>,
+}
+
+fn usage_key() -> UiId {
+    UiId::new("bank_usage_dialog")
+}
+
+fn open_usage(ctx: &egui::Context, title: String, exams: Vec<Id>) {
+    with_state(ctx, usage_key(), |s: &mut UsageDialog| s.open = Some((title, exams)));
+}
+
+/// Lists the exams that use a bank / question; a row opens that exam.
+fn draw_usage_dialog(app: &mut App, ctx: &egui::Context) {
+    let Some((title, ids)) = with_state(ctx, usage_key(), |s: &mut UsageDialog| s.open.clone()) else {
+        return;
+    };
+    let mut close = false;
+    let mut go: Option<Id> = None;
+    let modal = egui::Modal::new(UiId::new("bank_usage_modal")).show(ctx, |ui| {
+        ui.set_min_width(380.0);
+        ui.set_max_width(460.0);
+        ui.label(theme::serif(title.clone()).size(20.0));
+        ui.add_space(2.0);
+        ui.label(theme::muted(crate::bankops::usage_label(ids.len())).size(12.5));
+        ui.add_space(8.0);
+        if ids.is_empty() {
+            ui.label(theme::muted("No exam places these questions yet. Add them from an exam's question shelf.").size(12.5));
+        }
+        for id in &ids {
+            let Some(e) = app.store.exam(id) else { continue };
+            let resp = kit::card().inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(theme::strong(truncate(&e.name, 44)));
+                        ui.label(
+                            theme::muted(format!(
+                                "{} question{} · edited {}",
+                                e.items.len(),
+                                if e.items.len() == 1 { "" } else { "s" },
+                                rel_time(e.modified)
+                            ))
+                            .size(11.5),
+                        );
+                    });
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.label(theme::accent("Open").size(12.5));
+                    });
+                });
+            });
+            let r = ui.interact(resp.response.rect, ui.id().with(("usage_row", id)), Sense::click());
+            if r.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if r.clicked() {
+                go = Some(id.clone());
+            }
+            ui.add_space(6.0);
+        }
+        ui.add_space(6.0);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if kit::ghost_button(ui, "Close").clicked() {
+                close = true;
+            }
+        });
+    });
+    if let Some(id) = &go {
+        app.qedit = None;
+        app.open_exam(id);
+    }
+    if close || go.is_some() || modal.should_close() {
+        with_state(ctx, usage_key(), |s: &mut UsageDialog| s.open = None);
+    }
+}
+
+/// Accent "Used in N exams" link text; returns its response (hover sense only: the
+/// caller's card owns the click and checks the pointer against this rect).
+fn usage_link(ui: &mut Ui, n: usize, size: f32) -> egui::Response {
+    let txt = crate::bankops::usage_label(n);
+    let rt = if n > 0 { RichText::new(txt).size(size).color(theme::accent_col()).underline() } else { theme::muted(txt).size(size) };
+    let r = ui.add(egui::Label::new(rt).extend().sense(Sense::hover()));
+    if n > 0 && r.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    r
 }
 
 // ---------- screen 1: the Question Banks list ----------
@@ -233,6 +340,8 @@ struct BankRow {
     topics: usize,
     modified: i64,
     mix: [usize; 6],
+    /// Exams placing at least one of its questions.
+    used_in: Vec<Id>,
 }
 
 fn mix_index(k: QKind) -> usize {
@@ -276,6 +385,7 @@ impl App {
                 });
         });
         draw_bank_overlays(self, &ctx, key);
+        draw_usage_dialog(self, &ctx);
     }
 
     fn banks_body(&mut self, ui: &mut Ui, ctx: &egui::Context, key: UiId) {
@@ -356,6 +466,7 @@ impl App {
                     topics: unique_topics(&b.questions).len(),
                     modified: b.modified,
                     mix,
+                    used_in: crate::bankops::exams_using_bank(&self.store.exams, &b.id).iter().map(|e| e.id.clone()).collect(),
                 }
             })
             .collect();
@@ -448,6 +559,8 @@ impl App {
 
         // Insert-figure modal stacks on top of the open editor.
         self.draw_figure_picker(&ctx);
+        draw_topic_dialog(self, &ctx, key, &bank_id);
+        draw_usage_dialog(self, &ctx);
     }
 
     fn bank_edit_body(&mut self, ui: &mut Ui, ctx: &egui::Context, key: UiId, bank_id: &Id) {
@@ -480,17 +593,34 @@ impl App {
                     }
                     self.store.save_banks();
                 }
-                ui.label(
-                    theme::muted(format!(
-                        "{} question{} · {} topic{} · edited {}",
-                        questions.len(),
-                        if questions.len() == 1 { "" } else { "s" },
-                        topics.len(),
-                        if topics.len() == 1 { "" } else { "s" },
-                        rel_time(modified),
-                    ))
-                    .size(13.0),
-                );
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    ui.label(
+                        theme::muted(format!(
+                            "{} question{} · {} topic{} · edited {} · ",
+                            questions.len(),
+                            if questions.len() == 1 { "" } else { "s" },
+                            topics.len(),
+                            if topics.len() == 1 { "" } else { "s" },
+                            rel_time(modified),
+                        ))
+                        .size(13.0),
+                    );
+                    let used: Vec<Id> = crate::bankops::exams_using_bank(&self.store.exams, bank_id).iter().map(|e| e.id.clone()).collect();
+                    let r = usage_link(ui, used.len(), 13.0);
+                    if !used.is_empty() && ui.interact(r.rect, ui.id().with("bank_usage_link"), Sense::click()).clicked() {
+                        open_usage(ctx, bank_name.clone(), used);
+                    }
+                    let pics: usize = questions.iter().map(crate::bankops::pictures_needed).sum();
+                    if pics > 0 {
+                        ui.label(theme::muted(" · ").size(13.0));
+                        ui.label(
+                            RichText::new(format!("{pics} picture{} needed", if pics == 1 { "" } else { "s" }))
+                                .size(13.0)
+                                .color(theme::bad()),
+                        );
+                    }
+                });
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if kit::primary_button(ui, "Add question").clicked() {
@@ -505,7 +635,41 @@ impl App {
             });
         });
         ui.add_space(12.0);
+        // Usage counts per question for the cards (one pass per frame).
+        let usage = crate::bankops::question_usage(&self.store.exams, bank_id);
+        ctx.data_mut(|d| d.insert_temp(key.with("usage"), usage));
+        let wide = ui.available_width() >= 860.0;
+        if wide {
+            let side_w = 200.0;
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 18.0;
+                ui.allocate_ui_with_layout(Vec2::new(side_w, 0.0), Layout::top_down(Align::Min), |ui| {
+                    ui.set_width(side_w);
+                    outline_panel(ui, ctx, key, &questions);
+                });
+                let rest = ui.available_width();
+                ui.allocate_ui_with_layout(Vec2::new(rest, 0.0), Layout::top_down(Align::Min), |ui| {
+                    ui.set_width(rest);
+                    self.bank_edit_main(ui, ctx, key, bank_id, questions, topics, true);
+                });
+            });
+        } else {
+            self.bank_edit_main(ui, ctx, key, bank_id, questions, topics, false);
+        }
+    }
 
+    /// Toolbar, filters and the question cards (right of the outline when wide).
+    #[allow(clippy::too_many_arguments)]
+    fn bank_edit_main(
+        &mut self,
+        ui: &mut Ui,
+        ctx: &egui::Context,
+        key: UiId,
+        bank_id: &Id,
+        questions: Vec<Question>,
+        topics: Vec<String>,
+        wide: bool,
+    ) {
         // Toolbar row 1: search, sort, difficulty, view toggle.
         let st = with_state(ctx, key, |s: &mut BankEditState| s.clone());
         let mut search = st.search.clone();
@@ -556,6 +720,8 @@ impl App {
         }
         ui.add_space(6.0);
 
+        // Narrow windows: type + topic chips stand in for the outline panel.
+        if !wide {
         // Toolbar row 2: type chips with counts.
         let mut counts = [0usize; 6];
         for q in &questions {
@@ -598,10 +764,50 @@ impl App {
                         .filter(|q| q.topics.iter().any(|x| x.trim() == t))
                         .count();
                     let on = st.topic.as_deref() == Some(t.as_str());
-                    if kit::chip_toggle(ui, &format!("{t}  {n}"), on).clicked() {
+                    let chip = kit::chip_toggle(ui, &format!("{t}  {n}"), on).on_hover_text("Right-click to rename, merge or delete");
+                    if chip.clicked() {
                         let sel = if on { None } else { Some(t.clone()) };
                         with_state(ctx, key, |s: &mut BankEditState| s.topic = sel);
                     }
+                    // Narrow layout has no outline panel: the topic menu lives on the chip.
+                    chip.context_menu(|ui| {
+                        let mut act = None;
+                        if ui.button("Rename…").clicked() {
+                            act = Some(TopicMode::Rename);
+                        }
+                        if topics.len() > 1 && ui.button("Merge into…").clicked() {
+                            act = Some(TopicMode::Merge);
+                        }
+                        if ui.button("Delete…").clicked() {
+                            act = Some(TopicMode::Delete);
+                        }
+                        if let Some(mode) = act {
+                            let text = if mode == TopicMode::Rename { t.clone() } else { String::new() };
+                            with_state(ctx, key, |s: &mut BankEditState| s.topic_edit = Some(TopicEdit { from: t.clone(), mode, text }));
+                            ui.close();
+                        }
+                    });
+                }
+            });
+        }
+        }
+        // Active filter note with a clear link (the outline shows the choice too).
+        if wide && (st.topic.is_some() || st.kind.is_some()) {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                let mut parts: Vec<String> = Vec::new();
+                if let Some(k) = st.kind {
+                    parts.push(k.label().to_string());
+                }
+                if let Some(t) = &st.topic {
+                    parts.push(format!("topic “{t}”"));
+                }
+                ui.label(theme::muted(format!("Showing {}", parts.join(" · "))).size(12.0));
+                if ui.add(Button::new(theme::accent("Clear").size(12.0)).frame(false)).clicked() {
+                    with_state(ctx, key, |s: &mut BankEditState| {
+                        s.kind = None;
+                        s.topic = None;
+                    });
                 }
             });
         }
@@ -833,6 +1039,7 @@ fn counts_line(r: &BankRow) -> String {
 
 /// One bank tile: serif name, counts, type-mix bar, edited time.
 fn bank_card(ui: &mut Ui, app: &mut App, ctx: &egui::Context, key: UiId, r: &BankRow) {
+    let mut link: Option<Rect> = None;
     let mut menu_act = None;
     let mut over_menu = false;
     let resp = kit::card().inner_margin(Margin::same(14)).show(ui, |ui| {
@@ -849,10 +1056,16 @@ fn bank_card(ui: &mut Ui, app: &mut App, ctx: &egui::Context, key: UiId, r: &Ban
         ui.add_space(8.0);
         paint_mix_bar(ui, ui.available_width(), &r.mix);
         ui.add_space(8.0);
+        link = Some(usage_link(ui, r.used_in.len(), 12.0).rect);
+        ui.add_space(2.0);
         ui.label(theme::muted(format!("Edited {}", rel_time(r.modified))).size(11.5));
     });
     apply_bank_menu(ctx, key, r, menu_act);
     let click = ui.interact(resp.response.rect, ui.id().with(("bank_card", &r.id)), Sense::click());
+    if usage_clicked(&click, link, r) {
+        open_usage(ctx, r.name.clone(), r.used_in.clone());
+        return;
+    }
     if click.hovered() {
         ui.painter().rect_stroke(
             resp.response.rect,
@@ -866,7 +1079,13 @@ fn bank_card(ui: &mut Ui, app: &mut App, ctx: &egui::Context, key: UiId, r: &Ban
     }
 }
 
+/// True when the card click landed on its "Used in N exams" link (and there are exams).
+fn usage_clicked(click: &egui::Response, link: Option<Rect>, r: &BankRow) -> bool {
+    click.clicked() && !r.used_in.is_empty() && link.zip(click.interact_pointer_pos()).is_some_and(|(l, p)| l.expand(2.0).contains(p))
+}
+
 fn bank_list_row(ui: &mut Ui, app: &mut App, ctx: &egui::Context, key: UiId, r: &BankRow) {
+    let mut link: Option<Rect> = None;
     let mut menu_act = None;
     let mut over_menu = false;
     let resp = kit::card().inner_margin(Margin::symmetric(14, 9)).show(ui, |ui| {
@@ -882,6 +1101,9 @@ fn bank_list_row(ui: &mut Ui, app: &mut App, ctx: &egui::Context, key: UiId, r: 
             ui.allocate_ui(Vec2::new(90.0, 22.0), |ui| {
                 paint_mix_bar(ui, 80.0, &r.mix);
             });
+            ui.allocate_ui(Vec2::new(118.0, 22.0), |ui| {
+                link = Some(usage_link(ui, r.used_in.len(), 12.0).rect);
+            });
             ui.label(theme::muted(format!("Edited {}", rel_time(r.modified))).size(12.0));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let (a, o) = bank_menu(ui);
@@ -892,6 +1114,10 @@ fn bank_list_row(ui: &mut Ui, app: &mut App, ctx: &egui::Context, key: UiId, r: 
     });
     apply_bank_menu(ctx, key, r, menu_act);
     let click = ui.interact(resp.response.rect, ui.id().with(("bank_row", &r.id)), Sense::click());
+    if usage_clicked(&click, link, r) {
+        open_usage(ctx, r.name.clone(), r.used_in.clone());
+        return;
+    }
     if click.hovered() {
         ui.painter().rect_stroke(
             resp.response.rect,
@@ -1073,6 +1299,309 @@ impl App {
     }
 }
 
+// ---------- bank editor: outline panel (types + topics) ----------
+
+/// One outline row: label left, count right; filled when `on`. Leaves `right_pad` free
+/// at the right edge (for a menu button). Returns the row's click response.
+fn side_row(ui: &mut Ui, label: &str, n: usize, on: bool, right_pad: f32) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::click());
+    let p = ui.painter();
+    if on {
+        p.rect_filled(rect, CornerRadius::same(8), theme::accent_faded());
+        p.rect_stroke(rect, CornerRadius::same(8), Stroke::new(1.0, theme::accent_col().gamma_multiply(0.45)), egui::StrokeKind::Inside);
+    } else if resp.hovered() {
+        p.rect_filled(rect, CornerRadius::same(8), theme::hover_bg());
+    }
+    let fg = if on { theme::accent_col() } else { theme::text_col() };
+    let font = egui::FontId::new(12.5, if on { theme::bold_family() } else { egui::FontFamily::Proportional });
+    let cg = p.layout_no_wrap(n.to_string(), egui::FontId::new(11.5, theme::bold_family()), theme::muted_col());
+    let cx = rect.right() - 10.0 - right_pad;
+    let mut job = egui::text::LayoutJob::simple_singleline(label.to_string(), font, fg);
+    job.wrap.max_width = (cx - cg.size().x - 8.0 - (rect.left() + 10.0)).max(20.0);
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    job.wrap.overflow_character = Some('…');
+    let lg = p.layout_job(job);
+    p.galley(Pos2::new(rect.left() + 10.0, rect.center().y - lg.size().y / 2.0), lg, fg);
+    p.galley(Pos2::new(cx - cg.size().x, rect.center().y - cg.size().y / 2.0), cg, theme::muted_col());
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp
+}
+
+/// Left panel of the bank editor: Outline (all + per type, counts) and Topics (counts,
+/// click to filter, "…" menu to rename / merge / delete across the bank).
+fn outline_panel(ui: &mut Ui, ctx: &egui::Context, key: UiId, questions: &[Question]) {
+    let st = with_state(ctx, key, |s: &mut BankEditState| s.clone());
+    ui.spacing_mut().item_spacing.y = 2.0;
+    kit::small_caps(ui, "Outline");
+    ui.add_space(4.0);
+    if side_row(ui, "All questions", questions.len(), st.kind.is_none() && st.topic.is_none(), 0.0).clicked() {
+        with_state(ctx, key, |s: &mut BankEditState| {
+            s.kind = None;
+            s.topic = None;
+        });
+    }
+    let counts = crate::bankops::type_counts(questions);
+    for (k, n) in crate::bankops::KINDS.iter().copied().zip(counts) {
+        if n == 0 && st.kind != Some(k) {
+            continue;
+        }
+        let on = st.kind == Some(k);
+        if side_row(ui, k.label(), n, on, 0.0).clicked() {
+            with_state(ctx, key, |s: &mut BankEditState| s.kind = if on { None } else { Some(k) });
+        }
+    }
+    ui.add_space(16.0);
+    kit::small_caps(ui, "Topics");
+    ui.add_space(4.0);
+    let tc = crate::bankops::topic_counts(questions);
+    if tc.is_empty() {
+        ui.add(
+            egui::Label::new(theme::muted("No topics yet. Topics added to a question are listed here.").size(12.0)).wrap(),
+        );
+        return;
+    }
+    for (t, n) in &tc {
+        let on = st.topic.as_deref() == Some(t.as_str());
+        let resp = side_row(ui, t, *n, on, 18.0);
+        // "…" menu, placed over the row's right edge (added last, so it gets its clicks).
+        let mrect = Rect::from_center_size(Pos2::new(resp.rect.right() - 13.0, resp.rect.center().y), Vec2::new(20.0, 22.0));
+        let mut act: Option<TopicMode> = None;
+        // A child ui that takes no room in the list (the row already has it).
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(mrect).layout(Layout::left_to_right(Align::Center)));
+        child.style_mut().visuals.button_frame = false;
+        let over_menu = {
+            let ui = &mut child;
+            {
+                ui.menu_button(RichText::new("…").size(14.0).color(if on { theme::accent_col() } else { theme::muted_col() }), |ui| {
+                    if ui.button("Rename…").clicked() {
+                        act = Some(TopicMode::Rename);
+                        ui.close();
+                    }
+                    if tc.len() > 1 && ui.button("Merge into…").clicked() {
+                        act = Some(TopicMode::Merge);
+                        ui.close();
+                    }
+                    if ui.button("Delete…").clicked() {
+                        act = Some(TopicMode::Delete);
+                        ui.close();
+                    }
+                })
+                .response
+                .contains_pointer()
+            }
+        };
+        if let Some(mode) = act {
+            let text = if mode == TopicMode::Rename { t.clone() } else { String::new() };
+            with_state(ctx, key, |s: &mut BankEditState| s.topic_edit = Some(TopicEdit { from: t.clone(), mode, text }));
+        } else if resp.clicked() && !over_menu {
+            let sel = if on { None } else { Some(t.clone()) };
+            with_state(ctx, key, |s: &mut BankEditState| s.topic = sel);
+        }
+    }
+}
+
+/// Rename / merge / delete a topic on every question of the bank.
+fn draw_topic_dialog(app: &mut App, ctx: &egui::Context, key: UiId, bank_id: &Id) {
+    let Some(mut te) = with_state(ctx, key, |s: &mut BankEditState| s.topic_edit.clone()) else {
+        return;
+    };
+    let Some(bank) = app.store.bank(bank_id) else { return };
+    let tc = crate::bankops::topic_counts(&bank.questions);
+    let n_from = tc.iter().find(|(t, _)| *t == te.from).map(|(_, n)| *n).unwrap_or(0);
+    let others: Vec<String> = tc.iter().map(|(t, _)| t.clone()).filter(|t| *t != te.from).collect();
+    let qs = |n: usize| format!("{n} question{}", if n == 1 { "" } else { "s" });
+
+    let mut close = false;
+    let mut apply = false;
+    let target = crate::bankops::canonical_topic(&others, &te.text);
+    let merging = others.contains(&target);
+    let modal = egui::Modal::new(UiId::new("bank_topic_dialog")).show(ctx, |ui| {
+        ui.set_min_width(400.0);
+        ui.set_max_width(440.0);
+        match te.mode {
+            TopicMode::Rename => {
+                ui.label(theme::serif("Rename topic").size(20.0));
+                ui.add_space(4.0);
+                ui.add(
+                    egui::Label::new(
+                        theme::text(format!("“{}” is on {}. The new name replaces it on all of them.", te.from, qs(n_from))).size(12.5),
+                    )
+                    .wrap(),
+                );
+                ui.add_space(8.0);
+                // Read Enter before the field runs (it may consume the key when it hands back focus).
+                let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let r = ui.add(TextEdit::singleline(&mut te.text).desired_width(ui.available_width()).hint_text("New topic name"));
+                // Focus the field once when the dialog opens.
+                let fid = UiId::new("bank_topic_dialog_focused");
+                if !ui.ctx().data(|d| d.get_temp::<bool>(fid).unwrap_or(false)) {
+                    ui.ctx().data_mut(|d| d.insert_temp(fid, true));
+                    r.request_focus();
+                }
+                if enter && (r.lost_focus() || r.has_focus()) {
+                    apply = true;
+                }
+                let sugg = crate::bankops::suggest_topics(&others, &te.text, &[], 6);
+                if !sugg.is_empty() && te.text.trim() != te.from {
+                    ui.add_space(6.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+                        ui.label(theme::muted("Existing:").size(11.5));
+                        for t in sugg {
+                            if kit::chip_toggle(ui, &t, false).clicked() {
+                                te.text = t.clone();
+                            }
+                        }
+                    });
+                }
+                if merging {
+                    ui.add_space(6.0);
+                    ui.add(
+                        egui::Label::new(
+                            theme::muted(format!("“{target}” already exists, so the two topics merge into one.")).size(12.0),
+                        )
+                        .wrap(),
+                    );
+                }
+            }
+            TopicMode::Merge => {
+                ui.label(theme::serif(format!("Merge “{}” into…", te.from)).size(20.0));
+                ui.add_space(4.0);
+                ui.add(
+                    egui::Label::new(
+                        theme::text(format!("Its {} {} to the topic you pick; “{}” goes away.", qs(n_from), if n_from == 1 { "moves" } else { "move" }, te.from)).size(12.5),
+                    )
+                    .wrap(),
+                );
+                ui.add_space(8.0);
+                egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                    for (t, n) in tc.iter().filter(|(t, _)| *t != te.from) {
+                        let on = te.text == *t;
+                        if side_row(ui, t, *n, on, 0.0).clicked() {
+                            te.text = t.clone();
+                        }
+                    }
+                });
+            }
+            TopicMode::Delete => {
+                ui.label(theme::serif(format!("Delete topic “{}”?", te.from)).size(20.0));
+                ui.add_space(4.0);
+                ui.add(
+                    egui::Label::new(
+                        theme::text(format!(
+                            "It is removed from {}. {}",
+                            qs(n_from),
+                            if n_from == 1 { "The question itself stays." } else { "The questions themselves stay." }
+                        )).size(12.5),
+                    )
+                    .wrap(),
+                );
+            }
+        }
+        ui.add_space(12.0);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let ok = match te.mode {
+                TopicMode::Rename => !te.text.trim().is_empty() && target != te.from,
+                TopicMode::Merge => others.contains(&te.text),
+                TopicMode::Delete => true,
+            };
+            let label = match te.mode {
+                TopicMode::Rename if merging => "Merge",
+                TopicMode::Rename => "Rename",
+                TopicMode::Merge => "Merge",
+                TopicMode::Delete => "Delete topic",
+            };
+            let clicked = if te.mode == TopicMode::Delete {
+                ui.add(
+                    Button::new(RichText::new(label).family(theme::bold_family()).color(theme::on_accent_col()))
+                        .fill(theme::bad())
+                        .corner_radius(CornerRadius::same(255))
+                        .min_size(Vec2::new(0.0, 34.0)),
+                )
+                .clicked()
+            } else {
+                ui.add_enabled_ui(ok, |ui| kit::primary_button(ui, label)).inner.clicked()
+            };
+            if clicked && ok {
+                apply = true;
+            }
+            if kit::ghost_button(ui, "Cancel").clicked() {
+                close = true;
+            }
+        });
+    });
+
+    if apply {
+        let to = if te.mode == TopicMode::Merge { te.text.clone() } else { target.clone() };
+        let valid = match te.mode {
+            TopicMode::Rename => !to.trim().is_empty() && to != te.from,
+            TopicMode::Merge => others.contains(&to),
+            TopicMode::Delete => true,
+        };
+        if valid {
+            let t = now_secs();
+            let mut n = 0;
+            if let Some(b) = app.store.bank_mut(bank_id) {
+                n = match te.mode {
+                    TopicMode::Delete => crate::bankops::delete_topic(&mut b.questions, &te.from),
+                    _ => crate::bankops::rename_topic(&mut b.questions, &te.from, &to),
+                };
+                b.modified = t;
+            }
+            // An open draft carries its own topic list: keep it in step.
+            if let Some(d) = app.qedit.as_mut().filter(|d| &d.bank_id == bank_id) {
+                let mut one = vec![Question { topics: d.topics.clone(), ..placeholder_question() }];
+                match te.mode {
+                    TopicMode::Delete => crate::bankops::delete_topic(&mut one, &te.from),
+                    _ => crate::bankops::rename_topic(&mut one, &te.from, &to),
+                };
+                d.topics = one.remove(0).topics;
+            }
+            app.store.save_banks();
+            let from = te.from.clone();
+            with_state(ctx, key, |s: &mut BankEditState| {
+                if s.topic.as_deref() == Some(from.as_str()) {
+                    s.topic = if te.mode == TopicMode::Delete { None } else { Some(to.clone()) };
+                }
+            });
+            let qn = qs(n);
+            app.toast(match te.mode {
+                TopicMode::Delete => format!("Removed “{from}” from {qn}"),
+                TopicMode::Merge => format!("Merged “{from}” into “{to}” on {qn}"),
+                TopicMode::Rename if merging => format!("Merged “{from}” into “{to}” on {qn}"),
+                TopicMode::Rename => format!("Renamed “{from}” to “{to}” on {qn}"),
+            });
+            close = true;
+        }
+    }
+    if close || modal.should_close() {
+        ctx.data_mut(|d| d.remove_temp::<bool>(UiId::new("bank_topic_dialog_focused")));
+        with_state(ctx, key, |s: &mut BankEditState| s.topic_edit = None);
+    } else {
+        with_state(ctx, key, |s: &mut BankEditState| s.topic_edit = Some(te));
+    }
+}
+
+/// A throwaway question (only `topics` matters) for running bankops on a draft's list.
+fn placeholder_question() -> Question {
+    Question {
+        id: String::new(),
+        stem: String::new(),
+        kind: crate::model::Kind::Short { sample: String::new() },
+        points: None,
+        difficulty: None,
+        topics: Vec::new(),
+        image: None,
+        explanation: None,
+        figure: None,
+        created: 0,
+        modified: 0,
+    }
+}
+
 // ---------- question cards ----------
 
 fn diff_rank(d: Option<Difficulty>) -> u8 {
@@ -1139,6 +1668,10 @@ fn draw_card(
         Some(q) => app.qedit.as_ref().and_then(|d| d.qid.as_deref()) == Some(q.id.as_str()),
     };
     let mut toggled = false;
+    let used = q
+        .and_then(|q| ctx.data(|d| d.get_temp::<std::collections::HashMap<Id, usize>>(key.with("usage"))).and_then(|m| m.get(&q.id).copied()))
+        .unwrap_or(0);
+    let mut usage_rect: Option<Rect> = None;
 
     let frame = kit::card()
         .stroke(Stroke::new(1.0, if open { theme::accent_col() } else { theme::border() }));
@@ -1167,6 +1700,18 @@ fn draw_card(
                     }
                     if let Some(d) = q.difficulty {
                         ui.label(theme::muted(diff_label(d)).size(11.5));
+                    }
+                    if used > 0 {
+                        let r = ui.add(
+                            egui::Label::new(
+                                RichText::new(format!("in {used} exam{}", if used == 1 { "" } else { "s" }))
+                                    .size(11.5)
+                                    .color(theme::accent_col())
+                                    .underline(),
+                            )
+                            .sense(Sense::hover()),
+                        );
+                        usage_rect = Some(r.rect);
                     }
                     if let Some(p) = points_label(q.points) {
                         ui.label(RichText::new(p).family(theme::bold_family()).size(12.0).color(theme::ink()));
@@ -1205,6 +1750,9 @@ fn draw_card(
                         if let Some(d) = q.difficulty {
                             ui.label(theme::muted(diff_label(d)).size(11.5));
                         }
+                        if used > 0 {
+                            usage_rect = Some(usage_link(ui, used, 11.5).rect);
+                        }
                     });
                 }
             }
@@ -1215,7 +1763,14 @@ fn draw_card(
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
         if hr.clicked() {
-            toggled = true;
+            let on_usage = usage_rect.zip(hr.interact_pointer_pos()).is_some_and(|(r, p)| r.expand(2.0).contains(p));
+            match q {
+                Some(q) if on_usage => {
+                    let ids: Vec<Id> = crate::bankops::exams_using_question(&app.store.exams, bank_id, &q.id).iter().map(|e| e.id.clone()).collect();
+                    open_usage(ctx, format!("Q{n} · {}", truncate(&crate::equation::stem_preview(&q.stem), 40)), ids);
+                }
+                _ => toggled = true,
+            }
         }
         if open && scroll_to {
             hr.scroll_to_me(Some(Align::TOP));
