@@ -180,12 +180,19 @@
 //!     each card is a Short question (stem = front, sample = back); otherwise the cards
 //!     become Matching questions of at most 10 term → definition pairs each (split
 //!     evenly, stem "Match each term with its definition.").
+//! 10b. **Blackboard upload file** (tab-delimited "Upload Questions" form): every line
+//!     `TAG<TAB>stem<TAB>…` with a Blackboard type tag (MC, MA, TF, ESS, SR, FIB,
+//!     FIB_PLUS, FIL, NUM, MAT, ORD; OP/HS/JUMBLED_SENTENCE/QUIZ_BOWL skipped); see
+//!     [`try_bb_upload`]. Checked before term lists, which never claim tagged rows.
 //! 11. **Question-block text**: Blackboard test-generator text (also what the AI converter
 //!     returns and what "Paste your questions" takes) plus untagged Aiken blocks (real
 //!     Aiken's `ANSWER: B` line after the choices marks the correct letter). See
 //!     [`parse_blackboard`] for the grammar. The doc name is the filename stem, or
 //!     "Pasted questions" for an untitled paste. A stem written over several lines keeps
-//!     its line breaks (MC/MA, TF, NUM and Aiken stems). Two hardenings from a live e2e corpus:
+//!     its line breaks (MC/MA, TF, NUM and Aiken stems). An MC block whose choices carry no
+//!     letters takes Test Parrot's plain-line form (`stem` / `Venus` / `*Mercury` / `Mars`:
+//!     first line = stem, every later line a choice, `*` = correct; see
+//!     `plain_line_choices`). Two hardenings from a live e2e corpus:
 //!     a TF statement may have its answer glued onto the stem line's tail ("…liquid iron.
 //!     False" — a bare, case-insensitive t/f/true/false word after its statement is the
 //!     answer, stripped from the stem), and in a FIB stem a run of three-or-more
@@ -275,10 +282,161 @@ fn parse_text(text: &str, name: &str, ext: &str) -> Result<ImportDoc, String> {
     if let Some(result) = try_numbered(text, &name) {
         return result;
     }
+    if let Some(result) = try_bb_upload(text, &name) {
+        return result;
+    }
     if let Some(result) = try_term_list(text, &name) {
         return result;
     }
     parse_blocks(text, &name)
+}
+
+// ---------- Blackboard upload file (tab-delimited) ----------
+
+/// Every Blackboard "Upload Questions" type tag (the first cell of a row).
+const BB_UPLOAD_TAGS: [&str; 15] =
+    ["mc", "ma", "tf", "ess", "sr", "fib", "fib_plus", "fil", "num", "mat", "ord", "op", "jumbled_sentence", "quiz_bowl", "hs"];
+
+/// The rows of a Blackboard upload file: every non-empty line holds a tab and its first
+/// cell is an upload type tag. `None` when any line is not such a row.
+fn bb_upload_rows(text: &str) -> Option<Vec<Vec<String>>> {
+    let mut rows = Vec::new();
+    for l in text.lines() {
+        let l = l.trim_end_matches(['\r', '\n']);
+        if l.trim().is_empty() {
+            continue;
+        }
+        let cells: Vec<String> = l.split('\t').map(|c| c.trim().to_string()).collect();
+        if cells.len() < 2 || !BB_UPLOAD_TAGS.contains(&cells[0].to_ascii_lowercase().as_str()) {
+            return None;
+        }
+        rows.push(cells);
+    }
+    (!rows.is_empty()).then_some(rows)
+}
+
+/// Blackboard's tab-delimited upload form, one question per row:
+/// `MC|MA <stem> (<answer> correct|incorrect)…`, `TF <stem> true|false`, `ESS|SR <stem>
+/// [sample]`, `FIL <stem>` (file response → Short), `FIB <stem> <answer>…` (one blank
+/// accepting every answer; `___` appended to the stem when it has none, or one answer per
+/// blank when the counts match), `FIB_PLUS <stem with [x]> x <ans>… <empty> y <ans>…`,
+/// `NUM <stem> <answer> [tolerance]`, `MAT <stem> (<left> <right>)…`, `ORD <stem>
+/// <item>…` (Blank of the comma-joined order). `OP`, `HS`, `JUMBLED_SENTENCE` and
+/// `QUIZ_BOWL` have no gradable answer here and are skipped.
+fn try_bb_upload(text: &str, name: &str) -> Option<Result<ImportDoc, String>> {
+    let rows = bb_upload_rows(text)?;
+    let mut questions = Vec::new();
+    for (i, row) in rows.iter().enumerate() {
+        match bb_upload_row(row) {
+            Ok(Some(q)) => questions.push(q),
+            Ok(None) => {}
+            Err(e) => return Some(Err(format!("row {}: {e}", i + 1))),
+        }
+    }
+    if questions.is_empty() {
+        return Some(Err("The Blackboard upload file has no importable rows (OP, HS, JUMBLED_SENTENCE and QUIZ_BOWL are not supported).".into()));
+    }
+    Some(Ok(ImportDoc { name: name.to_string(), questions, exams: Vec::new() }))
+}
+
+fn bb_upload_row(row: &[String]) -> Result<Option<Question>, String> {
+    let tag = row[0].to_ascii_lowercase();
+    let stem = row[1].clone();
+    // Trailing empty cells (a spreadsheet's padding) carry nothing.
+    let mut rest: Vec<String> = row[2..].to_vec();
+    while rest.last().is_some_and(|c| c.is_empty()) {
+        rest.pop();
+    }
+    if stem.is_empty() {
+        return Err(format!("{} row has no question text", row[0]));
+    }
+    let kind = match tag.as_str() {
+        "mc" | "ma" => {
+            if rest.len() < 2 {
+                return Err("MC needs answer, correct/incorrect pairs after the question".into());
+            }
+            let answers: Vec<Answer> = rest
+                .chunks(2)
+                .filter(|c| !c[0].is_empty())
+                .map(|c| Answer {
+                    text: c[0].clone(),
+                    correct: c.get(1).is_some_and(|f| f.eq_ignore_ascii_case("correct")),
+                    locked: false,
+                })
+                .collect();
+            if answers.is_empty() {
+                return Err("MC row has no answers".into());
+            }
+            Kind::Mc { answers }
+        }
+        "tf" => {
+            let a = rest.first().map(|s| s.to_ascii_lowercase()).unwrap_or_default();
+            let correct = match a.as_str() {
+                "true" | "t" => true,
+                "false" | "f" => false,
+                _ => return Err("TF row needs true or false after the statement".into()),
+            };
+            Kind::Tf { correct }
+        }
+        "ess" | "sr" => Kind::Short { sample: rest.first().cloned().unwrap_or_default() },
+        "fil" => Kind::Short { sample: String::new() },
+        "fib" => {
+            let answers: Vec<String> = rest.into_iter().filter(|a| !a.is_empty()).collect();
+            if answers.is_empty() {
+                return Err("FIB row has no accepted answers".into());
+            }
+            let stem = normalize_blanks(&stem);
+            let blanks = blank_count(&stem);
+            let (stem, accept) = if blanks > 1 && blanks == answers.len() {
+                (stem, answers.into_iter().map(|a| vec![a]).collect())
+            } else if blanks == 0 {
+                (format!("{stem} {BLANK}"), vec![answers])
+            } else {
+                (stem, vec![answers])
+            };
+            return Ok(Some(make_question(stem, Kind::Blank { accept })));
+        }
+        "fib_plus" => {
+            let mut accept: Vec<Vec<String>> = Vec::new();
+            let mut stem = stem;
+            for group in rest.split(|c| c.is_empty()) {
+                let Some((var, answers)) = group.split_first() else { continue };
+                let marker = format!("[{var}]");
+                if !stem.contains(&marker) || answers.is_empty() {
+                    continue;
+                }
+                stem = stem.replacen(&marker, BLANK, 1);
+                accept.push(answers.to_vec());
+            }
+            if accept.is_empty() {
+                return Err("FIB_PLUS row has no [variable] with answers".into());
+            }
+            return Ok(Some(make_question(stem, Kind::Blank { accept })));
+        }
+        "num" => {
+            let ans = rest.first().ok_or("NUM row needs an answer")?;
+            let v = parse_f64(ans).ok_or_else(|| format!("NUM answer {ans:?} is not a number"))?;
+            let tol = rest.get(1).and_then(|t| parse_f64(t)).map(f64::abs).unwrap_or(0.0);
+            let variants = if tol > 0.0 { num_range(v - tol, v + tol) } else { vec![fmt_num(v)] };
+            Kind::Blank { accept: vec![variants] }
+        }
+        "mat" => {
+            if rest.len() < 2 {
+                return Err("MAT row needs left, right pairs after the question".into());
+            }
+            let pairs: Vec<Pair> = rest.chunks(2).filter(|c| c.len() == 2).map(|c| Pair { left: c[0].clone(), right: c[1].clone() }).collect();
+            Kind::Matching { pairs, distractors: Vec::new() }
+        }
+        "ord" => {
+            let items: Vec<String> = rest.into_iter().filter(|a| !a.is_empty()).collect();
+            if items.is_empty() {
+                return Err("ORD row has no items".into());
+            }
+            Kind::Blank { accept: vec![vec![items.join(", ")]] }
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(make_question(stem, kind)))
 }
 
 /// The Blackboard test-generator format (plus untagged Aiken blocks), used for a paste.
@@ -562,7 +720,63 @@ fn parse_mc(lines: &[String]) -> Result<(String, Vec<Answer>), String> {
     if answers.is_empty() {
         return Err("no answer choices — put each choice on its own line and mark the correct one with a leading *".into());
     }
+    if let Some(plain) = plain_line_choices(lines) {
+        return Ok(plain);
+    }
     Ok((stem, answers))
+}
+
+/// The plain-line choice form (Test Parrot's own paste placeholder): no choice carries a
+/// letter, only the correct one(s) a leading `*`, and the wrong ones are bare lines —
+/// `Which planet…?` / `Venus` / `*Mercury` / `Mars`. Claimed when no choice line is
+/// lettered and a bare line follows a starred one, or only one starred line exists among
+/// several bare ones (a one-choice MC is never meant). The stem is the first line plus
+/// any directly following stem-markup lines (table rows `|…`, bullets `- `/`• `); every
+/// other line is a choice. `None` = the ordinary lettered/star form.
+fn plain_line_choices(lines: &[String]) -> Option<(String, Vec<Answer>)> {
+    let lettered = |l: &str| {
+        let w = l.trim();
+        let w = w.strip_prefix('*').map_or(w, str::trim_start);
+        let b = w.as_bytes();
+        b.len() >= 2 && (b'a'..=b'j').contains(&b[0].to_ascii_lowercase()) && (b[1] == b'.' || b[1] == b')')
+    };
+    if lines.iter().any(|l| lettered(l)) {
+        return None;
+    }
+    let starred = |l: &str| l.trim().strip_prefix('*').is_some_and(|r| !r.trim().is_empty());
+    let first_star = lines.iter().position(|l| starred(l))?;
+    let stars = lines.iter().filter(|l| starred(l)).count();
+    let bare_after = lines[first_star..].iter().any(|l| !starred(l) && !l.trim().is_empty());
+    let bare = lines.iter().filter(|l| !starred(l)).count();
+    if !(bare_after || (stars == 1 && bare >= 2)) {
+        return None;
+    }
+    if starred(&lines[0]) {
+        return None; // no stem line at all
+    }
+    let markup = |l: &str| {
+        let t = l.trim_start();
+        t.starts_with('|') || t.starts_with("- ") || t.starts_with("• ")
+    };
+    let mut stem_end = 1;
+    while stem_end < lines.len() && markup(&lines[stem_end]) {
+        stem_end += 1;
+    }
+    let choices: Vec<Answer> = lines[stem_end..]
+        .iter()
+        .filter_map(|l| {
+            let t = l.trim();
+            let (correct, text) = match t.strip_prefix('*') {
+                Some(r) => (true, r.trim()),
+                None => (false, t),
+            };
+            (!text.is_empty()).then(|| Answer { text: text.to_string(), correct, locked: false })
+        })
+        .collect();
+    if choices.len() < 2 {
+        return None;
+    }
+    Some((lines[..stem_end].join("\n"), choices))
 }
 
 /// Is this line a choice in an MC/MA or Aiken block (with a non-empty choice text)?
@@ -3012,6 +3226,15 @@ fn term_pairs(text: &str) -> Option<Vec<(String, String)>> {
     if lines.is_empty() {
         return None;
     }
+    // Rows led by a Blackboard type tag (`MC<TAB>stem…`, `TF<TAB>…`) are questions, not
+    // flashcards: a list where most rows are tagged is never a term list.
+    let tagged = lines
+        .iter()
+        .filter(|l| l.split_once('\t').is_some_and(|(a, _)| BB_UPLOAD_TAGS.contains(&a.trim().to_ascii_lowercase().as_str())))
+        .count();
+    if tagged * 2 >= lines.len() {
+        return None;
+    }
     let cell = |s: &str| {
         let s = s.trim();
         if html || looks_html(s) { html_inline(s) } else { s.to_string() }
@@ -4632,6 +4855,9 @@ pub fn format_label(data: &[u8], filename: &str) -> Option<&'static str> {
     if try_numbered(&text, "").is_some() {
         return Some("Respondus / text2qti text");
     }
+    if bb_upload_rows(&text).is_some() {
+        return Some("Blackboard upload file (tab-delimited)");
+    }
     if term_pairs(&text).is_some() {
         return Some("Flashcard list (Quizlet/Anki)");
     }
@@ -5820,5 +6046,73 @@ mod import_format_tests {
         assert_eq!(format_version(br#"{"kind":"test-parrot-question-bank","version":1}"#).as_deref(), Some("1"));
         assert_eq!(format_version(b"<questestinterop><item/></questestinterop>").as_deref(), Some("QTI 1.2"));
         assert_eq!(format_version(b"MC\nWhat?\n*a\nb\n"), None);
+    }
+
+    #[test]
+    fn plain_line_star_choices_are_choices_not_stem() {
+        // Test Parrot's own paste placeholder: wrong choices are bare lines.
+        let parsed = |t: &str| parse_blackboard(t).unwrap().questions;
+        let qs = parsed("MC\nWhich planet is closest to the Sun?\nVenus\n*Mercury\nMars\n\nTF\nThe Sun is a star.\nT\n");
+        assert_eq!(qs.len(), 2);
+        assert_eq!(qs[0].stem, "Which planet is closest to the Sun?");
+        let Kind::Mc { answers } = &qs[0].kind else { panic!("not MC") };
+        let texts: Vec<&str> = answers.iter().map(|a| a.text.as_str()).collect();
+        assert_eq!(texts, ["Venus", "Mercury", "Mars"]);
+        assert_eq!(answers.iter().map(|a| a.correct).collect::<Vec<_>>(), [false, true, false]);
+        assert!(matches!(qs[1].kind, Kind::Tf { correct: true }));
+        // Correct choice last: one star among several bare lines is still the plain form.
+        let q = &parsed("MC\nPick one\nRed\nBlue\n*Green\n")[0];
+        assert_eq!(q.stem, "Pick one");
+        let Kind::Mc { answers } = &q.kind else { panic!() };
+        assert_eq!(answers.len(), 3);
+        assert!(answers[2].correct);
+        // A table under the stem stays in the stem.
+        let q = &parsed("MC\nUse the table.\n| x | y |\n| 1 | 2 |\nOne\n*Two\n")[0];
+        assert_eq!(q.stem, "Use the table.\n| x | y |\n| 1 | 2 |");
+        // Lettered choices keep the old rule (multi-line stems allowed).
+        let q = &parsed("MC\nLine one\nline two\n*a. yes\nb. no\n")[0];
+        assert_eq!(q.stem, "Line one\nline two");
+        // All-starred choices after a multi-line stem keep the old rule too.
+        let q = &parsed("MC\nLine one\nline two\n*yes\n*also\n")[0];
+        assert_eq!(q.stem, "Line one\nline two");
+    }
+
+    #[test]
+    fn blackboard_tab_delimited_upload_file() {
+        let text = "MC\tWhich planet is closest to the Sun?\tVenus\tincorrect\tMercury\tcorrect\tMars\tincorrect\n\
+                    TF\tThe Sun is a star.\ttrue\n\
+                    FIB\tWater is made of hydrogen and ___.\toxygen\n\
+                    ESS\tExplain gravity.\tAttraction of masses.\n\
+                    NUM\tPi to two places?\t3.14\t0.01\n\
+                    MAT\tMatch.\tNa\tsodium\tK\tpotassium\n\
+                    ORD\tOrder these.\tone\ttwo\tthree\n\
+                    FIB_PLUS\tThe [a] is [b].\ta\tsky\t\tb\tblue\tazure\n\
+                    OP\tHow do you feel?\n";
+        assert_eq!(format_label(text.as_bytes(), "pool.txt"), Some("Blackboard upload file (tab-delimited)"));
+        let d = doc(text.as_bytes(), "pool.txt");
+        assert_eq!(d.questions.len(), 8, "OP skipped");
+        let Kind::Mc { answers } = &d.questions[0].kind else { panic!("not MC: {:?}", d.questions[0].kind) };
+        assert_eq!(answers.len(), 3);
+        assert!(answers[1].correct && !answers[0].correct && !answers[2].correct);
+        assert_eq!(answers[1].text, "Mercury");
+        assert!(matches!(d.questions[1].kind, Kind::Tf { correct: true }));
+        assert!(matches!(&d.questions[2].kind, Kind::Blank { accept } if accept == &vec![vec!["oxygen".to_string()]]));
+        assert!(matches!(&d.questions[3].kind, Kind::Short { sample } if sample == "Attraction of masses."));
+        assert!(matches!(&d.questions[4].kind, Kind::Blank { accept } if accept[0].contains(&"3.15".to_string())));
+        assert!(matches!(&d.questions[5].kind, Kind::Matching { pairs, .. } if pairs.len() == 2 && pairs[1].right == "potassium"));
+        assert!(matches!(&d.questions[6].kind, Kind::Blank { accept } if accept[0][0] == "one, two, three"));
+        assert_eq!(d.questions[7].stem, "The ___ is ___.");
+        assert!(matches!(&d.questions[7].kind, Kind::Blank { accept } if accept.len() == 2 && accept[1].len() == 2));
+        // A FIB stem with no blank gets one appended.
+        let d = doc(b"FIB\tThe capital of France is\tParis\n", "x.txt");
+        assert_eq!(d.questions[0].stem, "The capital of France is ___");
+    }
+
+    #[test]
+    fn term_list_never_claims_tagged_rows() {
+        // A two-column list whose first cells are type tags is not flashcards.
+        assert!(term_pairs("MC\tstem one\nTF\tstem two\n").is_none());
+        // Ordinary vocabulary tab lists are still term lists.
+        assert!(term_pairs("cat\tgato\ndog\tperro\nbird\tpajaro\n").is_some());
     }
 }

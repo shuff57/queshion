@@ -1672,6 +1672,7 @@ fn draw_card(
         .and_then(|q| ctx.data(|d| d.get_temp::<std::collections::HashMap<Id, usize>>(key.with("usage"))).and_then(|m| m.get(&q.id).copied()))
         .unwrap_or(0);
     let mut usage_rect: Option<Rect> = None;
+    let mut copy_rect: Option<Rect> = None;
 
     let frame = kit::card()
         .stroke(Stroke::new(1.0, if open { theme::accent_col() } else { theme::border() }));
@@ -1716,6 +1717,7 @@ fn draw_card(
                     if let Some(p) = points_label(q.points) {
                         ui.label(RichText::new(p).family(theme::bold_family()).size(12.0).color(theme::ink()));
                     }
+                    copy_rect = Some(copy_icon(ui));
                     paint_chevron(ui, false);
                 });
             } else {
@@ -1732,6 +1734,9 @@ fn draw_card(
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         paint_chevron(ui, open);
+                        if q.is_some() && !open {
+                            copy_rect = Some(copy_icon(ui));
+                        }
                         if let Some(p) = q.and_then(|q| points_label(q.points)) {
                             ui.label(RichText::new(p).family(theme::bold_family()).size(12.0).color(theme::ink()));
                         }
@@ -1762,9 +1767,26 @@ fn draw_card(
         if hr.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
+        if let Some(q) = q {
+            hr.context_menu(|ui| {
+                if ui.button("Duplicate").clicked() {
+                    duplicate_question(app, bank_id, &q.id);
+                    ui.close();
+                }
+                if ui.button("Delete").clicked() {
+                    if open {
+                        app.qedit = None;
+                    }
+                    delete_question(app, ctx, key, bank_id, &q.id);
+                    ui.close();
+                }
+            });
+        }
         if hr.clicked() {
             let on_usage = usage_rect.zip(hr.interact_pointer_pos()).is_some_and(|(r, p)| r.expand(2.0).contains(p));
+            let on_copy = copy_rect.zip(hr.interact_pointer_pos()).is_some_and(|(r, p)| r.contains(p));
             match q {
+                Some(q) if on_copy => duplicate_question(app, bank_id, &q.id),
                 Some(q) if on_usage => {
                     let ids: Vec<Id> = crate::bankops::exams_using_question(&app.store.exams, bank_id, &q.id).iter().map(|e| e.id.clone()).collect();
                     open_usage(ctx, format!("Q{n} · {}", truncate(&crate::equation::stem_preview(&q.stem), 40)), ids);
@@ -1823,6 +1845,46 @@ fn draw_card(
     }
 }
 
+/// Copies question `qid` of `bank` (Test Parrot's Copy): same content under a fresh id
+/// and fresh timestamps, inserted right after the original. Returns the copy's id.
+pub(crate) fn duplicate_in_bank(bank: &mut crate::model::QuestionBank, qid: &str) -> Option<Id> {
+    let idx = bank.questions.iter().position(|x| x.id == qid)?;
+    let now = now_secs();
+    let copy = Question { id: crate::model::new_id(), created: now, modified: now, ..bank.questions[idx].clone() };
+    let id = copy.id.clone();
+    bank.questions.insert(idx + 1, copy);
+    bank.modified = now;
+    Some(id)
+}
+
+/// Duplicates a stored question in place (bank card Copy button / right-click menu).
+fn duplicate_question(app: &mut App, bank_id: &str, qid: &str) {
+    let done = app.store.bank_mut(&bank_id.to_string()).and_then(|b| duplicate_in_bank(b, qid)).is_some();
+    if done {
+        app.store.save_banks();
+    }
+}
+
+/// The card's Copy affordance: a small two-sheets icon. Only paints and reports its rect;
+/// the header's click handler routes a click inside it (the header owns the clicks).
+fn copy_icon(ui: &mut Ui) -> Rect {
+    let (r, resp) = ui.allocate_exact_size(Vec2::new(20.0, 20.0), Sense::hover());
+    let hot = resp.hovered();
+    let col = if hot { theme::accent_col() } else { theme::muted_col() };
+    if hot {
+        ui.painter().rect_filled(r, CornerRadius::same(5), theme::accent_faded());
+    }
+    let s = Stroke::new(1.3, col);
+    let c = r.center();
+    let back = Rect::from_center_size(c + Vec2::new(-1.8, -1.8), Vec2::new(8.0, 9.5));
+    let front = Rect::from_center_size(c + Vec2::new(1.8, 1.8), Vec2::new(8.0, 9.5));
+    ui.painter().rect_stroke(back, CornerRadius::same(1), s, egui::StrokeKind::Middle);
+    ui.painter().rect_filled(front, CornerRadius::same(1), theme::card());
+    ui.painter().rect_stroke(front, CornerRadius::same(1), s, egui::StrokeKind::Middle);
+    resp.on_hover_text("Copy question");
+    r
+}
+
 /// Removes a stored question and parks it in the Undo strip.
 fn delete_question(app: &mut App, ctx: &egui::Context, key: UiId, bank_id: &str, qid: &str) {
     let mut removed: Option<(Question, usize)> = None;
@@ -1853,6 +1915,38 @@ fn truncate(s: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn duplicate_inserts_a_fresh_copy_after_the_original() {
+        use crate::formats::make_question;
+        use crate::model::{Kind, Part, PartKind, QuestionBank};
+        let mut a = make_question("First".into(), Kind::Tf { correct: true });
+        a.topics = vec!["Atoms".into()];
+        a.points = Some(2.0);
+        a.created = 5;
+        let b = make_question(
+            "Second".into(),
+            Kind::Multipart { parts: vec![Part { stem: "a.".into(), kind: PartKind::Short { sample: "x".into() } }] },
+        );
+        let mut bank: QuestionBank = serde_json::from_value(serde_json::json!({
+            "id": "b1", "name": "B", "questions": [], "created": 0, "modified": 0
+        }))
+        .unwrap();
+        bank.questions = vec![a.clone(), b.clone()];
+        let id = duplicate_in_bank(&mut bank, &a.id).expect("copied");
+        assert_eq!(bank.questions.len(), 3);
+        let c = &bank.questions[1];
+        assert_eq!(c.id, id);
+        assert_ne!(c.id, a.id);
+        assert_eq!(c.stem, "First");
+        assert_eq!(c.topics, a.topics);
+        assert_eq!(c.points, Some(2.0));
+        assert!(matches!(c.kind, Kind::Tf { correct: true }));
+        assert!(c.created > 5, "fresh timestamps");
+        assert_eq!(bank.questions[2].id, b.id, "inserted right after the original");
+        assert!(bank.modified > 0);
+        assert!(duplicate_in_bank(&mut bank, "missing").is_none());
+    }
 
     #[test]
     fn fmt_date_formats_epoch_days() {

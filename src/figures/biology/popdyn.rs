@@ -96,7 +96,7 @@ pub fn growth_params() -> Vec<ParamDef> {
         ParamDef::text("y_title", "y-axis title (blank = automatic)", ""),
         ParamDef::bool("fit", "Fit the axes automatically", true),
         ParamDef::float("x_max", "x-axis maximum (when not fitting)", 1.0, 100_000.0, 1.0, 20.0),
-        ParamDef::float("y_max", "y-axis maximum (when not fitting, first panel)", 1.0, 10_000_000.0, 10.0, 1100.0),
+        ParamDef::float("y_max", "y-axis maximum (when not fitting, first panel)", 0.001, 10_000_000.0, 10.0, 1100.0),
         ParamDef::choice("minor", "Minor gridlines", &["None", "2 per block", "4 per block", "5 per block"], "None"),
         ParamDef::bool("blank", "Blank graph (axes only, for students to draw on)", false),
         ParamDef::text("title", "Chart title (blank = none)", ""),
@@ -530,6 +530,60 @@ pub fn growth_examples() -> Vec<Example> {
             ("census_auto", Value::B(true)), ("census_every", Value::F(5.0)),
         ] },
         Example { name: "Blank population growth graph for students to draw on", params: vec![("draw_curve", Value::B(false)), ("mark_k", Value::B(false))] },
+    ]
+}
+
+/// The reference's "Classic setups" (Population card), value for value from its share links;
+/// a setup that gives axis ranges turns axis fitting off, as choosing one does on the reference.
+pub fn growth_classics() -> Vec<Example> {
+    let st = |v: &str| Value::S(v.into());
+    let f = Value::F;
+    let no_fit = ("fit", Value::B(false));
+    vec![
+        Example { name: "Yeast in a flask", params: vec![
+            ("n0", f(10.0)), ("r", f(0.54)), ("k", f(665.0)), ("tspan", f(18.0)), ("unit", st("Hours")), ("organism", st("yeast cells")),
+            ("census_auto", Value::B(true)), ("census_scatter", st("About 5%")), ("mark_phases", Value::B(true)),
+            ("x_title", st("Time (hours)")), ("y_title", st("Yeast cells (thousands)")),
+            ("rate_title", st("Growth rate (yeast cells/hour)")), ("pc_title", st("Per capita growth rate (per hour)")),
+            no_fit.clone(), ("x_max", f(18.0)), ("y_max", f(800.0)),
+        ] },
+        Example { name: "Deer on an island", params: vec![
+            ("r", f(0.4)), ("k", f(500.0)), ("tspan", f(30.0)), ("organism", st("deer")), ("census_every", f(5.0)), ("mark_infl", Value::B(true)),
+            ("y_title", st("Number of deer")), ("rate_title", st("Growth rate (deer/year)")),
+            no_fit.clone(), ("x_max", f(30.0)), ("x_step", f(2.0)), ("y_max", f(550.0)), ("y_step", f(50.0)),
+        ] },
+        Example { name: "Bacteria doubling every hour", params: vec![
+            ("growth", st("Exponential (J-curve)")), ("n0", f(100.0)), ("r", f(0.6931472)), ("tspan", f(10.0)), ("unit", st("Hours")),
+            ("organism", st("bacteria")), ("census_auto", Value::B(true)), ("census_table", Value::B(true)),
+            ("x_title", st("Time (hours)")), ("y_title", st("Number of bacteria")),
+            ("rate_title", st("Growth rate (bacteria/hour)")), ("pc_title", st("Per capita growth rate (per hour)")),
+            no_fit.clone(), ("x_max", f(10.0)), ("x_step", f(0.5)), ("y_max", f(120_000.0)), ("y_step", f(10_000.0)),
+        ] },
+        Example { name: "Exponential and logistic growth", params: vec![
+            ("growth", st("Exponential and logistic")), ("n0", f(10.0)), ("census_every", f(2.0)), no_fit.clone(), ("y_max", f(1300.0)),
+        ] },
+        Example { name: "Per capita growth rate against N", params: vec![
+            ("growth", st("Exponential and logistic")), ("n0", f(10.0)), ("graph", st("Per capita rate against population size")), ("census_every", f(2.0)),
+            no_fit.clone(), ("x_max", f(1300.0)), ("x_step", f(50.0)), ("x_numbers", st("Every 5th line")), ("y_max", f(0.65)), ("y_step", f(0.05)),
+        ] },
+        Example { name: "Growth rate and per capita rate", params: vec![
+            ("n0", f(10.0)), ("graph", st("Both rates against population size")), ("census_every", f(2.0)), ("mark_infl", Value::B(true)),
+            no_fit.clone(), ("x_max", f(1100.0)), ("x_step", f(50.0)), ("y_max", f(160.0)), ("y_step", f(20.0)), ("y2_max", f(0.7)), ("y2_step", f(0.1)),
+        ] },
+        Example { name: "Population size and growth rate over time", params: vec![
+            ("n0", f(10.0)), ("graph", st("Population size and growth rate")), ("census_every", f(2.0)), ("mark_infl", Value::B(true)),
+            no_fit.clone(), ("y_max", f(1200.0)), ("y_step", f(200.0)), ("y2_max", f(160.0)),
+        ] },
+        Example { name: "Overshoot and oscillation around K", params: vec![
+            ("growth", st("Overshoot and oscillation")), ("r", f(0.6)), ("tau", f(2.0)), ("tspan", f(40.0)), ("census_every", f(5.0)),
+            no_fit.clone(), ("x_max", f(40.0)), ("x_step", f(2.0)), ("y_max", f(1800.0)), ("y_step", f(200.0)),
+        ] },
+        Example { name: "Boom and crash", params: vec![
+            ("growth", st("Boom and crash")), ("n0", f(30.0)), ("k", f(6000.0)), ("tspan", f(30.0)), ("organism", st("reindeer")), ("census_every", f(5.0)),
+            ("y_title", st("Number of reindeer")), ("rate_title", st("Growth rate (reindeer/year)")),
+            no_fit, ("x_max", f(30.0)), ("x_step", f(2.0)), ("y_max", f(6500.0)), ("y_step", f(500.0)),
+        ] },
+        Example { name: "Blank graph for students to draw on", params: vec![("draw_curve", Value::B(false)), ("census_every", f(2.0))] },
     ]
 }
 

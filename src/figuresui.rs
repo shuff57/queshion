@@ -169,7 +169,7 @@ thread_local! {
 }
 
 fn thumb(ctx: &egui::Context, def: &FigureDef, budget: &mut u8) -> Option<TextureHandle> {
-    let p = Params::defaults(&(def.params)());
+    let p = figures::start_params(def);
     let key = format!("{}:{:x}", def.id, hash_params(def.id, &p));
     if let Some(hit) = THUMBS.with(|t| t.borrow().get(&key).cloned()) {
         return hit;
@@ -378,7 +378,7 @@ impl Workspace {
     fn select(&mut self, i: usize) {
         self.reset_history();
         self.sel = Some(i);
-        self.params = Params::defaults(&(reg()[i].params)());
+        self.params = figures::start_params(&reg()[i]);
         self.comp = Default::default();
         self.editing = None;
         self.shown = None;
@@ -462,10 +462,10 @@ impl Workspace {
         }
 
         let q = self.search.trim().to_lowercase();
-        let list: Vec<(usize, &FigureDef)> = reg()
+        let mut list: Vec<(usize, &FigureDef)> = reg()
             .iter()
             .enumerate()
-            .filter(|(_, d)| self.subject.is_none_or(|s| d.subject == s))
+            .filter(|(_, d)| self.subject.is_none_or(|s| figures::listed_under(d, s)))
             .filter(|(_, d)| {
                 q.is_empty()
                     || d.title.to_lowercase().contains(&q)
@@ -473,6 +473,10 @@ impl Workspace {
                     || d.id.contains(&q)
             })
             .collect();
+        // cross-listed figures come after the subject's own, as on the reference home pages
+        if let Some(s) = self.subject {
+            list.sort_by_key(|(_, d)| d.subject != s);
+        }
 
         let max_h = if self.modal {
             (ctx.viewport_rect().height() * 0.55).clamp(220.0, 520.0)
@@ -793,12 +797,7 @@ impl Workspace {
             }
             for e in ex {
                 if ui.button(e.name).clicked() {
-                    let mut p = Params::defaults(&(def.params)());
-                    for (k, v) in &e.params {
-                        p.0.insert((*k).to_string(), v.clone());
-                    }
-                    p.normalize(&(def.params)(), false);
-                    self.set_params_with_history(p);
+                    self.set_params_with_history(example_params(def, &e));
                     ui.close();
                 }
             }
@@ -1067,8 +1066,12 @@ impl Workspace {
                     if let Some(card) = figures::rows_for(def.id) {
                         self.rows_card(ui, def.id, &pdefs, &card);
                     }
-                    if let Some(card) = figures::chips_for(def.id) {
-                        self.chips_card(ui, &pdefs, &card);
+                    // the Classic setups dropdown goes in the figure's first card: an action-chips
+                    // card ("Family") when there is one, else the first section
+                    let chips = figures::chips_for(def.id);
+                    let classic_in_chips = chips.as_ref().is_some_and(|c| c.count_key.is_empty());
+                    if let Some(card) = chips {
+                        self.chips_card(ui, def.id, &pdefs, &card);
                     }
                     let secs = figures::layout::sections(def.id, &pdefs, n_now);
                     for (si_, sec) in secs.iter().enumerate() {
@@ -1097,15 +1100,25 @@ impl Workspace {
                                     ui.label(theme::muted(sec.help.as_str()).size(11.0));
                                     ui.add_space(4.0);
                                 }
+                                if si_ == 0 && !classic_in_chips {
+                                    self.classic_combo(ui, def.id);
+                                }
                                 for &i in &shown {
                                     param_control(ui, &pdefs[i], &mut self.params);
+                                    if figures::random_key(def.id) == Some(pdefs[i].key)
+                                        && ui.button(RichText::new("Random").size(12.0)).on_hover_text("Set a random reading").clicked()
+                                    {
+                                        figures::random_reading(def.id, &mut self.params, random_seed());
+                                    }
                                     ui.add_space(6.0);
                                 }
                                 ui.add_space(4.0);
                             });
                         if reset {
+                            let start = figures::start_params(def);
                             for &i in &sec.items {
-                                self.params.0.insert(pdefs[i].key.to_string(), pdefs[i].default.clone());
+                                let k = pdefs[i].key;
+                                self.params.0.insert(k.to_string(), start.0.get(k).cloned().unwrap_or_else(|| pdefs[i].default.clone()));
                             }
                         }
                         ui.separator();
@@ -1113,7 +1126,7 @@ impl Workspace {
                 });
             ui.add_space(4.0);
             if ghost(ui, "Reset all").clicked() {
-                self.params = Params::defaults(&pdefs);
+                self.params = figures::start_params(def);
             }
         });
     }
@@ -1257,7 +1270,7 @@ impl Workspace {
     }
 
     /// "Add a force" chips: each appends one preset item and bumps the count.
-    fn chips_card(&mut self, ui: &mut Ui, pdefs: &[ParamDef], card: &figures::ChipsCard) {
+    fn chips_card(&mut self, ui: &mut Ui, fig: &str, pdefs: &[ParamDef], card: &figures::ChipsCard) {
         let n = self.params.i(card.count_key);
         Frame::new()
             .fill(theme::card())
@@ -1285,8 +1298,38 @@ impl Workspace {
                         self.params.set_i(card.count_key, n - 1);
                     }
                 });
+                if !slotted {
+                    ui.add_space(6.0);
+                    self.classic_combo(ui, fig);
+                }
             });
         ui.add_space(8.0);
+    }
+
+    /// The reference's "Classic setups" dropdown (population growth, Punnett square, pedigree):
+    /// picking one starts the figure over from that setup, as one undo step.
+    fn classic_combo(&mut self, ui: &mut Ui, fig: &str) {
+        let setups = figures::classic_setups(fig);
+        let Some(def) = self.sel.map(|si| &reg()[si]) else { return };
+        if setups.is_empty() {
+            return;
+        }
+        ui.label(theme::muted("Classic setups").size(11.0));
+        let mut pick = None;
+        egui::ComboBox::from_id_salt(("fig_classic", fig))
+            .selected_text("Choose one…")
+            .width(ui.available_width().min(260.0))
+            .show_ui(ui, |ui| {
+                for (i, e) in setups.iter().enumerate() {
+                    if ui.selectable_label(false, e.name).clicked() {
+                        pick = Some(i);
+                    }
+                }
+            });
+        if let Some(i) = pick {
+            self.set_params_with_history(example_params(def, &setups[i]));
+        }
+        ui.add_space(6.0);
     }
 
     /// A colour swatch that opens a palette popover for one param.
@@ -1591,6 +1634,22 @@ fn section_summary(defs: &[ParamDef], p: &Params, items: &[usize]) -> String {
 fn fmt_measure(v: f64) -> String {
     let s = format!("{:.3}", v);
     s.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+/// A named starting point (example or classic setup): the figure's defaults with its overrides.
+fn example_params(def: &FigureDef, e: &figures::Example) -> Params {
+    let defs = (def.params)();
+    let mut p = Params::defaults(&defs);
+    for (k, v) in &e.params {
+        p.0.insert((*k).to_string(), v.clone());
+    }
+    p.normalize(&defs, false);
+    p
+}
+
+/// A fresh seed for the Random reading buttons.
+fn random_seed() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(7)
 }
 
 /// Applies a chip: fills slot `count + 1` and bumps the count, or (no `count_key`) just sets the

@@ -48,6 +48,35 @@ pub fn handles(id: &str, p: &Params, size: (f64, f64)) -> Option<Vec<interact::H
     handles::handles(id, p, size)
 }
 
+/// The micropipette's "Random" button: any volume the pipette can be set to, in its own steps.
+pub fn random_reading(id: &str, p: &mut Params, seed: u64) -> bool {
+    if id != "micropipette-reading" {
+        return false;
+    }
+    let sp = pipette::spec(p.s("size"));
+    let steps = ((sp.max - sp.min) / sp.unit).round();
+    let k = (super::unit_random(seed) * (steps + 1.0)).floor().min(steps);
+    // the finest pipette counts in 0.01 µL, so two decimals hold every setting exactly
+    p.set_f("volume", ((sp.min + k * sp.unit) * 100.0).round() / 100.0);
+    true
+}
+
+/// "Classic setups" for the biology figures that have the dropdown on the reference.
+pub fn classic_setups(id: &str) -> Option<Vec<super::Example>> {
+    match id {
+        "population-growth" => Some(popdyn::growth_classics()),
+        "punnett-square" => Some(punnett::classics()),
+        "pedigree" => Some(pedigree::classics()),
+        _ => None,
+    }
+}
+
+/// Adds the L/M/S label-size param (the reference toolbar toggle) to a param list.
+fn with_ls(mut v: Vec<ParamDef>) -> Vec<ParamDef> {
+    v.push(svg::label_size_param());
+    v
+}
+
 pub fn defs() -> Vec<FigureDef> {
     vec![
         FigureDef {
@@ -55,16 +84,16 @@ pub fn defs() -> Vec<FigureDef> {
             subject: Subject::Biology,
             title: "Population Growth",
             blurb: "Graph exponential, logistic, overshoot or boom-and-crash growth, with growth-rate panels and census points.",
-            params: popdyn::growth_params,
-            render: popdyn::growth_render,
+            params: || with_ls(popdyn::growth_params()),
+            render: |p| svg::with_label_size(popdyn::growth_render(p), p),
         },
         FigureDef {
             id: "punnett-square",
             subject: Subject::Biology,
             title: "Punnett Square",
             blurb: "Cross two parents (monohybrid, dihybrid or X-linked) and get the grid, shading and genotype and phenotype ratios.",
-            params: punnett::params,
-            render: punnett::render,
+            params: || with_ls(punnett::params()),
+            render: |p| svg::with_label_size(punnett::render(p), p),
         },
         FigureDef {
             id: "pedigree",
@@ -79,8 +108,8 @@ pub fn defs() -> Vec<FigureDef> {
             subject: Subject::Biology,
             title: "Predator-Prey Cycles",
             blurb: "Lotka-Volterra population cycles for a predator and its prey, over time or as a phase plot.",
-            params: popdyn::pp_params,
-            render: popdyn::pp_render,
+            params: || with_ls(popdyn::pp_params()),
+            render: |p| svg::with_label_size(popdyn::pp_render(p), p),
         },
         FigureDef {
             id: "gel-electrophoresis",

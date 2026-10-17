@@ -90,6 +90,18 @@ pub fn handles(id: &str, p: &Params, size: (f64, f64)) -> Option<Vec<interact::H
     handles::handles(id, p, size)
 }
 
+/// The spring scale's "Random" button: a force between 5% and 95% of the capacity, to 2 decimal
+/// places (the reference's readings, e.g. 3.48, 8.27 N on the 10 N scale).
+pub fn random_reading(id: &str, p: &mut Params, seed: u64) -> bool {
+    if id != "spring-scale" {
+        return false;
+    }
+    let cap = p.s("cap").trim_end_matches(" N").parse::<f64>().unwrap_or(10.0);
+    let v = cap * (0.05 + 0.9 * super::unit_random(seed));
+    p.set_f("reading", (v * 100.0).round() / 100.0);
+    true
+}
+
 pub fn defs() -> Vec<FigureDef> {
     let mut v = mech::defs();
     v.extend(graphs::defs());

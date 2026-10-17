@@ -723,6 +723,9 @@ struct R {
     head: f64,
     lead: f64,
     imgs: Vec<Px>,
+    /// The printed "Name / Class / Date" line, repeated at the top of every page after
+    /// the first (set once page 1's header area is drawn; `None` on the answer key).
+    running: Option<String>,
 }
 
 impl R {
@@ -730,7 +733,11 @@ impl R {
         self.y - self.margin
     }
     fn full_height(&self) -> f64 {
-        PAGE_H - 2.0 * self.margin
+        PAGE_H - 2.0 * self.margin - self.running.as_ref().map_or(0.0, |_| self.running_h())
+    }
+    /// Height the repeated header takes at the top of a continuation page.
+    fn running_h(&self) -> f64 {
+        self.lead + self.body * 0.6
     }
     fn new_page(&mut self) {
         if !self.cur.is_empty() {
@@ -738,6 +745,11 @@ impl R {
             self.pages.push((cur, std::mem::take(&mut self.used)));
         }
         self.y = PAGE_H - self.margin;
+        if let Some(h) = self.running.clone() {
+            let x0 = self.x0;
+            self.line(x0, &h, Face::Reg);
+            self.y -= self.body * 0.6;
+        }
     }
     fn text(&mut self, x: f64, y: f64, face: Face, size: f64, s: &str) {
         let bytes = esc_pdf(&winansi(s));
@@ -903,6 +915,7 @@ pub fn render_pdf(doc: &ExamDoc) -> Result<Vec<u8>, String> {
         head,
         lead: body * 1.42,
         imgs,
+        running: None,
     };
 
     // Title area (also printed on the answer-key document).
@@ -921,6 +934,10 @@ pub fn render_pdf(doc: &ExamDoc) -> Result<Vec<u8>, String> {
             r.y -= body * 1.1;
             r.rule(r.x0, r.y, r.x1, r.y);
             r.y -= body * 0.9;
+        }
+        // Like Test Parrot, the Name/Class/Date line repeats at the top of every page.
+        if !doc.header_line.trim().is_empty() {
+            r.running = Some(doc.header_line.trim().to_string());
         }
     }
     // Version label ("Version B" etc.), small and muted, under the header area.
@@ -1536,6 +1553,13 @@ const ROOT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"
 const DOC_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/></Relationships>"#;
 
+/// Content-type overrides and document relationships for the repeating page header
+/// (header1 = pages 2+, header2 = the empty first-page header).
+const HEADER_TYPES: &str = r#"<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/><Override PartName="/word/header2.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>"#;
+const HEADER_RELS: &str = r#"<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/><Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header2.xml"/></Relationships>"#;
+const EMPTY_HEADER: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p/></w:hdr>"#;
+
 const STYLES: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="120"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="120" w:after="60"/></w:pPr><w:rPr><w:b/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style></w:styles>"#;
 
@@ -1547,7 +1571,7 @@ pub fn render_docx(doc: &ExamDoc) -> Result<Vec<u8>, String> {
     let mut b = String::new();
     b.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n");
     b.push_str(
-        "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>",
+        "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body>",
     );
 
     if !doc.title.is_empty() {
@@ -1641,8 +1665,24 @@ pub fn render_docx(doc: &ExamDoc) -> Result<Vec<u8>, String> {
         }
     }
 
+    // The Name/Class/Date line repeats on every page (Test Parrot does the same): a Word
+    // page header on pages 2+ (`titlePg` with an empty first-page header, since page 1
+    // already prints it under the title).
+    let running = (!doc.is_key && !doc.header_line.trim().is_empty()).then(|| {
+        let mut h = String::from(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">",
+        );
+        wpara(&mut h, &Par::body(doc.header_line.trim()), body_sz);
+        h.push_str("</w:hdr>");
+        h
+    });
+    let (head_refs, title_pg) = if running.is_some() {
+        ("<w:headerReference w:type=\"default\" r:id=\"rId3\"/><w:headerReference w:type=\"first\" r:id=\"rId4\"/>", "<w:titlePg/>")
+    } else {
+        ("", "")
+    };
     b.push_str(&format!(
-        "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"{}\" w:right=\"{}\" w:bottom=\"{}\" w:left=\"{}\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/><w:cols w:space=\"720\"/></w:sectPr></w:body></w:document>",
+        "<w:sectPr>{head_refs}<w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"{}\" w:right=\"{}\" w:bottom=\"{}\" w:left=\"{}\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/><w:cols w:space=\"720\"/>{title_pg}</w:sectPr></w:body></w:document>",
         tw(doc.margin_mm as f64),
         tw(doc.margin_mm as f64),
         tw(doc.margin_mm as f64),
@@ -1653,14 +1693,26 @@ pub fn render_docx(doc: &ExamDoc) -> Result<Vec<u8>, String> {
     let mut z = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let opt = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
-    for (name, data) in [
-        ("[Content_Types].xml", CONTENT_TYPES),
+    let (types, rels) = match &running {
+        Some(_) => (
+            CONTENT_TYPES.replace("</Types>", HEADER_TYPES),
+            DOC_RELS.replace("</Relationships>", HEADER_RELS),
+        ),
+        None => (CONTENT_TYPES.to_string(), DOC_RELS.to_string()),
+    };
+    let mut parts: Vec<(&str, &str)> = vec![
+        ("[Content_Types].xml", types.as_str()),
         ("_rels/.rels", ROOT_RELS),
-        ("word/_rels/document.xml.rels", DOC_RELS),
+        ("word/_rels/document.xml.rels", rels.as_str()),
         ("word/styles.xml", STYLES),
         ("word/numbering.xml", numbering.as_str()),
         ("word/document.xml", b.as_str()),
-    ] {
+    ];
+    if let Some(h) = &running {
+        parts.push(("word/header1.xml", h.as_str()));
+        parts.push(("word/header2.xml", EMPTY_HEADER));
+    }
+    for (name, data) in parts {
         z.start_file(name, opt.clone()).map_err(|e| format!("docx zip: {e}"))?;
         use std::io::Write as _;
         z.write_all(data.as_bytes()).map_err(|e| format!("docx zip: {e}"))?;
@@ -1959,6 +2011,46 @@ mod tests {
         assert!(docxml.contains("<w:b/>"));
         assert!(docxml.contains("1. Which planet") || docxml.contains("1. B"), "numbered key lines");
         assert!(!docxml.contains("[picture]"), "no pictures on key docs");
+    }
+
+    #[test]
+    fn header_line_repeats_on_every_page() {
+        let mut doc = sample_doc();
+        doc.header_line = "Name: Zed Class: Q Date: D".into();
+        let base = doc.questions[1].clone();
+        doc.questions = (1..=40).map(|n| DocQ { number: n, ..base.clone() }).collect();
+        let pdf = render_pdf(&doc).unwrap();
+        let pages = count_pages(&pdf);
+        assert!(pages >= 3, "40 essay questions span pages");
+        let heads = String::from_utf8_lossy(&pdf).matches("(Name: Zed Class: Q Date: D) Tj").count();
+        assert_eq!(heads, pages, "the header prints once per page");
+        let margin = 18.0 * MM_PT;
+        for y in baselines(&pdf) {
+            assert!(y > margin - 1.0 && y < PAGE_H - margin + 1.0, "text outside the margins at y={y}");
+        }
+        // The answer key carries no header at all.
+        let key = render_pdf(&ExamDoc { is_key: true, ..doc.clone() }).unwrap();
+        assert!(!String::from_utf8_lossy(&key).contains("(Name: Zed"));
+
+        // DOCX: a Word page header on pages 2+ (titlePg + empty first-page header).
+        let bytes = render_docx(&doc).unwrap();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let read = |z: &mut zip::ZipArchive<std::io::Cursor<Vec<u8>>>, n: &str| {
+            let mut s = String::new();
+            z.by_name(n).unwrap().read_to_string(&mut s).unwrap();
+            s
+        };
+        let docxml = read(&mut z, "word/document.xml");
+        assert!(docxml.contains(r#"<w:headerReference w:type="default" r:id="rId3"/>"#));
+        assert!(docxml.contains("<w:titlePg/>"));
+        assert_eq!(docxml.matches("Name: Zed").count(), 1, "page 1 prints it once in the body");
+        assert!(read(&mut z, "word/header1.xml").contains("Name: Zed"));
+        assert!(!read(&mut z, "word/header2.xml").contains("Name"));
+        assert!(read(&mut z, "word/_rels/document.xml.rels").contains("header1.xml"));
+        assert!(read(&mut z, "[Content_Types].xml").contains("/word/header1.xml"));
+        let key = render_docx(&ExamDoc { is_key: true, ..doc }).unwrap();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(key)).unwrap();
+        assert!(z.by_name("word/header1.xml").is_err(), "no header part on the key");
     }
 
     fn rich_doc(stem: &str) -> ExamDoc {

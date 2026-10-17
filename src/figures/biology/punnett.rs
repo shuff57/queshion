@@ -781,6 +781,27 @@ pub fn render(p: &Params) -> String {
 }
 
 /// "Start from an example" entries (the reference gallery).
+/// The reference's "Classic setups" dropdown, from its share links.
+pub fn classics() -> Vec<Example> {
+    let st = |v: &str| Value::S(v.into());
+    vec![
+        Example { name: "Mendel’s pea plants", params: vec![] },
+        Example { name: "Test cross", params: vec![("parents", st("Tt x tt"))] },
+        Example { name: "Dihybrid cross", params: vec![
+            ("cross", st("Dihybrid")), ("parents", st("RrYy x RrYy")), ("phenotypes", st("R: round; r: wrinkled; Y: yellow; y: green")),
+        ] },
+        Example { name: "Color blindness", params: vec![
+            ("cross", st("X-linked")), ("parents", st("X^B X^b x X^B Y")), ("phenotypes", st("X^B: normal vision; X^b: color-blind")), ("parent_labels", st("♀ ♂")),
+        ] },
+        Example { name: "Snapdragon color", params: vec![
+            ("dominance", st("Incomplete")), ("parents", st("C^R C^W x C^R C^W")), ("phenotypes", st("C^R: red; C^R+C^W: pink; C^W: white")),
+        ] },
+        Example { name: "ABO blood type", params: vec![
+            ("dominance", st("Codominance")), ("parents", st("I^A i x I^B i")), ("phenotypes", st("I^A: type A; I^A+I^B: type AB; I^B: type B; i: type O")),
+        ] },
+    ]
+}
+
 pub fn examples() -> Vec<Example> {
     let st = |v: &str| Value::S(v.into());
     vec![

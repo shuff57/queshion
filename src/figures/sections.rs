@@ -34,7 +34,7 @@ static FIG_1: [RefSection; 7] = [
 
 static FIG_2: [RefSection; 4] = [
     s("Box plot", &["caps"], "Labels write the five-number summary on the figure. Leave them off for students to find."),
-    s("Titles", &["title", "axis_title", "fill", "data3", "summary3", "name3", "data4", "summary4", "name4", "read5", "min_lab", "min_label", "med_lab", "med_label", "max_lab", "max_label", "title_mode", "axis_title_mode"], ""),
+    s("Titles", &["title", "axis_title", "fill", "data3", "summary3", "name3", "data4", "summary4", "name4", "read5", "min_lab", "min_label", "med_lab", "med_label", "q1_lab", "q1_label", "q3_lab", "q3_label", "max_lab", "max_label", "title_mode", "axis_title_mode"], ""),
     s("Number line", &["data", "summary", "name1", "data2", "summary2", "name2", "values", "outliers", "auto", "axis_min", "axis_max", "axis_step", "numbers"], "Leave these empty to fit the data."),
     s("More options", &["label_size"], ""),
 ];
@@ -185,7 +185,7 @@ static FIG_20: [RefSection; 3] = [
 static FIG_21: [RefSection; 6] = [
     s("Motion", &["n", "x0", "tangent_t"], "A to B (0–4 s): speeding up from 0 to 4 m/s, a = 1 m/s²; 0 m to 8 m"),
     s("Marks", &["letters", "styles", "tangent"], ""),
-    s("Titles", &["title_mode", "title", "xt_mode", "xt", "yt_pos_mode", "yt_pos", "yt_vel_mode", "yt_vel", "yt_acc_mode", "yt_acc"], "Type ^ for a superscript, as in m/s^2, and _ for a subscript."),
+    s("Titles", &["title_mode", "title", "xt_mode", "xt", "yt_pos_mode", "yt_pos", "yt_vel_mode", "yt_vel", "yt_acc_mode", "yt_acc", "label_size"], "Type ^ for a superscript, as in m/s^2, and _ for a subscript."),
     s("Axes and grid", &["numbers", "grid", "t_min", "t_max", "t_step", "p_min", "p_max", "p_step", "v_min", "v_max", "v_step", "a_min", "a_max", "a_step"], ""),
     s("Figure", &["color"], ""),
     s("Graphs", &["show", "ranges"], ""),
@@ -251,22 +251,22 @@ static FIG_29: [RefSection; 6] = [
 ];
 
 static FIG_30: [RefSection; 9] = [
+    s("Population", &["growth", "n0", "r", "k", "unit", "organism"], ""),
     s("Graphs", &["tspan", "graph"], "The growth rate dN/dt is individuals added per year; the per capita growth rate, (dN/dt)/N, is per individual."),
     s("Curve", &["curve_color", "draw_curve"], ""),
     s("Census data", &["census", "census_auto", "census_every", "census_scatter", "census_seed", "census_table"], ""),
     s("Marked on the graph", &["mark_k", "mark_infl", "k_label", "tau", "k_label_style", "mark_phases"], ""),
-    s("Titles", &["x_title", "y_title", "fit", "title", "curve_width", "title_style", "xtitle_style", "ytitle_style", "rate_title", "pc_title"], ""),
+    s("Titles", &["x_title", "y_title", "fit", "title", "curve_width", "title_style", "xtitle_style", "ytitle_style", "rate_title", "pc_title", "label_size"], ""),
     s("x-axis", &["x_max", "x_min", "x_step", "x_numbers", "x_end", "x_end_text", "x_lo_end", "x_hi_end", "y_step"], ""),
-    s("y-axis", &["y_max", "blank", "y_min", "y_numbers", "y_end", "y_end_text", "y_lo_end", "y_hi_end"], ""),
+    s("y-axis", &["y_max", "blank", "y_min", "y_numbers", "y_end", "y_end_text", "y_lo_end", "y_hi_end", "y2_max", "y2_step"], ""),
     s("Grid", &["minor"], ""),
-    s("Population", &["growth", "n0", "r", "k", "unit", "organism"], ""),
 ];
 
 static FIG_31: [RefSection; 8] = [
     s("Graph", &["graph", "y_min", "y_max", "y_numbers"], ""),
     s("Data", &["data", "marks"], ""),
     s("Marked", &["source", "cycle", "alpha", "beta", "gamma", "delta", "show", "style", "y_axis", "census_every", "census_noise", "census_seed", "census_join", "mark_lag", "mark_period", "lag_labels"], ""),
-    s("Titles", &["x_title", "y_title", "title", "line_width", "legend", "title_style", "xtitle_style", "ytitle_style", "x_min", "x_max", "x_lo_end", "x_hi_end", "y_lo_end", "y_hi_end"], ""),
+    s("Titles", &["x_title", "y_title", "title", "line_width", "legend", "title_style", "xtitle_style", "ytitle_style", "x_min", "x_max", "x_lo_end", "x_hi_end", "y_lo_end", "y_hi_end", "label_size"], ""),
     s("x-axis", &["tshow", "unit", "x_fit", "x_step", "x_numbers", "x_end", "x_end_text", "y_fit", "y_step"], ""),
     s("y-axis", &["y_end", "y_end_text"], ""),
     s("Grid", &["minor"], ""),
@@ -298,7 +298,7 @@ static FIG_34: [RefSection; 4] = [
 static FIG_35: [RefSection; 5] = [
     s("Square", &["cross", "dominance", "parents", "filled", "geno_ratio", "parent_labels", "blank_parents", "blank_gametes", "cells", "blank_cells", "cell_phenotype", "geno_ratio_style"], "Parents"),
     s("Ratios", &["ratio_form", "sex_split"], "Genotypes"),
-    s("Title and question", &["title", "question", "outline_heavy"], "Chart title"),
+    s("Title and question", &["title", "question", "outline_heavy", "label_size"], "Chart title"),
     s("Phenotypes", &["phenotypes", "pheno_ratio_style", "pheno_ratio"], ""),
     s("Shading", &["shading", "shade_style", "shade_color"], ""),
 ];
@@ -413,7 +413,7 @@ static FIG_49: [RefSection; 7] = [
     s("Wave", &["kind", "against", "amp", "wl", "cycles"], "In the units of the axes."),
     s("Marks", &["mark_wl", "wl_lab_mode", "wl_lab", "mark_amp", "amp_lab_mode", "amp_lab", "mark_ct", "crest_mode", "trough_mode"], ""),
     s("Graph", &["numbers", "color"], ""),
-    s("Titles", &["title_mode", "title", "xt_mode", "xt", "yt_mode", "yt"], ""),
+    s("Titles", &["title_mode", "title", "xt_mode", "xt", "yt_mode", "yt", "label_size"], ""),
     s("x-axis", &["xaxis_fit", "xmin", "xmax", "xstep", "xaxis_num", "xaxis_letter"], ""),
     s("y-axis", &["yaxis_fit", "ymin", "ymax", "ystep", "yaxis_num", "yaxis_letter"], ""),
     s("Grid", &["grid", "minor"], ""),

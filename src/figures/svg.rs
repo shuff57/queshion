@@ -59,3 +59,82 @@ impl Doc {
         )
     }
 }
+
+/// The reference's L/M/S label-size toggle: text size factor for a `label_size` choice
+/// (Large is 1.4x and Small 0.8x Medium, as on the reference generators).
+pub fn label_factor(choice: &str) -> f64 {
+    match choice {
+        "Large" => 1.4,
+        "Small" => 0.8,
+        _ => 1.0,
+    }
+}
+
+/// The `label_size` param shared by the figures that get the toggle by scaling their output.
+pub fn label_size_param() -> super::ParamDef {
+    super::ParamDef::choice("label_size", "Label size", &["Large", "Medium", "Small"], "Medium")
+}
+
+/// Applies the `label_size` param to a finished SVG (`scale_text`); Medium returns it unchanged.
+pub fn with_label_size(svg: String, p: &super::Params) -> String {
+    let f = label_factor(p.s("label_size"));
+    if f == 1.0 { svg } else { scale_text(&svg, f) }
+}
+
+/// Multiplies every numeric `font-size="…"` and `dy="…"` (superscript offsets, which generators
+/// work out from the font size) by `f`, for generators that draw text at fixed sizes. Values in
+/// other units (`0.35em`) are left alone, so they keep scaling with their font.
+pub fn scale_text(svg: &str, f: f64) -> String {
+    let mut out = String::with_capacity(svg.len() + 64);
+    let mut rest = svg;
+    loop {
+        let next = ["font-size=\"", " dy=\""].iter().filter_map(|pat| rest.find(pat).map(|i| (i, *pat))).min_by_key(|(i, _)| *i);
+        let Some((i, pat)) = next else {
+            out.push_str(rest);
+            break;
+        };
+        let start = i + pat.len();
+        out.push_str(&rest[..start]);
+        rest = &rest[start..];
+        let end = rest.find('"').unwrap_or(rest.len());
+        let val = &rest[..end];
+        let num = val.trim_end_matches("px");
+        match num.parse::<f64>() {
+            Ok(v) => {
+                let n = ((v * f) * 100.0).round() / 100.0;
+                out.push_str(&format!("{n}"));
+                if num.len() != val.len() {
+                    out.push_str("px");
+                }
+            }
+            Err(_) => out.push_str(val),
+        }
+        rest = &rest[end..];
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scale_text_scales_sizes_and_offsets_only() {
+        let svg = r#"<text font-size="14" x="3"><tspan font-size="10.0" dy="-5.0">2</tspan><tspan dy="0.35em">x</tspan></text><text font-size="20px">y</text><line stroke-width="2"/>"#;
+        let big = scale_text(svg, 1.4);
+        assert!(big.contains(r#"font-size="19.6""#), "{big}");
+        assert!(big.contains(r#"font-size="14" dy="-7""#), "{big}");
+        assert!(big.contains(r#"dy="-7""#), "{big}");
+        assert!(big.contains(r#"dy="0.35em""#), "{big}");
+        assert!(big.contains(r#"font-size="28px""#), "{big}");
+        assert!(big.contains(r#"x="3""#) && big.contains(r#"stroke-width="2""#), "{big}");
+        assert_eq!(scale_text(svg, 1.0).replace(".0\"", "\""), svg.replace(".0\"", "\""));
+    }
+
+    #[test]
+    fn label_factors_match_reference() {
+        assert_eq!(label_factor("Large"), 1.4);
+        assert_eq!(label_factor("Medium"), 1.0);
+        assert_eq!(label_factor("Small"), 0.8);
+    }
+}

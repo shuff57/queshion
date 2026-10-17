@@ -590,9 +590,57 @@ fn slash_hook(ui: &mut Ui, eq: &EqCtx, field: EqField, text: &mut String, out: &
     st.store(&eq.ctx, out.response.id);
 }
 
-/// True when a field's text renders differently from its raw form (stem markup or `$math$`).
+/// True when a field's text renders differently from its raw form (stem markup, `$math$`
+/// or a `[picture]` placeholder an importer left).
 fn renders_rich(text: &str) -> bool {
-    crate::richtext::has_markup(text) || text.contains('*')
+    crate::richtext::has_markup(text) || text.contains('*') || has_picture(text)
+}
+
+/// Does `text` hold a real `[picture]` / `[picture: alt]` marker?
+fn has_picture(text: &str) -> bool {
+    text.contains("[picture") && crate::bankops::split_pictures(text).iter().any(|p| matches!(p, crate::bankops::StemPart::Picture(_)))
+}
+
+/// `text` cut into the runs a preview draws: (char offset of the run in `text`, run) for
+/// text, `None` offset for a picture placeholder (its alt in the run).
+fn preview_runs(text: &str) -> Vec<(Option<usize>, String)> {
+    use crate::bankops::StemPart;
+    let mut byte = 0usize;
+    crate::bankops::split_pictures(text)
+        .into_iter()
+        .map(|p| match p {
+            StemPart::Text(t) => {
+                let at = text[byte..].find(&t).map_or(byte, |i| byte + i);
+                byte = at + t.len();
+                (Some(text[..at].chars().count()), t)
+            }
+            StemPart::Picture(alt) => (None, alt.unwrap_or_default()),
+        })
+        .collect()
+}
+
+/// The editor's stand-in for a `[picture]` marker: a dashed "Picture needed" box with its
+/// description (the picture itself is added with Attach image after import).
+fn picture_box(ui: &mut Ui, alt: &str, size: f32) {
+    let w = ui.available_width().clamp(120.0, 420.0);
+    let h = if alt.is_empty() { size * 2.6 } else { size * 3.6 };
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, h), Sense::hover());
+    let p = ui.painter();
+    let red = theme::red();
+    p.rect_filled(rect, CornerRadius::same(6), red.gamma_multiply(0.08));
+    p.extend(egui::Shape::dashed_line(
+        &[rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom(), rect.left_top()],
+        Stroke::new(1.0, red),
+        4.0,
+        3.0,
+    ));
+    let cy = if alt.is_empty() { rect.center().y } else { rect.center().y - size * 0.6 };
+    p.text(Pos2::new(rect.center().x, cy), egui::Align2::CENTER_CENTER, "Picture needed", egui::FontId::new(size, theme::bold_family()), red);
+    if !alt.is_empty() {
+        let a: String = if alt.chars().count() > 60 { alt.chars().take(60).chain(std::iter::once('…')).collect() } else { alt.to_string() };
+        p.text(Pos2::new(rect.center().x, cy + size * 1.25), egui::Align2::CENTER_CENTER, a, egui::FontId::new(size * 0.85, theme::serif_family()), theme::muted_col());
+    }
+    ui.add_space(4.0);
 }
 
 /// Rendered preview of a field that holds markup or equations; clicking an equation opens it
@@ -606,7 +654,21 @@ fn eq_preview(ui: &mut Ui, eq: &EqCtx, field: EqField, text: &str, indent: f32, 
         ui.add_space(indent);
         ui.vertical(|ui| {
             let o = crate::equation::Rich::new(size, theme::text_col()).editable(true);
-            hit = crate::equation::rich_ui(ui, text, &o).1;
+            if !has_picture(text) {
+                hit = crate::equation::rich_ui(ui, text, &o).1;
+                return;
+            }
+            for (at, run) in preview_runs(text) {
+                match at {
+                    Some(at) => {
+                        if let Some(mut h) = crate::equation::rich_ui(ui, &run, &o).1 {
+                            h.span = h.span.start + at..h.span.end + at;
+                            hit = Some(h);
+                        }
+                    }
+                    None => picture_box(ui, &run, size),
+                }
+            }
         });
     });
     if let Some(h) = hit {
@@ -766,6 +828,24 @@ fn eq_line(ui: &mut Ui, eq: &EqCtx, field: EqField, text: &mut String, w: f32, h
     let r = fr.response.rect;
     let idx = out.cursor_range.map_or(text.chars().count(), |cr| cr.primary.index.into());
     if sigma_button(ui, eq, &field, Pos2::new(r.right() - 17.0, r.center().y), 22.0).clicked() {
+        eq.request(field.clone(), idx, None, String::new());
+    }
+    slash_hook(ui, eq, field, text, &out);
+    out.response.response
+}
+
+/// Like `eq_line`, but the text may hold line breaks (a multipart part's stem: its
+/// sub-lines, bullets and table rows). A single-line field would draw each `\n` as a
+/// missing-glyph box; this one grows a row per line, and Enter adds a line.
+fn eq_line_multi(ui: &mut Ui, eq: &EqCtx, field: EqField, text: &mut String, w: f32, hint: &str) -> egui::Response {
+    let inner = (w - 24.0 - 2.0 - 24.0).max(30.0);
+    let fr = field_frame(Margin::symmetric(12, 6)).show(ui, |ui| {
+        TextEdit::multiline(text).frame(Frame::new()).hint_text(hint).desired_rows(1).desired_width(inner).show(ui)
+    });
+    let out = fr.inner;
+    let r = fr.response.rect;
+    let idx = out.cursor_range.map_or(text.chars().count(), |cr| cr.primary.index.into());
+    if sigma_button(ui, eq, &field, Pos2::new(r.right() - 17.0, r.top() + 17.0), 22.0).clicked() {
         eq.request(field.clone(), idx, None, String::new());
     }
     slash_hook(ui, eq, field, text, &out);
@@ -1221,7 +1301,7 @@ fn multipart_editor(ui: &mut Ui, eq: &EqCtx, parts: &mut Vec<Part>, w: f32) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             ui.label(theme::muted(format!("{}.", i + 1)).size(12.0));
-            eq_line(ui, eq, EqField::PartStem(i), &mut parts[i].stem, (w - 24.0 - 3.0 * 52.0 - 30.0).max(120.0), "Part stem");
+            eq_line_multi(ui, eq, EqField::PartStem(i), &mut parts[i].stem, (w - 24.0 - 3.0 * 52.0 - 30.0).max(120.0), "Part stem");
             for (v, tag) in [(0, "MC"), (1, "TF"), (2, "Short")] {
                 if kit::chip_toggle(ui, tag, sel == v).clicked() {
                     sel = v;
@@ -1551,6 +1631,21 @@ mod tests {
             accept: vec![vec!["one".to_string()], vec!["two".to_string()]],
         };
         assert!(d.validate().is_empty());
+    }
+
+    #[test]
+    fn picture_markers_preview_as_placeholders() {
+        let t = "[picture: Handwritten key for NH3]\nNumber of charge clouds: 4\nShape: $x^2$";
+        assert!(has_picture(t));
+        assert!(renders_rich(t), "a picture marker gets a preview even without markup");
+        let runs = preview_runs(t);
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0], (None, "Handwritten key for NH3".to_string()));
+        let (Some(at), run) = &runs[1] else { panic!("text run expected") };
+        // The run's char offset maps a click on its equation back into the full text.
+        assert_eq!(t.chars().skip(*at).take(run.chars().count()).collect::<String>(), *run);
+        assert!(!has_picture("a [pictures] b"));
+        assert!(!renders_rich("Number of charge clouds: 4"));
     }
 }
 

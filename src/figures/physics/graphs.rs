@@ -545,13 +545,19 @@ fn wave_render(p: &Params) -> String {
     g.finish()
 }
 
+/// Adds the L/M/S label-size param (the reference toolbar toggle) to a param list.
+fn with_ls(mut v: Vec<ParamDef>) -> Vec<ParamDef> {
+    v.push(crate::figures::svg::label_size_param());
+    v
+}
+
 pub fn defs() -> Vec<FigureDef> {
     vec![
         FigureDef { id: "motion-graphs", subject: Subject::Physics, title: "Motion Graphs",
             blurb: "Position-, velocity- and acceleration-time graphs built from up to six motion segments (rest, constant velocity, speeding up, slowing down).",
-            params: motion_params, render: motion_render },
+            params: || with_ls(motion_params()), render: |p| crate::figures::svg::with_label_size(motion_render(p), p) },
         FigureDef { id: "waves", subject: Subject::Physics, title: "Waves",
             blurb: "Transverse and longitudinal waves with amplitude and wavelength marks on measurable, gridded axes.",
-            params: wave_params, render: wave_render },
+            params: || with_ls(wave_params()), render: |p| crate::figures::svg::with_label_size(wave_render(p), p) },
     ]
 }

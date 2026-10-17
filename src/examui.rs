@@ -1450,6 +1450,22 @@ fn draw_page(
                 ));
             }
             ui.painter().set(bg, Shape::Vec(shapes));
+            // The header line repeats at the top of every later page (print does the same).
+            if !exam.header.trim().is_empty() {
+                let x = paper_rect.left() + side;
+                for k in 1..st.pages {
+                    let y = paper_rect.top() + k as f32 * PAGE_H + side * 1.05;
+                    ui.painter().text(
+                        Pos2::new(x, y + bp * 0.72),
+                        Align2::LEFT_CENTER,
+                        exam.header.trim(),
+                        FontId::new(bp * 0.96, theme::serif_family()),
+                        Color32::from_rgb(0x33, 0x33, 0x33),
+                    );
+                    let ly = y + bp * 1.45 + 1.0;
+                    ui.painter().line_segment([Pos2::new(x, ly), Pos2::new(x + cw, ly)], Stroke::new(1.0, PAPER_RULE));
+                }
+            }
             // Page numbers at the foot of each page.
             for k in 1..=st.pages {
                 ui.painter().text(
@@ -1529,6 +1545,9 @@ fn draw_page_article(
     }
     ui.add_space(10.0);
 
+    // Pages 2+ repeat the header line at their top; content starts below it.
+    let hdr_h = running_header_h(&exam.header, bp);
+
     // Numbers: matching consumes one number per left item; everything else one.
     // Keeps the preview numbering identical to the printed exam.
     let mut numbers: Vec<u32> = Vec::with_capacity(items.len());
@@ -1577,14 +1596,8 @@ fn draw_page_article(
         // Keep a question off the dashed page-break line: when last frame's height says it
         // would cross the break, start it at the top of the next page (as the print does).
         let h_id = egui::Id::new(("qs_item_h", &item.question_id));
-        let paper_top = ctx.data(|d| d.get_temp::<f32>(egui::Id::new("qs_paper_top")));
-        if let (Some(h), Some(p0)) = (ctx.data(|d| d.get_temp::<f32>(h_id)), paper_top) {
-            let top = ui.cursor().top();
-            let page = ((top - p0) / PAGE_H).floor().max(0.0);
-            let page_end = p0 + (page + 1.0) * PAGE_H - side * 0.8;
-            if top + h > page_end && h < PAGE_H - side * 1.85 {
-                ui.add_space(page_end + side * 0.8 + side * 1.05 - top);
-            }
+        if let Some(h) = ctx.data(|d| d.get_temp::<f32>(h_id)) {
+            keep_on_page(ui, h, side, hdr_h);
         }
         let rect = draw_item(app, ui, ctx, exam_id, st, i, number, q.as_ref(), cw, bp, side);
         ctx.data_mut(|d| d.insert_temp(h_id, rect.height()));
@@ -1611,10 +1624,12 @@ fn draw_page_article(
         return;
     }
     ui.add_space(bp * 1.2);
+    keep_on_page(ui, bp * 1.6 + 6.0 + bp * 2.1, side, hdr_h);
     ui.add(egui::Label::new(ptext("Answer Section", bp + 1.0, true)).wrap());
     ui.add_space(6.0);
     let cell_w = (cw / 4.0).min(130.0);
     for chunk in cells.chunks(4) {
+        keep_on_page(ui, bp * 2.1, side, hdr_h);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = Vec2::ZERO;
             for n in chunk {
@@ -1628,6 +1643,36 @@ fn draw_page_article(
                 );
             }
         });
+    }
+}
+
+/// Height the repeated header line (Name / Class / Date) takes at the top of pages 2+;
+/// 0 when the exam has no header.
+fn running_header_h(header: &str, bp: f32) -> f32 {
+    if header.trim().is_empty() { 0.0 } else { bp * 1.45 + bp * 0.6 }
+}
+
+/// Where page `k` (0-based) of the preview starts its content, relative to the paper top:
+/// the top margin, plus the repeated header on pages after the first.
+fn page_content_top(k: f32, side: f32, hdr_h: f32) -> f32 {
+    k * PAGE_H + side * 1.05 + if k >= 1.0 { hdr_h } else { 0.0 }
+}
+
+/// Keeps a block `h` tall off the dashed page-break line and out of the repeated header:
+/// when it would cross into the bottom margin it starts at the next page's content top
+/// (as the print does); when the cursor sits in a page's header band it moves below it.
+fn keep_on_page(ui: &mut egui::Ui, h: f32, side: f32, hdr_h: f32) {
+    let Some(p0) = ui.ctx().data(|d| d.get_temp::<f32>(egui::Id::new("qs_paper_top"))) else { return };
+    let top = ui.cursor().top();
+    let page = ((top - p0) / PAGE_H).floor().max(0.0);
+    let start = p0 + page_content_top(page, side, hdr_h);
+    if top < start {
+        ui.add_space(start - top);
+        return;
+    }
+    let page_end = p0 + (page + 1.0) * PAGE_H - side * 0.8;
+    if top + h > page_end && h < PAGE_H - side * 1.85 - hdr_h {
+        ui.add_space(p0 + page_content_top(page + 1.0, side, hdr_h) - top);
     }
 }
 
@@ -1675,11 +1720,26 @@ fn margin_button(ui: &mut egui::Ui, id: egui::Id, center: Pos2, kind: u8, show: 
                 p.line_segment([c + Vec2::new(-4.0, 1.5), c + Vec2::new(0.0, -2.5)], s);
                 p.line_segment([c + Vec2::new(0.0, -2.5), c + Vec2::new(4.0, 1.5)], s);
             }
+            3 => {
+                // Duplicate: two overlapping sheets.
+                let back = Rect::from_center_size(c + Vec2::new(-1.6, -1.6), Vec2::new(7.0, 8.5));
+                let front = Rect::from_center_size(c + Vec2::new(1.6, 1.6), Vec2::new(7.0, 8.5));
+                p.rect_stroke(back, CornerRadius::same(1), Stroke::new(1.3, col), StrokeKind::Middle);
+                p.rect_filled(front, CornerRadius::same(1), theme::paper());
+                p.rect_stroke(front, CornerRadius::same(1), Stroke::new(1.3, col), StrokeKind::Middle);
+            }
             _ => {
                 p.line_segment([c + Vec2::new(-4.0, -1.5), c + Vec2::new(0.0, 2.5)], s);
                 p.line_segment([c + Vec2::new(0.0, 2.5), c + Vec2::new(4.0, -1.5)], s);
             }
         }
+        let tip = match kind {
+            0 => "Remove from exam",
+            1 => "Move up",
+            3 => "Duplicate question",
+            _ => "Move down",
+        };
+        resp.clone().on_hover_text(tip);
     }
     show && resp.clicked()
 }
@@ -1762,6 +1822,13 @@ fn draw_item(
         }
         if margin_button(ui, ui.id().with(("it_dn", i)), Pos2::new(rx, y0 + 40.0), 2, show) {
             shift_item(app, exam_id, i, 1);
+        }
+        // Duplicate sits in the left gutter under the grip, inside even a one-line
+        // question's height (the right rail is already three buttons tall).
+        if margin_button(ui, ui.id().with(("it_dup", i)), gc + Vec2::new(0.0, 24.0), 3, show) {
+            if let Some(at) = duplicate_item(app, exam_id, i) {
+                st.just_added = Some((at, ctx.input(|t| t.time)));
+            }
         }
     }
     if dragging_this {
@@ -1971,6 +2038,26 @@ fn remove_item(app: &mut crate::App, exam_id: &Id, i: usize) {
         }
         items
     });
+}
+
+/// Duplicate (Test Parrot's per-question menu): copies item `i`'s question in its bank
+/// (right after the original) and puts the copy on the page right after item `i`, as one
+/// undo step for the page. Returns the copy's item index.
+fn duplicate_item(app: &mut crate::App, exam_id: &Id, i: usize) -> Option<usize> {
+    let item = app.store.exam(exam_id)?.items.get(i)?.clone();
+    let bank = app.store.bank_mut(&item.bank_id)?;
+    let new_id = crate::bankui::duplicate_in_bank(bank, &item.question_id)?;
+    app.store.save_banks();
+    let bank_id = item.bank_id.clone();
+    apply_items_fn(app, exam_id, |items| with_copy_after(items, i, &bank_id, &new_id));
+    Some(i + 1)
+}
+
+/// `items` with a new item for (`bank_id`, `question_id`) inserted after index `i`.
+fn with_copy_after(mut items: Vec<ExamItem>, i: usize, bank_id: &Id, question_id: &Id) -> Vec<ExamItem> {
+    let at = (i + 1).min(items.len());
+    items.insert(at, ExamItem { bank_id: bank_id.clone(), question_id: question_id.clone() });
+    items
 }
 
 fn shift_item(app: &mut crate::App, exam_id: &Id, i: usize, dir: i32) {
@@ -3727,5 +3814,28 @@ mod stem_ui_tests {
         assert!(needs_rich("the *most* one"));
         assert!(needs_rich("H_{2}O"));
     }
-}
 
+    #[test]
+    fn later_pages_reserve_room_for_the_repeated_header() {
+        let bp = 11.0 * PT;
+        assert_eq!(running_header_h("", bp), 0.0);
+        assert_eq!(running_header_h("   ", bp), 0.0);
+        let h = running_header_h("Name: ____", bp);
+        assert!(h > bp, "the header band is at least a line tall");
+        assert_eq!(page_content_top(0.0, 30.0, h), 30.0 * 1.05, "page 1: header is part of the body");
+        assert_eq!(page_content_top(1.0, 30.0, h), PAGE_H + 30.0 * 1.05 + h);
+        assert_eq!(page_content_top(2.0, 30.0, 0.0), 2.0 * PAGE_H + 30.0 * 1.05);
+    }
+
+    #[test]
+    fn duplicate_puts_the_copy_right_after_the_item() {
+        let it = |q: &str| ExamItem { bank_id: "b".into(), question_id: q.into() };
+        let out = with_copy_after(vec![it("a"), it("b"), it("c")], 1, &"b".to_string(), &"b2".to_string());
+        let ids: Vec<&str> = out.iter().map(|x| x.question_id.as_str()).collect();
+        assert_eq!(ids, ["a", "b", "b2", "c"]);
+        let out = with_copy_after(vec![it("a")], 0, &"b".to_string(), &"a2".to_string());
+        assert_eq!(out[1].question_id, "a2");
+        let out = with_copy_after(Vec::new(), 3, &"b".to_string(), &"z".to_string());
+        assert_eq!(out.len(), 1, "an out-of-range index appends");
+    }
+}

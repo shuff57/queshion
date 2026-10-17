@@ -4297,10 +4297,14 @@ fn shows_title(p: &Params, mode_key: &str, text_key: &str) -> bool {
 /// Layout shared with the drag handles (math_plot::box_plot).
 pub(super) fn box_geom(p: &Params) -> Option<BoxG> {
     let sets: Vec<(usize, [f64; 5], Vec<f64>)> = (0..4).filter_map(|i| box_set(p, i).map(|(f, o)| (i, f, o))).collect();
-    if sets.is_empty() { return None; }
     let (mut lo, mut hi) = (f64::MAX, f64::MIN);
     for (_, f, o) in &sets { for v in f.iter().chain(o.iter()) { lo = lo.min(*v); hi = hi.max(*v); } }
-    let (amin, amax, step) = if p.b("auto") {
+    // no data: a bare number line for students to draw on (the reference's blank box plot,
+    // 0 to 10 by 1 when the line is automatic), with one empty row above it
+    let blank = sets.is_empty();
+    let (amin, amax, step) = if blank && p.b("auto") {
+        (0.0, 10.0, 1.0)
+    } else if p.b("auto") {
         let st = nice_step((hi - lo).max(1e-6));
         ((lo / st).floor() * st - if lo % st == 0.0 { st } else { 0.0 }, (hi / st).ceil() * st + if hi % st == 0.0 { st } else { 0.0 }, st)
     } else { (p.f("axis_min"), p.f("axis_max").max(p.f("axis_min") + 1e-3), p.f("axis_step").max(1e-3)) };
@@ -4308,8 +4312,9 @@ pub(super) fn box_geom(p: &Params) -> Option<BoxG> {
     let w = 680.0;
     let top = if shows_title(p, "title_mode", "title") { 46.0 } else { 20.0 };
     let rowh = 84.0;
-    let ay = top + rowh * sets.len() as f64 + 6.0;
-    let h = top + rowh * sets.len() as f64 + 62.0 + if shows_title(p, "axis_title_mode", "axis_title") { 22.0 } else { 0.0 };
+    let rows = sets.len().max(1) as f64;
+    let ay = top + rowh * rows + 6.0;
+    let h = top + rowh * rows + 62.0 + if shows_title(p, "axis_title_mode", "axis_title") { 22.0 } else { 0.0 };
     Some(BoxG { sets, amin, amax, step, x0: if named { 110.0 } else { 40.0 }, x1: w - 36.0, top, rowh, w, h, ay })
 }
 
@@ -4534,9 +4539,9 @@ fn mode_title(d: &mut Doc, mode: &str, x: f64, y: f64, text: &str, size: f64) {
 fn mapping_diagram_render(p: &Params) -> String {
     let MapData { ins, outs, pairs, .. } = mapping_parse(p);
     let pairs: Vec<(String, String)> = pairs.into_iter().map(|q| (q.a, q.b)).collect();
-    if ins.is_empty() && outs.is_empty() { return msg("Enter inputs and outputs"); }
     let fs = lsz(p);
-    let rows = ins.len().max(outs.len()).max(1) as f64;
+    // no pairs: two empty ovals for students to fill in (the reference's blank diagram)
+    let rows = if ins.is_empty() && outs.is_empty() { 4.0 } else { ins.len().max(outs.len()).max(1) as f64 };
     let spacing = 42.0;
     let has_title = p.s("title_mode") == "Text" || p.s("title_mode") == "Blank line";
     let top = if has_title { 40.0 } else { 0.0 };
@@ -5218,6 +5223,37 @@ pub fn handles(id: &str, p: &Params, size: (f64, f64)) -> Option<Vec<interact::H
     super::math_plot::handles(id, p, size).or_else(|| super::math_geo::handles(id, p, size))
 }
 
+/// Solids' "Shading" choice: Tinted (the shaded faces drawn so far) or White, the reference's
+/// black-and-white look. Saved solids without the key keep their tint.
+fn with_solid_fill(mut v: Vec<ParamDef>) -> Vec<ParamDef> {
+    v.push(ParamDef::choice("fill", "Shading", &["Tinted", "White"], "Tinted"));
+    v
+}
+
+/// White shading: every light tint (the face and cap fills, all channels >= 0xc0) becomes white.
+/// Ink, dashed hidden edges, black text and white label halos are left as drawn.
+fn solid_fill(svg: String, p: &Params) -> String {
+    if p.s("fill") != "White" {
+        return svg;
+    }
+    let mut out = String::with_capacity(svg.len());
+    let mut rest = svg.as_str();
+    while let Some(i) = rest.find("=\"#") {
+        let (head, tail) = rest.split_at(i + 3);
+        out.push_str(head);
+        let hex = tail.get(..6).filter(|h| h.chars().all(|c| c.is_ascii_hexdigit()) && tail[6..].starts_with('"'));
+        let light = hex.is_some_and(|h| (0..3).all(|k| u8::from_str_radix(&h[k * 2..k * 2 + 2], 16).is_ok_and(|c| c >= 0xc0)));
+        match hex {
+            Some(_) if light => out.push_str("ffffff"),
+            Some(h) => out.push_str(h),
+            None => {}
+        }
+        rest = if hex.is_some() { &tail[6..] } else { tail };
+    }
+    out.push_str(rest);
+    out
+}
+
 pub fn defs() -> Vec<FigureDef> {
     let f = |id, title, blurb, params: fn() -> Vec<ParamDef>, render: fn(&Params) -> String| FigureDef { id, subject: Subject::Math, title, blurb, params, render };
     vec![
@@ -5232,11 +5268,11 @@ pub fn defs() -> Vec<FigureDef> {
         f("regular-polygon", "Regular Polygon", "Any regular polygon from 3 to 20 sides, sized by side, radius or apothem.", regular_polygon_params, regular_polygon_render),
         f("angles", "Angles", "Single, adjacent, straight-line, around-a-point or vertical angles with measures.", angles_params, angles_render),
         f("parallel-lines", "Parallel Lines and Transversal", "Parallel lines cut by a transversal with chosen angles marked in degrees or by number.", parallel_lines_params, parallel_lines_render),
-        f("prism", "Prism", "A prism on a rectangle, triangle or regular-polygon base, right or oblique, with dashed hidden edges.", prism_params, prism_render),
-        f("cylinder", "Cylinder", "A cylinder, right or oblique, with radius or diameter and height.", cylinder_params, cylinder_render),
-        f("pyramid", "Pyramid", "A pyramid on a rectangle or regular-polygon base with optional height and slant height.", pyramid_params, pyramid_render),
-        f("cone", "Cone", "A cone, right or oblique, with radius or diameter, height and slant height.", cone_params, cone_render),
-        f("sphere", "Sphere", "A sphere or hemisphere with its radius or diameter.", sphere_params, sphere_render),
+        f("prism", "Prism", "A prism on a rectangle, triangle or regular-polygon base, right or oblique, with dashed hidden edges.", || with_solid_fill(prism_params()), |p| solid_fill(prism_render(p), p)),
+        f("cylinder", "Cylinder", "A cylinder, right or oblique, with radius or diameter and height.", || with_solid_fill(cylinder_params()), |p| solid_fill(cylinder_render(p), p)),
+        f("pyramid", "Pyramid", "A pyramid on a rectangle or regular-polygon base with optional height and slant height.", || with_solid_fill(pyramid_params()), |p| solid_fill(pyramid_render(p), p)),
+        f("cone", "Cone", "A cone, right or oblique, with radius or diameter, height and slant height.", || with_solid_fill(cone_params()), |p| solid_fill(cone_render(p), p)),
+        f("sphere", "Sphere", "A sphere or hemisphere with its radius or diameter.", || with_solid_fill(sphere_params()), |p| solid_fill(sphere_render(p), p)),
         f("box-plot", "Box Plot", "A box plot from a data list or five-number summary; compare two sets.", box_plot_params, box_plot_render),
         f("mapping-diagram", "Mapping Diagram", "Input and output sets joined by arrows, from ordered pairs.", mapping_diagram_params, mapping_diagram_render),
         f("ruler-reading", "Ruler Reading", "A metric or inch ruler with an object to measure at any position and length.", length_reading_params, length_reading_render),
@@ -5244,6 +5280,30 @@ pub fn defs() -> Vec<FigureDef> {
 }
 
 // ───────────────────────── tests ─────────────────────────
+
+#[cfg(test)]
+mod solid_fill_tests {
+    use super::*;
+
+    /// Solids are tinted by default (saved figures unchanged) and white on request.
+    #[test]
+    fn solids_white_shading() {
+        for id in ["prism", "cylinder", "pyramid", "cone", "sphere"] {
+            let d = defs().into_iter().find(|d| d.id == id).unwrap();
+            let mut p = Params::defaults(&(d.params)());
+            assert_eq!(p.s("fill"), "Tinted", "{id}");
+            let tinted = (d.render)(&p);
+            p.set_s("fill", "White");
+            let white = (d.render)(&p);
+            assert_ne!(tinted, white, "{id}: white shading changed nothing");
+            for h in ["#d9e7f6", "#e3eef9", "#f4f9ff"] {
+                assert!(!white.contains(h), "{id}: {h} left in white shading");
+            }
+            assert!(white.contains(INK), "{id}: edges kept");
+            to_png(&white, 0.5).unwrap();
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

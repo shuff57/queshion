@@ -17,6 +17,7 @@ pub mod math_geo;
 pub mod math_plot;
 pub mod physics;
 pub mod sections;
+pub mod start;
 pub mod svg;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -147,6 +148,25 @@ pub struct FigureDef {
     pub params: fn() -> Vec<ParamDef>,
     /// Pure: params -> standalone SVG document string (white background, fixed viewBox).
     pub render: fn(&Params) -> String,
+}
+
+/// Other subject tabs a figure is listed under besides its own, as the reference sites
+/// cross-link them (physics links the coordinate grid and thermometer, biology the pH reading,
+/// chemistry the spring scale, math the vector diagram).
+pub fn also_listed(id: &str) -> &'static [Subject] {
+    match id {
+        "spring-scale" => &[Subject::Chemistry],
+        "vector-diagram" => &[Subject::Math],
+        "coordinate-grid" => &[Subject::Physics],
+        "temperature-reading" => &[Subject::Physics],
+        "ph-reading" => &[Subject::Biology],
+        _ => &[],
+    }
+}
+
+/// Whether `def` shows under the `s` subject tab (its own subject or a cross-listing).
+pub fn listed_under(def: &FigureDef, s: Subject) -> bool {
+    def.subject == s || also_listed(def.id).contains(&s)
 }
 
 pub fn registry() -> Vec<FigureDef> {
@@ -296,6 +316,36 @@ pub fn migrate(id: &str, spec: &crate::model::FigureSpec, p: &mut Params) {
     math::migrate(id, spec, p)
 }
 
+/// The param a "Random" button sits under (the reference's Random reading on instrument figures).
+pub fn random_key(id: &str) -> Option<&'static str> {
+    match id {
+        "spring-scale" => Some("reading"),
+        "micropipette-reading" => Some("volume"),
+        _ => None,
+    }
+}
+
+/// A uniform number in [0, 1) from `seed` (splitmix64), for the Random reading buttons.
+pub fn unit_random(seed: u64) -> f64 {
+    let mut z = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^= z >> 31;
+    (z >> 11) as f64 / (1u64 << 53) as f64
+}
+
+/// Sets a random reading the instrument can show (the reference's "Random" button); false when
+/// the figure has none.
+pub fn random_reading(id: &str, p: &mut Params, seed: u64) -> bool {
+    physics::random_reading(id, p, seed) || biology::random_reading(id, p, seed)
+}
+
+/// The reference's "Classic setups" dropdown (population growth, Punnett square, pedigree):
+/// named starting points like `Example`, applied over the plain defaults.
+pub fn classic_setups(id: &str) -> Vec<Example> {
+    biology::classic_setups(id).unwrap_or_default()
+}
+
 /// A named starting point for a figure ("Start from an example"): parameter overrides on top of
 /// the defaults. Each subject module contributes via `examples(id) -> Option<Vec<Example>>`.
 #[derive(Clone, Debug)]
@@ -312,10 +362,22 @@ pub fn examples_for(id: &str) -> Vec<Example> {
         .unwrap_or_default()
 }
 
-/// Params for `def`: its defaults overridden by a JSON object of strings, bools and numbers
+/// The params a figure opens with on the Figures tab: its defaults plus `start::overrides`
+/// (the reference generators' first screen).
+pub fn start_params(def: &FigureDef) -> Params {
+    let defs = (def.params)();
+    let mut p = Params::defaults(&defs);
+    for (k, v) in start::overrides(def.id) {
+        p.0.insert(k.to_string(), v);
+    }
+    p.normalize(&defs, false);
+    p
+}
+
+/// Params for `def`: its opening state (`start_params`) overridden by a JSON object of strings, bools and numbers
 /// (used by the headless figure hooks).
 pub fn params_from_json(def: &FigureDef, over: &serde_json::Value) -> Params {
-    let mut p = Params::defaults(&(def.params)());
+    let mut p = start_params(def);
     for (k, v) in over.as_object().into_iter().flatten() {
         match v {
             serde_json::Value::Bool(b) => p.set_b(k, *b),
@@ -384,6 +446,93 @@ pub fn validate_svg(svg: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     /// Every registered figure must render with default params into a rasterizable SVG.
+    /// The reference cross-lists five generators on a second subject site.
+    #[test]
+    fn cross_listed_figures() {
+        let reg = registry();
+        let under = |s: Subject| reg.iter().filter(|d| listed_under(d, s)).map(|d| d.id).collect::<Vec<_>>();
+        assert!(under(Subject::Chemistry).contains(&"spring-scale"));
+        assert!(under(Subject::Math).contains(&"vector-diagram"));
+        assert!(under(Subject::Physics).contains(&"coordinate-grid"));
+        assert!(under(Subject::Physics).contains(&"temperature-reading"));
+        assert!(under(Subject::Biology).contains(&"ph-reading"));
+        // still listed under their own subject, and every cross-listed id exists
+        assert!(under(Subject::Physics).contains(&"spring-scale"));
+        for id in ["spring-scale", "vector-diagram", "coordinate-grid", "temperature-reading", "ph-reading"] {
+            assert!(reg.iter().any(|d| d.id == id), "{id}");
+        }
+    }
+
+    #[test]
+    fn random_readings_stay_on_the_instrument() {
+        let reg = registry();
+        for (id, key) in [("spring-scale", "reading"), ("micropipette-reading", "volume")] {
+            assert_eq!(random_key(id), Some(key));
+            let def = reg.iter().find(|d| d.id == id).unwrap();
+            let mut seen = std::collections::BTreeSet::new();
+            for seed in 0..200u64 {
+                let mut p = Params::defaults(&(def.params)());
+                assert!(random_reading(id, &mut p, seed));
+                let v = p.f(key);
+                seen.insert((v * 1000.0) as i64);
+                match id {
+                    "spring-scale" => {
+                        assert!((0.0..=10.0).contains(&v), "{v}");
+                        assert!(((v * 100.0).round() - v * 100.0).abs() < 1e-6, "2 decimals: {v}");
+                    }
+                    _ => {
+                        assert!((2.0..=20.0).contains(&v), "{v}");
+                        assert!(((v * 10.0).round() - v * 10.0).abs() < 1e-6, "0.1 µL steps: {v}");
+                    }
+                }
+            }
+            assert!(seen.len() > 50, "{id}: readings should vary");
+        }
+        // larger instruments follow their own capacity / range
+        let ss = reg.iter().find(|d| d.id == "spring-scale").unwrap();
+        let mut p = Params::defaults(&(ss.params)());
+        p.set_s("cap", "50 N");
+        let hi = (0..100).map(|s| { random_reading("spring-scale", &mut p, s); p.f("reading") }).fold(0.0, f64::max);
+        assert!(hi > 10.0 && hi <= 50.0, "{hi}");
+        let pip = reg.iter().find(|d| d.id == "micropipette-reading").unwrap();
+        let mut p = Params::defaults(&(pip.params)());
+        p.set_s("size", "1000 µL");
+        for s in 0..50 {
+            random_reading("micropipette-reading", &mut p, s);
+            let v = p.f("volume");
+            assert!((100.0..=1000.0).contains(&v) && (v / 10.0).fract().abs() < 1e-9, "{v}");
+        }
+        let mut q = Params::default();
+        assert!(!random_reading("waves", &mut q, 1));
+    }
+
+    #[test]
+    fn classic_setups_match_the_reference_lists() {
+        let names = |id: &str| classic_setups(id).iter().map(|e| e.name).collect::<Vec<_>>();
+        assert_eq!(names("population-growth").len(), 10);
+        assert_eq!(names("punnett-square").len(), 6);
+        assert_eq!(names("pedigree").len(), 6);
+        assert_eq!(names("population-growth")[0], "Yeast in a flask");
+        assert!(names("pedigree").contains(&"Albinism"));
+        assert!(names("pedigree").contains(&"Vitamin D–resistant rickets"));
+        assert!(classic_setups("waves").is_empty());
+        // every setup names real params with in-range values and renders
+        for d in registry() {
+            let defs = (d.params)();
+            for ex in classic_setups(d.id) {
+                let mut p = Params::defaults(&defs);
+                for (k, v) in &ex.params {
+                    assert!(defs.iter().any(|x| x.key == *k), "{} / {}: unknown key {k}", d.id, ex.name);
+                    p.0.insert(k.to_string(), v.clone());
+                }
+                let before = p.clone();
+                p.normalize(&defs, false);
+                assert_eq!(format!("{:?}", before.0), format!("{:?}", p.0), "{} / {}: out of range", d.id, ex.name);
+                to_png(&(d.render)(&p), 0.4).unwrap_or_else(|e| panic!("{} / {}: {e}", d.id, ex.name));
+            }
+        }
+    }
+
     #[test]
     fn all_figures_render_with_defaults() {
         for d in registry() {

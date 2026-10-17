@@ -218,6 +218,25 @@ mod tests {
         assert_eq!(item_of("mark_h"), None);
     }
 
+    /// No figure gets a stray "Item 2" section from a key that only looks like a per-item key
+    /// (population growth's `y2_max`), and population growth opens on its Population card.
+    #[test]
+    fn no_stray_item_sections() {
+        for d in super::super::registry() {
+            let defs = (d.params)();
+            for s in sections(d.id, &defs, None) {
+                assert!(!s.title.starts_with("Item "), "{}: stray section {}", d.id, s.title);
+            }
+        }
+        let pg = super::super::registry().into_iter().find(|d| d.id == "population-growth").unwrap();
+        let defs = (pg.params)();
+        let secs = sections(pg.id, &defs, None);
+        assert_eq!(secs[0].title, "Population");
+        let yaxis = secs.iter().find(|s| s.title == "y-axis").unwrap();
+        assert!(yaxis.items.iter().any(|&i| defs[i].key == "y2_max"));
+        assert!(secs.iter().all(|s| s.title != "More options"), "every population param has a reference section");
+    }
+
     #[test]
     fn every_param_lands_in_exactly_one_section() {
         for d in super::super::registry() {

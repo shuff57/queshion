@@ -96,6 +96,24 @@ fn norm(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
+/// What "Skip duplicates" compares: the whole question — stem AND its kind's content
+/// (answers and which are correct, pairs, accepted blanks, every multipart part with its
+/// own stem and table) — whitespace- and case-insensitively. Two multiparts sharing a
+/// lead-in but with different parts are not duplicates.
+fn dup_key(q: &crate::model::Question) -> String {
+    fn norm_all(v: &mut serde_json::Value) {
+        match v {
+            serde_json::Value::String(s) => *s = norm(s),
+            serde_json::Value::Array(a) => a.iter_mut().for_each(norm_all),
+            serde_json::Value::Object(o) => o.values_mut().for_each(norm_all),
+            _ => {}
+        }
+    }
+    let mut kind = serde_json::to_value(&q.kind).unwrap_or_default();
+    norm_all(&mut kind);
+    format!("{}\u{1}{}", norm(&q.stem), kind)
+}
+
 // ---------- reading sources ----------
 
 /// Plain text of a .docx: paragraphs become lines, empty paragraphs keep the blank
@@ -520,14 +538,14 @@ fn dup_flags(app: &crate::App, st: &State) -> Vec<Vec<bool>> {
     if let Some(id) = &st.dest {
         if let Some(b) = app.store.bank(id) {
             for q in &b.questions {
-                seen.insert(norm(&q.stem));
+                seen.insert(dup_key(q));
             }
         }
     }
     st.sources
         .iter()
         .map(|s| match &s.doc {
-            Some(d) => d.questions.iter().map(|q| !seen.insert(norm(&q.stem))).collect(),
+            Some(d) => d.questions.iter().map(|q| !seen.insert(dup_key(q))).collect(),
             None => Vec::new(),
         })
         .collect()
@@ -1529,6 +1547,24 @@ mod tests {
         assert_eq!(t, "TF\nA & B is true\nT\n");
         let doc = crate::formats::detect_and_parse(t.as_bytes(), "x.docx").unwrap();
         assert_eq!(doc.questions.len(), 1);
+    }
+
+    #[test]
+    fn dup_key_compares_full_content_not_lead_in() {
+        use crate::formats::make_question;
+        use crate::model::{Kind, Part, PartKind};
+        let multi = |a: &str| {
+            make_question(
+                "Use the table.\n| a | b |".into(),
+                Kind::Multipart { parts: vec![Part { stem: a.into(), kind: PartKind::Short { sample: String::new() } }] },
+            )
+        };
+        assert_ne!(dup_key(&multi("NH3")), dup_key(&multi("CO2")), "same lead-in, different parts");
+        assert_eq!(dup_key(&multi("CO2")), dup_key(&multi("  co2 ")), "whitespace/case only");
+        let tf = |s: &str, c: bool| make_question(s.into(), Kind::Tf { correct: c });
+        assert_eq!(dup_key(&tf("The sun is a star.", true)), dup_key(&tf("The  Sun is a star.", true)));
+        assert_ne!(dup_key(&tf("The sun is a star.", true)), dup_key(&tf("The sun is a star.", false)));
+        assert_ne!(dup_key(&tf("Same stem", true)), dup_key(&make_question("Same stem".into(), Kind::Short { sample: String::new() })));
     }
 
     #[test]
