@@ -249,6 +249,9 @@ pub struct Workspace {
     spec_err: Option<String>,
     /// Canvas editor of the composite-shape figure.
     comp: composite_canvas::Canvas,
+    /// Where the last preview drew the figure: top-left on screen and points per SVG unit
+    /// (lets tests aim synthetic pointer events at a label).
+    preview_map: Option<(egui::Pos2, f64)>,
 }
 
 /// A saved parameter set for one figure ("Save preset"), kept in `figure-presets.json`.
@@ -910,6 +913,7 @@ impl Workspace {
         let to_screen = |p: (f64, f64)| egui::pos2(img.left() + (p.0 * k) as f32, img.top() + (p.1 * k) as f32);
         let to_svg = |p: egui::Pos2| ((p.x - img.left()) as f64 / k, (p.y - img.top()) as f64 / k);
         let _ = ch;
+        self.preview_map = Some((img.min, k));
         let pdefs = (def.params)();
 
         self.live = false;
@@ -917,16 +921,19 @@ impl Workspace {
             return;
         }
         let mut hs = def.handles(&self.params, (cw, ch));
-        // Zones first so knobs on top win the hit test.
-        hs.sort_by_key(|h| h.shape != Shape::Zone);
+        // Zones first so knobs on top win the hit test; movable labels last of all, so a press on
+        // a label's own text moves the label (their hit box is the text, not the 9 pt minimum).
+        hs.sort_by_key(|h| (h.label_drag, h.shape != Shape::Zone));
+        let has_labels = hs.iter().any(|h| h.label_drag);
         let painter = ui.painter_at(full.expand(8.0));
         let acc = theme::accent_col();
         let mut changed = false;
         let mut start_edit: Option<(&'static str, String)> = None;
         for (i, h) in hs.iter().enumerate() {
             let c = to_screen(h.pos);
-            let hx = (h.half.0 * k).max(9.0) as f32;
-            let hy = (h.half.1 * k).max(9.0) as f32;
+            let min_half = if h.label_drag { 5.0 } else { 9.0 };
+            let hx = (h.half.0 * k).max(min_half) as f32;
+            let hy = (h.half.1 * k).max(min_half) as f32;
             let hit = egui::Rect::from_center_size(c, Vec2::new(hx * 2.0, hy * 2.0));
             let sense = if h.drag.is_some() { Sense::click_and_drag() } else { Sense::click() };
             let r = ui.interact(hit, UiId::new(("fig_handle", si, i)), sense);
@@ -945,8 +952,10 @@ impl Workspace {
                     }
                 });
             }
+            // grab offset from where the press began (not where the drag threshold was crossed),
+            // so the dragged thing follows the pointer exactly
             if r.drag_started()
-                && let Some(ptr) = r.interact_pointer_pos()
+                && let Some(ptr) = ui.input(|i| i.pointer.press_origin()).or(r.interact_pointer_pos())
             {
                 let t = to_svg(ptr);
                 ui.data_mut(|d| d.insert_temp(UiId::new("fig_drag_off"), (t.0 - h.pos.0, t.1 - h.pos.1)));
@@ -1039,7 +1048,7 @@ impl Workspace {
             painter.text(
                 full.left_bottom() + Vec2::new(4.0, -2.0),
                 egui::Align2::LEFT_BOTTOM,
-                "Drag the dots to edit; double-click a label to rename it",
+                if has_labels { "Drag the dots to edit; drag a label to move it" } else { "Drag the dots to edit; double-click a label to rename it" },
                 egui::FontId::proportional(10.5),
                 theme::muted_col(),
             );
@@ -1082,6 +1091,7 @@ impl Workspace {
                         let id = ui.make_persistent_id(("fig_sec", def.id, sec.title.as_str()));
                         let summary = section_summary(&pdefs, &self.params, &sec.items);
                         let mut reset = false;
+                        let (mut reset_labels, mut straighten) = (false, false);
                         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, si_ < 2)
                             .show_header(ui, |ui| {
                                 ui.vertical(|ui| {
@@ -1104,7 +1114,22 @@ impl Workspace {
                                     self.classic_combo(ui, def.id);
                                 }
                                 for &i in &shown {
+                                    if pdefs[i].key == figures::labels::KEY {
+                                        // the offsets param is never typed: dragging sets it, this clears it
+                                        if figures::labels::any_moved(&self.params)
+                                            && ui.button(RichText::new("Reset label positions").size(12.0)).on_hover_text("Put every dragged label back in its own place").clicked()
+                                        {
+                                            reset_labels = true;
+                                        }
+                                        continue;
+                                    }
                                     param_control(ui, &pdefs[i], &mut self.params);
+                                    if pdefs[i].key == "rotate"
+                                        && figures::labels::turnable(def.id)
+                                        && ui.add_enabled(self.params.f("rotate") != 0.0, Button::new(RichText::new("Straighten").size(12.0))).on_hover_text("Turn the figure back to 0°").clicked()
+                                    {
+                                        straighten = true;
+                                    }
                                     if figures::random_key(def.id) == Some(pdefs[i].key)
                                         && ui.button(RichText::new("Random").size(12.0)).on_hover_text("Set a random reading").clicked()
                                     {
@@ -1114,6 +1139,16 @@ impl Workspace {
                                 }
                                 ui.add_space(4.0);
                             });
+                        if reset_labels {
+                            let mut p = self.params.clone();
+                            figures::labels::reset(&mut p);
+                            self.set_params_with_history(p);
+                        }
+                        if straighten {
+                            let mut p = self.params.clone();
+                            p.set_f("rotate", 0.0);
+                            self.set_params_with_history(p);
+                        }
                         if reset {
                             let start = figures::start_params(def);
                             for &i in &sec.items {
@@ -1610,7 +1645,7 @@ fn section_summary(defs: &[ParamDef], p: &Params, items: &[usize]) -> String {
     let mut parts: Vec<String> = Vec::new();
     for &i in items {
         let d = &defs[i];
-        if is_hidden(defs, p, d) {
+        if is_hidden(defs, p, d) || d.key == figures::labels::KEY {
             continue;
         }
         let part = match (&d.kind, p.0.get(d.key)) {
@@ -1627,6 +1662,9 @@ fn section_summary(defs: &[ParamDef], p: &Params, items: &[usize]) -> String {
         if parts.len() >= 3 {
             break;
         }
+    }
+    if items.iter().any(|&i| defs[i].key == figures::labels::KEY) && figures::labels::any_moved(p) {
+        parts.push("labels moved".into());
     }
     parts.join(" · ")
 }
@@ -2193,6 +2231,101 @@ mod tests {
         assert_eq!(hash_params(id, &ws.params), before, "undo restores the previous params");
         ws.step_history(false);
         assert_eq!(hash_params(id, &ws.params), after, "redo reapplies the pasted params");
+    }
+
+    /// Pointer drag on the figure preview from SVG point `a` to `b` (one press, four moves, release).
+    fn preview_drag(ctx: &egui::Context, ws: &mut Workspace, a: (f64, f64), b: (f64, f64)) {
+        let (o, k) = ws.preview_map.expect("preview drawn");
+        let sc = |q: (f64, f64)| egui::pos2(o.x + (q.0 * k) as f32, o.y + (q.1 * k) as f32);
+        let (pa, pb) = (sc(a), sc(b));
+        comp_frame(ctx, ws, vec![egui::Event::PointerMoved(pa)]);
+        comp_frame(ctx, ws, btn(pa, true));
+        for i in 1..=4 {
+            comp_frame(ctx, ws, vec![egui::Event::PointerMoved(pa + (pb - pa) * (i as f32 / 4.0))]);
+        }
+        comp_frame(ctx, ws, btn(pb, false));
+        comp_frame(ctx, ws, vec![]);
+    }
+
+    fn open_fig(id: &str) -> (egui::Context, Workspace) {
+        let ctx = egui::Context::default();
+        theme::setup(&ctx);
+        let mut ws = Workspace::new(false);
+        ws.select(find_def(id).unwrap().0);
+        for _ in 0..3 {
+            comp_frame(&ctx, &mut ws, vec![]);
+        }
+        (ctx, ws)
+    }
+
+    /// Dragging a label on the preview moves only that label (offset param), as one undo step,
+    /// on a flat shape and on a solid; vertex knobs keep working next to a moved label.
+    #[test]
+    fn dragging_a_label_moves_it_as_one_undo_step() {
+        for (id, lbl) in [("triangle", "s0"), ("rectangle", "v2"), ("cone", "h")] {
+            let (ctx, mut ws) = open_fig(id);
+            let def = &reg()[ws.sel.unwrap()];
+            let before = ws.params.clone();
+            let b = figures::labels::boxes(&(def.render)(&ws.params)).into_iter().find(|b| b.id == lbl).unwrap_or_else(|| panic!("{id}: no label {lbl}"));
+            let c = b.centre();
+            preview_drag(&ctx, &mut ws, c, (c.0 + 30.0, c.1 + 20.0));
+            let off = figures::labels::get(&ws.params, lbl);
+            assert!((off.0 - 30.0).abs() < 1.5 && (off.1 - 20.0).abs() < 1.5, "{id}: offset {off:?} ({})", ws.params.s(figures::labels::KEY));
+            for (k, v) in &before.0 {
+                if k != figures::labels::KEY {
+                    assert_eq!(ws.params.0.get(k), Some(v), "{id}: {k} changed by a label drag");
+                }
+            }
+            // the moved label is drawn (and hit-tested) at its new place
+            let moved = figures::labels::boxes(&(def.render)(&ws.params)).into_iter().find(|b| b.id == lbl).unwrap();
+            assert!((moved.centre().0 - c.0 - off.0).abs() < 1e-6);
+            ws.step_history(true);
+            assert_eq!(ws.params.s(figures::labels::KEY), "", "{id}: undo puts the label back");
+            assert!(ws.undo.is_empty(), "{id}: the whole drag is one undo step");
+            ws.step_history(false);
+            assert_eq!(figures::labels::get(&ws.params, lbl), off, "{id}: redo moves it again");
+        }
+        // a vertex knob next to a moved label still drags the vertex
+        let (ctx, mut ws) = open_fig("rectangle");
+        ws.params.set_s(figures::labels::KEY, "v2:20,-20");
+        for _ in 0..2 {
+            comp_frame(&ctx, &mut ws, vec![]);
+        }
+        let def = &reg()[ws.sel.unwrap()];
+        let hs = def.handles(&ws.params, ws.canvas);
+        let knob = hs.iter().find(|h| !h.label_drag && h.tip.contains("width")).expect("width knob").pos;
+        let ab = ws.params.s("m_ab").to_string();
+        preview_drag(&ctx, &mut ws, knob, (knob.0 - 60.0, knob.1));
+        assert_ne!(ws.params.s("m_ab"), ab, "the width knob still works");
+        assert_eq!(ws.params.s(figures::labels::KEY), "v2:20,-20", "and leaves the label alone");
+    }
+
+    /// Offsets survive a saved spec / preset round trip and reach every output (PNG and SVG).
+    #[test]
+    fn label_offsets_round_trip_and_reach_exports() {
+        for id in figures::labels::FIGURES {
+            let (i, def) = find_def(id).unwrap();
+            let mut p = figures::start_params(def);
+            let boxes = figures::labels::boxes(&(def.render)(&p));
+            assert!(!boxes.is_empty(), "{id}: no movable labels by default");
+            let first = boxes[0].id.clone();
+            figures::labels::set(&mut p, &first, (25.0, -15.0));
+            let spec = spec_for(id, &p);
+            let json = serde_json::to_string(&spec).unwrap();
+            let back: FigureSpec = serde_json::from_str(&json).unwrap();
+            let q = params_from_spec(def, &back);
+            assert_eq!(figures::labels::get(&q, &first), (25.0, -15.0), "{id}");
+            let ws = Workspace { sel: Some(i), params: q, ..Default::default() };
+            let out = ws.output().unwrap();
+            assert!(out.svg.as_ref().unwrap().contains(&format!(r#"data-lbl="{first}""#)), "{id}");
+            assert!(out.svg.as_ref().unwrap().contains("translate("), "{id}: svg export honours the offset");
+            let plain = Workspace { sel: Some(i), params: figures::start_params(def), ..Default::default() }.output().unwrap();
+            assert_ne!(out.png, plain.png, "{id}: png differs when a label is moved");
+        }
+        // an old spec without the key opens with no offsets
+        let def = find_def("triangle").unwrap().1;
+        let q = params_from_spec(def, &FigureSpec { id: "triangle".into(), params: Default::default() });
+        assert_eq!(q.s(figures::labels::KEY), "");
     }
 
     #[test]

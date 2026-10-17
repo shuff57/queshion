@@ -52,11 +52,14 @@ pub struct Handle {
     pub scroll: Option<ScrollFn>,
     /// Text param edited inline on double-click.
     pub edit: Option<&'static str>,
+    /// A movable figure label (`labels::handles`): hit only over its own text box and drawn on
+    /// top of the other handles, so a drag that starts on the label moves the label.
+    pub label_drag: bool,
 }
 
 impl Handle {
     fn base(pos: Pt, shape: Shape, cursor: Cursor, tip: &str) -> Self {
-        Handle { pos, half: (7.0, 7.0), shape, cursor, tip: tip.to_string(), drag: None, click: None, scroll: None, edit: None }
+        Handle { pos, half: (7.0, 7.0), shape, cursor, tip: tip.to_string(), drag: None, click: None, scroll: None, edit: None, label_drag: false }
     }
     /// Round knob that drives params when dragged.
     pub fn knob(pos: Pt, tip: &str, f: impl Fn(&mut Params, Pt) + Send + Sync + 'static) -> Self {
@@ -133,11 +136,17 @@ pub fn lerp_map(v: f64, a0: f64, a1: f64, b0: f64, b1: f64) -> f64 {
 /// Handles for figure `id` given its current params and canvas size (w, h) in SVG units.
 /// Each subject module contributes via its own `handles(id, p, size) -> Option<Vec<Handle>>`.
 pub fn handles_for(id: &str, p: &Params, size: Pt) -> Vec<Handle> {
-    super::physics::handles(id, p, size)
+    let mut hs = super::physics::handles(id, p, size)
         .or_else(|| super::biology::handles(id, p, size))
         .or_else(|| super::chemistry::handles(id, p, size))
         .or_else(|| super::math::handles(id, p, size))
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if super::labels::draggable(id)
+        && let Some(def) = super::registry().into_iter().find(|d| d.id == id)
+    {
+        hs.extend(super::labels::handles(def.render, p));
+    }
+    hs
 }
 
 #[cfg(test)]

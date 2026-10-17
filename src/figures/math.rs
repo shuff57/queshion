@@ -123,6 +123,13 @@ const MSERIF: &str = "Liberation Serif, Noto Serif, DejaVu Serif, Times New Roma
 /// Math-typeset label centred on (x, y): serif face; letters (variables, vertex names) italic;
 /// numbers, operators, multi-letter lowercase words (sin, cm) and the unit upright.
 fn mlabel(doc: &mut Doc, x: f64, y: f64, size: f64, s: &str, unit: &str) {
+    doc.raw(&mlabel_svg(x, y, size, s, unit));
+}
+/// `mlabel` as a movable label with id `id` (see `labels::wrap`).
+fn mlabel_id(doc: &mut Doc, id: &str, x: f64, y: f64, size: f64, s: &str, unit: &str) {
+    doc.raw(&super::labels::wrap(id, (x, y), super::labels::text_half(s, size), &mlabel_svg(x, y, size, s, unit)));
+}
+fn mlabel_svg(x: f64, y: f64, size: f64, s: &str, unit: &str) -> String {
     let chars: Vec<char> = s.chars().collect();
     let unit = unit.trim();
     let mut body = String::new();
@@ -137,7 +144,7 @@ fn mlabel(doc: &mut Doc, x: f64, y: f64, size: f64, s: &str, unit: &str) {
         if upright { body.push_str(&e); } else { body.push_str(&format!(r#"<tspan font-style="italic">{e}</tspan>"#)); }
         i = j;
     }
-    doc.raw(&format!(r##"<text x="{x:.2}" y="{:.2}" font-size="{size:.1}" text-anchor="middle" font-family="{MSERIF}" fill="#000">{body}</text>"##, y + size * 0.34));
+    format!(r##"<text x="{x:.2}" y="{:.2}" font-size="{size:.1}" text-anchor="middle" font-family="{MSERIF}" fill="#000">{body}</text>"##, y + size * 0.34)
 }
 
 /// Label-size toolbar setting (Large / Medium / Small) as a font scale.
@@ -197,7 +204,7 @@ fn vnames(p: &Params, n: usize) -> Vec<String> {
 }
 
 #[derive(Clone, Default)]
-struct Extra { a: Pt, b: Pt, label: Option<String>, t: f64, dash: &'static str, raw: bool }
+struct Extra { a: Pt, b: Pt, label: Option<String>, t: f64, dash: &'static str, raw: bool, /** movable-label id of its label (numbered when repeated) */ id: &'static str }
 type Mark = (Pt, Pt, Pt);
 
 struct PolySpec {
@@ -257,7 +264,7 @@ fn height_from(v: Pt, p: Pt, q: Pt, label: (Option<String>, bool), dash: &'stati
     let t = (v.0 - p.0) * u.0 + (v.1 - p.1) * u.1;
     let foot = (p.0 + u.0 * t, p.1 + u.1 * t);
     // label nearer the foot, where the shape is usually wider
-    let mut ex = vec![Extra { a: v, b: foot, label: label.0, t: 0.62, dash, raw: label.1 }];
+    let mut ex = vec![Extra { a: v, b: foot, label: label.0, t: 0.62, dash, raw: label.1, id: "h" }];
     if t < 0.0 { ex.push(Extra { a: p, b: foot, t: 0.5, dash, ..Default::default() }); }
     if t > l { ex.push(Extra { a: q, b: foot, t: 0.5, dash, ..Default::default() }); }
     let dir = if t < l / 2.0 { (foot.0 + u.0, foot.1 + u.1) } else { (foot.0 - u.0, foot.1 - u.1) };
@@ -268,6 +275,11 @@ fn height_label(p: &Params) -> (Option<String>, bool) { named_label(p.s("height_
 
 /// Renders a polygon spec: flip, side-at-bottom and turn, then marks and math-typeset labels.
 fn draw_poly(s: PolySpec, dec: i64, unit: &str) -> String {
+    // dragged labels keep their place relative to the shape when it is turned
+    let turn = s.rot;
+    super::labels::turned(turn, move || draw_poly_inner(s, dec, unit))
+}
+fn draw_poly_inner(s: PolySpec, dec: i64, unit: &str) -> String {
     let n = s.pts.len();
     let flip = s.flip;
     let fl = move |p: Pt| if flip { (-p.0, p.1) } else { p };
@@ -362,7 +374,7 @@ fn draw_poly(s: PolySpec, dec: i64, unit: &str) -> String {
             let bl = (b.0 * b.0 + b.1 * b.1).sqrt();
             if bl < 1e-6 { b = (-u.1, u.0); } else { b = (b.0 / bl, b.1 / bl); }
             let r = ar + 6.0 + 0.5 * (tw(&t, asz) * 0.85 * b.0.abs() + asz * b.1.abs()) + (40.0 - ang).max(0.0) * 0.5;
-            mlabel(&mut doc, v.0 + b.0 * r, v.1 + b.1 * r, asz, &t, unit);
+            mlabel_id(&mut doc, &format!("a{i}"), v.0 + b.0 * r, v.1 + b.1 * r, asz, &t, unit);
         }
     }
     // side labels
@@ -376,7 +388,7 @@ fn draw_poly(s: PolySpec, dec: i64, unit: &str) -> String {
             if nn.0 * (mid.0 - cen.0) + nn.1 * (mid.1 - cen.1) < 0.0 { nn = (-nn.0, -nn.1); }
             let marked = s.ticks.get(i).copied().unwrap_or(0) > 0 || s.arrows.get(i).copied().unwrap_or(0) > 0;
             let off = if marked { 12.0 } else { 9.0 } + 0.5 * (tw(&t, ssz) * 0.85 * nn.0.abs() + ssz * 0.9 * nn.1.abs());
-            mlabel(&mut doc, mid.0 + nn.0 * off, mid.1 + nn.1 * off, ssz, &t, unit);
+            mlabel_id(&mut doc, &format!("s{i}"), mid.0 + nn.0 * off, mid.1 + nn.1 * off, ssz, &t, unit);
         }
     }
     let ex_scr: Vec<(Pt, Pt)> = s.extras.iter().map(|e| (m.p(rot(e.a)), m.p(rot(e.b)))).collect();
@@ -401,17 +413,20 @@ fn draw_poly(s: PolySpec, dec: i64, unit: &str) -> String {
                 let sc = if ok { dmin } else { -1.0 };
                 if sc > best.0 { best = (sc, c); }
             }
-            mlabel(&mut doc, best.1 .0, best.1 .1, ssz, &txt, unit);
+            let base = if e.id.is_empty() { "x" } else { e.id };
+            let nth = s.extras[..ei].iter().filter(|o| o.label.is_some() && (if o.id.is_empty() { "x" } else { o.id }) == base).count();
+            let id = if nth == 0 && !e.id.is_empty() { base.to_string() } else { format!("{base}{nth}") };
+            mlabel_id(&mut doc, &id, best.1 .0, best.1 .1, ssz, &txt, unit);
         }
     }
     // free notes (centre name, ...)
-    for (at, dir, t) in &s.notes {
+    for (ni, (at, dir, t)) in s.notes.iter().enumerate() {
         let q = m.p(rot(*at));
         let d = rot_deg(fl(*dir), total);
         let l = (d.0 * d.0 + d.1 * d.1).sqrt().max(1e-9);
         let (dx, dy) = (d.0 / l, -d.1 / l);
         let r = 12.0 + 0.5 * (tw(t, ssz) * 0.85 * dx.abs() + ssz * dy.abs());
-        mlabel(&mut doc, q.0 + dx * r, q.1 + dy * r, ssz, t, unit);
+        mlabel_id(&mut doc, &format!("n{ni}"), q.0 + dx * r, q.1 + dy * r, ssz, t, unit);
     }
     // vertex letters
     if s.vlabels {
@@ -423,7 +438,7 @@ fn draw_poly(s: PolySpec, dec: i64, unit: &str) -> String {
             let bl = (b.0 * b.0 + b.1 * b.1).sqrt();
             if bl < 1e-6 { b = (u.1, -u.0); } else { b = (b.0 / bl, b.1 / bl); }
             let off = 10.0 + 0.5 * vsz * 0.75;
-            mlabel(&mut doc, v.0 + b.0 * off, v.1 + b.1 * off, vsz, &s.names[i], "");
+            mlabel_id(&mut doc, &format!("v{i}"), v.0 + b.0 * off, v.1 + b.1 * off, vsz, &s.names[i], "");
         }
     }
     doc.finish()
@@ -1214,7 +1229,7 @@ fn diagonals(p: &Params, pts: &[Pt], ex: &mut Vec<Extra>, mk: &mut Vec<Mark>) {
                 _ => None,
             }
         };
-        ex.push(Extra { a: pts[i], b: pts[j], label, t, dash, raw: true });
+        ex.push(Extra { a: pts[i], b: pts[j], label, t, dash, raw: true, id: if i == 0 { "ac" } else { "bd" } });
     }
     if ac && bd {
         let (u, w) = (unit_v(pts[0], pts[2]), unit_v(pts[1], pts[3]));
@@ -1331,7 +1346,7 @@ pub(crate) fn trapezoid_render(p: &Params) -> String {
             ex.extend(e);
             mk.extend(m);
         } else if from_d {
-            ex.push(Extra { a: (ab / 2.0, 0.0), b: (ab / 2.0, h), label: lab.0.clone(), t: 0.5, dash, raw: lab.1 });
+            ex.push(Extra { a: (ab / 2.0, 0.0), b: (ab / 2.0, h), label: lab.0.clone(), t: 0.5, dash, raw: lab.1, id: "h" });
             mk.push(((ab / 2.0, 0.0), (ab / 2.0, h), (ab, 0.0)));
         }
         if from_c && (c.0 - ab).abs() > 1e-9 {
@@ -1464,12 +1479,12 @@ pub(crate) fn regular_polygon_render(p: &Params) -> String {
     }
     if p.b("radius") {
         let (label, raw) = named_label(p.s("radius_label"), p.s("radius_text"), "r");
-        ex.push(Extra { a: o, b: pts[rad_at], label, t: 0.5, dash, raw });
+        ex.push(Extra { a: o, b: pts[rad_at], label, t: 0.5, dash, raw, id: "r" });
     }
     if p.b("apothem") {
         let mid = ((pts[0].0 + pts[1].0) / 2.0, (pts[0].1 + pts[1].1) / 2.0);
         let (label, raw) = named_label(p.s("apothem_label"), p.s("apothem_text"), "a");
-        ex.push(Extra { a: o, b: mid, label, t: 0.5, dash, raw });
+        ex.push(Extra { a: o, b: mid, label, t: 0.5, dash, raw, id: "ap" });
         mk.push((mid, o, pts[1]));
     }
     let cname = p.s("center_name").trim();
@@ -3099,18 +3114,20 @@ fn is_var(s: &str) -> bool {
     matches!(ch.next(), Some(c) if c.is_alphabetic()) && t.chars().count() <= 3 && t.chars().all(|c| c.is_alphanumeric() || c == '\'')
 }
 fn stw(s: &str, size: f64) -> f64 { s.chars().count() as f64 * size * 0.5 }
-fn sput(d: &mut Doc, x: f64, y: f64, text: &str, size: f64) {
+/// Solid label centred on (x, y). A non-empty `id` makes it a movable label (`labels::wrap`).
+fn sput(d: &mut Doc, id: &str, x: f64, y: f64, text: &str, size: f64) {
     let style = if is_var(text) { r#" font-style="italic""# } else { "" };
-    d.raw(&format!(r##"<text x="{x:.2}" y="{:.2}" font-size="{size}" text-anchor="middle" font-family="{SERIF}"{style} fill="#000" stroke="#fff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">{}</text>"##, y + size * 0.34, super::svg::esc(text)));
+    let t = format!(r##"<text x="{x:.2}" y="{:.2}" font-size="{size}" text-anchor="middle" font-family="{SERIF}"{style} fill="#000" stroke="#fff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">{}</text>"##, y + size * 0.34, super::svg::esc(text));
+    if id.is_empty() { d.raw(&t); } else { d.raw(&super::labels::wrap(id, (x, y), super::labels::text_half(text, size), &t)); }
 }
 /// Label beside screen segment a-b at fraction t, on the side away from `center`.
-fn sbeside(d: &mut Doc, a: Pt, b: Pt, t: f64, center: Pt, text: &str, size: f64) {
+fn sbeside(d: &mut Doc, id: &str, a: Pt, b: Pt, t: f64, center: Pt, text: &str, size: f64) {
     let m = (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t);
     let u = unit_v(a, b);
     let mut n = (-u.1, u.0);
     if n.0 * (m.0 - center.0) + n.1 * (m.1 - center.1) < 0.0 { n = (-n.0, -n.1); }
     let off = 7.0 + 0.5 * (stw(text, size) * n.0.abs() + size * 0.9 * n.1.abs());
-    sput(d, m.0 + n.0 * off, m.1 + n.1 * off, text, size);
+    sput(d, id, m.0 + n.0 * off, m.1 + n.1 * off, text, size);
 }
 /// Label for measure `key` of value `v`: `<key>_lab` picks Measure / Text / None (`def` when the
 /// key is absent, e.g. older saved figures) and `<key>_label` holds the text. `hidden` comes from
@@ -3131,10 +3148,10 @@ fn corner_name(i: usize) -> String {
     if i < 26 { c.to_string() } else { format!("{c}{}", i / 26) }
 }
 /// Corner letter just outside vertex `q` (screen), pushed away from `center`.
-fn name_at(d: &mut Doc, q: Pt, center: Pt, name: &str, size: f64) {
+fn name_at(d: &mut Doc, id: &str, q: Pt, center: Pt, name: &str, size: f64) {
     let u = unit_v(center, q);
     let u = if u.0.is_finite() { u } else { (0.0, -1.0) };
-    sput(d, q.0 + u.0 * (size * 0.9), q.1 + u.1 * (size * 0.9), name, size);
+    sput(d, id, q.0 + u.0 * (size * 0.9), q.1 + u.1 * (size * 0.9), name, size);
 }
 
 struct Solid { v: Vec<P3>, faces: Vec<Vec<usize>> }
@@ -3496,39 +3513,39 @@ fn prism_render(p: &Params) -> String {
     let hide = hide_list(p);
     let hid = |n: &str| hide.iter().any(|h| h == n);
     let mc = m.p(cenp);
-    let lab = |d: &mut Doc, a: P3, bb: P3, s: Option<String>| if let Some(s) = s { sbeside(d, m.p(proj(a)), m.p(proj(bb)), 0.5, mc, &s, fs); };
+    let lab = |d: &mut Doc, id: &str, a: P3, bb: P3, s: Option<String>| if let Some(s) = s { sbeside(d, id, m.p(proj(a)), m.p(proj(bb)), 0.5, mc, &s, fs); };
     // labels inside the base face sit away from the base's own centre
     let mb = m.p(proj(centroid3(&b)));
-    let labb = |d: &mut Doc, a: P3, bb: P3, t: f64, s: Option<String>| if let Some(s) = s { sbeside(d, m.p(proj(a)), m.p(proj(bb)), t, mb, &s, fs); };
+    let labb = |d: &mut Doc, id: &str, a: P3, bb: P3, t: f64, s: Option<String>| if let Some(s) = s { sbeside(d, id, m.p(proj(a)), m.p(proj(bb)), t, mb, &s, fs); };
     let right = p.b("right");
     let poly = kind == "Regular polygon";
     // base edge (front bottom) b0-b1
-    if poly { lab(&mut d, b[0], b[1], mtext(p, "side", "Measure", p.f("side"), hid("side"))); }
-    else { lab(&mut d, b[0], b[1], mtext(p, "length", "Measure", l, hid("length"))); }
+    if poly { lab(&mut d, "side", b[0], b[1], mtext(p, "side", "Measure", p.f("side"), hid("side"))); }
+    else { lab(&mut d, "length", b[0], b[1], mtext(p, "length", "Measure", l, hid("length"))); }
     // the base face's own measures: on the bottom face when standing, the front face when lying
     let wtxt = mtext(p, "width", "Measure", wd, hid("width"));
     match kind {
-        "Rectangle" => lab(&mut d, b[1], b[2], wtxt),
+        "Rectangle" => lab(&mut d, "width", b[1], b[2], wtxt),
         "Right triangle" => {
-            labb(&mut d, b[1], b[2], 0.5, wtxt);
+            labb(&mut d, "width", b[1], b[2], 0.5, wtxt);
             if right { rmark3(&mut d, &m, &proj, b[1], sub3(b[0], b[1]), sub3(b[2], b[1])); }
-            labb(&mut d, b[0], b[2], 0.5, mtext(p, "hyp", "None", dist3(b[0], b[2]), hid("hypotenuse")));
+            labb(&mut d, "hyp", b[0], b[2], 0.5, mtext(p, "hyp", "None", dist3(b[0], b[2]), hid("hypotenuse")));
         }
         "Isosceles triangle" => {
             if let Some(s) = wtxt {
                 let f0 = mid3(b[0], b[1]);
                 dline(&mut d, m.p(proj(f0)), m.p(proj(b[2])), "#444", 1.4, "6 4");
-                labb(&mut d, f0, b[2], 0.6, Some(s));
+                labb(&mut d, "width", f0, b[2], 0.6, Some(s));
                 if right { rmark3(&mut d, &m, &proj, f0, sub3(b[1], f0), sub3(b[2], f0)); }
             }
-            labb(&mut d, b[1], b[2], 0.5, mtext(p, "hyp", "None", dist3(b[1], b[2]), hid("slanted")));
+            labb(&mut d, "hyp", b[1], b[2], 0.5, mtext(p, "hyp", "None", dist3(b[1], b[2]), hid("slanted")));
         }
         _ => {
             if let Some(s) = mtext(p, "apothem", "None", dist3(mid3(b[0], b[1]), centroid3(&b)), hid("apothem")) {
                 let (c0, f0) = (centroid3(&b), mid3(b[0], b[1]));
                 dline(&mut d, m.p(proj(c0)), m.p(proj(f0)), "#444", 1.4, "6 4");
                 d.circle(m.p(proj(c0)).0, m.p(proj(c0)).1, 2.4, INK, INK, 1.0);
-                labb(&mut d, c0, f0, 0.4, Some(s));
+                labb(&mut d, "apothem", c0, f0, 0.4, Some(s));
                 if right { rmark3(&mut d, &m, &proj, f0, sub3(b[1], f0), sub3(c0, f0)); }
             }
         }
@@ -3537,12 +3554,12 @@ fn prism_render(p: &Params) -> String {
     if lying {
         // prism length runs back along the depth from the front corner nearest the depth side
         let vi = (0..k).filter(|i| b[*i].2 < 1e-9).max_by(|x, y| (sx * b[*x].0).partial_cmp(&(sx * b[*y].0)).unwrap()).unwrap_or(1);
-        lab(&mut d, b[vi], t[vi], htxt);
+        lab(&mut d, "height", b[vi], t[vi], htxt);
     } else if lean.abs() < 1e-9 {
         // vertical edge at the front corner away from the depth side
         let ymin = b.iter().map(|q| q.1).fold(f64::MAX, f64::min);
         let vi = (0..k).filter(|i| b[*i].1 < ymin + 1e-9).min_by(|x, y| (sx * b[*x].0).partial_cmp(&(sx * b[*y].0)).unwrap()).unwrap_or(0);
-        lab(&mut d, b[vi], t[vi], htxt);
+        lab(&mut d, "height", b[vi], t[vi], htxt);
     } else {
         let top = (foot.0, foot.1, hh);
         dline(&mut d, m.p(proj(top)), m.p(proj(foot)), "#444", 1.4, "6 4");
@@ -3551,14 +3568,14 @@ fn prism_render(p: &Params) -> String {
         if htxt.is_some() || right {
             if right { rmark3(&mut d, &m, &proj, foot, sub3(e, foot), (0.0, 0.0, 1.0)); }
         }
-        if let Some(s) = htxt { sbeside(&mut d, m.p(proj(foot)), m.p(proj(top)), 0.7, mc, &s, fs); }
-        lab(&mut d, e, foot, mtext(p, "lean", "None", lean.abs(), hid("lean")));
+        if let Some(s) = htxt { sbeside(&mut d, "height", m.p(proj(foot)), m.p(proj(top)), 0.7, mc, &s, fs); }
+        lab(&mut d, "lean", e, foot, mtext(p, "lean", "None", lean.abs(), hid("lean")));
         let et = (e.0 + lean, e.1, hh);
-        if let Some(s) = tlabel(p, "edge", "edge", "None", dist3(e, et)) { sbeside(&mut d, m.p(proj(e)), m.p(proj(et)), 0.3, mc, &s, fs); }
+        if let Some(s) = tlabel(p, "edge", "edge", "None", dist3(e, et)) { sbeside(&mut d, "edge", m.p(proj(e)), m.p(proj(et)), 0.3, mc, &s, fs); }
     }
     if p.b("names") {
         let fsn = fs * 0.95;
-        for (i, q) in solid.v.iter().enumerate() { name_at(&mut d, m.p(proj(*q)), mc, &corner_name(i), fsn); }
+        for (i, q) in solid.v.iter().enumerate() { name_at(&mut d, &format!("v{i}"), m.p(proj(*q)), mc, &corner_name(i), fsn); }
     }
     d.finish()
 }
@@ -3643,41 +3660,41 @@ fn pyramid_render(p: &Params) -> String {
     let hide = hide_list(p);
     let hid = |n: &str| hide.iter().any(|h| h == n);
     let mc = m.p(cenp);
-    let lab = |d: &mut Doc, a: P3, bb: P3, s: Option<String>| if let Some(s) = s { sbeside(d, m.p(proj(a)), m.p(proj(bb)), 0.5, mc, &s, fs); };
+    let lab = |d: &mut Doc, id: &str, a: P3, bb: P3, s: Option<String>| if let Some(s) = s { sbeside(d, id, m.p(proj(a)), m.p(proj(bb)), 0.5, mc, &s, fs); };
     let right = p.b("right");
     let foot = (c3.0, c3.1, 0.0);
     let hfoot = (apex.0, apex.1, 0.0);
     if p.b("show_height") {
         dline(&mut d, m.p(proj(apex)), m.p(proj(hfoot)), "#444", 1.5, "6 4");
         if lean.abs() > 1e-9 { dline(&mut d, m.p(proj(foot)), m.p(proj(hfoot)), "#444", 1.5, "6 4"); }
-        lab(&mut d, hfoot, apex, mtext(p, "height", "Measure", hh, hid("height")));
+        lab(&mut d, "height", hfoot, apex, mtext(p, "height", "Measure", hh, hid("height")));
         if right { rmark3(&mut d, &m, &proj, hfoot, (-sx, 0.0, 0.0), (0.0, 0.0, 1.0)); }
     }
     let mid = mid3(base[0], base[1]);
     if let Some(s) = tlabel(p, "slant", "slant", "None", dist3(mid, apex)).filter(|_| !hid("slant")) {
         dline(&mut d, m.p(proj(mid)), m.p(proj(apex)), "#444", 1.5, "6 4");
         let (pa, pm) = (m.p(proj(apex)), m.p(proj(mid)));
-        sbeside(&mut d, pm, pa, 0.3, mc, &s, fs);
+        sbeside(&mut d, "slant", pm, pa, 0.3, mc, &s, fs);
         if right && lean.abs() < 1e-9 { rmark3(&mut d, &m, &proj, mid, sub3(base[1], mid), sub3(apex, mid)); }
     }
     if lean.abs() > 1e-9 && let Some(s) = mtext(p, "lean", "Measure", lean.abs(), false) {
         // lean: from the base centre to the foot of the height, along the base
-        lab(&mut d, foot, hfoot, Some(s));
+        lab(&mut d, "lean", foot, hfoot, Some(s));
     }
     if let Some(s) = mtext(p, "apothem", "None", dist3(mid, foot), hid("apothem")) {
         dline(&mut d, m.p(proj(foot)), m.p(proj(mid)), "#444", 1.4, "6 4");
-        lab(&mut d, foot, mid, Some(s));
+        lab(&mut d, "apothem", foot, mid, Some(s));
         if right { rmark3(&mut d, &m, &proj, mid, sub3(base[1], mid), sub3(foot, mid)); }
     }
     if kind == "Regular polygon" {
-        lab(&mut d, base[0], base[1], mtext(p, "side", "Measure", p.f("side"), hid("side")));
+        lab(&mut d, "side", base[0], base[1], mtext(p, "side", "Measure", p.f("side"), hid("side")));
     } else {
-        lab(&mut d, base[0], base[1], mtext(p, "length", "Measure", l, hid("length")));
+        lab(&mut d, "length", base[0], base[1], mtext(p, "length", "Measure", l, hid("length")));
         let (w0, w1) = if sx > 0.0 { (base[1], base[2]) } else { (base[0], base[3]) };
-        lab(&mut d, w0, w1, mtext(p, "width", "Measure", wd, hid("width")));
+        lab(&mut d, "width", w0, w1, mtext(p, "width", "Measure", wd, hid("width")));
     }
     if p.b("names") {
-        for (i, q) in solid.v.iter().enumerate() { name_at(&mut d, m.p(proj(*q)), mc, &corner_name(i), fs * 0.95); }
+        for (i, q) in solid.v.iter().enumerate() { name_at(&mut d, &format!("v{i}"), m.p(proj(*q)), mc, &corner_name(i), fs * 0.95); }
     }
     d.finish()
 }
@@ -3745,11 +3762,11 @@ fn base_measure(d: &mut Doc, m: &Map, o: Pt, r: f64, p: &Params, solid: bool, ab
     let (a, b) = if diam { (m.p((o.0 - r, o.1)), rb) } else { (c, rb) };
     if solid { d.line(a.0, a.1, b.0, b.1, INK, 2.0); } else { dline(d, a, b, "#444", 1.5, dash); }
     let off = if above { -fs * 0.85 } else { fs * 0.85 };
-    if let Some(s) = dt { sput(d, (a.0 + b.0) / 2.0, c.1 + off, &s, fs); }
+    if let Some(s) = dt { sput(d, "d", (a.0 + b.0) / 2.0, c.1 + off, &s, fs); }
     if let Some(s) = rt {
         // with the diameter also labelled, the radius sits on the other side of the line
         let y = if diam { c.1 - off } else { c.1 + off };
-        sput(d, (c.0 + rb.0) / 2.0, y, &s, fs);
+        sput(d, "r", (c.0 + rb.0) / 2.0, y, &s, fs);
         d.circle(c.0, c.1, 2.8, INK, INK, 1.0);
     }
 }
@@ -3803,19 +3820,19 @@ fn cylinder_render(p: &Params) -> String {
         let (t, b) = (m.p((lean, ht)), m.p((lean, 0.0)));
         dline(&mut d, t, b, "#444", 1.5, "6 4");
         d.circle(t.0, t.1, 2.8, INK, INK, 1.0);
-        if let Some(txt) = htxt { sput(&mut d, t.0 - 10.0 - stw(&txt, fs) / 2.0, (t.1 + b.1) / 2.0, &txt, fs); }
+        if let Some(txt) = htxt { sput(&mut d, "h", t.0 - 10.0 - stw(&txt, fs) / 2.0, (t.1 + b.1) / 2.0, &txt, fs); }
         if lean.abs() > 1e-9 { dline(&mut d, m.p((0.0, 0.0)), b, "#444", 1.5, "6 4"); }
         if p.b("right") && !diam_shown(p) { square_mark(&mut d, b, (b.0, b.1 - 10.0), (b.0 + 10.0, b.1), 10.0); }
     } else if let Some(txt) = htxt {
-        sbeside(&mut d, r0, r1, 0.5, center, &txt, fs);
+        sbeside(&mut d, "h", r0, r1, 0.5, center, &txt, fs);
     }
     if lean.abs() > 1e-9 {
         if let Some(txt) = mtext(p, "lean", "None", lean.abs(), false) {
             let (a, b) = (m.p((0.0, 0.0)), m.p((lean, 0.0)));
-            sput(&mut d, (a.0 + b.0) / 2.0, a.1 - fs * 0.85, &txt, fs);
+            sput(&mut d, "lean", (a.0 + b.0) / 2.0, a.1 - fs * 0.85, &txt, fs);
         }
         let side = if lean > 0.0 { (r0, r1) } else { (l0, l1) };
-        if let Some(txt) = tlabel(p, "edge", "edge", "None", (h * h + lean * lean).sqrt()) { sbeside(&mut d, side.0, side.1, 0.5, center, &txt, fs); }
+        if let Some(txt) = tlabel(p, "edge", "edge", "None", (h * h + lean * lean).sqrt()) { sbeside(&mut d, "edge", side.0, side.1, 0.5, center, &txt, fs); }
     }
     d.finish()
 }
@@ -3889,14 +3906,14 @@ fn cone_render(p: &Params) -> String {
     if p.b("show_height") {
         let (t, b) = (m.p(apex), m.p((lean, 0.0)));
         dline(&mut d, t, b, "#444", 1.5, "6 4");
-        if let Some(txt) = mtext(p, "h", "Measure", h, false) { sput(&mut d, t.0 - 10.0 - stw(&txt, fs) / 2.0, (t.1 + b.1) / 2.0 - 8.0, &txt, fs); }
+        if let Some(txt) = mtext(p, "h", "Measure", h, false) { sput(&mut d, "h", t.0 - 10.0 - stw(&txt, fs) / 2.0, (t.1 + b.1) / 2.0 - 8.0, &txt, fs); }
         if lean.abs() > 1e-9 { dline(&mut d, m.p((0.0, 0.0)), b, "#444", 1.5, "6 4"); }
         if p.b("right") && !diam_shown(p) && lean.abs() < 1e-9 { square_mark(&mut d, b, (b.0, b.1 - 10.0), (b.0 + 10.0, b.1), 10.0); }
         if lean.abs() > 1e-9 {
             if p.b("right") { square_mark(&mut d, b, (b.0, b.1 - 10.0), (b.0 - lean.signum() * 10.0, b.1), 10.0); }
             if let Some(txt) = mtext(p, "lean", "None", lean.abs(), false) {
                 let a = m.p((0.0, 0.0));
-                sput(&mut d, (a.0 + b.0) / 2.0, a.1 - fs * 0.8, &txt, fs);
+                sput(&mut d, "lean", (a.0 + b.0) / 2.0, a.1 - fs * 0.8, &txt, fs);
             }
         }
     }
@@ -3905,7 +3922,7 @@ fn cone_render(p: &Params) -> String {
     let ltxt = if lean.abs() > 1e-9 { mtext(p, "l", "None", sl, false) } else { tlabel(p, "l", "slant", "None", sl) };
     if let Some(txt) = ltxt {
         let (a, b) = (m.p(apex), m.p(pr));
-        sbeside(&mut d, a, b, 0.5, m.p((lean * 0.5, h * c * 0.4)), &txt, fs);
+        sbeside(&mut d, "l", a, b, 0.5, m.p((lean * 0.5, h * c * 0.4)), &txt, fs);
     }
     d.finish()
 }
@@ -4374,7 +4391,7 @@ fn box_plot_render(p: &Params) -> String {
             if x - last_x < stw(&text, fs * 0.8) + 8.0 { lrow = 1 - lrow; } else { lrow = 0; }
             last_x = x;
             let y = cy - bh / 2.0 - 10.0 - lrow as f64 * (fs * 0.85);
-            if mode == "Text" { math_text(&mut d, x, y, fs * 0.8, "middle", &text, false); } else { sput(&mut d, x, y, &text, fs * 0.8); }
+            if mode == "Text" { math_text(&mut d, x, y, fs * 0.8, "middle", &text, false); } else { sput(&mut d, "", x, y, &text, fs * 0.8); }
         }
     }
     d.finish()
@@ -5260,19 +5277,19 @@ pub fn defs() -> Vec<FigureDef> {
         f("coordinate-grid", "Coordinate Grid", "Graph paper with numbered axes, minor gridlines, plotted equations and labelled points.", coordinate_grid_params, coordinate_grid_render),
         f("composite-shape", "Composite Shape", "Build a compound figure from rectangles, triangles, circles and semicircles, with dimension marks.", composite_params, composite_render),
         f("number-line", "Number Line", "A number line with adjustable range and ticks, graphed inequalities and marked points.", number_line_params, number_line_render),
-        f("triangle", "Triangle", "A triangle drawn to scale from sides, angles or right-triangle legs, with optional height.", triangle_params, triangle_render),
-        f("rectangle", "Rectangle", "A rectangle or square drawn to scale with labelled sides and optional diagonals.", rectangle_params, rectangle_render),
-        f("parallelogram", "Parallelogram", "A parallelogram or rhombus from its sides and an angle, with height and diagonals.", parallelogram_params, parallelogram_render),
-        f("trapezoid", "Trapezoid", "A plain, isosceles or right trapezoid from its bases and height.", trapezoid_params, trapezoid_render),
-        f("kite", "Kite", "A kite from its two side lengths and the angle between the short sides.", kite_params, kite_render),
-        f("regular-polygon", "Regular Polygon", "Any regular polygon from 3 to 20 sides, sized by side, radius or apothem.", regular_polygon_params, regular_polygon_render),
+        f("triangle", "Triangle", "A triangle drawn to scale from sides, angles or right-triangle legs, with optional height.", || super::labels::with_param(triangle_params()), |p| super::labels::rendering(p, || triangle_render(p))),
+        f("rectangle", "Rectangle", "A rectangle or square drawn to scale with labelled sides and optional diagonals.", || super::labels::with_param(rectangle_params()), |p| super::labels::rendering(p, || rectangle_render(p))),
+        f("parallelogram", "Parallelogram", "A parallelogram or rhombus from its sides and an angle, with height and diagonals.", || super::labels::with_param(parallelogram_params()), |p| super::labels::rendering(p, || parallelogram_render(p))),
+        f("trapezoid", "Trapezoid", "A plain, isosceles or right trapezoid from its bases and height.", || super::labels::with_param(trapezoid_params()), |p| super::labels::rendering(p, || trapezoid_render(p))),
+        f("kite", "Kite", "A kite from its two side lengths and the angle between the short sides.", || super::labels::with_param(kite_params()), |p| super::labels::rendering(p, || kite_render(p))),
+        f("regular-polygon", "Regular Polygon", "Any regular polygon from 3 to 20 sides, sized by side, radius or apothem.", || super::labels::with_param(regular_polygon_params()), |p| super::labels::rendering(p, || regular_polygon_render(p))),
         f("angles", "Angles", "Single, adjacent, straight-line, around-a-point or vertical angles with measures.", angles_params, angles_render),
         f("parallel-lines", "Parallel Lines and Transversal", "Parallel lines cut by a transversal with chosen angles marked in degrees or by number.", parallel_lines_params, parallel_lines_render),
-        f("prism", "Prism", "A prism on a rectangle, triangle or regular-polygon base, right or oblique, with dashed hidden edges.", || with_solid_fill(prism_params()), |p| solid_fill(prism_render(p), p)),
-        f("cylinder", "Cylinder", "A cylinder, right or oblique, with radius or diameter and height.", || with_solid_fill(cylinder_params()), |p| solid_fill(cylinder_render(p), p)),
-        f("pyramid", "Pyramid", "A pyramid on a rectangle or regular-polygon base with optional height and slant height.", || with_solid_fill(pyramid_params()), |p| solid_fill(pyramid_render(p), p)),
-        f("cone", "Cone", "A cone, right or oblique, with radius or diameter, height and slant height.", || with_solid_fill(cone_params()), |p| solid_fill(cone_render(p), p)),
-        f("sphere", "Sphere", "A sphere or hemisphere with its radius or diameter.", || with_solid_fill(sphere_params()), |p| solid_fill(sphere_render(p), p)),
+        f("prism", "Prism", "A prism on a rectangle, triangle or regular-polygon base, right or oblique, with dashed hidden edges.", || super::labels::with_param(with_solid_fill(prism_params())), |p| super::labels::rendering(p, || solid_fill(prism_render(p), p))),
+        f("cylinder", "Cylinder", "A cylinder, right or oblique, with radius or diameter and height.", || super::labels::with_param(with_solid_fill(cylinder_params())), |p| super::labels::rendering(p, || solid_fill(cylinder_render(p), p))),
+        f("pyramid", "Pyramid", "A pyramid on a rectangle or regular-polygon base with optional height and slant height.", || super::labels::with_param(with_solid_fill(pyramid_params())), |p| super::labels::rendering(p, || solid_fill(pyramid_render(p), p))),
+        f("cone", "Cone", "A cone, right or oblique, with radius or diameter, height and slant height.", || super::labels::with_param(with_solid_fill(cone_params())), |p| super::labels::rendering(p, || solid_fill(cone_render(p), p))),
+        f("sphere", "Sphere", "A sphere or hemisphere with its radius or diameter.", || super::labels::with_param(with_solid_fill(sphere_params())), |p| super::labels::rendering(p, || solid_fill(sphere_render(p), p))),
         f("box-plot", "Box Plot", "A box plot from a data list or five-number summary; compare two sets.", box_plot_params, box_plot_render),
         f("mapping-diagram", "Mapping Diagram", "Input and output sets joined by arrows, from ordered pairs.", mapping_diagram_params, mapping_diagram_render),
         f("ruler-reading", "Ruler Reading", "A metric or inch ruler with an object to measure at any position and length.", length_reading_params, length_reading_render),

@@ -11,6 +11,7 @@ pub mod biology;
 pub mod chemistry;
 pub mod composite;
 pub mod interact;
+pub mod labels;
 pub mod layout;
 pub mod math;
 pub mod math_geo;
