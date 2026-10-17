@@ -157,6 +157,46 @@ pub fn examples(id: &str) -> Option<Vec<super::Example>> {
 
 /// Handles are laid out in the figure's own coordinates; the chart-title band the wrapper adds
 /// shifts the figure down, so positions and pointer coordinates are shifted to match.
+/// "Add ..." chips / action buttons for this subject's figures.
+/// particle-diagram: the reference's "Add a kind" adds kinds 2-4 (it allows four), each new kind
+/// starting as 4 lone, medium, white, uncharged particles (in both boxes), plus "Shuffle".
+/// bohr-model: "Fill" (shells back to the automatic ones) and "Shuffle" (nucleus balls).
+pub fn chips(id: &str) -> Option<super::ChipsCard> {
+    use super::{Chip, ChipsCard, Value};
+    let kind = |label: &'static str, k: [&'static str; 6]| Chip {
+        label,
+        set: vec![
+            (k[0], Value::I(4)),
+            (k[1], Value::I(4)),
+            (k[2], Value::S("Alone".into())),
+            (k[3], Value::S("M".into())),
+            (k[4], Value::S("White".into())),
+            (k[5], Value::S("None".into())),
+        ],
+    };
+    let shuffle = Chip { label: "Shuffle", set: vec![("shuffle", Value::I(i64::MIN))] };
+    match id {
+        "particle-diagram" => Some(ChipsCard {
+            title: "Add a kind",
+            count_key: "",
+            max: 0,
+            chips: vec![
+                kind("Kind 2", ["b_count", "b2_count", "b_shape", "b_size", "b_shade", "b_charge"]),
+                kind("Kind 3", ["c_count", "c2_count", "c_shape", "c_size", "c_shade", "c_charge"]),
+                kind("Kind 4", ["d_count", "d2_count", "d_shape", "d_size", "d_shade", "d_charge"]),
+                shuffle,
+            ],
+        }),
+        "bohr-model" => Some(ChipsCard {
+            title: "Electrons and nucleus",
+            count_key: "",
+            max: 0,
+            chips: vec![Chip { label: "Fill the shells", set: vec![("shells_custom", Value::S(String::new()))] }, shuffle],
+        }),
+        _ => None,
+    }
+}
+
 pub fn handles(id: &str, p: &Params, size: (f64, f64)) -> Option<Vec<interact::Handle>> {
     let dy = frame::title_band(p);
     let hs = handles::handles(id, p, (size.0, size.1 - dy))?;
@@ -213,6 +253,54 @@ mod tests {
     fn f(x: f64) -> Value { Value::F(x) }
     fn i(x: i64) -> Value { Value::I(x) }
     fn b(x: bool) -> Value { Value::B(x) }
+
+    /// Applies an action chip the way the panel does (fresh-random values get a fixed number here).
+    fn apply(p: &mut Params, chip: &crate::figures::Chip) {
+        for (k, v) in &chip.set {
+            let v = if *v == Value::I(i64::MIN) { Value::I(123) } else { v.clone() };
+            p.0.insert(k.to_string(), v);
+        }
+    }
+
+    #[test]
+    fn chips_add_kinds_and_actions() {
+        for id in ["particle-diagram", "bohr-model"] {
+            let d = find(id);
+            let pd = (d.params)();
+            let card = chips(id).unwrap();
+            assert!(card.count_key.is_empty());
+            for c in &card.chips {
+                for (k, v) in &c.set {
+                    let def = pd.iter().find(|x| x.key == *k).unwrap_or_else(|| panic!("{id}: chip {} sets unknown {k}", c.label));
+                    if let (Kind::Choice(o), Value::S(sv)) = (&def.kind, v) { assert!(o.contains(&sv.as_str()), "{id} {k}={sv}"); }
+                }
+            }
+        }
+        // Each "Add a kind" chip makes a new kind of particle appear.
+        let d = find("particle-diagram");
+        let mut p = Params::defaults(&(d.params)());
+        let card = chips("particle-diagram").unwrap();
+        let mut last = (d.render)(&p);
+        for c in card.chips.iter().take(3) {
+            apply(&mut p, c);
+            let svg = (d.render)(&p);
+            assert!(svg.len() > last.len(), "{} added nothing", c.label);
+            last = svg;
+        }
+        assert_eq!(p.i("d_count"), 4);
+        assert_eq!(p.s("c_shade"), "White");
+        // Shuffle moves the particles.
+        apply(&mut p, &card.chips[3]);
+        assert_ne!((d.render)(&p), last);
+        // Bohr "Fill" drops hand-set shells.
+        let b = find("bohr-model");
+        let mut q = Params::defaults(&(b.params)());
+        let auto = (b.render)(&q);
+        q.set_s("shells_custom", "2, 3");
+        assert_ne!((b.render)(&q), auto);
+        apply(&mut q, &chips("bohr-model").unwrap().chips[0]);
+        assert_eq!((b.render)(&q), auto);
+    }
 
     #[test]
     fn ids_unique_and_complete() {

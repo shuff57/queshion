@@ -3,7 +3,7 @@
 //! renderers in `math.rs` (layout constants are repeated here on purpose; keep them in sync).
 #![allow(dead_code)]
 use super::interact::{Handle, Pt};
-use super::math::{ell, eval, nums, parse_ineq, preset_spec, Interval, Map};
+use super::math::{ell, eval, nums, parse_ineq, preset_spec, quarter_pts, Interval, Map};
 use super::Params;
 
 fn fmt_n(v: f64) -> String {
@@ -262,45 +262,8 @@ fn box_plot(p: &Params) -> Vec<Handle> {
 
 // ───────────────────────── mapping diagram ─────────────────────────
 
-struct Pair { a: String, b: String, b_span: (usize, usize) }
-fn mp_parse(p: &Params) -> (Vec<String>, Vec<String>, Vec<Pair>) {
-    let mut ins = super::math::list_items(p.s("inputs"));
-    let mut outs = super::math::list_items(p.s("outputs"));
-    let ps = p.s("pairs");
-    // (inner text, byte offset of inner within ps)
-    let mut segs: Vec<(String, usize)> = vec![];
-    if ps.contains('(') {
-        let mut at = 0;
-        while let Some(i) = ps[at..].find('(') {
-            let st = at + i + 1;
-            let en = ps[st..].find(')').map(|j| st + j).unwrap_or(ps.len());
-            segs.push((ps[st..en].to_string(), st));
-            at = en.min(ps.len());
-            if at >= ps.len() { break; }
-        }
-    } else {
-        let mut off = 0;
-        for s in ps.split(';') { segs.push((s.to_string(), off)); off += s.len() + 1; }
-    }
-    let mut pairs = vec![];
-    for (inner, off) in segs {
-        let sep = if let Some(i) = inner.find("->") { Some((i, 2)) } else if let Some(i) = inner.find('\u{2192}') { Some((i, 3)) } else { inner.find(',').map(|i| (i, 1)) };
-        if let Some((i, l)) = sep {
-            let (a, braw) = (inner[..i].trim().to_string(), &inner[i + l..]);
-            let b = braw.trim().to_string();
-            if a.is_empty() || b.is_empty() { continue; }
-            let lead = braw.len() - braw.trim_start().len();
-            let st = off + i + l + lead;
-            if !ins.contains(&a) { ins.push(a.clone()); }
-            if !outs.contains(&b) { outs.push(b.clone()); }
-            pairs.push(Pair { a, b: b.clone(), b_span: (st, st + b.len()) });
-        }
-    }
-    (ins, outs, pairs)
-}
-
 fn mapping(p: &Params, _size: (f64, f64)) -> Vec<Handle> {
-    let (ins, outs, pairs) = mp_parse(p);
+    let super::math::MapData { ins, outs, pairs, .. } = super::math::mapping_parse(p);
     if ins.is_empty() && outs.is_empty() { return vec![]; }
     let rows = ins.len().max(outs.len()).max(1) as f64;
     let spacing = 42.0;
@@ -315,17 +278,26 @@ fn mapping(p: &Params, _size: (f64, f64)) -> Vec<Handle> {
         let pos = (rx - 28.0, ypos(j, nout));
         hs.push(Handle::knob(pos, "Drag up or down to point this arrow at another output", move |p, t| {
             if near(t, pos) { return; }
-            let (_, outs, pairs) = mp_parse(p);
+            let m = super::math::mapping_parse(p);
+            let (outs, pairs) = (&m.outs, &m.pairs);
             let Some(pr) = pairs.get(k) else { return };
             if outs.is_empty() { return; }
             let first = ypos(0, outs.len());
             let gap = if outs.len() > 1 { ypos(1, outs.len()) - first } else { spacing };
             let nj = (((t.1 - first) / gap).round().max(0.0) as usize).min(outs.len() - 1);
             if outs[nj] == pr.b { return; }
-            let mut s = p.s("pairs").to_string();
-            if pr.b_span.1 <= s.len() && s.is_char_boundary(pr.b_span.0) && s.is_char_boundary(pr.b_span.1) {
-                s.replace_range(pr.b_span.0..pr.b_span.1, &outs[nj]);
-                p.set_s("pairs", &s);
+            let mut s = p.s(m.key).to_string();
+            match pr.b_span {
+                Some((st, en)) if en <= s.len() && s.is_char_boundary(st) && s.is_char_boundary(en) => {
+                    s.replace_range(st..en, &outs[nj]);
+                    p.set_s(m.key, &s);
+                }
+                // "Match in order" arrows have no text: write them all out with this one moved
+                None => {
+                    let all: Vec<String> = pairs.iter().enumerate().map(|(i, q)| format!("{} -> {}", q.a, if i == k { &outs[nj] } else { &q.b })).collect();
+                    p.set_s(m.key, &all.join("; "));
+                }
+                _ => {}
             }
         }).with_cursor(super::interact::Cursor::ResizeV));
     }
@@ -386,7 +358,7 @@ fn points_of(c: &[Vec<String>]) -> Vec<(V, Pt)> {
             },
             "tri" => for i in [1, 3, 5] { if let (Some(x), Some(y)) = (n(i), n(i + 1)) { out.push((V::Abs(ci, i), (x, y))); } },
             "poly" => { let mut i = 1; while i + 1 < tk.len() { if let (Some(x), Some(y)) = (n(i), n(i + 1)) { out.push((V::Abs(ci, i), (x, y))); } i += 2; } }
-            "circle" | "semi" => if let (Some(x), Some(y), Some(r)) = (n(1), n(2), n(3)) {
+            "circle" | "semi" | "quarter" => if let (Some(x), Some(y), Some(r)) = (n(1), n(2), n(3)) {
                 out.push((V::Abs(ci, 1), (x, y)));
                 let horiz = !matches!(tk.get(4).map(|s| s.to_lowercase()).as_deref(), Some("l") | Some("r"));
                 out.push((V::Radius(ci), if horiz { (x + r, y) } else { (x, y + r) }));
@@ -412,11 +384,75 @@ fn all_points(c: &[Vec<String>]) -> Vec<Pt> {
                 let (a0, a1) = match tk.get(4).map(|s| s.to_lowercase()).as_deref() { Some("d") => (180.0, 360.0), Some("l") => (90.0, 270.0), Some("r") => (-90.0, 90.0), _ => (0.0, 180.0) };
                 all.extend(ell(x, y, r, r, a0, a1));
             },
+            "quarter" => if let (Some(x), Some(y), Some(r)) = (n(1), n(2), n(3)) { all.extend(quarter_pts(x, y, r, tk.get(4).map(|s| s.as_str()).unwrap_or("ne"))); },
             "dash" | "dim" => if let (Some(a), Some(b), Some(c2), Some(e)) = (n(1), n(2), n(3), n(4)) { all.extend([(a, b), (c2, e)]); },
             _ => {}
         }
     }
     all
+}
+
+/// Straight sides of the polygon pieces (rect, tri, poly, quarter) as (a, b, piece centroid).
+fn piece_sides(c: &[Vec<String>]) -> Vec<(Pt, Pt, Pt)> {
+    let mut polys: Vec<Vec<Pt>> = vec![];
+    for tk in c {
+        let n = |i| tn(tk, i);
+        match tk[0].to_lowercase().as_str() {
+            "rect" => if let (Some(x), Some(y), Some(w), Some(h)) = (n(1), n(2), n(3), n(4)) { polys.push(vec![(x, y), (x + w, y), (x + w, y + h), (x, y + h)]); },
+            "tri" => if let (Some(a), Some(b), Some(c2), Some(d), Some(e), Some(f)) = (n(1), n(2), n(3), n(4), n(5), n(6)) { polys.push(vec![(a, b), (c2, d), (e, f)]); },
+            "poly" => { let v: Vec<f64> = tk[1..].iter().filter_map(|s| s.parse().ok()).collect(); if v.len() >= 6 { polys.push(v.chunks(2).filter(|c| c.len() == 2).map(|c| (c[0], c[1])).collect()); } }
+            _ => {}
+        }
+    }
+    let mut out = vec![];
+    for (pi, v) in polys.iter().enumerate() {
+        let k = v.len() as f64;
+        let cen = (v.iter().map(|q| q.0).sum::<f64>() / k, v.iter().map(|q| q.1).sum::<f64>() / k);
+        for i in 0..v.len() {
+            let (a, b) = (v[i], v[(i + 1) % v.len()]);
+            if dist2(a, b) < 1e-6 { continue; }
+            // a side shared with another piece is inside the shape: nothing can be added there
+            let shared = polys.iter().enumerate().any(|(pj, w)| pj != pi && (0..w.len()).any(|j| {
+                let (c2, d2) = (w[j], w[(j + 1) % w.len()]);
+                overlap(a, b, c2, d2)
+            }));
+            if !shared { out.push((a, b, cen)); }
+        }
+    }
+    out
+}
+fn dist2(a: Pt, b: Pt) -> f64 { (a.0 - b.0).powi(2) + (a.1 - b.1).powi(2) }
+/// Two collinear segments that share more than a point.
+fn overlap(a: Pt, b: Pt, c: Pt, d: Pt) -> bool {
+    let l = dist2(a, b).sqrt();
+    let u = ((b.0 - a.0) / l, (b.1 - a.1) / l);
+    let off = |q: Pt| ((q.0 - a.0) * u.1 - (q.1 - a.1) * u.0).abs();
+    if off(c) > 1e-6 || off(d) > 1e-6 { return false; }
+    let t = |q: Pt| (q.0 - a.0) * u.0 + (q.1 - a.1) * u.1;
+    let (t0, t1) = (t(c).min(t(d)), t(c).max(t(d)));
+    t1.min(l) - t0.max(0.0) > 1e-6
+}
+
+/// The piece the reference adds on a side: a rectangle as wide as the side and 3/4 as deep
+/// (a slanted side gets the same rectangle turned to it, as a poly).
+pub(super) fn piece_on_side(a: Pt, b: Pt, cen: Pt) -> String {
+    let l = dist2(a, b).sqrt();
+    let u = ((b.0 - a.0) / l, (b.1 - a.1) / l);
+    let mut nrm = (-u.1, u.0);
+    let mid = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+    if (mid.0 - cen.0) * nrm.0 + (mid.1 - cen.1) * nrm.1 < 0.0 { nrm = (-nrm.0, -nrm.1); }
+    let dep = snap(l * 0.75, 0.5).max(0.5);
+    let (c, d) = ((b.0 + nrm.0 * dep, b.1 + nrm.1 * dep), (a.0 + nrm.0 * dep, a.1 + nrm.1 * dep));
+    let axis = u.0.abs() < 1e-9 || u.1.abs() < 1e-9;
+    if axis {
+        let xs = [a.0, b.0, c.0, d.0];
+        let ys = [a.1, b.1, c.1, d.1];
+        let (x0, y0) = (xs.iter().cloned().fold(f64::MAX, f64::min), ys.iter().cloned().fold(f64::MAX, f64::min));
+        let (x1, y1) = (xs.iter().cloned().fold(f64::MIN, f64::max), ys.iter().cloned().fold(f64::MIN, f64::max));
+        format!("rect {} {} {} {}", fmt_n(x0), fmt_n(y0), fmt_n(x1 - x0), fmt_n(y1 - y0))
+    } else {
+        format!("poly {} {} {} {} {} {} {} {}", fmt_n(a.0), fmt_n(a.1), fmt_n(b.0), fmt_n(b.1), fmt_n(c.0), fmt_n(c.1), fmt_n(d.0), fmt_n(d.1))
+    }
 }
 
 fn set_pt(tk: &mut [String], i: usize, q: Pt) { tk[i] = fmt_n(q.0); tk[i + 1] = fmt_n(q.1); }
@@ -481,6 +517,25 @@ fn composite(p: &Params) -> Vec<Handle> {
             p.set_s("preset", "Custom (use the text below)");
         });
         hs.push(h);
+    }
+    // the reference's "+" beside each outside straight side: click to add a rectangle there
+    for (a, b, cen) in piece_sides(&c) {
+        let (pa, pb, pc) = (m.p(a), m.p(b), m.p(cen));
+        let l = dist2(pa, pb).sqrt();
+        if l < 30.0 { continue; }
+        let mid = ((pa.0 + pb.0) / 2.0, (pa.1 + pb.1) / 2.0);
+        let mut nrm = (-(pb.1 - pa.1) / l, (pb.0 - pa.0) / l);
+        if (mid.0 - pc.0) * nrm.0 + (mid.1 - pc.1) * nrm.1 < 0.0 { nrm = (-nrm.0, -nrm.1); }
+        let pos = (mid.0 + nrm.0 * 18.0, mid.1 + nrm.1 * 18.0);
+        let piece = piece_on_side(a, b, cen);
+        let h = Handle::zone(pos, (14.0, 14.0), "Click to add a rectangle on this side", move |p| {
+            let mut spec = active_spec(p).trim().trim_end_matches(';').to_string();
+            if !spec.is_empty() { spec.push_str("; "); }
+            spec.push_str(&piece);
+            p.set_s("spec", &spec);
+            p.set_s("preset", "Custom (use the text below)");
+        });
+        hs.push(Handle { shape: super::interact::Shape::Diamond, ..h });
     }
     hs
 }

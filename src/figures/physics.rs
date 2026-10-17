@@ -14,6 +14,77 @@ pub fn examples(id: &str) -> Option<Vec<super::Example>> {
     examples::examples(id)
 }
 
+/// "Add a force / vector / segment / part / object" chips for the figures that keep a numbered list of items.
+pub fn chips(id: &str) -> Option<super::ChipsCard> {
+    use super::{Chip, ChipsCard, Value};
+    let force = |label, ang: f64, lab: &'static str| Chip {
+        label,
+        set: vec![("f{n}_ang", Value::F(ang)), ("f{n}_len", Value::F(1.0)), ("f{n}_lab", Value::S(lab.into())), ("f{n}_lab_mode", Value::S("Text".into()))],
+    };
+    match id {
+        "free-body-diagram" => Some(ChipsCard {
+            title: "Add a force",
+            count_key: "n",
+            max: 8,
+            chips: vec![
+                force("Gravity", 270.0, "F_g"),
+                force("Normal", 90.0, "F_N"),
+                force("Friction", 180.0, "F_f"),
+                force("Tension", 90.0, "F_T"),
+                force("Applied", 0.0, "F_app"),
+                force("Spring", 0.0, "F_s"),
+                force("Air resistance", 180.0, "F_air"),
+                force("Force", 45.0, "F"),
+            ],
+        }),
+        "vector-diagram" => Some(ChipsCard {
+            title: "Add a vector",
+            count_key: "n",
+            max: 4,
+            chips: vec![Chip {
+                label: "Vector",
+                set: vec![("v{n}_mag", Value::F(3.0)), ("v{n}_ang", Value::F(90.0)), ("v{n}_lab", Value::S("{L}".into())), ("v{n}_lab_mode", Value::S("Text".into()))],
+            }],
+        }),
+        "motion-graphs" => {
+            // the reference's "Add a segment" buttons: kind, speed, 3 s, forward
+            let seg = |label: &'static str, v: f64| Chip {
+                label,
+                set: vec![("s{n}_kind", Value::S(label.into())), ("s{n}_v", Value::F(v)), ("s{n}_t", Value::F(3.0)), ("s{n}_dir", Value::S("Forward".into()))],
+            };
+            Some(ChipsCard {
+                title: "Add a segment",
+                count_key: "n",
+                max: 6,
+                chips: vec![
+                    seg("At rest", 0.0),
+                    seg("Constant velocity forward", 4.0),
+                    seg("Constant velocity back", 4.0),
+                    seg("Speeding up", 4.0),
+                    seg("Slowing down", 0.0),
+                ],
+            })
+        }
+        "circuit-diagram" => {
+            // a new part keeps the slot's own value (2, 4, 6, 8 ohms) and an automatic name
+            let part = |label: &'static str| Chip {
+                label,
+                set: vec![("r{n}_kind", Value::S(label.into())), ("r{n}_name_mode", Value::S("Text".into())), ("r{n}_name", Value::S(String::new())), ("r{n}_val_mode", Value::S("Text".into()))],
+            };
+            Some(ChipsCard { title: "Add a resistor or bulb", count_key: "n", max: 4, chips: vec![part("Resistor"), part("Bulb")] })
+        }
+        "inclined-plane" => {
+            // objects 2 and 3 sit above object 1 (the legacy single-object keys)
+            let obj = |label: &'static str| Chip {
+                label,
+                set: vec![("obj{n}_kind", Value::S(label.into())), ("obj{n}_lab_mode", Value::S("Text".into())), ("obj{n}_size", Value::I(100))],
+            };
+            Some(ChipsCard { title: "Add an object above", count_key: "n", max: 3, chips: vec![obj("Block"), obj("Ball"), obj("Cart")] })
+        }
+        _ => None,
+    }
+}
+
 /// Direct-manipulation handles for this subject's figures (None = not one of ours).
 pub fn handles(id: &str, p: &Params, size: (f64, f64)) -> Option<Vec<interact::Handle>> {
     handles::handles(id, p, size)
@@ -85,6 +156,58 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Every chip key resolves to a real param for every slot it can fill, and the count param's
+    /// range matches the card's maximum.
+    #[test]
+    fn physics_chips_fill_real_params() {
+        for d in defs() {
+            let Some(card) = chips(d.id) else { continue };
+            let pdefs = (d.params)();
+            let count = pdefs.iter().find(|p| p.key == card.count_key).unwrap_or_else(|| panic!("{}: no count key", d.id));
+            match count.kind { Kind::Int { max, .. } => assert_eq!(max, card.max, "{}", d.id), _ => panic!("{}: count not int", d.id) }
+            for slot in 2..=card.max {
+                for chip in &card.chips {
+                    for (k, v) in &chip.set {
+                        let key = k.replace("{n}", &slot.to_string());
+                        let pd = pdefs.iter().find(|p| p.key == key).unwrap_or_else(|| panic!("{}: chip {} sets unknown {key}", d.id, chip.label));
+                        if let (Kind::Choice(opts), Value::S(s)) = (&pd.kind, v) {
+                            assert!(opts.contains(&s.as_str()), "{}: {key} has no option {s}", d.id);
+                        }
+                    }
+                }
+            }
+        }
+        for id in ["free-body-diagram", "vector-diagram", "motion-graphs", "circuit-diagram", "inclined-plane"] {
+            assert!(chips(id).is_some(), "{id}");
+        }
+        assert_eq!(chips("free-body-diagram").unwrap().max, 8);
+        assert_eq!(chips("motion-graphs").unwrap().max, 6);
+    }
+
+    /// Old two-block specs still give two blocks; `n` gives 1-3 objects foot first, in order.
+    #[test]
+    fn incline_rows() {
+        let all = defs();
+        let d = all.iter().find(|d| d.id == "inclined-plane").unwrap();
+        let p = with(d, &[("two", Value::B(true))]);
+        assert_eq!(mech::incline_count(&p), 2);
+        let objs = mech::incline_objects(&p, 400.0);
+        assert!(objs.iter().all(|o| o.kind == "Block"));
+        for (n, joined) in [(1, "By strings"), (2, "By strings"), (3, "By strings"), (3, "Touching")] {
+            let p = with(d, &[("n", Value::I(n)), ("joined", s(joined)), ("obj2_kind", s("Cart")), ("obj3_kind", s("Ball"))]);
+            let o = mech::incline_objects(&p, 550.0);
+            assert_eq!(o.len(), n as usize);
+            for w in o.windows(2) {
+                let gap = (w[1].s - mech::obj_half_len(w[1].kind, w[1].sz)) - (w[0].s + mech::obj_half_len(w[0].kind, w[0].sz));
+                if joined == "Touching" { assert!(gap.abs() < 1e-6); } else { assert!(gap > 7.0); }
+            }
+        }
+        // single object: unchanged centre at pos * slope length
+        let p = with(d, &[]);
+        let o = mech::incline_objects(&p, 400.0);
+        assert!((o[0].s - 0.55 * 400.0).abs() < 1e-9);
     }
 
     fn with(d: &FigureDef, kv: &[(&str, Value)]) -> Params {

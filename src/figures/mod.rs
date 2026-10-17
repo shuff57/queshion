@@ -205,9 +205,77 @@ impl MeasureCard {
     }
 }
 
+/// One slot of a fixed-slot rows card (box-plot data sets, number-line inequalities).
+#[derive(Clone, Debug)]
+pub struct RowSlot {
+    pub value_key: &'static str,
+    pub name_key: Option<&'static str>,
+    pub color_key: Option<&'static str>,
+}
+
+#[derive(Clone, Debug)]
+pub enum RowsSource {
+    /// A fixed list of slots; empty ones beyond the first appear on "Add".
+    Slots(Vec<RowSlot>),
+    /// One text param holding the rows joined by `sep` (equations), with per-row colour params.
+    Joined { key: &'static str, sep: &'static str, color_keys: Vec<&'static str> },
+}
+
+/// The reference's list cards (EQUATIONS, DATA): one editable row per equation / data set with
+/// add and clear, and an optional colour per row.
+#[derive(Clone, Debug)]
+pub struct RowsCard {
+    pub title: &'static str,
+    pub help: &'static str,
+    pub hint: &'static str,
+    pub add_label: &'static str,
+    pub source: RowsSource,
+}
+
+impl RowsCard {
+    pub fn keys(&self) -> Vec<&'static str> {
+        match &self.source {
+            RowsSource::Slots(v) => v.iter().flat_map(|r| [Some(r.value_key), r.name_key, r.color_key]).flatten().collect(),
+            RowsSource::Joined { key, color_keys, .. } => std::iter::once(*key).chain(color_keys.iter().copied()).collect(),
+        }
+    }
+}
+
+pub fn rows_for(id: &str) -> Option<RowsCard> {
+    math::rows(id)
+}
+
+/// "Add a force" style chips: each appends one item (slot `{n}` = count + 1) with preset values.
+/// Keys may contain `{n}`; text values may contain `{L}` (the letter A, B, C ... for the slot).
+#[derive(Clone, Debug)]
+pub struct Chip {
+    pub label: &'static str,
+    pub set: Vec<(&'static str, Value)>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ChipsCard {
+    pub title: &'static str,
+    pub count_key: &'static str,
+    pub max: i64,
+    pub chips: Vec<Chip>,
+}
+
+/// `count_key == ""` makes the chips plain actions (no slot is added); `Value::I(i64::MIN)` in a
+/// chip's `set` means "a fresh random number" (a new seed, e.g. "New pedigree").
+pub fn chips_for(id: &str) -> Option<ChipsCard> {
+    physics::chips(id).or_else(|| math::chips(id)).or_else(|| chemistry::chips(id)).or_else(|| biology::chips(id))
+}
+
 /// The Measures card of a figure, if it has one (math shapes and solids contribute).
 pub fn measures_for(id: &str) -> Option<MeasureCard> {
     math::measures(id)
+}
+
+/// Whether a Measures-card group (by title) or a row (by value key) applies to the current
+/// params. The reference hides, e.g., the "Oblique" group of a right solid. Default: shown.
+pub fn card_visible(id: &str, group: &str, row: Option<&str>, p: &Params) -> bool {
+    math::card_visible(id, group, row, p)
 }
 
 /// Values worked out from the typed ones, as (value_key, text) pairs shown grey in empty boxes
@@ -219,6 +287,11 @@ pub fn computed_for(id: &str, p: &Params) -> Vec<(&'static str, String)> {
 /// Upgrades a saved spec made before a figure's inputs were reworked: reads the old keys from
 /// `spec` and writes the new ones into `p` (called after the defaults + spec are applied).
 pub fn migrate(id: &str, spec: &crate::model::FigureSpec, p: &mut Params) {
+    // Old inclined-plane specs with a second block become n = 2 objects.
+    if id == "inclined-plane" && spec.params.get("two") == Some(&serde_json::Value::Bool(true)) && !spec.params.contains_key("n") {
+        p.set_i("n", 2);
+        p.set_b("two", false);
+    }
     math::migrate(id, spec, p)
 }
 

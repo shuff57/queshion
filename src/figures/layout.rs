@@ -67,7 +67,8 @@ fn plain_section(pd: &ParamDef) -> &'static str {
 /// keyword grouping below. Every param lands in exactly one section either way.
 pub fn sections(fig: &str, defs: &[ParamDef], n_now: Option<i64>) -> Vec<Section> {
     // Params a Measures card owns are drawn there, not in a section.
-    let owned: Vec<&str> = super::measures_for(fig).map(|c| c.keys()).unwrap_or_default();
+    let mut owned: Vec<&str> = super::measures_for(fig).map(|c| c.keys()).unwrap_or_default();
+    owned.extend(super::rows_for(fig).map(|c| c.keys()).unwrap_or_default());
     let mut out = sections_all(fig, defs, n_now);
     for s in &mut out {
         s.items.retain(|&i| !owned.contains(&defs[i].key));
@@ -78,20 +79,23 @@ pub fn sections(fig: &str, defs: &[ParamDef], n_now: Option<i64>) -> Vec<Section
 
 fn sections_all(fig: &str, defs: &[ParamDef], n_now: Option<i64>) -> Vec<Section> {
     let Some(reference) = super::sections::reference(fig) else { return heuristic_sections(fig, defs, n_now) };
-    let in_item = |i: usize| item_of(defs[i].key).is_some();
+    // Keys the table names explicitly belong to that section even when they look like per-item keys
+    // (`a2_count`: the "after" box of particle kind a).
+    let listed: Vec<&str> = reference.iter().filter(|r| !r.item).flat_map(|r| r.keys.iter().copied()).collect();
+    let in_item = |i: usize| item_of(defs[i].key).is_some() && !listed.contains(&defs[i].key);
     let mut placed = vec![false; defs.len()];
     let mut out: Vec<Section> = Vec::new();
     for rs in reference {
         if rs.item {
             // One section per item number, params in declaration order.
-            let mut nums: Vec<usize> = defs.iter().filter_map(|d| item_of(d.key).map(|(_, n)| n)).collect();
+            let mut nums: Vec<usize> = defs.iter().filter(|d| !listed.contains(&d.key)).filter_map(|d| item_of(d.key).map(|(_, n)| n)).collect();
             nums.sort_unstable();
             nums.dedup();
             for n in nums {
                 if n_now.is_some_and(|c| n as i64 > c) {
                     continue;
                 }
-                let idx: Vec<usize> = (0..defs.len()).filter(|&i| item_of(defs[i].key).is_some_and(|(_, k)| k == n) && !placed[i]).collect();
+                let idx: Vec<usize> = (0..defs.len()).filter(|&i| item_of(defs[i].key).is_some_and(|(_, k)| k == n) && !placed[i] && !listed.contains(&defs[i].key)).collect();
                 if idx.is_empty() {
                     continue;
                 }
@@ -179,6 +183,34 @@ fn heuristic_sections(fig: &str, defs: &[ParamDef], n_now: Option<i64>) -> Vec<S
 mod tests {
     use super::*;
 
+    /// Dev tool: `QUESHION_DUMP=/path/sections.json cargo test --release dump_sections -- --ignored`
+    /// writes every figure's panel section titles (used to compare with the reference pages).
+    #[test]
+    #[ignore]
+    fn dump_sections() {
+        let Ok(path) = std::env::var("QUESHION_DUMP") else { return };
+        let mut out = serde_json::Map::new();
+        let mut keys = serde_json::Map::new();
+        for d in super::super::registry() {
+            keys.insert(d.id.to_string(), serde_json::json!((d.params)().iter().map(|x| x.key).collect::<Vec<_>>()));
+            let defs = (d.params)();
+            let n = defs.iter().any(|x| x.key == "n").then_some(4);
+            let mut titles: Vec<String> = sections(d.id, &defs, n).iter().map(|s| s.title.clone()).collect();
+            if let Some(c) = super::super::measures_for(d.id) {
+                titles.insert(0, c.title.to_string());
+            }
+            if let Some(c) = super::super::rows_for(d.id) {
+                titles.insert(0, c.title.to_string());
+            }
+            if let Some(c) = super::super::chips_for(d.id) {
+                titles.insert(0, c.title.to_string());
+            }
+            out.insert(d.id.to_string(), serde_json::json!(titles));
+        }
+        std::fs::write(&path, serde_json::to_string_pretty(&out).unwrap()).unwrap();
+        std::fs::write(path.replace(".json", "-keys.json"), serde_json::to_string_pretty(&keys).unwrap()).unwrap();
+    }
+
     #[test]
     fn item_keys() {
         assert_eq!(item_of("f1_ang"), Some(("f", 1)));
@@ -192,7 +224,8 @@ mod tests {
             let defs = (d.params)();
             let secs = sections(d.id, &defs, None);
             let mut seen: Vec<usize> = secs.iter().flat_map(|s| s.items.clone()).collect();
-            let owned = super::super::measures_for(d.id).map(|c| c.keys()).unwrap_or_default();
+            let mut owned = super::super::measures_for(d.id).map(|c| c.keys()).unwrap_or_default();
+            owned.extend(super::super::rows_for(d.id).map(|c| c.keys()).unwrap_or_default());
             seen.extend((0..defs.len()).filter(|&i| owned.contains(&defs[i].key)));
             seen.sort();
             assert_eq!(seen, (0..defs.len()).collect::<Vec<_>>(), "{}", d.id);

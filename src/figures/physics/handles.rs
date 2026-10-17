@@ -49,9 +49,9 @@ fn bump(s: &str, d: f64) -> String {
 
 // ------------------------------------------------------------------ free-body diagram
 
-const FANG: [&str; 6] = ["f1_ang", "f2_ang", "f3_ang", "f4_ang", "f5_ang", "f6_ang"];
-const FLEN: [&str; 6] = ["f1_len", "f2_len", "f3_len", "f4_len", "f5_len", "f6_len"];
-const FLAB: [&str; 6] = ["f1_lab", "f2_lab", "f3_lab", "f4_lab", "f5_lab", "f6_lab"];
+const FANG: [&str; 8] = ["f1_ang", "f2_ang", "f3_ang", "f4_ang", "f5_ang", "f6_ang", "f7_ang", "f8_ang"];
+const FLEN: [&str; 8] = ["f1_len", "f2_len", "f3_len", "f4_len", "f5_len", "f6_len", "f7_len", "f8_len"];
+const FLAB: [&str; 8] = ["f1_lab", "f2_lab", "f3_lab", "f4_lab", "f5_lab", "f6_lab", "f7_lab", "f8_lab"];
 
 fn fbd(p: &Params, size: (f64, f64)) -> Vec<Handle> {
     let m = M::new(p, size);
@@ -123,27 +123,31 @@ fn vector(p: &Params, size: (f64, f64)) -> Vec<Handle> {
 
 // ------------------------------------------------------------------ inclined plane
 
-/// incline_render: (ax, ground, lh, up-ramp unit, outward normal) for ramp angle `th`.
-fn incline_geo(th: f64) -> (f64, f64, f64, Pt, Pt) {
-    let tr = th.to_radians();
-    let (ax, ground) = (50.0, 285.0);
-    let bw = (390.0f64).min(205.0 / tr.tan());
+/// incline_render: (ax, ground, lh, up-ramp unit, outward normal) for the current params.
+fn incline_geo(p: &Params) -> (f64, f64, f64, Pt, Pt) {
+    let tr = p.f("angle").clamp(5.0, 75.0).to_radians();
+    let (_, _, ax, ground, bw) = super::mech::incline_frame(p);
     (ax, ground, bw / tr.cos(), (tr.cos(), -tr.sin()), (-tr.sin(), -tr.cos()))
 }
 
 fn incline(p: &Params, size: (f64, f64)) -> Vec<Handle> {
     let m = M::new(p, size);
     let th = p.f("angle").clamp(5.0, 75.0);
-    let (ax, ground, lh, uu, nn) = incline_geo(th);
-    let sz = 50.0 * p.f("size") / 100.0;
-    let s0 = p.f("pos") * lh;
-    let base = (ax + uu.0 * s0, ground + uu.1 * s0);
-    let up = match p.s("obj") { "Cart" => sz * 0.53, _ => sz / 2.0 };
-    let com = (base.0 + nn.0 * up, base.1 + nn.1 * up);
+    let (ax, ground, lh, uu, nn) = incline_geo(p);
+    let objs = super::mech::incline_objects(p, lh);
     let r = (lh * 0.22).clamp(34.0, 60.0);
     let arc = polar((ax, ground), th, r);
     let mut out = vec![];
-    out.push(lab(m, com, 40.0, "obj_lab"));
+    let mut up = 0.0;
+    for o in &objs {
+        let b = (ax + uu.0 * o.s, ground + uu.1 * o.s);
+        up = match o.kind { "Cart" => o.sz * 0.53, _ => o.sz / 2.0 };
+        out.push(lab(m, (b.0 + nn.0 * up, b.1 + nn.1 * up), 40.0, o.lab_key));
+    }
+    // the slide knob sits under the middle of the row; dragging it moves the row's centre
+    let row = (objs[0].s + objs[objs.len() - 1].s) / 2.0;
+    let shift = p.f("pos") * lh - row;
+    let base = (ax + uu.0 * row, ground + uu.1 * row);
     out.push(lab(m, polar((ax, ground), th / 2.0, r + 20.0), 40.0, "ang_lab"));
     if p.b("mark_len") {
         let o = super::mech::len_mark_off(up) + 14.0;
@@ -155,7 +159,7 @@ fn incline(p: &Params, size: (f64, f64)) -> Vec<Handle> {
     out.push(Handle::knob(m.p(base), "Drag to slide the object along the ramp", move |p, q| {
         let q = m.p(q);
         let s = (q.0 - ax) * uu.0 + (q.1 - ground) * uu.1;
-        p.set_f("pos", s / lh);
+        p.set_f("pos", (s + shift) / lh);
     }).with_cursor(Cursor::Move));
     out
 }

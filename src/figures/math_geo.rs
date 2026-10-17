@@ -419,7 +419,7 @@ fn pyramid(p: &Params) -> Option<Vec<Handle>> {
 
 fn round_solid(id: &str, p: &Params, _cyl: bool) -> Option<Vec<Handle>> {
     let fm = Fm::of(id, p)?;
-    let r = p.f("radius");
+    let r = super::math::solid_r(p);
     let h = if id == "cone" { cone_height(p) } else { edge_height(p, p.s("stands") == "Oblique") };
     let c = p.f("view").to_radians().cos();
     let lean = if p.s("stands") == "Oblique" { p.f("lean") } else { 0.0 };
@@ -427,7 +427,7 @@ fn round_solid(id: &str, p: &Params, _cyl: bool) -> Option<Vec<Handle>> {
     let rad = fm.scr((r, 0.0));
     let cone = id == "cone";
     Some(vec![
-        Handle::knob(rad, "Drag to change the radius", move |p, s| p.set_f("radius", fm.mdl(s).0)).with_cursor(Cursor::ResizeH),
+        Handle::knob(rad, "Drag to change the radius", move |p, s| super::math::set_solid_r(p, fm.mdl(s).0)).with_cursor(Cursor::ResizeH),
         Handle::knob(top, "Drag to change the height (and lean if oblique)", move |p, s| {
             let m = fm.mdl(s);
             let c = p.f("view").to_radians().cos().max(0.1);
@@ -435,7 +435,7 @@ fn round_solid(id: &str, p: &Params, _cyl: bool) -> Option<Vec<Handle>> {
             let oblique = p.s("stands") == "Oblique";
             if oblique { p.set_f("lean", m.0); }
             if cone && !oblique && typed(p, "slant").is_some() {
-                p.set_s("slant", &fmt((h * h + p.f("radius").powi(2)).sqrt(), 2));
+                p.set_s("slant", &fmt((h * h + super::math::solid_r(p).powi(2)).sqrt(), 2));
             } else if !cone && oblique && typed(p, "edge").is_some() {
                 p.set_s("edge", &fmt((h * h + p.f("lean").powi(2)).sqrt(), 2));
             } else {
@@ -447,5 +447,5 @@ fn round_solid(id: &str, p: &Params, _cyl: bool) -> Option<Vec<Handle>> {
 
 fn sphere(p: &Params) -> Option<Vec<Handle>> {
     let fm = Fm::of("sphere", p)?;
-    Some(vec![Handle::knob(fm.scr((p.f("radius"), 0.0)), "Drag to change the radius", move |p, s| p.set_f("radius", fm.mdl(s).0)).with_cursor(Cursor::ResizeH)])
+    Some(vec![Handle::knob(fm.scr((super::math::solid_r(p), 0.0)), "Drag to change the radius", move |p, s| super::math::set_solid_r(p, fm.mdl(s).0)).with_cursor(Cursor::ResizeH)])
 }

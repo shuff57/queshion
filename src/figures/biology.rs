@@ -26,6 +26,24 @@ pub fn examples(id: &str) -> Option<Vec<super::Example>> {
     }
 }
 
+/// "Add ..." chips / action buttons for this subject's figures.
+/// pedigree: "New pedigree" draws a new random family (fresh seed) and, like the reference,
+/// drops the hand changes made to the old one.
+pub fn chips(id: &str) -> Option<super::ChipsCard> {
+    match id {
+        "pedigree" => Some(super::ChipsCard {
+            title: "Family",
+            count_key: "",
+            max: 0,
+            chips: vec![super::Chip {
+                label: "New pedigree",
+                set: vec![("seed", Value::I(i64::MIN)), ("changes", Value::S(String::new()))],
+            }],
+        }),
+        _ => None,
+    }
+}
+
 pub fn handles(id: &str, p: &Params, size: (f64, f64)) -> Option<Vec<interact::Handle>> {
     handles::handles(id, p, size)
 }
@@ -229,3 +247,29 @@ pub(crate) fn render_case(id: &str, name: &str, over: &[(&str, Value)]) -> Strin
 
 #[cfg(test)]
 pub(crate) fn s(v: &str) -> Value { Value::S(v.into()) }
+
+#[cfg(test)]
+mod chip_tests {
+    use super::*;
+
+    #[test]
+    fn new_pedigree_chip_reseeds_and_drops_changes() {
+        let card = chips("pedigree").unwrap();
+        assert!(card.count_key.is_empty());
+        let chip = &card.chips[0];
+        assert_eq!(chip.label, "New pedigree");
+        assert!(chip.set.iter().any(|(k, v)| *k == "seed" && *v == Value::I(i64::MIN)));
+        let def = defs().into_iter().find(|d| d.id == "pedigree").unwrap();
+        let pd = (def.params)();
+        for (k, _) in &chip.set { assert!(pd.iter().any(|d| d.key == *k), "unknown {k}"); }
+        let mut p = Params::defaults(&pd);
+        p.set_s("changes", "II-3=affected");
+        let before = (def.render)(&p);
+        for (k, v) in &chip.set {
+            let v = if *v == Value::I(i64::MIN) { Value::I(4242) } else { v.clone() };
+            p.0.insert(k.to_string(), v);
+        }
+        assert_eq!(p.s("changes"), "");
+        assert_ne!((def.render)(&p), before);
+    }
+}

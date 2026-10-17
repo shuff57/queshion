@@ -6,26 +6,28 @@ use std::f64::consts::PI;
 // ---------------------------------------------------------------- motion graphs
 
 const KINDS: [&str; 5] = ["At rest", "Constant velocity forward", "Constant velocity back", "Speeding up", "Slowing down"];
-pub(super) const SK: [[&str; 8]; 5] = [
+pub(super) const SK: [[&str; 8]; 6] = [
     ["s1_kind", "Segment 1 motion", "s1_v", "Segment 1 speed (m/s)", "s1_t", "Segment 1 lasts (s)", "s1_dir", "Segment 1 direction"],
     ["s2_kind", "Segment 2 motion", "s2_v", "Segment 2 speed (m/s)", "s2_t", "Segment 2 lasts (s)", "s2_dir", "Segment 2 direction"],
     ["s3_kind", "Segment 3 motion", "s3_v", "Segment 3 speed (m/s)", "s3_t", "Segment 3 lasts (s)", "s3_dir", "Segment 3 direction"],
     ["s4_kind", "Segment 4 motion", "s4_v", "Segment 4 speed (m/s)", "s4_t", "Segment 4 lasts (s)", "s4_dir", "Segment 4 direction"],
     ["s5_kind", "Segment 5 motion", "s5_v", "Segment 5 speed (m/s)", "s5_t", "Segment 5 lasts (s)", "s5_dir", "Segment 5 direction"],
+    ["s6_kind", "Segment 6 motion", "s6_v", "Segment 6 speed (m/s)", "s6_t", "Segment 6 lasts (s)", "s6_dir", "Segment 6 direction"],
 ];
-const SDEF: [(&str, f64, f64); 5] = [
+const SDEF: [(&str, f64, f64); 6] = [
     ("Speeding up", 4.0, 4.0),
     ("Constant velocity forward", 4.0, 4.0),
     ("Slowing down", 0.0, 4.0),
     ("At rest", 0.0, 3.0),
     ("At rest", 0.0, 2.0),
+    ("At rest", 0.0, 3.0),
 ];
 
 const TMODES: [&str; 3] = ["Text", "Blank line", "None"];
 
 fn motion_params() -> Vec<ParamDef> {
     let mut v = vec![
-        ParamDef::int("n", "Number of segments", 1, 5, 4),
+        ParamDef::int("n", "Number of segments", 1, 6, 4),
         ParamDef::float("x0", "Starting position (m)", -50.0, 50.0, 1.0, 0.0),
     ];
     for (i, k) in SK.iter().enumerate() {
@@ -78,7 +80,7 @@ impl Seg {
 pub(super) fn build_segs(p: &Params) -> Vec<Seg> {
     let mut out: Vec<Seg> = Vec::new();
     let (mut t, mut v, mut x) = (0.0, 0.0, p.f("x0"));
-    for k in SK.iter().take(p.i("n").clamp(1, 5) as usize) {
+    for k in SK.iter().take(p.i("n").clamp(1, 6) as usize) {
         let dur = p.f(k[4]).max(0.1);
         let sp = p.f(k[2]);
         let sgn = if p.s(k[6]) == "Back" { -1.0 } else { 1.0 };
@@ -228,7 +230,7 @@ fn motion_panel(g: &mut G, p: &Params, segs: &[Seg], which: u8, rect: (f64, f64,
     }
     g.raw("</g>");
     if p.b("letters") {
-        let letters = ["A", "B", "C", "D", "E", "F"];
+        let letters = ["A", "B", "C", "D", "E", "F", "G"];
         for i in 0..=segs.len() {
             let (tm, y) = if which == 2 {
                 // acceleration: letter each step at its start (A..), the last at its end
@@ -546,7 +548,7 @@ fn wave_render(p: &Params) -> String {
 pub fn defs() -> Vec<FigureDef> {
     vec![
         FigureDef { id: "motion-graphs", subject: Subject::Physics, title: "Motion Graphs",
-            blurb: "Position-, velocity- and acceleration-time graphs built from up to five motion segments (rest, constant velocity, speeding up, slowing down).",
+            blurb: "Position-, velocity- and acceleration-time graphs built from up to six motion segments (rest, constant velocity, speeding up, slowing down).",
             params: motion_params, render: motion_render },
         FigureDef { id: "waves", subject: Subject::Physics, title: "Waves",
             blurb: "Transverse and longitudinal waves with amplitude and wavelength marks on measurable, gridded axes.",

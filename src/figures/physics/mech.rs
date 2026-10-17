@@ -6,39 +6,45 @@ fn colr(on: bool, i: usize) -> &'static str { if on { PAL[i % PAL.len()] } else 
 
 // ---------------------------------------------------------------- free-body diagram
 
-const FK: [[&str; 6]; 6] = [
+const FK: [[&str; 6]; 8] = [
     ["f1_ang", "Force 1 direction (deg)", "f1_len", "Force 1 length", "f1_lab", "Force 1 label"],
     ["f2_ang", "Force 2 direction (deg)", "f2_len", "Force 2 length", "f2_lab", "Force 2 label"],
     ["f3_ang", "Force 3 direction (deg)", "f3_len", "Force 3 length", "f3_lab", "Force 3 label"],
     ["f4_ang", "Force 4 direction (deg)", "f4_len", "Force 4 length", "f4_lab", "Force 4 label"],
     ["f5_ang", "Force 5 direction (deg)", "f5_len", "Force 5 length", "f5_lab", "Force 5 label"],
     ["f6_ang", "Force 6 direction (deg)", "f6_len", "Force 6 length", "f6_lab", "Force 6 label"],
+    ["f7_ang", "Force 7 direction (deg)", "f7_len", "Force 7 length", "f7_lab", "Force 7 label"],
+    ["f8_ang", "Force 8 direction (deg)", "f8_len", "Force 8 length", "f8_lab", "Force 8 label"],
 ];
 /// Per-force extras: label mode, mark angle, measured from, angle label mode, angle label, components.
-const FX: [[&str; 6]; 6] = [
+const FX: [[&str; 6]; 8] = [
     ["f1_lab_mode", "f1_mark", "f1_from", "f1_alab_mode", "f1_alab", "f1_comps"],
     ["f2_lab_mode", "f2_mark", "f2_from", "f2_alab_mode", "f2_alab", "f2_comps"],
     ["f3_lab_mode", "f3_mark", "f3_from", "f3_alab_mode", "f3_alab", "f3_comps"],
     ["f4_lab_mode", "f4_mark", "f4_from", "f4_alab_mode", "f4_alab", "f4_comps"],
     ["f5_lab_mode", "f5_mark", "f5_from", "f5_alab_mode", "f5_alab", "f5_comps"],
     ["f6_lab_mode", "f6_mark", "f6_from", "f6_alab_mode", "f6_alab", "f6_comps"],
+    ["f7_lab_mode", "f7_mark", "f7_from", "f7_alab_mode", "f7_alab", "f7_comps"],
+    ["f8_lab_mode", "f8_mark", "f8_from", "f8_alab_mode", "f8_alab", "f8_comps"],
 ];
-const FXL: [[&str; 6]; 6] = [
+const FXL: [[&str; 6]; 8] = [
     ["Force 1 label shows", "Force 1: mark its angle", "Force 1 angle measured from", "Force 1 angle label shows", "Force 1 angle label", "Force 1: show its components"],
     ["Force 2 label shows", "Force 2: mark its angle", "Force 2 angle measured from", "Force 2 angle label shows", "Force 2 angle label", "Force 2: show its components"],
     ["Force 3 label shows", "Force 3: mark its angle", "Force 3 angle measured from", "Force 3 angle label shows", "Force 3 angle label", "Force 3: show its components"],
     ["Force 4 label shows", "Force 4: mark its angle", "Force 4 angle measured from", "Force 4 angle label shows", "Force 4 angle label", "Force 4: show its components"],
     ["Force 5 label shows", "Force 5: mark its angle", "Force 5 angle measured from", "Force 5 angle label shows", "Force 5 angle label", "Force 5: show its components"],
     ["Force 6 label shows", "Force 6: mark its angle", "Force 6 angle measured from", "Force 6 angle label shows", "Force 6 angle label", "Force 6: show its components"],
+    ["Force 7 label shows", "Force 7: mark its angle", "Force 7 angle measured from", "Force 7 angle label shows", "Force 7 angle label", "Force 7: show its components"],
+    ["Force 8 label shows", "Force 8: mark its angle", "Force 8 angle measured from", "Force 8 angle label shows", "Force 8 angle label", "Force 8: show its components"],
 ];
-const FDEF: [(f64, &str); 6] = [(270.0, "F_g"), (90.0, "F_N"), (0.0, "F_f"), (180.0, "F_T"), (45.0, "F_app"), (225.0, "F_s")];
+const FDEF: [(f64, &str); 8] = [(270.0, "F_g"), (90.0, "F_N"), (0.0, "F_f"), (180.0, "F_T"), (45.0, "F_app"), (225.0, "F_s"), (135.0, "F"), (315.0, "F")];
 const FMODES: [&str; 3] = ["Text", "Blank line", "None"];
 
 fn fbd_params() -> Vec<ParamDef> {
     let mut v = vec![
         ParamDef::choice("body", "Body", &["Dot", "Block", "Ball", "Cart"], "Dot"),
         ParamDef::int("body_size", "Body size (%)", 50, 200, 100),
-        ParamDef::int("n", "Number of forces", 1, 6, 2),
+        ParamDef::int("n", "Number of forces", 1, 8, 2),
     ];
     for (i, k) in FK.iter().enumerate() {
         let x = FX[i];
@@ -93,7 +99,7 @@ pub(super) struct FGeo {
 pub(super) fn fbd_geo(p: &Params) -> FGeo {
     let body = p.s("body");
     let sc = (p.f("body_size") / 100.0).clamp(0.5, 2.0);
-    let n = p.i("n").clamp(1, 6) as usize;
+    let n = p.i("n").clamp(1, 8) as usize;
     let angs: Vec<f64> = (0..n).map(|i| p.f(FK[i][0]).rem_euclid(360.0)).collect();
     // raw geometry around (0,0)
     let mut forces = vec![];
@@ -422,8 +428,23 @@ fn incline_params() -> Vec<ParamDef> {
         ParamDef::int("size", "Object size (%)", 50, 200, 100),
         ParamDef::float("pos", "Where on the ramp", 0.15, 0.85, 0.05, 0.55),
         ParamDef::bool("two", "A second block higher up, tied by a string", false),
+        ParamDef::int("n", "Number of objects", 1, 3, 1),
+        ParamDef::choice("obj2_kind", "Object 2", &["Block", "Ball", "Cart"], "Block"),
+        ParamDef::choice("obj2_lab_mode", "Object 2 label shows", &IMODES, "Text"),
         ParamDef::text("obj2_lab", "Second block label", "m_2"),
+        ParamDef::int("obj2_size", "Object 2 size (%)", 50, 200, 100),
+        ParamDef::choice("obj3_kind", "Object 3", &["Block", "Ball", "Cart"], "Block"),
+        ParamDef::choice("obj3_lab_mode", "Object 3 label shows", &IMODES, "Text"),
+        ParamDef::text("obj3_lab", "Object 3 label", "m_3"),
+        ParamDef::int("obj3_size", "Object 3 size (%)", 50, 200, 100),
+        ParamDef::choice("joined", "Joined", &["By strings", "Touching"], "By strings"),
+        ParamDef::int("spacing", "Space between (%)", 50, 200, 100),
         ParamDef::bool("tension", "Tension in the string", false),
+        ParamDef::choice("ten_lab_mode", "Tension label shows", &IMODES, "Text"),
+        ParamDef::text("ten_lab", "Tension label", "T"),
+        ParamDef::bool("contact", "Contact force, where they touch", false),
+        ParamDef::choice("cont_lab_mode", "Contact force label shows", &IMODES, "Text"),
+        ParamDef::text("cont_lab", "Contact force label", "P"),
         ParamDef::float("angle", "Ramp angle (deg)", 5.0, 75.0, 1.0, 30.0),
         ParamDef::bool("show_angle", "Mark the angle", true),
         ParamDef::choice("ang_lab_mode", "Angle label shows", &IMODES, "Text"),
@@ -456,6 +477,87 @@ fn incline_params() -> Vec<ParamDef> {
     ]
 }
 
+/// `T` -> `T_1`, `T_a` -> `T_{a1}`: the k-th of several strings or contacts.
+fn sub_k(lab: &str, k: usize) -> String {
+    let t = lab.trim();
+    if t.is_empty() || t == "none" { return lab.to_string(); }
+    match t.split_once('_') {
+        Some((b, s)) => format!("{b}_{{{}{k}}}", s.trim_matches(|c| c == '{' || c == '}')),
+        None => format!("{t}_{k}"),
+    }
+}
+
+/// `m` -> `m_2` for the k-th of several objects (labels that already have a subscript, or are
+/// longer than a symbol such as "5 kg", stay as typed).
+fn auto_sub(lab: &str, k: usize, multi: bool) -> String {
+    let t = lab.trim();
+    if !multi || t.is_empty() || t == "none" || t.contains('_') || t.chars().count() > 2 || !t.chars().all(|c| c.is_alphabetic()) {
+        return lab.to_string();
+    }
+    format!("{t}_{k}")
+}
+
+/// Half the length along the ramp of an object of kind `kind` and size `sz` (px).
+pub(super) fn obj_half_len(kind: &str, sz: f64) -> f64 {
+    match kind { "Cart" => sz * 0.75, _ => sz / 2.0 }
+}
+
+/// One object on the ramp: kind, size (px), centre distance along the ramp, label keys.
+pub(super) struct IncObj { pub kind: &'static str, pub sz: f64, pub s: f64, pub lab_key: &'static str, pub mode_key: &'static str }
+
+/// Number of objects: `n` (1-3), or 2 for an old spec with "A second block" ticked.
+pub(super) fn incline_count(p: &Params) -> usize {
+    let n = p.i("n").clamp(1, 3) as usize;
+    if n == 1 && p.b("two") { 2 } else { n }
+}
+
+/// The objects on a ramp of slope length `lh`, foot first, the row centred on `pos`.
+pub(super) fn incline_objects(p: &Params, lh: f64) -> Vec<IncObj> {
+    let n = incline_count(p);
+    let legacy = n == 2 && p.i("n") < 2; // old two-block spec: two equal blocks
+    let kind = |k: &str| -> &'static str { match k { "Ball" => "Ball", "Cart" => "Cart", _ => "Block" } };
+    let sz1 = 50.0 * p.f("size") / 100.0;
+    let mut v: Vec<(&'static str, f64, &'static str, &'static str)> = vec![(if n > 1 && legacy { "Block" } else { kind(p.s("obj")) }, sz1, "obj_lab", "obj_lab_mode")];
+    if n >= 2 {
+        if legacy {
+            v.push(("Block", sz1, "obj2_lab", ""));
+        } else {
+            v.push((kind(p.s("obj2_kind")), 50.0 * p.f("obj2_size") / 100.0, "obj2_lab", "obj2_lab_mode"));
+        }
+    }
+    if n >= 3 {
+        v.push((kind(p.s("obj3_kind")), 50.0 * p.f("obj3_size") / 100.0, "obj3_lab", "obj3_lab_mode"));
+    }
+    let touching = n > 1 && p.s("joined") == "Touching";
+    let halves: Vec<f64> = v.iter().map(|o| obj_half_len(o.0, o.1)).collect();
+    let body: f64 = halves.iter().sum::<f64>() * 2.0;
+    let mut gap = if touching || n == 1 {
+        0.0
+    } else {
+        // the old two-block spacing (string = centre gap minus a block), scaled by "Space between"
+        let avg = body / n as f64;
+        let base = if n == 2 { (avg * 1.9).max(lh * 0.32) - avg } else { (avg * 0.9).max(lh * 0.24 - avg) };
+        base * (p.f("spacing") / 100.0).clamp(0.5, 2.0)
+    };
+    if n > 1 && body + gap * (n as f64 - 1.0) > lh * 0.94 {
+        gap = ((lh * 0.94 - body) / (n as f64 - 1.0)).max(if touching { 0.0 } else { 8.0 });
+    }
+    let total = body + gap * (n as f64 - 1.0);
+    let start = if n == 1 {
+        p.f("pos") * lh - halves[0]
+    } else {
+        let lo = (sz1 * 0.8 - halves[0]).max(lh * 0.02);
+        (p.f("pos") * lh - total / 2.0).max(lo).min((lh * 0.98 - total).max(lo))
+    };
+    let mut s = start;
+    let mut out = vec![];
+    for (i, o) in v.into_iter().enumerate() {
+        out.push(IncObj { kind: o.0, sz: o.1, s: s + halves[i], lab_key: o.2, mode_key: o.3 });
+        s += 2.0 * halves[i] + gap;
+    }
+    out
+}
+
 /// `F_g` -> `F_{g1}` for the k-th of two objects (labels without a subscript gain one).
 fn indexed(lab: &str, k: usize, two: bool) -> String {
     if !two || lab.is_empty() || lab == "none" || lab.trim() == "T" { return lab.to_string(); }
@@ -484,15 +586,23 @@ impl RampObj {
 /// Distance of the ramp-length mark above the slope for an object of half height `hh`.
 pub(super) fn len_mark_off(hh: f64) -> f64 { 2.0 * hh + 34.0 }
 
+/// Canvas and ramp frame: (w, h, foot x, ground y, base width). A row of objects gets a bigger
+/// ramp so the strings between them have room.
+pub(super) fn incline_frame(p: &Params) -> (f64, f64, f64, f64, f64) {
+    let tr = p.f("angle").clamp(5.0, 75.0).to_radians();
+    if incline_count(p) > 1 {
+        (640.0, 440.0, 50.0, 395.0, (510.0f64).min(275.0 / tr.tan()))
+    } else {
+        (520.0, 330.0, 50.0, 285.0, (390.0f64).min(205.0 / tr.tan()))
+    }
+}
+
 fn incline_render(p: &Params) -> String {
-    let (w, h) = (520.0, 330.0);
+    let (w, h, ax, ground, bw) = incline_frame(p);
     let mut g = G::new(w, h, p.b("mirror"));
     let col = p.b("color");
     let th = p.f("angle").clamp(5.0, 75.0);
     let tr = th.to_radians();
-    let ground = 285.0;
-    let ax = 50.0;
-    let bw = (390.0f64).min(205.0 / tr.tan());
     let (bx, tx, ty) = (ax + bw, ax + bw, ground - bw * tr.tan());
     let (uu, nn) = ((tr.cos(), -tr.sin()), (-tr.sin(), -tr.cos())); // up-ramp, outward normal
     let lh = bw / tr.cos();
@@ -508,10 +618,12 @@ fn incline_render(p: &Params) -> String {
         }
     }
     // objects
-    let sz = 50.0 * p.f("size") / 100.0;
-    let two = p.b("two");
-    let kind = p.s("obj").to_string();
-    let draw_obj = |g: &mut G, kind: &str, s0: f64, lab: &str| -> RampObj {
+    let objs_spec = incline_objects(p, lh);
+    let n_obj = objs_spec.len();
+    let multi = n_obj > 1;
+    let touching = multi && p.s("joined") == "Touching";
+    let draw_obj = |g: &mut G, kind: &str, sz: f64, s0: f64, lab: &str| -> RampObj {
+        // `s0` is the object's centre along the ramp
         let base = (ax + uu.0 * s0, ground + uu.1 * s0);
         let loc = |l: f64, hgt: f64| (base.0 + uu.0 * l + nn.0 * hgt, base.1 + uu.1 * l + nn.1 * hgt);
         let o = match kind {
@@ -538,79 +650,128 @@ fn incline_render(p: &Params) -> String {
         g.label_at(o.com.0, o.com.1, 20.0, lab, st);
         o
     };
-    let pos = p.f("pos");
     let mut objs: Vec<RampObj> = vec![];
-    if two {
-        // the pair is centred on `pos`, the first object lower down
-        let gap = (sz * 1.9).max(lh * 0.32);
-        let s1 = (pos * lh - gap / 2.0).max(sz * 0.8);
-        let s2 = (s1 + gap).min(lh - sz * 0.8);
-        let o1 = draw_obj(&mut g, "Block", s1, &lab_mode(p, "obj_lab", "obj_lab_mode"));
-        let o2 = draw_obj(&mut g, "Block", s2, p.s("obj2_lab"));
-        // the string between them
-        let a = (o1.com.0 + uu.0 * o1.hl, o1.com.1 + uu.1 * o1.hl);
-        let b = (o2.com.0 - uu.0 * o2.hl, o2.com.1 - uu.1 * o2.hl);
-        g.line(a.0, a.1, b.0, b.1, INK, 1.4);
-        objs.push(o1);
-        objs.push(o2);
-    } else {
-        objs.push(draw_obj(&mut g, &kind, pos * lh, &lab_mode(p, "obj_lab", "obj_lab_mode")));
+    for (k, o) in objs_spec.iter().enumerate() {
+        let lab = lab_mode(p, o.lab_key, o.mode_key);
+        objs.push(draw_obj(&mut g, o.kind, o.sz, o.s, &auto_sub(&lab, k + 1, multi)));
+    }
+    // the strings between tied objects
+    if multi && !touching {
+        for w in objs.windows(2) {
+            let a = (w[0].com.0 + uu.0 * w[0].hl, w[0].com.1 + uu.1 * w[0].hl);
+            let b = (w[1].com.0 - uu.0 * w[1].hl, w[1].com.1 - uu.1 * w[1].hl);
+            g.line(a.0, a.1, b.0, b.1, INK, 1.4);
+        }
     }
     let dirv = |d: &str| -> Option<Pt> {
         match d { "Up the ramp" => Some(uu), "Down the ramp" => Some((-uu.0, -uu.1)), _ => None }
     };
-    let arrow_len = 46.0 + sz * 0.3;
+    let sz1 = objs_spec[0].sz;
+    let arrow_len = 46.0 + sz1 * 0.3;
     let force = |g: &mut G, from: Pt, d: Pt, lab: &str, i: usize| {
         let tip = (from.0 + d.0 * arrow_len, from.1 + d.1 * arrow_len);
         g.arrow(from.0, from.1, tip.0, tip.1, colr(col, i), SW);
         g.label_dir(tip.0, tip.1, d.0, d.1, 19.0, lab, ITALIC);
     };
-    let n_obj = objs.len();
     for (k, o) in objs.iter().enumerate() {
         let k1 = k + 1;
         if p.b("gravity") {
             let from = o.exit((0.0, 1.0), uu, nn);
-            force(&mut g, from, (0.0, 1.0), &indexed(&lab_mode(p, "grav_lab", "grav_lab_mode"), k1, two), 0);
+            force(&mut g, from, (0.0, 1.0), &indexed(&lab_mode(p, "grav_lab", "grav_lab_mode"), k1, multi), 0);
         }
         if p.b("normal") {
             let from = (o.com.0 + nn.0 * o.hh, o.com.1 + nn.1 * o.hh);
-            force(&mut g, from, nn, &indexed(&lab_mode(p, "norm_lab", "norm_lab_mode"), k1, two), 1);
+            force(&mut g, from, nn, &indexed(&lab_mode(p, "norm_lab", "norm_lab_mode"), k1, multi), 1);
         }
         if let Some(d) = dirv(p.s("friction")) {
-            // along the surface from the face it acts towards
-            let sgn = d.0 * uu.0 + d.1 * uu.1;
-            let from = (o.com.0 + uu.0 * o.hl * sgn - nn.0 * o.hh * 0.55, o.com.1 + uu.1 * o.hl * sgn - nn.1 * o.hh * 0.55);
-            force(&mut g, from, d, &indexed(&lab_mode(p, "fric_lab", "fric_lab_mode"), k1, two), 2);
-        }
-        if let Some(d) = dirv(p.s("applied")) {
-            // applied force acts on the last (upper) object
-            if k + 1 == n_obj {
+            let lab = indexed(&lab_mode(p, "fric_lab", "fric_lab_mode"), k1, multi);
+            if touching {
+                // the objects touch, so each friction arrow runs just under the surface below its object
+                let foot = (o.com.0 - nn.0 * (o.hh + 7.0), o.com.1 - nn.1 * (o.hh + 7.0));
+                let from = (foot.0 - d.0 * o.hl * 0.6, foot.1 - d.1 * o.hl * 0.6);
+                let tip = (from.0 + d.0 * (o.hl * 1.2 + 18.0), from.1 + d.1 * (o.hl * 1.2 + 18.0));
+                g.arrow(from.0, from.1, tip.0, tip.1, colr(col, 2), SW);
+                g.label_at(tip.0 - nn.0 * 16.0, tip.1 - nn.1 * 16.0, 19.0, &lab, ITALIC);
+            } else {
+                // along the surface from the face it acts towards
                 let sgn = d.0 * uu.0 + d.1 * uu.1;
-                let from = (o.com.0 + uu.0 * o.hl * sgn, o.com.1 + uu.1 * o.hl * sgn);
-                force(&mut g, from, d, &lab_mode(p, "app_lab", "app_lab_mode"), 3);
+                let from = (o.com.0 + uu.0 * o.hl * sgn - nn.0 * o.hh * 0.55, o.com.1 + uu.1 * o.hl * sgn - nn.1 * o.hh * 0.55);
+                if multi {
+                    // a row: the label goes under the arrow, clear of the next object
+                    let tip = (from.0 + d.0 * arrow_len, from.1 + d.1 * arrow_len);
+                    g.arrow(from.0, from.1, tip.0, tip.1, colr(col, 2), SW);
+                    let m = (from.0 + d.0 * arrow_len * 0.6 - nn.0 * 18.0, from.1 + d.1 * arrow_len * 0.6 - nn.1 * 18.0);
+                    g.label_at(m.0, m.1, 19.0, &lab, ITALIC);
+                } else {
+                    force(&mut g, from, d, &lab, 2);
+                }
             }
         }
-        if two && p.b("tension") {
-            let (d, sgn) = if k == 0 { (uu, 1.0) } else { ((-uu.0, -uu.1), -1.0) };
-            let from = (o.com.0 + uu.0 * o.hl * sgn, o.com.1 + uu.1 * o.hl * sgn);
-            let tip = (from.0 + d.0 * 34.0, from.1 + d.1 * 34.0);
-            g.arrow(from.0, from.1, tip.0, tip.1, colr(col, 4), SW);
-            let m = ((from.0 + tip.0) / 2.0 + nn.0 * 14.0, (from.1 + tip.1) / 2.0 + nn.1 * 14.0);
-            g.label_at(m.0, m.1, 18.0, "T", ITALIC);
+    }
+    if let Some(d) = dirv(p.s("applied")) {
+        let up = d.0 * uu.0 + d.1 * uu.1 > 0.0;
+        let lab = lab_mode(p, "app_lab", "app_lab_mode");
+        if touching {
+            // pushes the object at the back of the row: the arrow ends on its rear face
+            let o = if up { objs[0] } else { objs[n_obj - 1] };
+            let face = (o.com.0 - d.0 * o.hl, o.com.1 - d.1 * o.hl);
+            let tail = (face.0 - d.0 * arrow_len, face.1 - d.1 * arrow_len);
+            g.arrow(tail.0, tail.1, face.0, face.1, colr(col, 3), SW);
+            g.label_dir(tail.0, tail.1, -d.0, -d.1, 19.0, &lab, ITALIC);
+        } else {
+            // pulls the object in front (a single object: from its leading face)
+            let o = if up { objs[n_obj - 1] } else { objs[0] };
+            let from = (o.com.0 + d.0 * o.hl, o.com.1 + d.1 * o.hl);
+            force(&mut g, from, d, &lab, 3);
         }
     }
-    // velocity / acceleration: dashed, drawn beside (above) the upper object
+    if multi && !touching && p.b("tension") {
+        // each string pulls both its objects towards it: T (one string) or T_1, T_2
+        let base = lab_mode(p, "ten_lab", "ten_lab_mode");
+        for j in 0..n_obj - 1 {
+            let lab = if n_obj > 2 { sub_k(&base, j + 1) } else { base.clone() };
+            for (o, d) in [(objs[j], uu), (objs[j + 1], (-uu.0, -uu.1))] {
+                let from = (o.com.0 + d.0 * o.hl, o.com.1 + d.1 * o.hl);
+                let tip = (from.0 + d.0 * 34.0, from.1 + d.1 * 34.0);
+                g.arrow(from.0, from.1, tip.0, tip.1, colr(col, 4), SW);
+                let m = ((from.0 + tip.0) / 2.0 + nn.0 * 14.0, (from.1 + tip.1) / 2.0 + nn.1 * 14.0);
+                g.label_at(m.0, m.1, 18.0, &lab, ITALIC);
+            }
+        }
+    }
+    if touching && p.b("contact") {
+        // the pair of contact forces where two objects touch, just above the row
+        let base = lab_mode(p, "cont_lab", "cont_lab_mode");
+        for j in 0..n_obj - 1 {
+            let lab = if n_obj > 2 { sub_k(&base, j + 1) } else { base.clone() };
+            let (a, b) = (objs[j], objs[j + 1]);
+            // the interface point on the surface, lifted above the lower of the two tops
+            let (sa, sb) = (&objs_spec[j], &objs_spec[j + 1]);
+            let s = (sa.s + obj_half_len(sa.kind, sa.sz) + sb.s - obj_half_len(sb.kind, sb.sz)) / 2.0;
+            let surf = (ax + uu.0 * s, ground + uu.1 * s);
+            let lift = 2.0 * a.hh.min(b.hh) + 10.0;
+            let c = (surf.0 + nn.0 * lift, surf.1 + nn.1 * lift);
+            for d in [uu, (-uu.0, -uu.1)] {
+                g.arrow(c.0, c.1, c.0 + d.0 * 30.0, c.1 + d.1 * 30.0, colr(col, 5), SW);
+            }
+            g.label_at(c.0 + nn.0 * 18.0, c.1 + nn.1 * 18.0, 18.0, &lab, ITALIC);
+        }
+    }
+    // velocity / acceleration: dashed, above each tied object, or once above a touching row
     let top = *objs.last().unwrap();
-    let mut off = top.hh + 34.0;
-    for (key, mk, lk) in [("velocity", "vel_lab_mode", "vel_lab"), ("accel", "acc_lab_mode", "acc_lab")] {
-        if let Some(d) = dirv(p.s(key)) {
-            // above the object and a little ahead, clear of the normal force
-            let ahead = top.hl * 0.9 + 14.0;
-            let c = (top.com.0 + nn.0 * off + d.0 * ahead, top.com.1 + nn.1 * off + d.1 * ahead);
-            let (a, b) = ((c.0 - d.0 * 26.0, c.1 - d.1 * 26.0), (c.0 + d.0 * 26.0, c.1 + d.1 * 26.0));
-            g.dash_arrow(a.0, a.1, b.0, b.1, if col { PAL[1] } else { INK }, SW);
-            g.label_dir(c.0 + nn.0 * 2.0, c.1 + nn.1 * 2.0, nn.0, nn.1, 19.0, &lab_mode(p, lk, mk), ITALIC);
-            off += 34.0;
+    let movers: Vec<RampObj> = if multi && !touching { objs.clone() } else { vec![top] };
+    for o in &movers {
+        let mut off = o.hh + 34.0;
+        for (key, mk, lk) in [("velocity", "vel_lab_mode", "vel_lab"), ("accel", "acc_lab_mode", "acc_lab")] {
+            if let Some(d) = dirv(p.s(key)) {
+                // above the object and a little ahead, clear of the normal force
+                let ahead = o.hl * 0.9 + 14.0;
+                let c = (o.com.0 + nn.0 * off + d.0 * ahead, o.com.1 + nn.1 * off + d.1 * ahead);
+                let (a, b) = ((c.0 - d.0 * 26.0, c.1 - d.1 * 26.0), (c.0 + d.0 * 26.0, c.1 + d.1 * 26.0));
+                g.dash_arrow(a.0, a.1, b.0, b.1, if col { PAL[1] } else { INK }, SW);
+                g.label_dir(c.0 + nn.0 * 2.0, c.1 + nn.1 * 2.0, nn.0, nn.1, 19.0, &lab_mode(p, lk, mk), ITALIC);
+                off += 34.0;
+            }
         }
     }
     // angle mark

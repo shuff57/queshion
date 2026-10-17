@@ -891,6 +891,12 @@ pub(crate) const Q_V: [&str; 8] = ["m_ab", "m_bc", "m_cd", "m_da", "m_a", "m_b",
 pub(crate) const Q_LAB: [&str; 8] = ["ab_lab", "bc_lab", "cd_lab", "da_lab", "a_lab", "b_lab", "c_lab", "d_lab"];
 pub(crate) const Q_TXT: [&str; 8] = ["ab_label", "bc_label", "cd_label", "da_label", "a_label", "b_label", "c_label", "d_label"];
 pub(crate) const Q_MARK: [&str; 8] = ["ab_ticks", "bc_ticks", "cd_ticks", "da_ticks", "a_arcs", "b_arcs", "c_arcs", "d_arcs"];
+/// Parallel arrows per side (the label popover's second mark): "Auto" keeps the kind's own arrows
+/// (or the older `arrow_marks` list), anything else sets that side.
+pub(crate) const Q_ARROW: [&str; 4] = ["ab_arrows", "bc_arrows", "cd_arrows", "da_arrows"];
+/// Value keys of the card's "Parallel arrows" rows (linked rows: not params, text from `computed`).
+pub(crate) const Q_PAR: [&str; 4] = ["ab_par", "bc_par", "cd_par", "da_par"];
+const ARROW_OPTS: [&str; 5] = ["Auto", "None", "1", "2", "3"];
 
 /// Which of the eight rows (AB BC CD DA ∠A ∠B ∠C ∠D) have a value box in each quadrilateral;
 /// the others are linked ("CD = AB") or fixed (a rectangle's 90°).
@@ -1174,7 +1180,22 @@ fn diag_params() -> Vec<ParamDef> {
         ParamDef::choice("bd_lab", "Diagonal BD label", &LAB_OPTS, "None"),
         ParamDef::text("bd_label", "Diagonal BD label text", "e"),
         ParamDef::list("arrow_marks", "Parallel arrows per side, e.g. AB 1, CD 1 (or none; blank = the figure's default)", ""),
+        ParamDef::choice("ab_arrows", "Parallel arrows on AB", &ARROW_OPTS, "Auto"),
+        ParamDef::choice("bc_arrows", "Parallel arrows on BC", &ARROW_OPTS, "Auto"),
+        ParamDef::choice("cd_arrows", "Parallel arrows on CD", &ARROW_OPTS, "Auto"),
+        ParamDef::choice("da_arrows", "Parallel arrows on DA", &ARROW_OPTS, "Auto"),
     ]
+}
+
+/// Arrows drawn on each side: the per-side choice, else the `arrow_marks` list, else the kind's own.
+pub(crate) fn quad_arrows(p: &Params, default_arrows: &[u8]) -> Vec<u8> {
+    let names = corner_names(p, 4);
+    let base = parse_counts(p.s("arrow_marks"), &names, true).unwrap_or_else(|| default_arrows.to_vec());
+    (0..4).map(|i| match p.s(Q_ARROW[i]) { "None" => 0, "1" => 1, "2" => 2, "3" => 3, _ => base.get(i).copied().unwrap_or(0) }).collect()
+}
+/// Each kind's own parallel arrows (drawn while a side is on "Auto").
+pub(crate) fn quad_default_arrows(id: &str) -> Vec<u8> {
+    match id { "parallelogram" => vec![1, 2, 1, 2], "trapezoid" => vec![1, 0, 1, 0], _ => vec![0; 4] }
 }
 
 /// Diagonals AC / BD with their own label settings ("Drawn and labelled" forces the measure) and a
@@ -1213,7 +1234,7 @@ fn quad_draw(id: &str, p: &Params, s: &QSol, default_arrows: Vec<u8>, mut ex: Ve
     let pts = s.pts.to_vec();
     diagonals(p, &pts, &mut ex, &mut mk);
     let names = corner_names(p, 4);
-    let arrows = parse_counts(p.s("arrow_marks"), &names, true).unwrap_or(default_arrows);
+    let arrows = quad_arrows(p, &default_arrows);
     draw_poly(PolySpec {
         pts,
         names,
@@ -1342,9 +1363,17 @@ pub(crate) fn kite_render(p: &Params) -> String {
 
 /// (value_key, text) for every row of a quadrilateral that is worked out or linked.
 pub(crate) fn quad_computed(id: &str, p: &Params) -> Vec<(&'static str, String)> {
-    let Ok(s) = quad_solve(id, p) else { return vec![] };
-    let dec = p.i("dec");
     let mut out: Vec<(&'static str, String)> = Vec::new();
+    // the "Parallel arrows" rows' buttons: the arrows each side gets
+    let arr = quad_arrows(p, &quad_default_arrows(id));
+    for i in 0..4 {
+        let chev = "\u{203a}".repeat(arr[i] as usize);
+        let auto = matches!(p.s(Q_ARROW[i]), "" | "Auto");
+        out.push((Q_PAR[i], match (auto, arr[i]) { (true, 0) => "auto".to_string(), (true, _) => format!("{chev} auto"), _ => chev }));
+    }
+    // the solver's reason (too few / too many / inconsistent givens) shows under the card
+    let s = match quad_solve(id, p) { Ok(s) => s, Err(e) => { out.push(("__msg", e)); return out; } };
+    let dec = p.i("dec");
     let inp = q_inputs(id);
     for i in 0..8 {
         let Some(v) = s.vals[i] else { continue };
@@ -1508,17 +1537,49 @@ pub(crate) fn angles_params() -> Vec<ParamDef> {
         ParamDef::choice("ray_ends", "Ray ends", &["Arrows", "Plain", "Points"], "Arrows"),
         ParamDef::bool("shade", "Shade the angles", true),
         ParamDef::choice("label_size", "Label size", &["Large", "Medium", "Small"], "Medium"),
+        // "Add ray" (chips card) counts the rays in use; an empty row within the count is drawn
+        // in the middle of the widest gap, as the reference places a new ray.
+        ParamDef::int("ray_count", "Rays in use, the baseline included", 2, 6, 2),
     ]);
     v
+}
+
+/// The middle of the widest gap between `dirs` (degrees), searched over 0-180° while every ray is
+/// in the upper half, else round the whole circle. Whole degrees, like the reference's new rays.
+pub(crate) fn widest_gap_mid(dirs: &[f64]) -> f64 {
+    let upper = if dirs.iter().all(|d| *d <= 180.0 + 1e-9) { 180.0 } else { 360.0 };
+    let mut pts: Vec<f64> = dirs.iter().copied().filter(|d| *d <= upper).collect();
+    pts.extend([0.0, upper]);
+    pts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mut best = (0.0, upper);
+    for w in pts.windows(2) {
+        if w[1] - w[0] > best.1 - best.0 + 1e-9 || best == (0.0, upper) { best = (w[0], w[1]); }
+    }
+    ((best.0 + best.1) / 2.0).round()
+}
+
+/// Ray directions with their source row: typed rows first, then each empty row within
+/// `ray_count` placed in the widest gap left by the rays before it (bool: placed automatically).
+pub(crate) fn ray_rows(p: &Params) -> Vec<(usize, f64, bool)> {
+    let cnt = p.i("ray_count").clamp(2, 6) as usize;
+    let mut out: Vec<(usize, f64, bool)> = vec![];
+    for i in 1..6 {
+        if let Ok(Some(t)) = parse_typed(p.s(RAY_V[i])) { out.push((i, t.v.rem_euclid(360.0), false)); }
+    }
+    for i in 1..cnt {
+        if !p.s(RAY_V[i]).trim().is_empty() { continue; }
+        let mut have: Vec<f64> = out.iter().map(|r| r.1).collect();
+        have.push(0.0);
+        out.push((i, widest_gap_mid(&have), true));
+    }
+    out
 }
 
 /// Ray directions in degrees ccw from the baseline, sorted: (direction, source row 0-5, is the
 /// back half of a ray drawn as a line), and whether the last sector wraps back to the baseline.
 pub(crate) fn angle_dirs(p: &Params) -> (Vec<(f64, usize, bool)>, bool) {
     let mut d: Vec<(f64, usize, bool)> = vec![(0.0, 0, false)];
-    for i in 1..6 {
-        if let Ok(Some(t)) = parse_typed(p.s(RAY_V[i])) { d.push((t.v.rem_euclid(360.0), i, false)); }
-    }
+    for (i, a, _) in ray_rows(p) { d.push((a, i, false)); }
     let mut lines = false;
     for k in 0..d.len() {
         let (a, i, _) = d[k];
@@ -1592,8 +1653,11 @@ pub(crate) fn angles_render(p: &Params) -> String {
 }
 
 pub(crate) fn angles_computed(p: &Params) -> Vec<(&'static str, String)> {
-    let _ = p;
-    vec![("ray1", "0".to_string())]
+    let mut out = vec![("ray1", "0".to_string())];
+    // a row added with "Add ray" and left empty shows where its ray is drawn
+    for (i, a, auto) in ray_rows(p) { if auto { out.push((RAY_V[i], fmt(a, 1))); } }
+    if angle_dirs(p).0.len() < 2 { out.push(("__msg", "Give ray 2 a direction in degrees.".to_string())); }
+    out
 }
 
 // ----- parallel lines (lines card) -----
@@ -1747,7 +1811,10 @@ pub(crate) fn card(id: &str) -> Option<MeasureCard> {
             if i < 4 { sides.push(r); } else { angs.push(r); }
         }
         if id == "trapezoid" { sides.push(row("h", "m_h", "$unit", "height_label", "height_text", None)); }
-        vec![MeasureGroup { title: "Sides", rows: sides }, MeasureGroup { title: "Angles", rows: angs }]
+        // the side popover's second mark (parallel arrows) as its own rows: the card's rows hold
+        // one mark each
+        let arrows = (0..4).map(|i| MeasureRow { equals: Some("\u{203a}"), ..row(side_names[i], Q_PAR[i], "", Q_ARROW[i], "", None) }).collect();
+        vec![MeasureGroup { title: "Sides", rows: sides }, MeasureGroup { title: "Angles", rows: angs }, MeasureGroup { title: "Parallel arrows", rows: arrows }]
     };
     let help_quad = "Fill in the kind's measures; the rest are worked out and shown faintly. Type sqrt for \u{221a}, / for a fraction and pi for \u{3c0}. Rename a corner in the box before its angle. The button after each measure sets its label and congruence marks.";
     Some(match id {
@@ -3195,7 +3262,8 @@ fn measures_solid(id: &str) -> Option<super::MeasureCard> {
     let row = |name, value_key, label_key, text_key| MeasureRow { name, name_key: None, value_key, unit: "$unit", label_key, text_key, tick_key: None, equals: None };
     let link = |name, value_key, label_key, text_key, eq| MeasureRow { equals: Some(eq), ..row(name, value_key, label_key, text_key) };
     let g = |title, rows| MeasureGroup { title, rows };
-    let radius = || vec![row("Radius", "radius", "r_lab", "r_label"), link("Diameter", "diameter", "d_lab", "d_label", "2 \u{d7} radius")];
+    // the Diameter row (value "diam") replaces Radius with "Give the diameter instead" (card_visible)
+    let radius = || vec![row("Radius", "radius", "r_lab", "r_label"), row("Diameter", "diam", "r_lab", "d_label"), link("Diameter", "diameter", "d_lab", "d_label", "2 \u{d7} radius")];
     let (help, groups) = match id {
         "sphere" => ("Give the radius. The diameter is worked out; its label button draws it right across the circle.", vec![g("", radius())]),
         "cylinder" => (
@@ -3240,7 +3308,7 @@ fn measures_solid(id: &str) -> Option<super::MeasureCard> {
 fn computed_solid(id: &str, p: &Params) -> Vec<(&'static str, String)> {
     let mut out = Vec::new();
     let c = |v: f64| ctext(p, v);
-    if matches!(id, "sphere" | "cylinder" | "cone") { out.push(("diameter", c(2.0 * p.f("radius")))); }
+    if matches!(id, "sphere" | "cylinder" | "cone") { out.push(("diameter", c(2.0 * solid_r(p)))); }
     let oblique = p.s("stands") == "Oblique";
     match id {
         "cylinder" => {
@@ -3248,7 +3316,7 @@ fn computed_solid(id: &str, p: &Params) -> Vec<(&'static str, String)> {
             if typed(p, "edge").is_none() { out.push(("edge", c((h * h + p.f("lean").powi(2)).sqrt()))); } else { out.push(("height", c(h))); }
         }
         "cone" => {
-            let (r, h) = (p.f("radius"), cone_height(p));
+            let (r, h) = (solid_r(p), cone_height(p));
             let lean = if oblique { p.f("lean") } else { 0.0 };
             if typed(p, "slant").is_none() { out.push(("slant", c(((r - lean).powi(2) + h * h).sqrt()))); } else { out.push(("height", c(h))); }
         }
@@ -3271,7 +3339,34 @@ fn computed_solid(id: &str, p: &Params) -> Vec<(&'static str, String)> {
         }
         _ => {}
     }
+    if let Some(m) = solid_msg(id, p) { out.push(("__msg", m)); }
     out
+}
+
+/// The reference's red line under a solid's measures when the typed ones can't all hold.
+pub(super) fn solid_msg(id: &str, p: &Params) -> Option<String> {
+    let oblique = p.s("stands") == "Oblique";
+    let bad = |k: &str| !p.s(k).trim().is_empty() && typed(p, k).is_none();
+    match id {
+        "cylinder" | "prism" => {
+            let lying = id == "prism" && p.s("base") != "Rectangle" && p.s("sits") == "Lying on its side";
+            if !oblique || lying { return None; }
+            if bad("edge") { return Some("Type a number for the slanted edge, like 12, 2.5, 5/2 or 3\u{221a}2.".into()); }
+            let e = typed(p, "edge")?;
+            (e <= p.f("lean").abs() + 1e-6).then(|| "The height, lean and slanted edge don\u{2019}t fit together: the slanted edge has to be longer than the lean. Clear one to have it worked out.".into())
+        }
+        "cone" | "pyramid" => {
+            if bad("slant") { return Some("Type a number for the slant height, like 12, 2.5, 5/2 or 3\u{221a}2.".into()); }
+            let s = typed(p, "slant")?;
+            if oblique {
+                let what = if id == "cone" { "cone" } else { "pyramid" };
+                return Some(format!("An oblique {what}\u{2019}s slant height is worked out from its height and lean. Clear the slant height to have it worked out."));
+            }
+            let (min, what) = if id == "cone" { (solid_r(p), "radius") } else if p.s("base") == "Regular polygon" { (pyramid_apothem(p), "apothem") } else { (pyramid_apothem(p), "half the width") };
+            (s <= min + 1e-6).then(|| format!("The height and slant height don\u{2019}t fit together: the slant height has to be longer than the {what}. Clear one to have it worked out."))
+        }
+        _ => None,
+    }
 }
 
 /// Old specs: the `hide` list and `measure` choice become per-measure label modes.
@@ -3602,7 +3697,25 @@ fn round_common() -> Vec<ParamDef> {
         ParamDef::bool("right", "Right-angle squares", true),
         ParamDef::text("unit", "Unit", "cm"),
         ParamDef::int("dec", "Decimal places", 0, 3, 1),
+        // the reference's "Give the diameter instead": the Radius row becomes a Diameter row and the
+        // diameter is drawn right across the circle with the radius row's label
+        ParamDef::bool("give_d", "Give the diameter instead (drawn right across the circle)", false),
+        ParamDef::float("diam", "Diameter", 1.0, 100.0, 0.5, 6.0),
     ]
+}
+/// Radius of a round solid: the Radius row, or half the Diameter row with "Give the diameter instead".
+pub(super) fn solid_r(p: &Params) -> f64 { if p.b("give_d") { p.f("diam") / 2.0 } else { p.f("radius") } }
+/// Writes a dragged radius into whichever row is given.
+pub(super) fn set_solid_r(p: &mut Params, r: f64) { if p.b("give_d") { p.set_f("diam", 2.0 * r) } else { p.set_f("radius", r) } }
+/// The diameter's label: with "Give the diameter instead" it takes the radius row's label mode
+/// (Measure by default) and the diameter text; otherwise its own linked row's label.
+fn diam_text(p: &Params, v: f64) -> Option<String> {
+    if !p.b("give_d") { return mtext(p, "d", "None", v, false); }
+    match match p.s("r_lab") { "" => "Measure", m => m } {
+        "None" => None,
+        "Text" => { let t = p.s("d_label").trim(); Some(if t.is_empty() { "d".to_string() } else { t.to_string() }) }
+        _ => Some(fmtu(v, p.i("dec"), p.s("unit"))),
+    }
 }
 fn round_label_params() -> [ParamDef; 5] {
     let [d0, d1] = diameter_params();
@@ -3615,7 +3728,7 @@ fn round_label_params() -> [ParamDef; 5] {
     ]
 }
 /// The diameter line is drawn (its label is shown) instead of / as well as the radius.
-fn diam_shown(p: &Params) -> bool { mtext(p, "d", "None", 1.0, false).is_some() }
+fn diam_shown(p: &Params) -> bool { diam_text(p, 1.0).is_some() }
 
 /// Radius (or diameter) across the circle centred at model point o. `solid`: drawn as a solid
 /// line (sphere); otherwise dashed. `above`: label above the line.
@@ -3623,8 +3736,8 @@ fn base_measure(d: &mut Doc, m: &Map, o: Pt, r: f64, p: &Params, solid: bool, ab
     let fs = lsz(p);
     let c = m.p(o);
     let dash = if solid { "none" } else { "6 4" };
-    let rt = mtext(p, "r", "Measure", r, false);
-    let dt = mtext(p, "d", "None", 2.0 * r, false);
+    let rt = if p.b("give_d") { None } else { mtext(p, "r", "Measure", r, false) };
+    let dt = diam_text(p, 2.0 * r);
     // nothing is drawn across the circle when neither label prints (as the reference)
     if rt.is_none() && dt.is_none() { return; }
     let diam = dt.is_some();
@@ -3665,7 +3778,7 @@ fn cylinder_params() -> Vec<ParamDef> {
 
 fn cylinder_render(p: &Params) -> String {
     let oblique = p.s("stands") == "Oblique";
-    let (r, h) = (p.f("radius"), edge_height(p, oblique));
+    let (r, h) = (solid_r(p), edge_height(p, oblique));
     let (s, c) = (p.f("view").to_radians().sin(), p.f("view").to_radians().cos());
     let lean = if oblique { p.f("lean") } else { 0.0 };
     let ht = h * c;
@@ -3710,7 +3823,7 @@ fn cylinder_render(p: &Params) -> String {
 /// Cone height actually drawn: typed, or worked out from a given slant height (right cones).
 pub(super) fn cone_height(p: &Params) -> f64 {
     if p.s("stands") != "Oblique" && let Some(s) = typed(p, "slant") {
-        let r = p.f("radius");
+        let r = solid_r(p);
         if s > r + 1e-6 { return (s * s - r * r).sqrt(); }
     }
     p.f("height")
@@ -3739,7 +3852,7 @@ fn cone_params() -> Vec<ParamDef> {
 }
 
 fn cone_render(p: &Params) -> String {
-    let r = p.f("radius");
+    let r = solid_r(p);
     let h = cone_height(p);
     let (s, c) = (p.f("view").to_radians().sin(), p.f("view").to_radians().cos());
     let lean = if p.s("stands") == "Oblique" { p.f("lean") } else { 0.0 };
@@ -3809,7 +3922,7 @@ fn sphere_params() -> Vec<ParamDef> {
 }
 
 fn sphere_render(p: &Params) -> String {
-    let r = p.f("radius");
+    let r = solid_r(p);
     let s = p.f("view").to_radians().sin();
     let half = p.s("draw") == "A hemisphere";
     let bowl = half && p.s("face") == "Up, like a bowl";
@@ -4315,13 +4428,16 @@ pub(super) fn math_text(d: &mut Doc, x: f64, y: f64, size: f64, anchor: &str, s:
 
 pub(super) fn list_items(s: &str) -> Vec<String> {
     let mut v: Vec<String> = vec![];
-    for t in s.split(|c| c == ',' || c == ';').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) {
+    // commas, semicolons, or one item a line / a column pasted from a spreadsheet
+    for t in s.split(|c| c == ',' || c == ';' || c == '\n' || c == '\t').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) {
         if !v.contains(&t) { v.push(t); }
     }
     v
 }
 
 const TITLE_MODES: [&str; 3] = ["Text", "Blank line", "None"];
+/// `pairs` value that joins the i-th input to the i-th output ("Match in order").
+pub(super) const MATCH_IN_ORDER: &str = "in order";
 
 fn mapping_diagram_params() -> Vec<ParamDef> {
     vec![
@@ -4330,7 +4446,7 @@ fn mapping_diagram_params() -> Vec<ParamDef> {
         ParamDef::long("pairs", "Arrows as ordered pairs, e.g. (1,3); (2,5)  or  1->3; 2->5", "(1,3); (2,5); (3,7); (4,9)"),
         ParamDef::text("title_in", "Input title", "Input"),
         ParamDef::text("title_out", "Output title", "Output"),
-        ParamDef::choice("shape", "Sides", &["Ovals", "Rectangles", "None"], "Ovals"),
+        ParamDef::choice("shape", "Draw each side in", &["Ovals", "Boxes", "None"], "Ovals"),
         ParamDef::color("arrow_color", "Arrow colour", &SWATCHES, "#333333"),
         ParamDef::choice("in_mode", "Input title", &TITLE_MODES, "Text"),
         ParamDef::choice("out_mode", "Output title", &TITLE_MODES, "Text"),
@@ -4338,7 +4454,72 @@ fn mapping_diagram_params() -> Vec<ParamDef> {
         ParamDef::text("title", "Diagram title text (type ^ for a power, e.g. y = x^2)", "y = 2x + 1"),
         ParamDef::choice("fill", "Side fill", &["Tinted", "White"], "Tinted"),
         label_size_param(),
+        ParamDef::long("paste", "Ordered pairs, e.g. (1, 3), (2, 5), (3, 7): they replace both lists and the arrows", ""),
     ]
+}
+
+/// One arrow of a mapping diagram: input, output, and where the output sits in the source text
+/// (None for "Match in order" arrows, which have no text of their own).
+pub(super) struct MapPair { pub a: String, pub b: String, pub b_span: Option<(usize, usize)> }
+pub(super) struct MapData { pub ins: Vec<String>, pub outs: Vec<String>, pub pairs: Vec<MapPair>, pub key: &'static str }
+
+/// Pieces of a pairs text with their byte offsets: `(1,3), (2,5)`, `1->3; 2->5`, or one pair a line.
+fn pair_segments(ps: &str) -> Vec<(String, usize)> {
+    let mut segs = vec![];
+    let mut off = 0;
+    for piece in ps.split(|c| c == ';' || c == '\n') {
+        if piece.contains('(') {
+            let mut at = 0;
+            while let Some(i) = piece[at..].find('(') {
+                let st = at + i + 1;
+                let en = piece[st..].find(')').map(|j| st + j).unwrap_or(piece.len());
+                segs.push((piece[st..en].to_string(), off + st));
+                at = en.min(piece.len());
+                if at >= piece.len() { break; }
+            }
+        } else {
+            segs.push((piece.to_string(), off));
+        }
+        off += piece.len() + 1;
+    }
+    segs
+}
+
+/// Inputs, outputs and arrows actually drawn: the pasted pairs when there are any (they replace
+/// both lists and the arrows), else the lists plus the arrows (a pair may add a new item).
+pub(super) fn mapping_parse(p: &Params) -> MapData {
+    let pasted = !p.s("paste").trim().is_empty();
+    let key = if pasted { "paste" } else { "pairs" };
+    let (mut ins, mut outs) = if pasted { (vec![], vec![]) } else { (list_items(p.s("inputs")), list_items(p.s("outputs"))) };
+    let ps = p.s(key);
+    let mut pairs = vec![];
+    if !pasted && ps.trim().eq_ignore_ascii_case(MATCH_IN_ORDER) {
+        for (a, b) in ins.iter().zip(outs.iter()) { pairs.push(MapPair { a: a.clone(), b: b.clone(), b_span: None }); }
+        return MapData { ins, outs, pairs, key };
+    }
+    for (inner, off) in pair_segments(ps) {
+        let sep = if let Some(i) = inner.find("->") { Some((i, 2)) } else if let Some(i) = inner.find('\u{2192}') { Some((i, 3)) } else { inner.find(',').map(|i| (i, 1)) };
+        let Some((i, l)) = sep else { continue };
+        let (a, braw) = (inner[..i].trim().to_string(), &inner[i + l..]);
+        let b = braw.trim().to_string();
+        if a.is_empty() || b.is_empty() { continue; }
+        let st = off + i + l + (braw.len() - braw.trim_start().len());
+        if !ins.contains(&a) { ins.push(a.clone()); }
+        if !outs.contains(&b) { outs.push(b.clone()); }
+        if !pairs.iter().any(|q: &MapPair| q.a == a && q.b == b) { pairs.push(MapPair { a, b: b.clone(), b_span: Some((st, st + b.len())) }); }
+    }
+    MapData { ins, outs, pairs, key }
+}
+
+/// The reference's check under the arrows: every input needs exactly one arrow to be a function
+/// (only once some arrows are drawn; a diagram with none is for students to finish).
+pub(super) fn mapping_msg(p: &Params) -> Option<String> {
+    let m = mapping_parse(p);
+    if m.pairs.is_empty() { return None; }
+    let n = |a: &str| m.pairs.iter().filter(|q| q.a == a).count();
+    if let Some(a) = m.ins.iter().find(|a| n(a) > 1) { return Some(format!("Not a function: {a} has {} outputs. Every input needs exactly one.", n(a))); }
+    if let Some(a) = m.ins.iter().find(|a| n(a) == 0) { return Some(format!("Not a function yet: {a} has no output. Every input needs exactly one.")); }
+    None
 }
 
 /// A title in one of the Text / Blank line / None modes.
@@ -4351,25 +4532,8 @@ fn mode_title(d: &mut Doc, mode: &str, x: f64, y: f64, text: &str, size: f64) {
 }
 
 fn mapping_diagram_render(p: &Params) -> String {
-    let mut ins = list_items(p.s("inputs"));
-    let mut outs = list_items(p.s("outputs"));
-    let ps = p.s("pairs");
-    let raw: Vec<String> = if ps.contains('(') {
-        ps.split('(').skip(1).map(|s| s.split(')').next().unwrap_or("").to_string()).collect()
-    } else { ps.split(';').map(|s| s.to_string()).collect() };
-    let mut pairs = vec![];
-    for r in raw {
-        let seg = if let Some(i) = r.find("->") { Some((r[..i].to_string(), r[i + 2..].to_string())) }
-            else if let Some(i) = r.find('\u{2192}') { Some((r[..i].to_string(), r[i + 3..].to_string())) }
-            else { r.split_once(',').map(|(a, b)| (a.to_string(), b.to_string())) };
-        if let Some((a, b)) = seg {
-            let (a, b) = (a.trim().to_string(), b.trim().to_string());
-            if a.is_empty() || b.is_empty() { continue; }
-            if !ins.contains(&a) { ins.push(a.clone()); }
-            if !outs.contains(&b) { outs.push(b.clone()); }
-            pairs.push((a, b));
-        }
-    }
+    let MapData { ins, outs, pairs, .. } = mapping_parse(p);
+    let pairs: Vec<(String, String)> = pairs.into_iter().map(|q| (q.a, q.b)).collect();
     if ins.is_empty() && outs.is_empty() { return msg("Enter inputs and outputs"); }
     let fs = lsz(p);
     let rows = ins.len().max(outs.len()).max(1) as f64;
@@ -4391,7 +4555,7 @@ fn mapping_diagram_render(p: &Params) -> String {
         let rxx = half_w.max(62.0);
         match shape {
             "Ovals" => { d.raw(&format!(r##"<ellipse cx="{x}" cy="{cy}" rx="{rxx}" ry="{ry}" fill="{fill}" stroke="{INK}" stroke-width="2"/>"##)); }
-            "Rectangles" => { d.raw(&format!(r##"<rect x="{}" y="{}" width="{}" height="{}" rx="4" fill="{fill}" stroke="{INK}" stroke-width="2"/>"##, x - rxx, cy - ry, 2.0 * rxx, 2.0 * ry)); }
+            "Boxes" | "Rectangles" => { d.raw(&format!(r##"<rect x="{}" y="{}" width="{}" height="{}" rx="4" fill="{fill}" stroke="{INK}" stroke-width="2"/>"##, x - rxx, cy - ry, 2.0 * rxx, 2.0 * ry)); }
             _ => {}
         }
     };
@@ -4682,13 +4846,39 @@ fn length_reading_render(p: &Params) -> String {
 
 // ───────────────────────── composite shape ─────────────────────────
 
-enum Piece { Poly(Vec<Pt>) }
+/// A filled piece of a composite shape, with its own shading when one is named.
+enum Piece { Poly(Vec<Pt>, Option<&'static str>) }
+
+/// The "Start with" chips (the reference's first screen): each loads the preset's pieces into the
+/// Pieces card, so they can be edited, dragged and added to.
+pub(super) const COMPOSITE_STARTS: [&str; 7] = ["Rectangle", "Triangle", "Semicircle", "Circle", "L-shape", "House", "Arch"];
+pub(super) const COMPOSITE_CUSTOM: &str = "Custom (use the text below)";
+const COMPOSITE_HELP: &str = "One piece or mark a row. Pieces: rect X Y W H | tri X1 Y1 X2 Y2 X3 Y3 | poly X Y X Y ... | circle CX CY R | semi CX CY R u/d/l/r (the way it bulges) | quarter CX CY R ne/nw/se/sw. End a piece with blue, red, green or yellow to shade it. Marks: dim X1 Y1 X2 Y2 TEXT (a dimension; no text = its length; drawn right of the direction of travel) | dash X1 Y1 X2 Y2 (a height or other line) | ticks X1 Y1 X2 Y2 N (congruence ticks) | arrows X1 Y1 X2 Y2 N (parallel arrows) | text X Y WORDS | ra X Y NE/NW/SE/SW (right angle). On the figure, drag a corner to resize, or click a \u{25c6} beside a side to add a rectangle there.";
+
+/// Piece shading named at the end of a row (the reference's None / Blue / Red / Green / Yellow).
+pub(super) fn shade_word(tk: &[&str]) -> Option<&'static str> {
+    tk.iter().skip(1).find_map(|t| match t.to_lowercase().as_str() {
+        "blue" => Some("#cfe1fa"),
+        "red" => Some("#fbd0d0"),
+        "green" => Some("#c8f2d8"),
+        "yellow" => Some("#fde8a0"),
+        _ => None,
+    })
+}
+
+/// Arc points of a quarter circle sector piece (`quarter CX CY R ne`), centre first.
+pub(super) fn quarter_pts(x: f64, y: f64, r: f64, dir: &str) -> Vec<Pt> {
+    let a0 = match dir.to_lowercase().as_str() { "nw" => 90.0, "sw" => 180.0, "se" => 270.0, _ => 0.0 };
+    let mut v = vec![(x, y)];
+    v.extend(ell(x, y, r, r, a0, a0 + 90.0));
+    v
+}
 
 fn composite_params() -> Vec<ParamDef> {
     vec![
-        ParamDef::choice("preset", "Start from", &["Custom (use the text below)", "L-shape", "House", "Arch", "T-shape", "Rectangle", "Triangle", "Semicircle", "Circle"], "Custom (use the text below)"),
+        ParamDef::choice("preset", "Start from", &[COMPOSITE_CUSTOM, "L-shape", "House", "Arch", "T-shape", "Rectangle", "Triangle", "Semicircle", "Circle"], COMPOSITE_CUSTOM),
         ParamDef::long("spec",
-            "Pieces separated by ;  rect X Y W H | tri X1 Y1 X2 Y2 X3 Y3 | poly X Y X Y ... | circle CX CY R | semi CX CY R DIR(u/d/l/r bulge) | dash X1 Y1 X2 Y2 | dim X1 Y1 X2 Y2 TEXT (label drawn to the right of travel, go counterclockwise) | text X Y WORDS | ra X Y NE/NW/SE/SW (right angle)",
+            "Pieces separated by ;  rect X Y W H | tri X1 Y1 X2 Y2 X3 Y3 | poly X Y X Y ... | circle CX CY R | semi CX CY R DIR(u/d/l/r bulge) | quarter CX CY R ne/nw/se/sw | dash X1 Y1 X2 Y2 | dim X1 Y1 X2 Y2 TEXT (label drawn to the right of travel, go counterclockwise) | ticks X1 Y1 X2 Y2 N | arrows X1 Y1 X2 Y2 N | text X Y WORDS | ra X Y NE/NW/SE/SW (right angle); end a piece with blue/red/green/yellow to shade it",
             "rect 0 0 6 4; semi 3 4 3 u; dash 3 4 6 4; text 4.5 4.6 r = 3; dim 0 0 6 0 6 cm; dim 6 0 6 4 4 cm; ra 0 0 NE; ra 6 0 NW"),
         ParamDef::bool("shade", "Shade the shape", true),
         ParamDef::color("fill_color", "Shade colour", &SWATCHES, "#e9f1fb"),
@@ -4719,21 +4909,27 @@ fn composite_render(p: &Params) -> String {
     let mut dims: Vec<(Pt, Pt, String)> = vec![];
     let mut texts: Vec<(Pt, String)> = vec![];
     let mut rights: Vec<(Pt, String)> = vec![];
+    let mut marks: Vec<(Pt, Pt, u8, bool)> = vec![];
     for cmd in spec.split(|c| c == ';' || c == '\n') {
         let tk: Vec<&str> = cmd.split_whitespace().collect();
         if tk.is_empty() { continue; }
         let num = |i: usize| tk.get(i).and_then(|s| s.replace('\u{2212}', "-").parse::<f64>().ok());
+        let shade = shade_word(&tk);
         match tk[0].to_lowercase().as_str() {
-            "rect" => if let (Some(x), Some(y), Some(w), Some(h)) = (num(1), num(2), num(3), num(4)) { pieces.push(Piece::Poly(vec![(x, y), (x + w, y), (x + w, y + h), (x, y + h)])); },
-            "tri" => if let (Some(a), Some(b), Some(c), Some(d), Some(e), Some(f)) = (num(1), num(2), num(3), num(4), num(5), num(6)) { pieces.push(Piece::Poly(vec![(a, b), (c, d), (e, f)])); },
-            "poly" => { let v: Vec<f64> = tk[1..].iter().filter_map(|s| s.parse().ok()).collect(); if v.len() >= 6 { pieces.push(Piece::Poly(v.chunks(2).filter(|c| c.len() == 2).map(|c| (c[0], c[1])).collect())); } }
-            "circle" => if let (Some(x), Some(y), Some(r)) = (num(1), num(2), num(3)) { pieces.push(Piece::Poly(ell(x, y, r, r, 0.0, 360.0))); },
+            "rect" => if let (Some(x), Some(y), Some(w), Some(h)) = (num(1), num(2), num(3), num(4)) { pieces.push(Piece::Poly(vec![(x, y), (x + w, y), (x + w, y + h), (x, y + h)], shade)); },
+            "tri" => if let (Some(a), Some(b), Some(c), Some(d), Some(e), Some(f)) = (num(1), num(2), num(3), num(4), num(5), num(6)) { pieces.push(Piece::Poly(vec![(a, b), (c, d), (e, f)], shade)); },
+            "poly" => { let v: Vec<f64> = tk[1..].iter().filter_map(|s| s.parse().ok()).collect(); if v.len() >= 6 { pieces.push(Piece::Poly(v.chunks(2).filter(|c| c.len() == 2).map(|c| (c[0], c[1])).collect(), shade)); } }
+            "circle" => if let (Some(x), Some(y), Some(r)) = (num(1), num(2), num(3)) { pieces.push(Piece::Poly(ell(x, y, r, r, 0.0, 360.0), shade)); },
             "semi" => if let (Some(x), Some(y), Some(r)) = (num(1), num(2), num(3)) {
                 let (a0, a1) = match tk.get(4).map(|s| s.to_lowercase()).as_deref() { Some("d") => (180.0, 360.0), Some("l") => (90.0, 270.0), Some("r") => (-90.0, 90.0), _ => (0.0, 180.0) };
-                pieces.push(Piece::Poly(ell(x, y, r, r, a0, a1)));
+                pieces.push(Piece::Poly(ell(x, y, r, r, a0, a1), shade));
             },
+            "quarter" => if let (Some(x), Some(y), Some(r)) = (num(1), num(2), num(3)) { pieces.push(Piece::Poly(quarter_pts(x, y, r, tk.get(4).copied().unwrap_or("ne")), shade)); },
             "dash" => if let (Some(a), Some(b), Some(c), Some(e)) = (num(1), num(2), num(3), num(4)) { dashes.push(((a, b), (c, e))); },
             "dim" => if let (Some(a), Some(b), Some(c), Some(e)) = (num(1), num(2), num(3), num(4)) { dims.push(((a, b), (c, e), tk[5..].join(" "))); },
+            "ticks" | "arrows" => if let (Some(a), Some(b), Some(c), Some(e)) = (num(1), num(2), num(3), num(4)) {
+                marks.push(((a, b), (c, e), num(5).unwrap_or(1.0).clamp(1.0, 3.0) as u8, tk[0].eq_ignore_ascii_case("arrows")));
+            },
             "text" => if let (Some(a), Some(b)) = (num(1), num(2)) { texts.push(((a, b), tk[3..].join(" "))); },
             "ra" => if let (Some(a), Some(b)) = (num(1), num(2)) { rights.push(((a, b), tk.get(3).unwrap_or(&"NE").to_uppercase())); },
             _ => {}
@@ -4741,7 +4937,7 @@ fn composite_render(p: &Params) -> String {
     }
     if pieces.is_empty() { return msg("No pieces: start the text with rect, tri, circle, semi or poly"); }
     let mut all: Vec<Pt> = vec![];
-    for Piece::Poly(v) in &pieces { all.extend(v.iter().copied()); }
+    for Piece::Poly(v, _) in &pieces { all.extend(v.iter().copied()); }
     for (a, b) in &dashes { all.push(*a); all.push(*b); }
     for (a, b, _) in &dims { all.push(*a); all.push(*b); }
     let (w, h) = (480.0, 360.0);
@@ -4749,16 +4945,31 @@ fn composite_render(p: &Params) -> String {
     let mut d = new_doc(w, h);
     let fill_s = colp(p, "fill_color", TINT);
     let fill = if p.b("shade") { fill_s.as_str() } else { "#fff" };
-    for Piece::Poly(v) in &pieces { d.poly(&mpts(&m, v), INK, INK, 5.0); }
-    for Piece::Poly(v) in &pieces { d.poly(&mpts(&m, v), fill, fill, 1.2); }
+    for Piece::Poly(v, _) in &pieces { d.poly(&mpts(&m, v), INK, INK, 5.0); }
+    for Piece::Poly(v, sh) in &pieces { let f = sh.unwrap_or(fill); d.poly(&mpts(&m, v), f, f, 1.2); }
     for (a, b) in &dashes { dline(&mut d, m.p(*a), m.p(*b), "#444", 1.6, "6 4"); }
     for (a, dirs) in &rights {
         let (sx, sy) = (if dirs.contains('W') { -1.0 } else { 1.0 }, if dirs.contains('S') { 1.0 } else { -1.0 });
         let v = m.p(*a);
         d.polyline(&[(v.0 + sx * 12.0, v.1), (v.0 + sx * 12.0, v.1 + sy * 12.0), (v.0, v.1 + sy * 12.0)], INK, 1.3);
     }
-    let bc = m.p((all.iter().map(|q| q.0).sum::<f64>() / all.len() as f64, all.iter().map(|q| q.1).sum::<f64>() / all.len() as f64));
-    let _ = bc;
+    // congruence ticks / parallel arrows across the middle of a side
+    for (a, b, k, arrows) in &marks {
+        let (pa, pb) = (m.p(*a), m.p(*b));
+        let u = unit_v(pa, pb);
+        let nn = (-u.1, u.0);
+        let c = ((pa.0 + pb.0) / 2.0, (pa.1 + pb.1) / 2.0);
+        for j in 0..*k {
+            let o = (j as f64 - (*k as f64 - 1.0) / 2.0) * if *arrows { 8.0 } else { 6.0 };
+            let q = (c.0 + u.0 * o, c.1 + u.1 * o);
+            if *arrows {
+                let (tip, back) = ((q.0 + u.0 * 3.0, q.1 + u.1 * 3.0), (q.0 - u.0 * 3.0, q.1 - u.1 * 3.0));
+                d.polyline(&[(back.0 + nn.0 * 5.0, back.1 + nn.1 * 5.0), tip, (back.0 - nn.0 * 5.0, back.1 - nn.1 * 5.0)], INK, 1.6);
+            } else {
+                d.line(q.0 + nn.0 * 6.0, q.1 + nn.1 * 6.0, q.0 - nn.0 * 6.0, q.1 - nn.1 * 6.0, INK, 1.6);
+            }
+        }
+    }
     let lsz = 15.0 * fscale(p);
     // units typed in a label stay upright: the trailing word after a number
     let unit_of = |t: &str| -> String {
@@ -4768,8 +4979,6 @@ fn composite_render(p: &Params) -> String {
     for (a, b, t) in &dims {
         let (pa, pb) = (m.p(*a), m.p(*b));
         let u = unit_v(pa, pb);
-        let nr = (u.1 * -1.0 * -1.0, -u.0); // right of travel in screen coords
-        let _ = nr;
         let right = (-u.1, u.0);
         let off = 16.0;
         let (qa, qb) = ((pa.0 + right.0 * off, pa.1 + right.1 * off), (pb.0 + right.0 * off, pb.1 + right.1 * off));
@@ -4799,11 +5008,13 @@ fn examples_a(id: &str) -> Option<Vec<super::Example>> {
             ex("Two transversals", vec![("transversals", I(2)), ("marked", s("2, 10")), ("unknown", s("10"))]),
         ],
         "composite-shape" => vec![
-            ex("L-shape for area", vec![("preset", s("L-shape"))]),
-            ex("House: rectangle and triangle", vec![("preset", s("House"))]),
-            ex("Arch: rectangle and semicircle", vec![("preset", s("Arch"))]),
-            ex("T-shape", vec![("preset", s("T-shape"))]),
-            ex("Semicircle", vec![("preset", s("Semicircle")), ("unit", s("cm"))]),
+            // examples load the pieces into the Pieces card (preset stays Custom) so they can be edited
+            ex("L-shape for area", vec![("preset", s(COMPOSITE_CUSTOM)), ("spec", s(preset_spec("L-shape").unwrap_or("")))]),
+            ex("House: rectangle and triangle", vec![("preset", s(COMPOSITE_CUSTOM)), ("spec", s(preset_spec("House").unwrap_or("")))]),
+            ex("Arch: rectangle and semicircle", vec![("preset", s(COMPOSITE_CUSTOM)), ("spec", s(preset_spec("Arch").unwrap_or("")))]),
+            ex("T-shape", vec![("preset", s(COMPOSITE_CUSTOM)), ("spec", s(preset_spec("T-shape").unwrap_or("")))]),
+            ex("Semicircle", vec![("preset", s(COMPOSITE_CUSTOM)), ("spec", s(preset_spec("Semicircle").unwrap_or(""))), ("unit", s("cm"))]),
+            ex("Shaded pieces with marks", vec![("preset", s(COMPOSITE_CUSTOM)), ("shade", Value::B(false)), ("spec", s("rect 0 0 6 4 blue; tri 6 0 9 0 6 4 yellow; quarter 0 4 2 ne green; dim 0 0 6 0; dim 6 0 9 0; dim 0 6 0 0; arrows 0 0 6 0 1; arrows 2 4 6 4 1; ra 0 0 NE"))]),
         ],
         _ => return None,
     };
@@ -4846,10 +5057,91 @@ pub fn measures(id: &str) -> Option<super::MeasureCard> {
         "cylinder" | "cone" | "sphere" | "pyramid" | "prism" => measures_solid(id),
         // flat shapes, angles and parallel lines (meas-a)
         "triangle" | "rectangle" | "parallelogram" | "trapezoid" | "kite" | "regular-polygon" | "angles" | "parallel-lines" => flat::card(id),
+        // the reference's INPUTS AND OUTPUTS card (its function check shows under it)
+        "mapping-diagram" => Some(MeasureCard {
+            title: "Inputs and outputs",
+            help: "Type or paste each list with commas or one item a line, like 1, 2, 3 or a column copied from a spreadsheet. Items can be numbers, math like 2x or 1/2, or words. Each side shows an item once, in the order typed.",
+            groups: vec![MeasureGroup {
+                title: "",
+                rows: vec![
+                    MeasureRow { unit: "", ..row("Inputs", "inputs", "", "") },
+                    MeasureRow { unit: "", ..row("Outputs", "outputs", "", "") },
+                ],
+            }],
+        }),
         _ => {
             let _ = (row, MeasureCard { title: "", help: "", groups: Vec::<MeasureGroup>::new() });
             None
         }
+    }
+}
+
+/// The rows card (equations / data sets) of a figure, if it has one.
+pub fn rows(id: &str) -> Option<super::RowsCard> {
+    use super::{RowSlot, RowsCard, RowsSource};
+    let slot = |value_key, name_key, color_key| RowSlot { value_key, name_key, color_key };
+    Some(match id {
+        "coordinate-grid" => RowsCard {
+            title: "Equations",
+            help: "One per row: y = 2x + 1; 2x + 3y = 6; x = 4; y > x - 2; -2 < x <= 3; y = x + 2, x < 1 (a piece with a domain).",
+            hint: "y = 2x + 1",
+            add_label: "Add an equation",
+            source: RowsSource::Joined { key: "equations", sep: ";", color_keys: vec!["eq1_color", "eq2_color", "eq3_color", "eq4_color"] },
+        },
+        "number-line" => RowsCard {
+            title: "Equations",
+            help: "An inequality such as -2 < x <= 5, or x < -1 or x >= 3. Leave empty to draw no graph.",
+            hint: "-2 < x <= 5",
+            add_label: "Add an inequality",
+            source: RowsSource::Slots(vec![slot("inequality", None, Some("ineq_color")), slot("inequality2", None, Some("ineq2_color"))]),
+        },
+        // one row per arrow; "Match in order" / "Clear arrows" are the chips under it
+        "mapping-diagram" => RowsCard {
+            title: "Arrows",
+            help: "One arrow a row, from an input to an output: 1 -> 3 or (1, 3). An input can go to more than one output, and an output can come from more than one input. Leave the arrows off for students to draw.",
+            hint: "1 -> 3",
+            add_label: "Add an arrow",
+            // no colours; the empty keys only lift the card's 8-row limit for longer lists
+            source: RowsSource::Joined { key: "pairs", sep: ";", color_keys: vec![""; 24] },
+        },
+        "composite-shape" => RowsCard {
+            title: "Pieces",
+            help: COMPOSITE_HELP,
+            hint: "rect 0 0 6 4",
+            add_label: "Add a piece or mark",
+            source: RowsSource::Joined { key: "spec", sep: ";", color_keys: vec![""; 40] },
+        },
+        "box-plot" => RowsCard {
+            title: "Data",
+            help: "Type the numbers of each data set, separated by commas. Name a set to label its box.",
+            hint: "62, 68, 70, 75, 80",
+            add_label: "Add a data set",
+            source: RowsSource::Slots(vec![slot("data", Some("name1"), None), slot("data2", Some("name2"), None), slot("data3", Some("name3"), None), slot("data4", Some("name4"), None)]),
+        },
+        _ => return None,
+    })
+}
+
+/// Visibility of a card group / row for the current params (default: everything is shown).
+pub fn card_visible(id: &str, group: &str, row: Option<&str>, p: &Params) -> bool {
+    match (id, group, row) {
+        // solids: the Oblique rows only for an oblique solid, the base rows only for that base
+        (_, "Oblique", _) => p.s("stands") == "Oblique",
+        ("prism", "Rectangle or triangle base", Some("hyp")) => p.s("base").contains("triangle"),
+        ("prism", "Rectangle or triangle base", _) | ("pyramid", "Rectangle base", _) => p.s("base") != "Regular polygon",
+        ("prism" | "pyramid", "Regular polygon base", _) => p.s("base") == "Regular polygon",
+        // "Give the diameter instead" swaps the Radius row for a Diameter row
+        ("cylinder" | "cone" | "sphere", _, Some("radius" | "diameter")) => !p.b("give_d"),
+        ("cylinder" | "cone" | "sphere", _, Some("diam")) => p.b("give_d"),
+        // angles: Baseline and Ray 2, then one more row per "Add ray" (a typed row always shows)
+        ("angles", _, Some(k)) if k != "ray1" => {
+            let i = flat::RAY_V.iter().position(|r| *r == k).unwrap_or(0);
+            i < p.i("ray_count").clamp(2, 6) as usize || !p.s(k).trim().is_empty()
+        }
+        // parallel lines: the third line / second transversal rows once added
+        ("parallel-lines", _, Some("p_line")) => p.i("lines") >= 3,
+        ("parallel-lines", _, Some("angle_b")) => p.i("transversals") >= 2,
+        _ => true,
     }
 }
 
@@ -4858,6 +5150,7 @@ pub fn computed(id: &str, p: &Params) -> Vec<(&'static str, String)> {
     match id {
         "cylinder" | "cone" | "sphere" | "pyramid" | "prism" => computed_solid(id, p),
         "triangle" | "rectangle" | "parallelogram" | "trapezoid" | "kite" | "regular-polygon" | "angles" | "parallel-lines" => flat::computed(id, p).unwrap_or_default(),
+        "mapping-diagram" => mapping_msg(p).map(|m| vec![("__msg", m)]).unwrap_or_default(),
         _ => Vec::new(),
     }
 }
@@ -4867,8 +5160,48 @@ pub fn migrate(id: &str, spec: &crate::model::FigureSpec, p: &mut Params) {
     match id {
         "cylinder" | "cone" | "sphere" | "pyramid" | "prism" => migrate_solid(id, spec, p),
         "triangle" | "rectangle" | "parallelogram" | "trapezoid" | "kite" | "regular-polygon" | "angles" | "parallel-lines" => flat::migrate(id, spec, p),
+        // the reference calls the rectangle sides "Boxes"
+        "mapping-diagram" => if spec.params.get("shape").and_then(|v| v.as_str()) == Some("Rectangles") { p.set_s("shape", "Boxes"); },
         _ => {}
     }
+}
+
+/// "Add ..." chips / action buttons for this subject's figures.
+pub fn chips(id: &str) -> Option<super::ChipsCard> {
+    use super::{Chip, ChipsCard};
+    let s = |v: &str| Value::S(v.to_string());
+    Some(match id {
+        // a new ray row (cleared, so it is drawn in the widest gap until a direction is typed)
+        "angles" => ChipsCard { title: "Add a ray", count_key: "ray_count", max: 6, chips: vec![Chip { label: "Add ray", set: vec![("ray{n}", s(""))] }] },
+        "parallel-lines" => ChipsCard {
+            title: "Add a line",
+            count_key: "",
+            max: 0,
+            chips: vec![
+                Chip { label: "Add parallel line", set: vec![("lines", Value::I(3))] },
+                Chip { label: "Add transversal", set: vec![("transversals", Value::I(2))] },
+            ],
+        },
+        "mapping-diagram" => ChipsCard {
+            title: "Quick arrows",
+            count_key: "",
+            max: 0,
+            chips: vec![
+                Chip { label: "Match in order", set: vec![("pairs", s(MATCH_IN_ORDER))] },
+                Chip { label: "Clear arrows", set: vec![("pairs", s(""))] },
+            ],
+        },
+        "composite-shape" => ChipsCard {
+            title: "Start with",
+            count_key: "",
+            max: 0,
+            chips: COMPOSITE_STARTS
+                .iter()
+                .map(|&name| Chip { label: name, set: vec![("preset", s(COMPOSITE_CUSTOM)), ("spec", s(preset_spec(name).unwrap_or("")))] })
+                .collect(),
+        },
+        _ => return None,
+    })
 }
 
 pub fn handles(id: &str, p: &Params, size: (f64, f64)) -> Option<Vec<interact::Handle>> {
@@ -5033,5 +5366,112 @@ mod tests {
         run("ruler-reading", "pencil", &[("object", s("Pencil")), ("start", f(2.0)), ("length", f(6.45)), ("show_value", b(true))]);
         run("ruler-reading", "inch", &[("marks", s("1/8 in")), ("ruler", i(6)), ("length", f(3.625)), ("start", f(0.0))]);
         run("ruler-reading", "long", &[("ruler", i(30)), ("marks", s("1 mm")), ("length", f(17.3))]);
+    }
+}
+
+#[cfg(test)]
+mod cfg_math_tests {
+    use super::*;
+    use super::flat::*;
+    fn params(id: &str, set: &[(&str, Value)]) -> Params {
+        let d = defs().into_iter().find(|d| d.id == id).unwrap();
+        let mut p = Params::defaults(&(d.params)());
+        for (k, v) in set { p.0.insert(k.to_string(), v.clone()); }
+        p
+    }
+    fn s(x: &str) -> Value { Value::S(x.into()) }
+
+    #[test]
+    fn new_rays_go_in_the_widest_gap() {
+        assert_eq!(widest_gap_mid(&[0.0, 60.0]), 120.0);
+        assert_eq!(widest_gap_mid(&[0.0]), 90.0);
+        assert_eq!(widest_gap_mid(&[0.0, 200.0]), 100.0);
+        let p = params("angles", &[("ray_count", Value::I(3))]);
+        let rows = ray_rows(&p);
+        assert!(rows.iter().any(|r| r.0 == 2 && r.1 == 120.0 && r.2), "{rows:?}");
+        assert!(angles_computed(&p).iter().any(|(k, v)| *k == "ray3" && v == "120"));
+        // typed rows always show; empty rows beyond the count are hidden
+        assert!(card_visible("angles", "", Some("ray3"), &p) && !card_visible("angles", "", Some("ray4"), &p));
+        let p = params("angles", &[("ray5", s("200"))]);
+        assert!(card_visible("angles", "", Some("ray5"), &p));
+    }
+
+    #[test]
+    fn chips_name_real_params() {
+        for id in ["angles", "parallel-lines", "mapping-diagram", "composite-shape"] {
+            let d = defs().into_iter().find(|d| d.id == id).unwrap();
+            let keys: Vec<&str> = (d.params)().iter().map(|p| p.key).collect();
+            let card = chips(id).unwrap();
+            assert!(card.count_key.is_empty() || keys.contains(&card.count_key), "{id}");
+            for c in &card.chips {
+                for (k, _) in &c.set { assert!(keys.contains(&k.replace("{n}", "3").as_str()), "{id}: {k}"); }
+            }
+        }
+        // every "Start with" chip loads a spec that draws
+        for name in COMPOSITE_STARTS { assert!(preset_spec(name).is_some(), "{name}"); }
+    }
+
+    #[test]
+    fn mapping_pairs_paste_and_order() {
+        let p = params("mapping-diagram", &[("pairs", s("1->3; (2,5)"))]);
+        let m = mapping_parse(&p);
+        assert_eq!(m.pairs.len(), 2);
+        assert_eq!(mapping_msg(&p).unwrap(), "Not a function yet: 3 has no output. Every input needs exactly one.");
+        let p = params("mapping-diagram", &[("pairs", s(MATCH_IN_ORDER))]);
+        let m = mapping_parse(&p);
+        assert_eq!(m.pairs.len(), 4);
+        assert!(m.pairs.iter().all(|q| q.b_span.is_none()) && mapping_msg(&p).is_none());
+        let p = params("mapping-diagram", &[("paste", s("(a, 1), (a, 2), (b, 2)"))]);
+        let m = mapping_parse(&p);
+        assert_eq!((m.ins.clone(), m.outs.clone(), m.key), (vec!["a".to_string(), "b".into()], vec!["1".to_string(), "2".into()], "paste"));
+        assert!(mapping_msg(&p).unwrap().starts_with("Not a function: a has 2 outputs"));
+        assert!(mapping_msg(&params("mapping-diagram", &[("pairs", s(""))])).is_none());
+        assert_eq!(list_items("1\n2\t3, 3"), vec!["1", "2", "3"]);
+    }
+
+    #[test]
+    fn quad_side_arrows_and_messages() {
+        let p = params("parallelogram", &[("ab_arrows", s("3")), ("bc_arrows", s("None"))]);
+        assert_eq!(quad_arrows(&p, &quad_default_arrows("parallelogram")), vec![3, 0, 1, 2]);
+        let c = quad_computed("parallelogram", &p);
+        assert!(c.iter().any(|(k, v)| *k == "cd_par" && v.ends_with("auto")));
+        // the older list still applies to sides left on Auto
+        let p = params("trapezoid", &[("arrow_marks", s("AB 2, CD 2"))]);
+        assert_eq!(quad_arrows(&p, &quad_default_arrows("trapezoid")), vec![2, 0, 2, 0]);
+        let p = params("rectangle", &[("m_ab", s("")), ("m_bc", s(""))]);
+        assert!(quad_computed("rectangle", &p).iter().any(|(k, _)| *k == "__msg"));
+    }
+
+    #[test]
+    fn solids_diameter_and_conflicts() {
+        let p = params("cylinder", &[("give_d", Value::B(true)), ("diam", Value::F(3.0))]);
+        assert_eq!(solid_r(&p), 1.5);
+        assert!(card_visible("cylinder", "", Some("diam"), &p) && !card_visible("cylinder", "", Some("radius"), &p));
+        assert!(!card_visible("cylinder", "Oblique", None, &p));
+        assert!(diam_text(&p, 3.0).is_some());
+        let p = params("cylinder", &[("stands", s("Oblique")), ("edge", s("1"))]);
+        assert!(solid_msg("cylinder", &p).unwrap().contains("don\u{2019}t fit together"));
+        assert!(card_visible("cylinder", "Oblique", None, &p));
+        let p = params("cone", &[("slant", s("2"))]);
+        assert!(solid_msg("cone", &p).is_some());
+        assert!(solid_msg("cone", &params("cone", &[("slant", s("5"))])).is_none());
+        let p = params("prism", &[("base", s("Regular polygon"))]);
+        assert!(card_visible("prism", "Regular polygon base", None, &p) && !card_visible("prism", "Rectangle or triangle base", None, &p));
+        assert!(!card_visible("prism", "Rectangle or triangle base", Some("hyp"), &params("prism", &[])));
+    }
+
+    #[test]
+    fn composite_add_piece_and_shading() {
+        assert_eq!(super::super::math_plot::piece_on_side((0.0, 4.0), (6.0, 4.0), (3.0, 2.0)), "rect 0 4 6 4.5");
+        assert_eq!(super::super::math_plot::piece_on_side((6.0, 0.0), (6.0, 4.0), (3.0, 2.0)), "rect 6 0 3 4");
+        assert_eq!(shade_word(&["rect", "0", "0", "1", "1", "Blue"]), Some("#cfe1fa"));
+        let p = params("composite-shape", &[("spec", s("rect 0 0 6 4 red; quarter 0 4 2 ne; ticks 0 0 6 0 2; arrows 0 4 6 4 1"))]);
+        assert!(composite_render(&p).contains("#fbd0d0"));
+        // the side handles add a piece when clicked
+        let hs = handles("composite-shape", &p, (480.0, 360.0)).unwrap();
+        let add = hs.iter().find(|h| h.click.is_some()).expect("an add-piece handle");
+        let mut q = p.clone();
+        (add.click.as_ref().unwrap())(&mut q);
+        assert_eq!(q.s("spec").matches(';').count(), p.s("spec").matches(';').count() + 1);
     }
 }

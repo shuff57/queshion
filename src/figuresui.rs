@@ -1031,6 +1031,12 @@ impl Workspace {
                     if let Some(card) = figures::measures_for(def.id) {
                         self.measures_card(ui, def.id, &pdefs, &card);
                     }
+                    if let Some(card) = figures::rows_for(def.id) {
+                        self.rows_card(ui, def.id, &pdefs, &card);
+                    }
+                    if let Some(card) = figures::chips_for(def.id) {
+                        self.chips_card(ui, &pdefs, &card);
+                    }
                     let secs = figures::layout::sections(def.id, &pdefs, n_now);
                     for (si_, sec) in secs.iter().enumerate() {
                         let shown: Vec<usize> = sec.items.iter().copied().filter(|&i| !is_hidden(&pdefs, &self.params, &pdefs[i])).collect();
@@ -1097,11 +1103,17 @@ impl Workspace {
                     }
                 });
                 for g in &card.groups {
+                    if !figures::card_visible(fig, g.title, None, &self.params) {
+                        continue;
+                    }
                     if !g.title.is_empty() {
                         ui.add_space(6.0);
                         ui.label(theme::strong(g.title).size(11.0));
                     }
                     for r in &g.rows {
+                        if !figures::card_visible(fig, g.title, Some(r.value_key), &self.params) {
+                            continue;
+                        }
                         self.measure_row(ui, pdefs, r, &computed);
                         ui.add_space(2.0);
                     }
@@ -1113,6 +1125,157 @@ impl Workspace {
                 }
             });
         ui.add_space(8.0);
+    }
+
+    /// The reference's list cards: one editable row per equation / data set, with Add, clear and
+    /// (where the figure has them) a colour per row.
+    fn rows_card(&mut self, ui: &mut Ui, fig: &str, pdefs: &[ParamDef], card: &figures::RowsCard) {
+        let extra_id = ui.make_persistent_id(("fig_rows_extra", fig));
+        let mut extra: usize = ui.data(|d| d.get_temp(extra_id)).unwrap_or(0);
+        Frame::new()
+            .fill(theme::card())
+            .stroke(Stroke::new(1.0, theme::border()))
+            .corner_radius(CornerRadius::same(12))
+            .inner_margin(Margin::same(10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    crate::kit::small_caps(ui, card.title);
+                    if !card.help.is_empty() {
+                        ui.label(theme::muted("(?)").size(11.0)).on_hover_text(card.help);
+                    }
+                });
+                ui.add_space(4.0);
+                let palette = |k: &str| pdefs.iter().find(|d| d.key == k).and_then(|d| if let Kind::Color(p) = &d.kind { Some(p.clone()) } else { None });
+                match &card.source {
+                    figures::RowsSource::Joined { key, sep, color_keys } => {
+                        let cur = self.params.s(key).to_string();
+                        let mut rows: Vec<String> = cur.split(*sep).map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
+                        for _ in 0..extra {
+                            rows.push(String::new());
+                        }
+                        if rows.is_empty() {
+                            rows.push(String::new());
+                        }
+                        let mut remove: Option<usize> = None;
+                        for (i, row) in rows.iter_mut().enumerate() {
+                            ui.horizontal(|ui| {
+                                ui.add(TextEdit::singleline(row).hint_text(card.hint).desired_width(170.0));
+                                if let Some(ck) = color_keys.get(i)
+                                    && let Some(pal) = palette(ck)
+                                {
+                                    self.row_colour(ui, ck, &pal);
+                                }
+                                if ui.add(Button::new(theme::muted("×").size(13.0)).frame(false)).on_hover_text("Remove this row").clicked() {
+                                    remove = Some(i);
+                                }
+                            });
+                        }
+                        if let Some(i) = remove {
+                            rows.remove(i);
+                        }
+                        let joined = rows.iter().map(|r| r.trim()).filter(|r| !r.is_empty()).collect::<Vec<_>>().join(&format!("{sep} "));
+                        if joined != cur {
+                            self.params.0.insert((*key).to_string(), Value::S(joined));
+                        }
+                        extra = extra.min(rows.iter().filter(|r| r.trim().is_empty()).count());
+                        if ui.button(card.add_label).clicked() && color_keys.len().max(8) > rows.len() {
+                            extra += 1;
+                        }
+                    }
+                    figures::RowsSource::Slots(slots) => {
+                        let mut shown = 0;
+                        for (i, sl) in slots.iter().enumerate() {
+                            let filled = !self.params.s(sl.value_key).trim().is_empty();
+                            if i == 0 || filled || i <= extra {
+                                shown = i + 1;
+                            }
+                        }
+                        for sl in slots.iter().take(shown) {
+                            ui.horizontal(|ui| {
+                                if let Some(nk) = sl.name_key {
+                                    let mut n = self.params.s(nk).to_string();
+                                    if ui.add(TextEdit::singleline(&mut n).hint_text("name").desired_width(64.0)).changed() {
+                                        self.params.0.insert(nk.to_string(), Value::S(n));
+                                    }
+                                }
+                                let mut v = self.params.s(sl.value_key).to_string();
+                                if ui.add(TextEdit::singleline(&mut v).hint_text(card.hint).desired_width(if sl.name_key.is_some() { 120.0 } else { 170.0 })).changed() {
+                                    self.params.0.insert(sl.value_key.to_string(), Value::S(v));
+                                }
+                                if let Some(ck) = sl.color_key
+                                    && let Some(pal) = palette(ck)
+                                {
+                                    self.row_colour(ui, ck, &pal);
+                                }
+                                if ui.add(Button::new(theme::muted("×").size(13.0)).frame(false)).on_hover_text("Clear this row").clicked() {
+                                    self.params.0.insert(sl.value_key.to_string(), Value::S(String::new()));
+                                }
+                            });
+                        }
+                        if shown < slots.len() && ui.button(card.add_label).clicked() {
+                            extra = shown;
+                        }
+                    }
+                }
+            });
+        ui.data_mut(|d| d.insert_temp(extra_id, extra));
+        ui.add_space(8.0);
+    }
+
+    /// "Add a force" chips: each appends one preset item and bumps the count.
+    fn chips_card(&mut self, ui: &mut Ui, pdefs: &[ParamDef], card: &figures::ChipsCard) {
+        let n = self.params.i(card.count_key);
+        Frame::new()
+            .fill(theme::card())
+            .stroke(Stroke::new(1.0, theme::border()))
+            .corner_radius(CornerRadius::same(12))
+            .inner_margin(Margin::same(10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    crate::kit::small_caps(ui, card.title);
+                    if !card.count_key.is_empty() {
+                        ui.label(theme::muted(format!("{n} of {}", card.max)).size(11.0));
+                    }
+                });
+                ui.add_space(4.0);
+                let slotted = !card.count_key.is_empty();
+                let full = slotted && n >= card.max;
+                ui.horizontal_wrapped(|ui| {
+                    for chip in &card.chips {
+                        if ui.add_enabled(!full, Button::new(RichText::new(format!("+ {}", chip.label)).size(12.0)).corner_radius(CornerRadius::same(10))).clicked() {
+                            apply_chip(&mut self.params, pdefs, card, chip);
+                        }
+                    }
+                    if slotted && n > 1 && ui.add(Button::new(theme::muted("Remove the last").size(12.0)).frame(false)).clicked() {
+                        self.params.set_i(card.count_key, n - 1);
+                    }
+                });
+            });
+        ui.add_space(8.0);
+    }
+
+    /// A colour swatch that opens a palette popover for one param.
+    fn row_colour(&mut self, ui: &mut Ui, key: &str, pal: &[&'static str]) {
+        let cur = self.params.s(key).to_string();
+        let (r, resp) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::click());
+        ui.painter().circle_filled(r.center(), 8.0, swatch(&cur));
+        ui.painter().circle_stroke(r.center(), 9.5, Stroke::new(1.0, theme::border()));
+        egui::Popup::menu(&resp).show(|ui| {
+            ui.horizontal_wrapped(|ui| {
+                for hex in pal {
+                    let (r, rr) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::click());
+                    ui.painter().circle_filled(r.center(), 9.0, swatch(hex));
+                    if cur.eq_ignore_ascii_case(hex) {
+                        ui.painter().circle_stroke(r.center(), 11.0, Stroke::new(2.0, theme::accent_col()));
+                    }
+                    if rr.clicked() {
+                        self.params.0.insert(key.to_string(), Value::S((*hex).to_string()));
+                    }
+                }
+            });
+        });
     }
 
     fn measure_row(&mut self, ui: &mut Ui, pdefs: &[ParamDef], r: &figures::MeasureRow, computed: &HashMap<&'static str, String>) {
@@ -1156,8 +1319,18 @@ impl Workspace {
                     _ => {
                         let mut v = self.params.s(r.value_key).to_string();
                         let hint = computed.get(r.value_key).cloned().unwrap_or_default();
+                        let was_empty = self.params.s(r.value_key).trim().is_empty();
                         if ui.add(TextEdit::singleline(&mut v).hint_text(hint.clone()).desired_width(88.0)).changed() {
                             self.params.0.insert(r.value_key.to_string(), Value::S(v.clone()));
+                            // Like the reference: typing a value shows its label, clearing it hides it.
+                            if !r.label_key.is_empty() {
+                                let mode = self.params.s(r.label_key).to_string();
+                                if was_empty && !v.trim().is_empty() && mode == "None" {
+                                    self.params.0.insert(r.label_key.to_string(), Value::S("Measure".into()));
+                                } else if v.trim().is_empty() && mode == "Measure" {
+                                    self.params.0.insert(r.label_key.to_string(), Value::S("None".into()));
+                                }
+                            }
                         }
                         shown = if v.trim().is_empty() { hint } else { v };
                     }
@@ -1385,6 +1558,34 @@ fn section_summary(defs: &[ParamDef], p: &Params, items: &[usize]) -> String {
 fn fmt_measure(v: f64) -> String {
     let s = format!("{:.3}", v);
     s.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+/// Applies a chip: fills slot `count + 1` and bumps the count, or (no `count_key`) just sets the
+/// chip's values. `Value::I(i64::MIN)` becomes a fresh random number within the param's range.
+fn apply_chip(p: &mut Params, pdefs: &[ParamDef], card: &figures::ChipsCard, chip: &figures::Chip) {
+    let slotted = !card.count_key.is_empty();
+    let slot = if slotted { p.i(card.count_key) + 1 } else { 0 };
+    if slotted && slot > card.max {
+        return;
+    }
+    let letter = ((b'A' + (slot as u8).saturating_sub(1)) as char).to_string();
+    for (tmpl, v) in &chip.set {
+        let key = tmpl.replace("{n}", &slot.to_string());
+        let Some(def) = pdefs.iter().find(|d| d.key == key) else { continue };
+        let val = match v {
+            Value::S(t) => Value::S(t.replace("{L}", &letter)),
+            Value::I(i64::MIN) => {
+                let (lo, hi) = match &def.kind { Kind::Int { min, max } => (*min, *max), _ => (1, 1_000_000) };
+                let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos() as i64).unwrap_or(7);
+                Value::I(lo + t.rem_euclid((hi - lo).max(1)))
+            }
+            other => other.clone(),
+        };
+        p.0.insert(key, val);
+    }
+    if slotted {
+        p.set_i(card.count_key, slot);
+    }
 }
 
 /// "Vector 1 magnitude" -> "magnitude"; "Number of vectors (1-4)" -> "number of vectors".
@@ -1921,5 +2122,32 @@ mod tests {
         other.apply_spec_text(&text).unwrap();
         assert_eq!(other.params.s("formula"), "NH3");
         assert_eq!(other.sel, Some(i));
+    }
+
+    #[test]
+    fn add_a_force_and_vector_chips_fill_the_next_slot() {
+        let fbd = figures::registry().into_iter().find(|d| d.id == "free-body-diagram").unwrap();
+        let defs = (fbd.params)();
+        let mut p = Params::defaults(&defs);
+        let card = figures::chips_for("free-body-diagram").unwrap();
+        let n0 = p.i("n");
+        apply_chip(&mut p, &defs, &card, &card.chips[0]);
+        assert_eq!(p.i("n"), n0 + 1);
+        assert_eq!(p.s(&format!("f{}_lab", n0 + 1)), "F_g");
+        assert_eq!(p.f(&format!("f{}_ang", n0 + 1)), 270.0);
+        // Full: further chips do nothing.
+        for _ in 0..10 {
+            apply_chip(&mut p, &defs, &card, &card.chips[1]);
+        }
+        assert_eq!(p.i("n"), card.max);
+
+        let vd = figures::registry().into_iter().find(|d| d.id == "vector-diagram").unwrap();
+        let vdefs = (vd.params)();
+        let mut q = Params::defaults(&vdefs);
+        let vcard = figures::chips_for("vector-diagram").unwrap();
+        let before = q.i("n");
+        apply_chip(&mut q, &vdefs, &vcard, &vcard.chips[0]);
+        assert_eq!(q.i("n"), before + 1);
+        assert_eq!(q.s(&format!("v{}_lab", before + 1)), ((b'A' + before as u8) as char).to_string());
     }
 }
