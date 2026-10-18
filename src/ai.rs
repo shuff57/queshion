@@ -366,7 +366,7 @@ pub fn convert_page(bytes: &[u8], mime: &str, hint: &str, cfg: &AiCfg, page_no: 
         if q.image.is_none() || q.figure.is_some() {
             continue;
         }
-        let crop = std::fs::read(crate::store::media_path(q.image.as_ref().expect("checked"))).unwrap_or_default();
+        let crop = crate::store::read_media(&q.image.as_ref().expect("checked").file).unwrap_or_default();
         match crate::figfit::fit(&crop, &q.stem, cfg) {
             Ok(Some(f)) => match crate::store::put_image(&f.png) {
                 Ok(img) => {

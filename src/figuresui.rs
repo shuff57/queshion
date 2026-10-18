@@ -299,10 +299,10 @@ fn export_example_png(def: &FigureDef, e: &figures::Example) -> Act {
     };
     let slug: String = e.name.to_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
     let slug = slug.split('-').filter(|s| !s.is_empty()).collect::<Vec<_>>().join("-");
-    let Some(path) = rfd::FileDialog::new().set_file_name(format!("{}-{slug}.png", def.id)).add_filter("PNG", &["png"]).save_file() else {
+    let Some(path) = crate::platform::save_path(&format!("{}-{slug}.png", def.id), "PNG", &["png"]) else {
         return Act::None;
     };
-    match std::fs::write(&path, png) {
+    match crate::platform::write(&path, &png) {
         Ok(()) => Act::Toast(format!("Exported {}", path.display()), false),
         Err(err) => Act::Toast(format!("Export failed: {err}"), true),
     }
@@ -742,7 +742,7 @@ impl Workspace {
         }
 
         let max_h = if self.modal {
-            (ctx.viewport_rect().height() * 0.55).clamp(220.0, 520.0)
+            (crate::theme::area_or(ctx.viewport_rect()).height() * 0.55).clamp(220.0, 520.0)
         } else {
             ui.available_height().max(200.0)
         };
@@ -808,12 +808,10 @@ impl Workspace {
                 );
                 ui.add_space(6.0);
                 if ghost(ui, "Choose file…").clicked()
-                    && let Some(path) = rfd::FileDialog::new()
-                        .add_filter("SVG / images", &["svg", "png", "jpg", "jpeg", "gif", "webp", "bmp"])
-                        .pick_file()
+                    && let Some(path) = crate::platform::pick_file("SVG / images", &["svg", "png", "jpg", "jpeg", "gif", "webp", "bmp"])
                 {
                     let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                    match std::fs::read(&path) {
+                    match crate::platform::read(&path) {
                         Ok(bytes) => self.import_bytes(ui.ctx(), &bytes, name),
                         Err(e) => self.import_err = Some(format!("Couldn't read the file: {e}")),
                     }
@@ -950,7 +948,7 @@ impl Workspace {
 
         let generated = self.imp.is_none();
         let avail_h = if self.modal {
-            (ctx.viewport_rect().height() * 0.55).clamp(260.0, 520.0)
+            (crate::theme::area_or(ctx.viewport_rect()).height() * 0.55).clamp(260.0, 520.0)
         } else {
             (ui.available_height() - 64.0).max(240.0)
         };
@@ -1067,8 +1065,8 @@ impl Workspace {
         let def = &reg()[si];
         let ex = figures::examples_for(def.id);
         let (mut edit, mut png, mut close) = (None, None, false);
-        let vw = ctx.viewport_rect().width();
-        let vh = ctx.viewport_rect().height();
+        let vw = crate::theme::area_or(ctx.viewport_rect()).width();
+        let vh = crate::theme::area_or(ctx.viewport_rect()).height();
         let w = (vw - 120.0).clamp(300.0, 1000.0);
         let m = Modal::new(UiId::new(("testparrot_fig_examples", self.modal))).show(ctx, |ui| {
             ui.set_width(w);
@@ -1930,15 +1928,12 @@ impl Workspace {
             _ => "figure".to_string(),
         };
         let (ext, label) = if svg { ("svg", "SVG") } else { ("png", "PNG") };
-        let Some(path) = rfd::FileDialog::new()
-            .set_file_name(format!("{stem}.{ext}"))
-            .add_filter(label, &[ext])
-            .save_file()
+        let Some(path) = crate::platform::save_path(&format!("{stem}.{ext}"), label, &[ext])
         else {
             return Act::None;
         };
         let data: Vec<u8> = if svg { out.svg.unwrap_or_default().into_bytes() } else { out.png };
-        match std::fs::write(&path, data) {
+        match crate::platform::write(&path, &data) {
             Ok(()) => Act::Toast(format!("Exported {}", path.display()), false),
             Err(e) => Act::Toast(format!("Export failed: {e}"), true),
         }
@@ -2567,7 +2562,7 @@ impl crate::App {
         let Some(mut ws) = self.figs.picker.take() else { return };
         let m = Modal::new(UiId::new("testparrot_fig_picker")).show(ctx, |ui| {
             ui.set_min_width(860.0);
-            ui.set_max_width((ctx.viewport_rect().width() - 80.0).max(560.0));
+            ui.set_max_width((crate::theme::area_or(ctx.viewport_rect()).width() - 80.0).max(560.0));
             ui.label(theme::serif_strong("Insert figure").size(21.0));
             ui.add_space(8.0);
             ws.show(ui)

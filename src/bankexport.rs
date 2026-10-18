@@ -229,7 +229,7 @@ fn dq_count(bank: &QuestionBank, k: QKind) -> usize {
 
 /// Reads a question's picture from the store for [`bank_doc`].
 pub fn store_image(img: &crate::model::ImageRef) -> Option<DocImage> {
-    let bytes = std::fs::read(crate::store::media_path(img)).ok()?;
+    let bytes = crate::store::read_media(&img.file)?;
     Some(DocImage { bytes, width_px: img.width, height_px: img.height })
 }
 
@@ -256,7 +256,7 @@ pub fn bank_data(bank: &QuestionBank) -> serde_json::Value {
     let mut media = BTreeMap::new();
     for q in &bank.questions {
         if let Some(img) = &q.image {
-            if let Ok(b) = std::fs::read(crate::store::media_path(img)) {
+            if let Some(b) = crate::store::read_media(&img.file) {
                 media.insert(img.file.clone(), serde_json::Value::String(b64_encode(&b)));
             }
         }
@@ -276,7 +276,7 @@ pub fn restore_media(json: &[u8]) -> usize {
     for (file, data) in m {
         let Some(bytes) = data.as_str().and_then(b64_decode) else { continue };
         let want = crate::model::ImageRef { file: file.clone(), width: 0, height: 0 };
-        if crate::store::media_path(&want).exists() {
+        if crate::store::media_exists(&want) {
             continue;
         }
         // put_image names the file by its content, the same name it had when exported.

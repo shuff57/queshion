@@ -19,6 +19,15 @@ pub static SERIF_BOLD_ITALIC: &[u8] = include_bytes!("../assets/fonts/SourceSeri
 /// DOCX names, so PDF and Word lines measure alike.
 pub static MONO_REGULAR: &[u8] = include_bytes!("../assets/fonts/LiberationMono-Regular.ttf");
 
+/// UI faces (Source Sans 3, SIL OFL 1.1). Compiled in so the app, the web build and the
+/// embedded officecraft tab all get identical typography with no filesystem access.
+pub static SANS_REGULAR: &[u8] = include_bytes!("../assets/fonts/SourceSans3-Regular.ttf");
+pub static SANS_ITALIC: &[u8] = include_bytes!("../assets/fonts/SourceSans3-It.ttf");
+pub static SANS_SEMIBOLD: &[u8] = include_bytes!("../assets/fonts/SourceSans3-Semibold.ttf");
+pub static SANS_BOLD: &[u8] = include_bytes!("../assets/fonts/SourceSans3-Bold.ttf");
+/// The semibold print face used by headings; the other four serif faces are above.
+pub static SERIF_SEMIBOLD: &[u8] = include_bytes!("../assets/fonts/SourceSerif4-Semibold.ttf");
+
 /// The family name the faces carry in their `name` table (used by SVG `font-family`).
 pub const SERIF_FAMILY: &str = "Source Serif 4";
 

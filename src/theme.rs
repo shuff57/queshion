@@ -9,7 +9,6 @@
 //! Colors are public constants so every worker styles directly; fonts are registered here
 //! at startup from `assets/fonts/` (falling back to egui's defaults when missing).
 
-use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use egui::{
@@ -111,21 +110,48 @@ pub const fn dark_palette() -> Palette {
     }
 }
 
-static DARK_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+thread_local! {
+    /// The palette mode for the app being drawn. Per-context, not process-global, so the
+    /// embedded officecraft tab cannot change the suite's palette.
+    static DARK_MODE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 
 /// Is the dark palette active?
 pub fn is_dark() -> bool {
-    DARK_MODE.load(std::sync::atomic::Ordering::Relaxed)
+    DARK_MODE.with(|d| d.get())
+}
+
+/// Sets the palette for this app's next frame. Call at the top of every frame; cheap.
+pub fn begin_frame(dark: bool) {
+    DARK_MODE.with(|d| d.set(dark));
 }
 
 /// Activate a palette mode and (if `ctx` given) restyle the running app.
 /// The caller persists the choice in settings.
 pub fn set_dark(dark: bool, ctx: Option<&Context>) {
-    DARK_MODE.store(dark, std::sync::atomic::Ordering::Relaxed);
+    begin_frame(dark);
     if let Some(ctx) = ctx {
         setup_style(ctx);
         ctx.request_repaint();
     }
+}
+
+thread_local! {
+    /// The rectangle the app may draw in. Standalone this is the viewport; in officecraft it
+    /// is the tab's content rect, so panels and overlays stay inside the tab.
+    static AREA: std::cell::Cell<egui::Rect> = const { std::cell::Cell::new(egui::Rect::NOTHING) };
+}
+
+pub fn set_area(rect: egui::Rect) {
+    AREA.with(|a| a.set(rect));
+}
+
+/// The host-provided drawing rect, falling back to `default` before the first frame.
+pub fn area_or(default: egui::Rect) -> egui::Rect {
+    AREA.with(|a| {
+        let r = a.get();
+        if r.is_finite() && r.width() > 0.0 && r.height() > 0.0 { r } else { default }
+    })
 }
 
 fn pal() -> Palette {
@@ -168,11 +194,11 @@ pub fn brown() -> Color32 { pal().accent }
 
 /// Named family: the house serif (headings, hero titles, exam preview).
 pub fn serif_family() -> FontFamily {
-    FontFamily::Name("serif".into())
+    FontFamily::Name("vs-serif".into())
 }
 /// Named family: heavier serif for large headings.
 pub fn serif_bold_family() -> FontFamily {
-    FontFamily::Name("serif-bold".into())
+    FontFamily::Name("vs-serif-bold".into())
 }
 pub fn serif_strong_family() -> FontFamily {
     serif_bold_family()
@@ -182,11 +208,11 @@ pub fn serif_strong_family() -> FontFamily {
 /// the house fonts (then callers fall back to egui's synthetic slant).
 pub fn italic_family(ctx: &Context, family: &FontFamily) -> Option<FontFamily> {
     let name = match family {
-        FontFamily::Proportional => "sans-italic",
+        FontFamily::Proportional => "vs-sans-italic",
         FontFamily::Name(n) => match n.as_ref() {
-            "serif" | "serif-italic" => "serif-italic",
-            "serif-bold" | "serif-bold-italic" => "serif-bold-italic",
-            "sans-italic" => "sans-italic",
+            "vs-serif" | "vs-serif-italic" => "vs-serif-italic",
+            "vs-serif-bold" | "vs-serif-bold-italic" => "vs-serif-bold-italic",
+            "vs-sans-italic" => "vs-sans-italic",
             _ => return None,
         },
         _ => return None,
@@ -196,7 +222,7 @@ pub fn italic_family(ctx: &Context, family: &FontFamily) -> Option<FontFamily> {
 }
 /// Named family: real bold sans (used by [`strong`]).
 pub fn bold_family() -> FontFamily {
-    FontFamily::Name("sans-bold".into())
+    FontFamily::Name("vs-sans-bold".into())
 }
 
 // ---------- text helpers ----------
@@ -306,57 +332,31 @@ pub fn error_wash() -> Color32 {
 
 // ---------- fonts ----------
 
-static FONTS: OnceLock<Option<FontDefinitions>> = OnceLock::new();
-
-/// Font directory: `<project>/assets/fonts` when run from the project root,
-/// or `../assets/fonts` relative to the executable (target/debug/...).
-pub fn fonts_dir() -> Option<PathBuf> {
-    let cwd = std::env::current_dir().ok()?;
-    if cwd.join("assets/fonts").is_dir() {
-        return Some(cwd.join("assets/fonts"));
-    }
-    let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    let up = exe_dir.join("../../assets/fonts");
-    if up.is_dir() { Some(up) } else { None }
-}
+static FONTS: OnceLock<FontDefinitions> = OnceLock::new();
 
 /// egui font-data key of the symbol fallback face (STIX Two Math).
 const FALLBACK_FACE: &str = "STIXTwoMath-Regular";
 
-/// Loads the house faces once. Returns `None` (and the app then quietly keeps
-/// egui's default fonts) when the font directory is missing or the sans regular
-/// face is absent — the app must start without it.
-fn load_fonts() -> Option<FontDefinitions> {
-    let dir = fonts_dir()?;
-    let read = |name: &str| std::fs::read(dir.join(name));
-
-    // The sans regular face is the one thing we can't do without.
-    let sans = read("SourceSans3-Regular.ttf").ok()?;
+/// Builds the house faces from bytes compiled into the binary. No filesystem access, so the
+/// same faces are available on the desktop, in the browser and inside officecraft.
+fn load_fonts() -> FontDefinitions {
     let mut defs = FontDefinitions::default();
-    let put = |defs: &mut FontDefinitions, name: &str, bytes: Vec<u8>| {
+    let put = |defs: &mut FontDefinitions, name: &str, bytes: &'static [u8]| {
         defs.font_data
-            .insert(name.to_string(), Arc::new(FontData::from_owned(bytes)));
+            .insert(name.to_string(), Arc::new(FontData::from_static(bytes)));
     };
 
-    put(&mut defs, "SourceSans3-Regular", sans);
-    if let Ok(b) = read("SourceSans3-It.ttf") {
-        put(&mut defs, "SourceSans3-It", b);
-    }
-    if let Ok(b) = read("SourceSans3-Semibold.ttf") {
-        put(&mut defs, "SourceSans3-Semibold", b);
-    }
-    if let Ok(b) = read("SourceSans3-Bold.ttf") {
-        put(&mut defs, "SourceSans3-Bold", b);
-    }
+    put(&mut defs, "SourceSans3-Regular", crate::fonts::SANS_REGULAR);
+    put(&mut defs, "SourceSans3-It", crate::fonts::SANS_ITALIC);
+    put(&mut defs, "SourceSans3-Semibold", crate::fonts::SANS_SEMIBOLD);
+    put(&mut defs, "SourceSans3-Bold", crate::fonts::SANS_BOLD);
     // The print serif comes from the binary (src/fonts.rs): the page preview, the card
-    // thumbnails and the PDF all use the very same four faces.
-    put(&mut defs, "SourceSerif4-Regular", crate::fonts::SERIF_REGULAR.to_vec());
-    put(&mut defs, "SourceSerif4-Bold", crate::fonts::SERIF_BOLD.to_vec());
-    put(&mut defs, "SourceSerif4-It", crate::fonts::SERIF_ITALIC.to_vec());
-    put(&mut defs, "SourceSerif4-BoldIt", crate::fonts::SERIF_BOLD_ITALIC.to_vec());
-    if let Ok(b) = read("SourceSerif4-Semibold.ttf") {
-        put(&mut defs, "SourceSerif4-Semibold", b);
-    }
+    // thumbnails and the PDF all use the very same faces.
+    put(&mut defs, "SourceSerif4-Regular", crate::fonts::SERIF_REGULAR);
+    put(&mut defs, "SourceSerif4-Bold", crate::fonts::SERIF_BOLD);
+    put(&mut defs, "SourceSerif4-It", crate::fonts::SERIF_ITALIC);
+    put(&mut defs, "SourceSerif4-BoldIt", crate::fonts::SERIF_BOLD_ITALIC);
+    put(&mut defs, "SourceSerif4-Semibold", crate::fonts::SERIF_SEMIBOLD);
     // STIX Two Math (OFL; the bytes equaSHion already compiles in) right behind the house
     // faces, for symbols they lack (⇒ ∈ ∠ ⊥ ...): the same fallback the PDF prints with.
     if let Some(b) = crate::fonts::fallback_bytes() {
@@ -388,7 +388,9 @@ fn load_fonts() -> Option<FontDefinitions> {
         FontFamily::Proportional,
         with(vec!["SourceSans3-Regular", "SourceSans3-It", "SourceSans3-Bold"], &defs),
     );
-    // Named families: ordered glyph-coverage fallbacks, egui defaults behind them.
+    // Named families: ordered glyph-coverage fallbacks, egui defaults behind them. The
+    // `vs-` prefix keeps them from colliding with the host suite's families in a shared
+    // egui context.
     let named = |name: &'static str, list: Vec<&'static str>| {
         (
             FontFamily::Name(Arc::<str>::from(name)),
@@ -400,25 +402,25 @@ fn load_fonts() -> Option<FontDefinitions> {
                 .collect::<Vec<String>>(),
         )
     };
-    let (fam, fonts) = named("sans-bold", vec!["SourceSans3-Bold", "SourceSans3-Semibold", "SourceSans3-Regular"]);
+    let (fam, fonts) = named("vs-sans-bold", vec!["SourceSans3-Bold", "SourceSans3-Semibold", "SourceSans3-Regular"]);
     defs.families.insert(fam, fonts);
-    let (fam, fonts) = named("serif", vec!["SourceSerif4-Regular", "SourceSerif4-Semibold", "SourceSans3-Regular"]);
+    let (fam, fonts) = named("vs-serif", vec!["SourceSerif4-Regular", "SourceSerif4-Semibold", "SourceSans3-Regular"]);
     defs.families.insert(fam, fonts);
-    let (fam, fonts) = named("serif-bold", vec!["SourceSerif4-Bold", "SourceSerif4-Semibold", "SourceSerif4-Regular"]);
+    let (fam, fonts) = named("vs-serif-bold", vec!["SourceSerif4-Bold", "SourceSerif4-Semibold", "SourceSerif4-Regular"]);
     defs.families.insert(fam, fonts);
     // Real italic faces (egui has no style linking: an italic run picks one of these
     // families instead of slanting the upright face, see `italic_family`).
-    let (fam, fonts) = named("serif-italic", vec!["SourceSerif4-It", "SourceSerif4-Regular"]);
+    let (fam, fonts) = named("vs-serif-italic", vec!["SourceSerif4-It", "SourceSerif4-Regular"]);
     defs.families.insert(fam, fonts);
-    let (fam, fonts) = named("serif-bold-italic", vec!["SourceSerif4-BoldIt", "SourceSerif4-Bold", "SourceSerif4-It"]);
+    let (fam, fonts) = named("vs-serif-bold-italic", vec!["SourceSerif4-BoldIt", "SourceSerif4-Bold", "SourceSerif4-It"]);
     defs.families.insert(fam, fonts);
-    let (fam, fonts) = named("sans-italic", vec!["SourceSans3-It", "SourceSans3-Regular"]);
+    let (fam, fonts) = named("vs-sans-italic", vec!["SourceSans3-It", "SourceSans3-Regular"]);
     defs.families.insert(fam, fonts);
-    Some(defs)
+    defs
 }
 
 /// Registered font set, initialized once on first use.
-pub fn fonts() -> &'static Option<FontDefinitions> {
+pub fn fonts() -> &'static FontDefinitions {
     FONTS.get_or_init(load_fonts)
 }
 
@@ -428,10 +430,7 @@ pub fn setup(ctx: &Context) {
 }
 
 fn setup_fonts(ctx: &Context) {
-    if let Some(defs) = fonts() {
-        ctx.set_fonts(defs.clone());
-    }
-    // Missing fonts: silently keep egui defaults; screens still read fine.
+    ctx.set_fonts(fonts().clone());
 }
 
 fn setup_style(ctx: &Context) {
@@ -502,18 +501,11 @@ fn setup_style(ctx: &Context) {
 mod tests {
     use super::*;
 
-    /// When run from the project root (cargo's default cwd), the bundled Source
-    /// fonts are present and registered. The named serif/bold families and the
-    /// Proportional list must all reference real font_data entries.
+    /// The compiled-in Source faces are always present. The named serif/bold families and
+    /// the Proportional list must all reference real font_data entries.
     #[test]
     fn bundled_fonts_register_named_families() {
-        if fonts_dir().is_none() {
-            // Not run from the project root (e.g. packaged): house fonts are an
-            // optional startup asset; the fallback path keeps egui defaults.
-            assert!(load_fonts().is_none());
-            return;
-        }
-        let defs = load_fonts().expect("fonts dir present but load failed");
+        let defs = load_fonts();
         for key in [
             "SourceSans3-Regular",
             "SourceSans3-It",
@@ -527,7 +519,7 @@ mod tests {
         ] {
             assert!(defs.font_data.contains_key(key), "missing font {key}");
         }
-        for family in ["sans-bold", "serif", "serif-bold", "serif-italic", "serif-bold-italic", "sans-italic"] {
+        for family in ["vs-sans-bold", "vs-serif", "vs-serif-bold", "vs-serif-italic", "vs-serif-bold-italic", "vs-sans-italic"] {
             let list = defs
                 .families
                 .get(&FontFamily::Name(family.into()))

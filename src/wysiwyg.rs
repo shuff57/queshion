@@ -3816,7 +3816,7 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
         let hi = sl.hi.min(list.len().saturating_sub(1));
         let mut new_tab = sl.tab;
         let mut new_hi = hi;
-        let screen = ui.ctx().content_rect();
+        let screen = crate::theme::area_or(ui.ctx().content_rect());
         let below = cr.bottom() + 4.0 + 300.0 < screen.bottom();
         let (pos, pivot) = if below { (Pos2::new(cr.left(), cr.bottom() + 4.0), egui::Align2::LEFT_TOP) } else { (Pos2::new(cr.left(), cr.top() - 4.0), egui::Align2::LEFT_BOTTOM) };
         let r = egui::Area::new(id.with("wys_slash"))
@@ -3905,7 +3905,7 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
     // where it was while the pointer is on it, or its buttons could never be clicked.
     let float_at = sel_rect.or(if float_keep { m.float_sel } else { None });
     if let Some(sr) = float_at.filter(|_| focused.is_some() || float_keep) {
-        let (at, pivot) = float_place(sr, m.float_rect.map(|r| r.size()), fixed_bar, ui.ctx().content_rect());
+        let (at, pivot) = float_place(sr, m.float_rect.map(|r| r.size()), fixed_bar, crate::theme::area_or(ui.ctx().content_rect()));
         let (a, r) = float_bar(ui, id, at, pivot, here, has_blanks, o.structured);
         float_act = a;
         m.float_rect = Some(r);

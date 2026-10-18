@@ -14,7 +14,7 @@ use crate::formats::ImportDoc;
 use crate::kit;
 use crate::model::{self, Id, Import, Question, QuestionBank};
 use crate::examui::{paper_question, ptext, PAGE_H, PAGE_W, PAPER_RULE, PAPER_SOFT, PT};
-use crate::screens::{fmt_time, import_how_label, mime_of, now_secs, pdf_pages_png, remap_empty_bank_ids, shell_frame, ImportFile};
+use crate::screens::{fmt_time, import_how_label, mime_of, now_secs, remap_empty_bank_ids, shell_frame, ImportFile};
 use crate::theme;
 
 // ---------- screen state (UI-only, never persisted) ----------
@@ -354,7 +354,7 @@ fn add_bytes_inner(app: &mut crate::App, st: &mut State, name: &str, bytes: Vec<
                     _ => {} // not readable as questions: fall back to the pages
                 }
             }
-            match pdf_pages_png(&bytes) {
+            match crate::platform::render_pdf_pages(&bytes) {
                 Ok(pages) => {
                     let n = pages.len();
                     for (i, png) in pages.into_iter().enumerate() {
@@ -416,7 +416,7 @@ fn add_paths(app: &mut crate::App, st: &mut State, paths: Vec<std::path::PathBuf
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "file".to_string());
-        match std::fs::read(&path) {
+        match crate::platform::read(&path) {
             Ok(b) => add_bytes(app, st, &name, b, "file"),
             Err(e) => app.toast_err(format!("Couldn't read {name}: {e}")),
         }
@@ -682,7 +682,7 @@ impl crate::App {
         }
         fix_pick(&mut st);
         let imports_before = self.store.imports.len();
-        let screen = ctx.content_rect();
+        let screen = crate::theme::area_or(ctx.content_rect());
         let big = !st.sources.is_empty();
         let w = if big { (screen.width() - 80.0).clamp(520.0, 1500.0) } else { 600.0_f32.min(screen.width() - 40.0) };
         let view_h = (screen.height() - 150.0).max(420.0);
@@ -892,16 +892,13 @@ fn drop_area(app: &mut crate::App, ui: &mut egui::Ui, st: &mut State) {
                         ui.label(theme::serif("Drop more here, or").size(16.0).color(theme::ink()));
                     }
                     if kit::primary_button(ui, if compact { "Add files" } else { "Choose files" }).clicked() {
-                        if let Some(paths) = rfd::FileDialog::new()
-                            .add_filter(
-                                "Question files",
-                                &[
-                                    "txt", "csv", "tsv", "json", "docx", "xlsx", "gift", "xml", "qti", "zip", "imscc", "md", "pdf", "png", "jpg",
-                                    "jpeg", "gif", "webp",
-                                ],
-                            )
-                            .pick_files()
-                        {
+                        if let Some(paths) = crate::platform::pick_files(
+                            "Question files",
+                            &[
+                                "txt", "csv", "tsv", "json", "docx", "xlsx", "gift", "xml", "qti", "zip", "imscc", "md", "pdf", "png", "jpg",
+                                "jpeg", "gif", "webp",
+                            ],
+                        ) {
                             add_paths(app, st, paths);
                         }
                     }
@@ -909,10 +906,7 @@ fn drop_area(app: &mut crate::App, ui: &mut egui::Ui, st: &mut State) {
                         st.paste_open = !st.paste_open;
                     }
                     if kit::ghost_button(ui, "Add photo").clicked() {
-                        if let Some(paths) = rfd::FileDialog::new()
-                            .add_filter("Photos & PDFs", &["png", "jpg", "jpeg", "gif", "webp", "pdf"])
-                            .pick_files()
-                        {
+                        if let Some(paths) = crate::platform::pick_files("Photos & PDFs", &["png", "jpg", "jpeg", "gif", "webp", "pdf"]) {
                             add_paths(app, st, paths);
                         }
                     }
@@ -2018,8 +2012,8 @@ fn attach_dialog(app: &mut crate::App, ctx: &egui::Context, st: &mut State) {
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             if kit::primary_button(ui, "Choose image file…").clicked() {
-                if let Some(path) = rfd::FileDialog::new().add_filter("Pictures", &["png", "jpg", "jpeg", "gif", "webp"]).pick_file() {
-                    match std::fs::read(&path) {
+                if let Some(path) = crate::platform::pick_file("Pictures", &["png", "jpg", "jpeg", "gif", "webp"]) {
+                    match crate::platform::read(&path) {
                         Ok(b) => picked = Some(b),
                         Err(e) => app.toast_err(format!("Couldn't read that file: {e}")),
                     }
@@ -2233,7 +2227,7 @@ fn docx_images(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
 fn resolve_add_file(app: &mut crate::App, rs: &mut Resolve, name: &str, bytes: Vec<u8>) {
     let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
     match ext.as_str() {
-        "pdf" => match pdf_pages_png(&bytes) {
+        "pdf" => match crate::platform::render_pdf_pages(&bytes) {
             Ok(pages) => {
                 let n = pages.len();
                 for (i, png) in pages.into_iter().enumerate() {
@@ -2353,7 +2347,7 @@ impl crate::App {
         }
         let total = rs.slots.len();
         let ready = rs.staged.len() + rs.described.iter().filter(|k| !rs.staged.contains_key(k)).count();
-        let screen = ctx.content_rect();
+        let screen = crate::theme::area_or(ctx.content_rect());
         let w = 620.0_f32.min(screen.width() - 40.0);
         let mut close = false;
         let mut apply = false;
@@ -2384,7 +2378,7 @@ impl crate::App {
                     ui.horizontal(|ui| {
                         ui.add_space(26.0);
                         if kit::ghost_button(ui, "Choose original…").clicked() {
-                            if let Some(paths) = rfd::FileDialog::new().add_filter("PDF, Word or photo", &["pdf", "docx", "png", "jpg", "jpeg", "gif", "webp"]).pick_files() {
+                            if let Some(paths) = crate::platform::pick_files("PDF, Word or photo", &["pdf", "docx", "png", "jpg", "jpeg", "gif", "webp"]) {
                                 for p in paths {
                                     let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
                                     match std::fs::read(&p) {
@@ -2444,8 +2438,8 @@ impl crate::App {
                                     if slot.attachable {
                                         let up = if rs.staged.contains_key(&k) { "Change file" } else { "Upload a file" };
                                         if kit::ghost_button(ui, up).clicked() {
-                                            if let Some(path) = rfd::FileDialog::new().add_filter("Pictures", &["png", "jpg", "jpeg", "gif", "webp"]).pick_file() {
-                                                match std::fs::read(&path) {
+                                            if let Some(path) = crate::platform::pick_file("Pictures", &["png", "jpg", "jpeg", "gif", "webp"]) {
+                                                match crate::platform::read(&path) {
                                                     Ok(b) if image::guess_format(&b).is_ok() => {
                                                         rs.staged.insert(k, b);
                                                         rs.described.remove(&k);

@@ -3778,7 +3778,7 @@ struct Mapped {
 
 /// Reads one attached image's bytes from the store media dir.
 fn read_img(img_ref: &model::ImageRef) -> Option<DocImg> {
-    let bytes = std::fs::read(store::media_path(img_ref)).ok()?;
+    let bytes = store::read_media(&img_ref.file)?;
     Some(DocImg { bytes, width_px: img_ref.width, height_px: img_ref.height })
 }
 
@@ -4769,7 +4769,7 @@ fn page_thumb_texture(app: &mut crate::App, ctx: &egui::Context, exam_id: &Id, p
         // pictures: decoded and downscaled into their boxes (smooth, not nearest-pixel)
         for (k, [x, y, bw, bh]) in placed {
             let Some(file) = files.get(k).filter(|f| !f.is_empty()) else { continue };
-            let Some(img) = std::fs::read(crate::store::store_dir().join(file)).ok().and_then(|b| image::load_from_memory(&b).ok()) else { continue };
+            let Some(img) = crate::store::read_media(file).and_then(|b| image::load_from_memory(&b).ok()) else { continue };
             let (pw, ph) = (((bw as f32) * scale).round().max(1.0) as u32, ((bh as f32) * scale).round().max(1.0) as u32);
             let small = image::imageops::resize(&img.to_rgba8(), pw, ph, image::imageops::FilterType::Triangle);
             let (x0, y0) = ((x as f32 * scale).round() as i64, (y as f32 * scale).round() as i64);
@@ -4956,7 +4956,7 @@ fn draw_export_preview(app: &mut crate::App, ui: &mut egui::Ui, exam_id: &Id, ke
 // ---------------------------------------------------------------------------
 
 fn xdg_open(path: &std::path::Path) {
-    let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+    let _ = crate::platform::open_path(path);
 }
 
 impl crate::App {
@@ -5133,10 +5133,7 @@ fn do_export_inner(
     let ext = if exu.docx { "docx" } else { "pdf" };
     let filter = if exu.docx { "DOCX" } else { "PDF" };
 
-    let Some(path) = rfd::FileDialog::new()
-        .set_file_name(format!("{}.{}", exam.name, ext))
-        .add_filter(filter, &[ext])
-        .save_file()
+    let Some(path) = crate::platform::save_path(&format!("{}.{}", exam.name, ext), filter, &[ext])
     else {
         return Ok(None); // user canceled
     };
@@ -5209,7 +5206,7 @@ fn do_export_inner(
             } else {
                 crate::export::render_pdf(&doc)?
             };
-            std::fs::write(&out_path, bytes).map_err(|e| e.to_string())?;
+            crate::platform::write(&out_path, &bytes).map_err(|e| e.to_string())?;
             files.push(out_path.to_string_lossy().to_string());
             wrote += 1;
             snap_write(
@@ -5236,7 +5233,7 @@ fn do_export_inner(
             } else {
                 crate::export::render_pdf(&doc)?
             };
-            std::fs::write(&out_path, bytes).map_err(|e| e.to_string())?;
+            crate::platform::write(&out_path, &bytes).map_err(|e| e.to_string())?;
             files.push(out_path.to_string_lossy().to_string());
             wrote += 1;
             let snap_suffix = if n_versions > 1 {

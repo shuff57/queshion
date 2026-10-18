@@ -1405,15 +1405,16 @@ pub fn export_bank(app: &mut App, bank_id: &Id) {
         app.toast_err("That bank is no longer there.");
         return;
     };
-    let path = rfd::FileDialog::new()
-        .set_file_name(format!("{}.json", crate::bankexport::file_stem(&bank.name)))
-        .add_filter("Question bank JSON", &["json"])
-        .save_file();
+    let path = crate::platform::save_path(
+        &format!("{}.json", crate::bankexport::file_stem(&bank.name)),
+        "Question bank JSON",
+        &["json"],
+    );
     let Some(path) = path else { return };
     let doc = crate::bankexport::bank_data(&bank);
     let written = serde_json::to_string_pretty(&doc)
         .map_err(|e| e.to_string())
-        .and_then(|s| std::fs::write(&path, s).map_err(|e| e.to_string()));
+        .and_then(|s| crate::platform::write(&path, s.as_bytes()).map_err(|e| e.to_string()));
     match written {
         Ok(()) => app.toast(format!("Exported to {}", path.display())),
         Err(e) => app.toast_err(format!("Export failed: {e}")),
@@ -1464,7 +1465,7 @@ fn draw_bank_export(app: &mut App, ctx: &egui::Context) {
         let pdf = crate::bankexport::bank_pdf(&bank);
         let mut pages = Vec::new();
         if let Ok(bytes) = &pdf {
-            if let Ok(pngs) = crate::screens::pdf_pages_png(bytes) {
+            if let Ok(pngs) = crate::platform::render_pdf_pages(bytes) {
                 for (i, png) in pngs.iter().enumerate() {
                     if let Ok(img) = image::load_from_memory(png) {
                         let img = img.thumbnail(900, 1200).to_rgba8();
@@ -1480,7 +1481,7 @@ fn draw_bank_export(app: &mut App, ctx: &egui::Context) {
         }
         BANK_EXPORT.with(|c| *c.borrow_mut() = Some(BankExportCache { bank: bank_id.clone(), modified: bank.modified, pdf, pages }));
     }
-    let screen = ctx.content_rect();
+    let screen = crate::theme::area_or(ctx.content_rect());
     let w = 700.0_f32.min(screen.width() - 40.0);
     let mut close = false;
     let mut save_pdf = false;
@@ -1545,13 +1546,14 @@ fn draw_bank_export(app: &mut App, ctx: &egui::Context) {
         export_bank(app, &bank_id);
     }
     if save_pdf {
-        let path = rfd::FileDialog::new()
-            .set_file_name(format!("{}.pdf", crate::bankexport::file_stem(&bank.name)))
-            .add_filter("PDF", &["pdf"])
-            .save_file();
+        let path = crate::platform::save_path(
+            &format!("{}.pdf", crate::bankexport::file_stem(&bank.name)),
+            "PDF",
+            &["pdf"],
+        );
         if let Some(path) = path {
             let bytes = BANK_EXPORT.with(|c| c.borrow().as_ref().and_then(|c| c.pdf.as_ref().ok().cloned()));
-            match bytes.map(|b| std::fs::write(&path, b)) {
+            match bytes.map(|b| crate::platform::write(&path, &b)) {
                 Some(Ok(())) => {
                     app.toast(format!("Saved {}", path.display()));
                     close = true;
@@ -1605,7 +1607,7 @@ impl App {
                 .corner_radius(CornerRadius::same(kit::R_FIELD))
                 .inner_margin(Margin::same(8))
                 .show(ui, |ui| {
-                    ui.monospace(crate::store::store_dir().display().to_string());
+                    ui.monospace(crate::store::backend_label());
                 });
             ui.add_space(6.0);
             ui.label(
@@ -2534,7 +2536,7 @@ fn draw_tidy_dialog(app: &mut App, ctx: &egui::Context, key: UiId, bank_id: &Id)
     };
     let mut close = false;
     let mut apply = false;
-    let screen = ctx.content_rect();
+    let screen = crate::theme::area_or(ctx.content_rect());
     let w = (screen.width() - 120.0).clamp(420.0, 940.0);
     let modal = egui::Modal::new(UiId::new("bank_tidy_dialog")).show(ctx, |ui| {
         Frame::new().inner_margin(Margin::symmetric(14, 10)).show(ui, |ui| {
@@ -3251,7 +3253,9 @@ pub fn draw_popover(app: &mut App, ctx: &egui::Context) {
         if let Some(q) = app.store.question(&bank_id, &qid).cloned() {
             app.open_bank(&bank_id);
             app.qedit = Some(qedit::Draft::from_question(bank_id.clone(), &q));
-            ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
+            if app.allow_viewports {
+                ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
+            }
         }
     }
     if close {

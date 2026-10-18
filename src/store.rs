@@ -11,8 +11,131 @@ fn data_base() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-pub fn store_dir() -> PathBuf {
+fn store_dir_from_env() -> PathBuf {
+    if let Ok(dir) = crate::env_var("VERSHION_STORE_DIR") {
+        if !dir.trim().is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
     data_base().join("vershion")
+}
+
+/// Legacy path helper. New code goes through the backend (`save_json`, `read_media`, …) so the
+/// native filesystem and the browser IndexedDB store stay interchangeable.
+pub fn store_dir() -> PathBuf {
+    store_dir_from_env()
+}
+
+/// The storage seam. Native uses [`FsBackend`]; the web build installs an IndexedDB backend
+/// before constructing the app.
+pub trait Backend {
+    fn read_doc(&self, name: &str) -> Option<Vec<u8>>;
+    fn write_doc(&self, name: &str, bytes: &[u8]) -> Result<(), String>;
+    fn exists(&self, rel: &str) -> bool;
+    fn read(&self, rel: &str) -> Option<Vec<u8>>;
+    fn write(&self, rel: &str, bytes: &[u8]) -> Result<(), String>;
+    fn list(&self, sub: &str) -> Vec<String>;
+    fn label(&self) -> String;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+static BACKEND: std::sync::OnceLock<Box<dyn Backend + Send + Sync>> = std::sync::OnceLock::new();
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn init(backend: Box<dyn Backend + Send + Sync>) {
+    let _ = BACKEND.set(backend);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn with_backend<R>(f: impl FnOnce(&dyn Backend) -> R) -> R {
+    let backend = BACKEND.get_or_init(|| Box::new(FsBackend::from_env()));
+    f(backend.as_ref())
+}
+
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static BACKEND: std::cell::RefCell<Option<Box<dyn Backend>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn init(backend: Box<dyn Backend>) {
+    BACKEND.with(|slot| *slot.borrow_mut() = Some(backend));
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn with_backend<R>(f: impl FnOnce(&dyn Backend) -> R) -> R {
+    BACKEND.with(|slot| {
+        let slot = slot.borrow();
+        let backend = slot.as_ref().expect("store backend: call store::init before use");
+        f(backend.as_ref())
+    })
+}
+
+/// Filesystem backend: JSON documents, media and backups under one root.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct FsBackend {
+    pub root: PathBuf,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl FsBackend {
+    pub fn from_env() -> FsBackend {
+        FsBackend { root: store_dir_from_env() }
+    }
+
+    pub fn new(root: impl Into<PathBuf>) -> FsBackend {
+        FsBackend { root: root.into() }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Backend for FsBackend {
+    fn read_doc(&self, name: &str) -> Option<Vec<u8>> {
+        std::fs::read(self.root.join(name)).ok()
+    }
+
+    fn write_doc(&self, name: &str, bytes: &[u8]) -> Result<(), String> {
+        std::fs::create_dir_all(&self.root).map_err(|e| e.to_string())?;
+        let path = self.root.join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let tmp = self.root.join(format!("{name}.tmp"));
+        std::fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+    }
+
+    fn exists(&self, rel: &str) -> bool {
+        self.root.join(rel).exists()
+    }
+
+    fn read(&self, rel: &str) -> Option<Vec<u8>> {
+        std::fs::read(self.root.join(rel)).ok()
+    }
+
+    fn write(&self, rel: &str, bytes: &[u8]) -> Result<(), String> {
+        let path = self.root.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(&path, bytes).map_err(|e| e.to_string())
+    }
+
+    fn list(&self, sub: &str) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(self.root.join(sub))
+            .map(|d| {
+                d.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    }
+
+    fn label(&self) -> String {
+        self.root.display().to_string()
+    }
 }
 
 /// One-time, non-destructive copy of the pre-rename data dir (`…/queshion`).
@@ -58,18 +181,14 @@ fn now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
-/// Atomic JSON save: write `file.tmp` then rename. Creates parent dirs.
+/// Serializes and writes a JSON document through the backend (atomic on the filesystem).
 pub fn save_json<T: Serialize>(name: &str, value: &T) -> Result<(), String> {
-    let dir = store_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join(name);
-    let tmp = dir.join(format!("{name}.tmp"));
-    std::fs::write(&tmp, serde_json::to_vec(value).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+    let bytes = serde_json::to_vec(value).map_err(|e| e.to_string())?;
+    with_backend(|b| b.write_doc(name, &bytes))
 }
 
 pub fn load_json<T: DeserializeOwned>(name: &str) -> Option<T> {
-    let bytes = std::fs::read(store_dir().join(name)).ok()?;
+    let bytes = with_backend(|b| b.read_doc(name))?;
     serde_json::from_slice(&bytes).ok()
 }
 
@@ -80,14 +199,31 @@ pub fn put_image(bytes: &[u8]) -> Result<crate::model::ImageRef, String> {
     let hex = format!("{hash:x}");
     let ext = sniff_ext(bytes);
     let file = format!("media/{hex}{ext}");
-    let dir = store_dir();
-    let out = dir.join(&file);
-    if !out.exists() {
-        std::fs::create_dir_all(dir.join("media")).map_err(|e| e.to_string())?;
-        std::fs::write(&out, bytes).map_err(|e| e.to_string())?;
+    if !with_backend(|b| b.exists(&file)) {
+        with_backend(|b| b.write(&file, bytes))?;
     }
     let (w, h) = imagesize(bytes).ok_or("unreadable image")?;
     Ok(crate::model::ImageRef { file, width: w, height: h })
+}
+
+/// Reads a stored media file (`ImageRef.file`) through the backend.
+pub fn read_media(file: &str) -> Option<Vec<u8>> {
+    with_backend(|b| b.read(file))
+}
+
+/// Whether a media file is already present in the backend.
+pub fn media_exists(image: &crate::model::ImageRef) -> bool {
+    with_backend(|b| b.exists(&image.file))
+}
+
+/// Lists the names in a store subdirectory (`media`, `backups`, …).
+pub fn list_dir(sub: &str) -> Vec<String> {
+    with_backend(|b| b.list(sub))
+}
+
+/// Human-readable location of the active backend, for Settings/Storage.
+pub fn backend_label() -> String {
+    with_backend(|b| b.label())
 }
 
 /// Where automatic backups go: `<store>/backups`.

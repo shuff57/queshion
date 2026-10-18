@@ -1239,7 +1239,7 @@ fn media_texture(
     if let Some(t) = textures.get(file) {
         return Some(t.clone());
     }
-    let bytes = std::fs::read(crate::store::store_dir().join(file)).ok()?;
+    let bytes = crate::store::read_media(file)?;
     let img = image::load_from_memory(&bytes).ok()?.to_rgba8();
     let tex = ctx.load_texture(
         format!("testparrot:{file}"),
@@ -1264,11 +1264,9 @@ fn draw_image_row(
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
         if ghost_button(ui, "Attach image...").clicked()
-            && let Some(path) = rfd::FileDialog::new()
-                .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"])
-                .pick_file()
+            && let Some(path) = crate::platform::pick_file("Images", &["png", "jpg", "jpeg", "gif", "webp"])
         {
-            match std::fs::read(&path) {
+            match crate::platform::read(&path) {
                 Ok(bytes) => match crate::store::put_image(&bytes) {
                     Ok(img) => {
                         media_texture(textures, ui.ctx(), &img.file);

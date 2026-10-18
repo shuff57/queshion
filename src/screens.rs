@@ -102,10 +102,10 @@ fn plural(n: usize, word: &str) -> String {
 pub fn root_ui(ctx: &Context) -> egui::Ui {
     egui::Ui::new(
         ctx.clone(),
-        egui::Id::new((ctx.viewport_id(), "__tp_ui")),
+        egui::Id::new((ctx.viewport_id(), "vs_ui")),
         UiBuilder::new()
             .layer_id(LayerId::background())
-            .max_rect(ctx.viewport_rect()),
+            .max_rect(theme::area_or(ctx.viewport_rect())),
     )
 }
 
@@ -530,7 +530,7 @@ impl crate::App {
         if let Some(t) = self.textures.get(file) {
             return Some(t.clone());
         }
-        let bytes = std::fs::read(store::store_dir().join(file)).ok()?;
+        let bytes = store::read_media(file)?;
         let img = image::load_from_memory(&bytes).ok()?.to_rgba8();
         let (w, h) = (img.width().max(1), img.height().max(1));
         let tex = ctx.load_texture(
@@ -552,7 +552,7 @@ impl crate::App {
     fn draw_sidebar_into(&mut self, root: &mut egui::Ui) {
         // V4 dock: 88 px rounded rail inside a 10 px app gutter; below ~900 px it
         // collapses to a 64 px icon rail (labels hidden).
-        let narrow = root.ctx().viewport_rect().width() < 900.0;
+        let narrow = root.max_rect().width() < 900.0;
         let dock_w = if narrow { 64.0 } else { 88.0 };
         egui::Panel::left(egui::Id::new("sidebar"))
             .exact_size(dock_w + 10.0 + DOCK_GAP)
@@ -1237,7 +1237,7 @@ impl crate::App {
                     ui.add_space(6.0);
                     ui.add(
                         egui::Label::new(
-                            RichText::new(store::store_dir().to_string_lossy().to_string())
+                            RichText::new(store::backend_label())
                                 .color(theme::text_col())
                                 .size(12.0)
                                 .family(egui::FontFamily::Monospace),
@@ -1246,7 +1246,7 @@ impl crate::App {
                     );
                     ui.add_space(8.0);
                     if kit::ghost_button(ui, "Open folder").clicked() {
-                        let _ = std::process::Command::new("xdg-open").arg(store::store_dir()).spawn();
+                        let _ = crate::platform::open_path(&store::store_dir());
                     }
                 });
                 ui.add_space(12.0);
@@ -1441,9 +1441,11 @@ impl crate::App {
     // ---------- backup / restore ----------
 
     pub fn backup_now(&mut self) {
-        let dest = rfd::FileDialog::new()
-            .set_file_name(format!("vershion-backup-{}.zip", fmt_date(now_secs())))
-            .save_file();
+        let dest = crate::platform::save_path(
+            &format!("vershion-backup-{}.zip", fmt_date(now_secs())),
+            "verSHion backups",
+            &["zip"],
+        );
         let Some(dest) = dest else { return };
         match write_backup(&dest) {
             Ok(()) => self.toast(format!("Backup saved: {}", dest.display())),
@@ -1452,9 +1454,7 @@ impl crate::App {
     }
 
     pub fn start_restore(&mut self) {
-        let Some(path) = rfd::FileDialog::new()
-            .add_filter("verSHion backups", &["zip"])
-            .pick_file()
+        let Some(path) = crate::platform::pick_file("verSHion backups", &["zip"])
         else {
             return;
         };

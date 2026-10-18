@@ -37,6 +37,7 @@ pub mod formats;
 pub mod importui;
 pub mod layout;
 pub mod model;
+pub mod platform;
 pub mod qedit;
 pub mod richtext;
 pub mod screens;
@@ -92,6 +93,9 @@ pub struct App {
     pub paste: String,
     pub ai: ai::Ai,
     pub storage_info: bool, // topbar ⓘ: "where your work is stored" popup
+    /// Whether secondary viewports (the bank pop-over) are allowed. False when embedded in a
+    /// host that owns the window.
+    pub allow_viewports: bool,
     pub panel_bank: Option<Id>,          // bank tab open in the exam editor side panel
     pub export_open: bool,
     pub history_open: bool,
@@ -165,6 +169,7 @@ impl App {
             confirm_restore: None,
             ai_busy: false,
             storage_info: false,
+            allow_viewports: true,
             import_file: None,
             ai_hint: String::new(),
             import_name: String::new(),
@@ -340,6 +345,8 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        theme::begin_frame(self.settings.dark);
+        theme::set_area(ui.max_rect());
         let ctx = ui.ctx().clone();
         if !self.qa_steps.is_empty() {
             ctx.request_repaint_after(std::time::Duration::from_millis(16)); // keep the VERSHION_SCRIPT clock advancing
@@ -400,8 +407,9 @@ fn handle_headless() -> bool {
 }
 
 fn main() -> Result<(), eframe::Error> {
-    // Copy the pre-rename data dir once, before anything reads the store.
+    // Copy the pre-rename data dir once, then install the filesystem backend.
     store::migrate_legacy_dir();
+    store::init(Box::new(store::FsBackend::from_env()));
     // Headless one-shot: VERSHION_RENDER_FIG=<figure id> [VERSHION_FIG_PARAMS='{"formula":"NH3"}']
     // VERSHION_OUT=<file.png> renders a Figures-tab figure to a PNG (strings/bools/numbers).
     if let Ok(id) = crate::env_var("VERSHION_RENDER_FIG") {

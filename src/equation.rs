@@ -1262,8 +1262,8 @@ mod tests {
                 let word = "minimum distance";
                 let it = theme::italic_family(ui.ctx(), &theme::serif_family()).expect("serif italic family registered");
                 let bit = theme::italic_family(ui.ctx(), &theme::serif_bold_family()).expect("serif bold italic family registered");
-                assert_eq!(it, FontFamily::Name("serif-italic".into()));
-                assert_eq!(bit, FontFamily::Name("serif-bold-italic".into()));
+                assert_eq!(it, FontFamily::Name("vs-serif-italic".into()));
+                assert_eq!(bit, FontFamily::Name("vs-serif-bold-italic".into()));
                 for (fam, style) in [(theme::serif_family(), Style::Regular), (theme::serif_bold_family(), Style::Bold), (it.clone(), Style::Italic), (bit.clone(), Style::BoldItalic)] {
                     let g = ui.painter().layout_no_wrap(word.into(), FontId::new(size, fam.clone()), Color32::BLACK);
                     let want = pdf_w(style, word, size);
