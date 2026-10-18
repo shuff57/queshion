@@ -1443,7 +1443,7 @@ thread_local! {
 }
 
 /// Test Parrot's "Export Question Bank": a preview of the printable bank file (answers
-/// included), then Download PDF, or the JSON file.
+/// included), then Download PDF, the JSON file, or a spreadsheet-friendly CSV.
 fn draw_bank_export(app: &mut App, ctx: &egui::Context) {
     if let Ok(v) = crate::env_var("VERSHION_BANK_EXPORT") {
         let hid = UiId::new("qs_bank_export_hook");
@@ -1486,6 +1486,7 @@ fn draw_bank_export(app: &mut App, ctx: &egui::Context) {
     let mut close = false;
     let mut save_pdf = false;
     let mut save_json = false;
+    let mut save_csv = false;
     let modal = egui::Modal::new(UiId::new("qs_bank_export_modal")).show(ctx, |ui| {
         ui.set_width(w);
         ui.label(theme::serif("Export question bank").size(22.0).color(theme::ink()));
@@ -1528,6 +1529,9 @@ fn draw_bank_export(app: &mut App, ctx: &egui::Context) {
         ui.add_space(8.0);
         ui.separator();
         ui.horizontal(|ui| {
+            if kit::ghost_button(ui, "Save CSV file…").on_hover_text("One row per question, for Excel, Sheets or Numbers").clicked() {
+                save_csv = true;
+            }
             if kit::ghost_button(ui, "Save JSON file…").on_hover_text("The bank as a question-bank JSON file (for other apps and backups)").clicked() {
                 save_json = true;
             }
@@ -1542,6 +1546,22 @@ fn draw_bank_export(app: &mut App, ctx: &egui::Context) {
             });
         });
     });
+    if save_csv {
+        let path = crate::platform::save_path(
+            &format!("{}.csv", crate::bankexport::file_stem(&bank.name)),
+            "CSV",
+            &["csv"],
+        );
+        if let Some(path) = path {
+            match crate::platform::write(&path, crate::bankexport::bank_csv(&bank).as_bytes()) {
+                Ok(()) => {
+                    app.toast(format!("Saved {}", path.display()));
+                    close = true;
+                }
+                Err(e) => app.toast_err(format!("Couldn't save: {e}")),
+            }
+        }
+    }
     if save_json {
         export_bank(app, &bank_id);
     }
