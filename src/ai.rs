@@ -258,6 +258,7 @@ fn request_key(cfg: &AiCfg) -> Option<String> {
 
 /// Cheap authenticated probe for the Settings "Test connection" button: GET {base}/models.
 /// Blocking; call from a thread. The reply never contains the key.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn test_connection(cfg: &AiCfg) -> Result<(), String> {
     let base = cfg.base.trim_end_matches('/');
     if base.is_empty() {
@@ -277,6 +278,12 @@ pub fn test_connection(cfg: &AiCfg) -> Result<(), String> {
     }
 }
 
+/// Browser placeholder; the fetch probe lands with the web entry.
+#[cfg(target_arch = "wasm32")]
+pub fn test_connection(_cfg: &AiCfg) -> Result<(), String> {
+    Err("Testing the connection is not available in this build yet.".to_string())
+}
+
 /// One pending conversion job; `Default` starts with none.
 #[derive(Default)]
 pub struct Ai {
@@ -293,7 +300,13 @@ impl Ai {
         let cfg = cfg.clone();
         let mime = mime.to_string();
         let ctx = ctx.clone();
+        #[cfg(not(target_arch = "wasm32"))]
         std::thread::spawn(move || {
+            let _ = tx.send(convert_page(&bytes, &mime, &hint, &cfg, page_no));
+            ctx.request_repaint();
+        });
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(async move {
             let _ = tx.send(convert_page(&bytes, &mime, &hint, &cfg, page_no));
             ctx.request_repaint();
         });
@@ -398,6 +411,7 @@ pub fn transcribe_checked(bytes: &[u8], mime: &str, cfg: &AiCfg, prompt: &str) -
     Ok(reply)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn agent() -> ureq::Agent {
     ureq::Agent::config_builder().timeout_global(Some(TIMEOUT)).http_status_as_error(false).build().into()
 }
@@ -448,6 +462,7 @@ fn openai_chat(cfg: &AiCfg, prompt: &str, mime: &str, images: &[&[u8]], temp: f6
 }
 
 /// One JSON POST, with the same error shapes for both providers; answers with the body.
+#[cfg(not(target_arch = "wasm32"))]
 fn post_json(url: &str, body: Value, key: Option<&str>) -> Result<Value, String> {
     let mut req = agent().post(url).header("Content-Type", "application/json");
     if let Some(k) = key {
@@ -463,6 +478,12 @@ fn post_json(url: &str, body: Value, key: Option<&str>) -> Result<Value, String>
         return Err(format!("{url} answered {status}: {msg}"));
     }
     Ok(v)
+}
+
+/// Browser transport placeholder; the fetch implementation lands with the web entry.
+#[cfg(target_arch = "wasm32")]
+fn post_json(url: &str, _body: Value, _key: Option<&str>) -> Result<Value, String> {
+    Err(format!("AI conversion is not available in this build yet (cannot reach {url})"))
 }
 
 /// Strips an accidental markdown fence (with its language tag) and outer whitespace; the

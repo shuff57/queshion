@@ -17,6 +17,13 @@ use crate::examui::{paper_question, ptext, PAGE_H, PAGE_W, PAPER_RULE, PAPER_SOF
 use crate::screens::{fmt_time, import_how_label, mime_of, now_secs, remap_empty_bank_ids, shell_frame, ImportFile};
 use crate::theme;
 
+/// Bytes read asynchronously from browser file drops, drained on the next frame.
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static DROPPED_BYTES: RefCell<Vec<Result<(String, Vec<u8>), String>>> = const { RefCell::new(Vec::new()) };
+    static RESOLVE_BYTES: RefCell<Vec<Result<(String, Vec<u8>), String>>> = const { RefCell::new(Vec::new()) };
+}
+
 // ---------- screen state (UI-only, never persisted) ----------
 
 #[derive(Clone, PartialEq)]
@@ -774,16 +781,39 @@ impl crate::App {
 
 /// OS drag-and-drop and Ctrl+V of plain text.
 fn intake(app: &mut crate::App, ctx: &egui::Context, st: &mut State) {
+    #[cfg(target_arch = "wasm32")]
+    for item in DROPPED_BYTES.with(|q| std::mem::take(&mut *q.borrow_mut())) {
+        match item {
+            Ok((name, b)) => add_bytes(app, st, &name, b, "file"),
+            Err(e) => app.toast_err(e),
+        }
+    }
     let dropped = ctx.input(|i| i.raw.dropped_files.clone());
     for f in dropped {
-        let path = f.path().to_path_buf();
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "dropped file".to_string());
-        match f.bytes() {
-            Ok(b) => add_bytes(app, st, &name, b, "file"),
-            Err(e) => app.toast_err(format!("Couldn't read {name}: {e}")),
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let path = f.path().to_path_buf();
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "dropped file".to_string());
+            match f.bytes() {
+                Ok(b) => add_bytes(app, st, &name, b, "file"),
+                Err(e) => app.toast_err(format!("Couldn't read {name}: {e}")),
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped file".to_string());
+            let ctx = ctx.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let item = match f.bytes_async().await {
+                    Ok(b) => Ok((name.clone(), b)),
+                    Err(e) => Err(format!("Couldn't read {name}: {e}")),
+                };
+                DROPPED_BYTES.with(|q| q.borrow_mut().push(item));
+                ctx.request_repaint();
+            });
         }
     }
     if !st.paste_open && !ctx.egui_wants_keyboard_input() {
@@ -2338,11 +2368,34 @@ impl crate::App {
         let Some(mut rs) = RESOLVE.with(|r| r.borrow_mut().take()) else { return };
         let Some(bank) = self.store.bank(&rs.bank).cloned() else { return };
         // Originals dropped onto the window while the dialog is open.
+        #[cfg(target_arch = "wasm32")]
+        for item in RESOLVE_BYTES.with(|q| std::mem::take(&mut *q.borrow_mut())) {
+            match item {
+                Ok((name, b)) => resolve_add_file(self, &mut rs, &name, b),
+                Err(e) => self.toast_err(e),
+            }
+        }
         for f in ctx.input(|i| i.raw.dropped_files.clone()) {
-            let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped file".into());
-            match f.bytes() {
-                Ok(b) => resolve_add_file(self, &mut rs, &name, b),
-                Err(e) => self.toast_err(format!("Couldn't read {name}: {e}")),
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped file".into());
+                match f.bytes() {
+                    Ok(b) => resolve_add_file(self, &mut rs, &name, b),
+                    Err(e) => self.toast_err(format!("Couldn't read {name}: {e}")),
+                }
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped file".into());
+                let ctx = ctx.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    let item = match f.bytes_async().await {
+                        Ok(b) => Ok((name.clone(), b)),
+                        Err(e) => Err(format!("Couldn't read {name}: {e}")),
+                    };
+                    RESOLVE_BYTES.with(|q| q.borrow_mut().push(item));
+                    ctx.request_repaint();
+                });
             }
         }
         let total = rs.slots.len();
