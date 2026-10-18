@@ -17,3 +17,25 @@ key and in previews. A stem without any of them is one paragraph on one line, as
 | `___` | a blank (unchanged) |
 
 Previews that need one line (bank cards, lists, search) use `richtext::plain`.
+
+## Editing it visually
+
+The question editor (`src/wysiwyg.rs`) edits this markup in place: markers are hidden, bold,
+italic, scripts and `$math$` show as they print, lists and quotes are blocks, tables are grids of
+cells, and `___` shows as a blank (in Fill-in-the-blank questions as a numbered chip with its answer).
+The stored stem is still exactly this text; text you do not touch is never rewritten. A few things
+the markup itself decides:
+
+* A numbered list needs a blank line above it when a paragraph line comes first (`1.` lines that
+  continue a paragraph print as plain lines). The list buttons add that blank line for you.
+* A `|` typed into a table cell is stored as `∣` (it would otherwise split the cell); a table
+  changed with the row/column buttons is written back with outer pipes (`| a | b |`) so empty cells
+  survive.
+* Text the editor cannot show safely (control characters such as Windows line endings, or more
+  than 20 000 characters) opens as markup with a notice; the `</>` button switches to markup at any
+  time.
+
+Shortcuts: Ctrl+B bold, Ctrl+I italic, Ctrl+, subscript, Ctrl+. superscript, Ctrl+\ clear,
+Ctrl+Shift+8 or Ctrl+Alt+8 bullets, Ctrl+Shift+7 or Ctrl+Alt+7 numbered, Ctrl+Shift+B quote,
+Ctrl+M (or `/` at the start of a word) equation, Ctrl+Shift+K blank / unblank, Ctrl+Z undo,
+Ctrl+Shift+Z or Ctrl+Y redo, Tab / Shift+Tab between table cells.

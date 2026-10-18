@@ -354,6 +354,16 @@ fn eq_image(ctx: &egui::Context, content: &str, size: f32, max_w: f32) -> Option
     img
 }
 
+/// A typeset equation for the WYSIWYG editor: texture, size in points and baseline from the top
+/// (cached like every other equation). None when `content` is not a drawable equation (blank,
+/// padded with spaces, or not parseable), in which case the editor shows it as literal text.
+pub fn math_image(ctx: &egui::Context, content: &str, size: f32, max_w: f32) -> Option<(egui::TextureId, Vec2, f32)> {
+    if content.trim().is_empty() || content.starts_with(char::is_whitespace) || content.ends_with(char::is_whitespace) {
+        return None;
+    }
+    eq_image(ctx, content, size, max_w).map(|i| (i.tex.id(), i.size, i.baseline))
+}
+
 fn build(ctx: &egui::Context, content: &str, size: f32, ppp: f32, max_w: f64) -> Option<Rc<EqImg>> {
     let m = parse(content)?;
     let f = fonts();

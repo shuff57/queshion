@@ -28,6 +28,7 @@ pub mod richtext;
 pub mod screens;
 pub mod store;
 pub mod theme;
+pub mod wysiwyg;
 
 use model::{ExamItem, Id};
 use store::Store;
@@ -226,6 +227,12 @@ impl eframe::App for App {
         eprintln!("qa step {} at frame {}", step, self.qa_frame);
         if step == "dump" {
             eprintln!("qa draft stem = {:?}", self.qedit.as_ref().map(|d| d.stem.clone()));
+            if let Some(model::Kind::Blank { accept }) = self.qedit.as_ref().map(|d| &d.kind) {
+                eprintln!("qa draft blanks = {accept:?}");
+            }
+            if let Some(model::Kind::Mc { answers }) = self.qedit.as_ref().map(|d| &d.kind) {
+                eprintln!("qa draft answers = {:?}", answers.iter().map(|a| a.text.clone()).collect::<Vec<_>>());
+            }
         }
         let (cmd, arg) = step.split_once(':').unwrap_or((step.as_str(), ""));
         let mods = egui::Modifiers::NONE;
@@ -256,24 +263,40 @@ impl eframe::App for App {
                 }
             }
             "text" => raw.events.push(egui::Event::Text(arg.to_string())),
+            // key:Enter, key:Ctrl+B, key:Shift+ArrowLeft, key:Ctrl+Shift+Num8 ...
             "key" => {
-                let key = match arg {
-                    "Enter" => Some(egui::Key::Enter),
-                    "Escape" => Some(egui::Key::Escape),
-                    "End" => Some(egui::Key::End),
-                    "Home" => Some(egui::Key::Home),
-                    "Tab" => Some(egui::Key::Tab),
-                    "ArrowRight" => Some(egui::Key::ArrowRight),
-                    "ArrowLeft" => Some(egui::Key::ArrowLeft),
-                    "Backspace" => Some(egui::Key::Backspace),
-                    _ => None,
+                let mut kmods = egui::Modifiers::NONE;
+                let mut name = arg;
+                loop {
+                    if let Some(r) = name.strip_prefix("Ctrl+") {
+                        kmods.ctrl = true;
+                        kmods.command = true;
+                        name = r;
+                    } else if let Some(r) = name.strip_prefix("Shift+") {
+                        kmods.shift = true;
+                        name = r;
+                    } else if let Some(r) = name.strip_prefix("Alt+") {
+                        kmods.alt = true;
+                        name = r;
+                    } else {
+                        break;
+                    }
+                }
+                let key = match name {
+                    "Num7" => Some(egui::Key::Num7),
+                    "Num8" => Some(egui::Key::Num8),
+                    "Num9" => Some(egui::Key::Num9),
+                    "Comma" => Some(egui::Key::Comma),
+                    "Period" => Some(egui::Key::Period),
+                    n => egui::Key::from_name(n),
                 };
                 if let Some(key) = key {
                     for pressed in [true, false] {
-                        raw.events.push(egui::Event::Key { key, physical_key: Some(key), pressed, repeat: false, modifiers: mods });
+                        raw.events.push(egui::Event::Key { key, physical_key: Some(key), pressed, repeat: false, modifiers: kmods });
                     }
                 }
             }
+            "paste" => raw.events.push(egui::Event::Paste(arg.replace("\\n", "\n"))),
             _ => {}
         }
     }

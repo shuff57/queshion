@@ -134,6 +134,12 @@ fn temp_key(bank_id: &str, qid: Option<&Id>) -> UiId {
         .with(qid.map_or("", |s| s.as_str()))
 }
 
+/// Widget id of the WYSIWYG editor drawing field `f` (also used to hand it the caret back after
+/// the equation dialog).
+fn field_editor_id(key: UiId, f: &EqField) -> UiId {
+    key.with(("wys_field", f))
+}
+
 /// Everything a field needs to ask for the equation modal.
 #[derive(Clone)]
 struct EqCtx {
@@ -567,29 +573,6 @@ fn sigma_button(ui: &mut Ui, eq: &EqCtx, field: &EqField, center: Pos2, size: f3
     br.on_hover_text("Insert equation (or type / at the start of a word)")
 }
 
-/// A '/' typed at the start of a word opens the equation editor and eats the slash. Only a
-/// slash that starts a word counts, so "1/2" and "and/or" type normally.
-fn slash_hook(ui: &mut Ui, eq: &EqCtx, field: EqField, text: &mut String, out: &egui::text_edit::TextEditOutput) {
-    if !(out.response.has_focus() && ui.input(|i| i.key_pressed(Key::Slash))) {
-        return;
-    }
-    let Some(cr) = out.cursor_range else { return };
-    let idx: usize = cr.primary.index.into();
-    let mut chars: Vec<char> = text.chars().collect();
-    let starts_word = idx >= 1
-        && chars.get(idx - 1) == Some(&'/')
-        && (idx == 1 || chars.get(idx - 2).is_some_and(|c| c.is_whitespace()));
-    if !starts_word {
-        return;
-    }
-    eq.request(field, idx - 1, None, String::new());
-    chars.remove(idx - 1);
-    *text = chars.into_iter().collect();
-    let mut st = out.state.clone();
-    st.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(egui::text::CharIndex::from(idx - 1)))));
-    st.store(&eq.ctx, out.response.id);
-}
-
 /// True when a field's text renders differently from its raw form (stem markup, `$math$`
 /// or a `[picture]` placeholder an importer left).
 fn renders_rich(text: &str) -> bool {
@@ -697,170 +680,45 @@ fn stem_preview(ui: &mut Ui, eq: &EqCtx, text: &str, w: f32) {
         });
 }
 
-/// The stem's insert helpers.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Markup {
-    Bold,
-    Italic,
-    Bullets,
-    Table,
-}
-
-const TABLE_TEMPLATE: &str = "Column 1 | Column 2 | Column 3\n---|---|---\n___ | ___ | ___\n___ | ___ | ___";
-
-/// Apply an insert helper to `text` with the char selection `sel`; returns the new text and the
-/// new char selection. Bold/italic wrap the selection (or insert a selected placeholder); the
-/// list helper toggles "• " on every line the selection touches; the table helper inserts a
-/// header + two blank rows on lines of their own with "Column 1" selected.
-fn apply_markup(text: &str, sel: std::ops::Range<usize>, m: Markup) -> (String, std::ops::Range<usize>) {
-    let ch: Vec<char> = text.chars().collect();
-    let a = sel.start.min(sel.end).min(ch.len());
-    let b = sel.start.max(sel.end).min(ch.len());
-    let collect = |v: &[char]| v.iter().collect::<String>();
-    match m {
-        Markup::Bold | Markup::Italic => {
-            let mark = if m == Markup::Bold { "**" } else { "*" };
-            let ml = mark.chars().count();
-            // Keep surrounding spaces outside the markers.
-            let (mut s, mut e) = (a, b);
-            while s < e && ch[s].is_whitespace() {
-                s += 1;
-            }
-            while e > s && ch[e - 1].is_whitespace() {
-                e -= 1;
-            }
-            let inner = if s == e { if m == Markup::Bold { "bold text".to_string() } else { "italic text".to_string() } } else { collect(&ch[s..e]) };
-            let n = inner.chars().count();
-            let out = format!("{}{mark}{inner}{mark}{}", collect(&ch[..s]), collect(&ch[e..]));
-            (out, s + ml..s + ml + n)
-        }
-        Markup::Bullets => {
-            let ls = ch[..a].iter().rposition(|c| *c == '\n').map_or(0, |i| i + 1);
-            let le = ch[b..].iter().position(|c| *c == '\n').map_or(ch.len(), |i| b + i);
-            let block = collect(&ch[ls..le]);
-            let lines: Vec<&str> = block.split('\n').collect();
-            let is_b = |l: &str| l.trim_start().starts_with("• ");
-            let all = lines.iter().filter(|l| !l.trim().is_empty()).all(|l| is_b(l)) && lines.iter().any(|l| is_b(l));
-            let new: Vec<String> = lines
-                .iter()
-                .map(|l| {
-                    if all {
-                        l.replacen("• ", "", 1)
-                    } else if is_b(l) || (l.trim().is_empty() && lines.len() > 1) {
-                        l.to_string()
-                    } else {
-                        format!("• {}", l.trim_start())
-                    }
-                })
-                .collect();
-            let nb = new.join("\n");
-            let end = ls + nb.chars().count();
-            (format!("{}{nb}{}", collect(&ch[..ls]), collect(&ch[le..])), end..end)
-        }
-        Markup::Table => {
-            let pre = if a > 0 && ch[a - 1] != '\n' { "\n" } else { "" };
-            let post = if b < ch.len() && ch[b] != '\n' { "\n" } else { "" };
-            let start = a + pre.chars().count();
-            let out = format!("{}{pre}{TABLE_TEMPLATE}{post}{}", collect(&ch[..a]), collect(&ch[b..]));
-            (out, start..start + "Column 1".chars().count())
-        }
-    }
-}
-
-/// Small text button for the stem toolbar.
-fn tool_button(ui: &mut Ui, label: RichText, tip: &str) -> egui::Response {
-    ui.add(
-        Button::new(label.size(12.5).color(theme::text_col()))
-            .fill(Color32::TRANSPARENT)
-            .stroke(Stroke::new(1.0, theme::border()))
-            .corner_radius(CornerRadius::same(8))
-            .min_size(Vec2::new(30.0, 24.0)),
-    )
-    .on_hover_text(tip)
-}
-
-/// The stem toolbar (bold, italic, bullet list, table). Edits `text` around the field's
-/// selection and puts the caret/selection back into the field.
-fn stem_toolbar(ui: &mut Ui, text: &mut String, out: &egui::text_edit::TextEditOutput) {
-    let mut pick = None;
-    ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        if tool_button(ui, RichText::new("B").family(theme::bold_family()), "Bold (**text**)").clicked() {
-            pick = Some(Markup::Bold);
-        }
-        if tool_button(ui, RichText::new("I").italics(), "Italic (*text*)").clicked() {
-            pick = Some(Markup::Italic);
-        }
-        if tool_button(ui, RichText::new("• List"), "Bullet list (lines starting with \"• \")").clicked() {
-            pick = Some(Markup::Bullets);
-        }
-        if tool_button(ui, RichText::new("Table"), "Table (cells separated by \" | \"; ___ is a blank)").clicked() {
-            pick = Some(Markup::Table);
-        }
-        ui.add_space(6.0);
-        ui.label(theme::muted("x_{2} subscript · x^{2} superscript · ___ blank").size(11.0));
-    });
-    let Some(m) = pick else { return };
-    let n = text.chars().count();
-    let sel = out.state.cursor.char_range().map_or(n..n, |r| {
-        let [x, y] = r.sorted_cursors();
-        usize::from(x.index)..usize::from(y.index)
-    });
-    let (t, ns) = apply_markup(text, sel, m);
-    *text = t;
-    let mut st = out.state.clone();
-    st.cursor.set_char_range(Some(egui::text::CCursorRange::two(
-        egui::text::CCursor::new(egui::text::CharIndex::from(ns.start)),
-        egui::text::CCursor::new(egui::text::CharIndex::from(ns.end)),
-    )));
-    st.store(ui.ctx(), out.response.id);
-    ui.memory_mut(|mem| mem.request_focus(out.response.id));
-}
-
-/// Single-line field with the sigma affordance at its right edge.
-fn eq_line(ui: &mut Ui, eq: &EqCtx, field: EqField, text: &mut String, w: f32, hint: &str) -> egui::Response {
-    let inner = (w - 24.0 - 2.0 - 24.0).max(30.0);
-    let fr = field_frame(Margin::symmetric(12, 6)).show(ui, |ui| {
-        TextEdit::singleline(text).frame(Frame::new()).hint_text(hint).desired_width(inner).show(ui)
+/// A field drawn by the WYSIWYG editor (inline markup and typeset math in place) inside the
+/// rounded field frame, with the sigma button at its right edge. `structured`: lists and tables
+/// as blocks (part stems, model answers); `newlines`: Enter adds a line.
+#[allow(clippy::too_many_arguments)]
+fn wys_field(ui: &mut Ui, eq: &EqCtx, field: EqField, text: &mut String, w: f32, hint: &str, structured: bool, newlines: bool, size: f32, sigma_top: bool) -> crate::wysiwyg::Out {
+    let inner = (w - 24.0 - 2.0 - 26.0).max(30.0);
+    let id = field_editor_id(eq.key, &field);
+    let fr = field_frame(Margin { left: 12, right: 30, top: 6, bottom: 6 }).show(ui, |ui| {
+        ui.set_width(inner);
+        crate::wysiwyg::editor(ui, id, text, crate::wysiwyg::Opts { size, width: inner, structured, newlines, hint, blanks: None, toolbar: false })
     });
     let out = fr.inner;
     let r = fr.response.rect;
-    let idx = out.cursor_range.map_or(text.chars().count(), |cr| cr.primary.index.into());
-    if sigma_button(ui, eq, &field, Pos2::new(r.right() - 17.0, r.center().y), 22.0).clicked() {
-        eq.request(field.clone(), idx, None, String::new());
+    let c = if sigma_top { Pos2::new(r.right() - 17.0, r.top() + 15.0) } else { Pos2::new(r.right() - 17.0, r.center().y) };
+    if sigma_button(ui, eq, &field, c, 22.0).clicked() {
+        eq.request(field.clone(), out.caret.unwrap_or(text.chars().count()), None, String::new());
     }
-    slash_hook(ui, eq, field, text, &out);
-    out.response.response
+    if let Some(a) = &out.eq {
+        eq.request(field.clone(), a.caret, a.span.clone(), a.initial.clone());
+    }
+    if has_picture(text) {
+        eq_preview(ui, eq, field, text, 0.0, 13.0);
+    }
+    out
 }
 
-/// Like `eq_line`, but the text may hold line breaks (a multipart part's stem: its
-/// sub-lines, bullets and table rows). A single-line field would draw each `\n` as a
-/// missing-glyph box; this one grows a row per line, and Enter adds a line.
-fn eq_line_multi(ui: &mut Ui, eq: &EqCtx, field: EqField, text: &mut String, w: f32, hint: &str) -> egui::Response {
-    let inner = (w - 24.0 - 2.0 - 24.0).max(30.0);
-    let fr = field_frame(Margin::symmetric(12, 6)).show(ui, |ui| {
-        TextEdit::multiline(text).frame(Frame::new()).hint_text(hint).desired_rows(1).desired_width(inner).show(ui)
-    });
-    let out = fr.inner;
-    let r = fr.response.rect;
-    let idx = out.cursor_range.map_or(text.chars().count(), |cr| cr.primary.index.into());
-    if sigma_button(ui, eq, &field, Pos2::new(r.right() - 17.0, r.top() + 17.0), 22.0).clicked() {
-        eq.request(field.clone(), idx, None, String::new());
-    }
-    slash_hook(ui, eq, field, text, &out);
-    out.response.response
+/// One-line answer field (MC choice, matching item, blank answers).
+fn eq_line(ui: &mut Ui, eq: &EqCtx, field: EqField, text: &mut String, w: f32, hint: &str) {
+    wys_field(ui, eq, field, text, w, hint, false, false, 13.5, false);
 }
 
-/// Multi-line field with the sigma affordance and a typeset preview.
-fn eq_multi(ui: &mut Ui, eq: &EqCtx, field: EqField, text: &mut String, w: f32, rows: usize, hint: &str) {
-    let (frect, out) = field_multi(ui, text, w, rows, None, 34, hint);
-    let idx = out.cursor_range.map_or(text.chars().count(), |cr| cr.primary.index.into());
-    if sigma_button(ui, eq, &field, Pos2::new(frect.right() - 20.0, frect.top() + 20.0), 26.0).clicked() {
-        eq.request(field.clone(), idx, None, String::new());
-    }
-    slash_hook(ui, eq, field.clone(), text, &out);
-    eq_preview(ui, eq, field, text, 0.0, 13.0);
+/// A multipart part's stem: its sub-lines, bullets and table rows edit as blocks.
+fn eq_line_multi(ui: &mut Ui, eq: &EqCtx, field: EqField, text: &mut String, w: f32, hint: &str) {
+    wys_field(ui, eq, field, text, w, hint, true, true, 13.5, true);
+}
+
+/// A multi-line answer (model answers).
+fn eq_multi(ui: &mut Ui, eq: &EqCtx, field: EqField, text: &mut String, w: f32, _rows: usize, hint: &str) {
+    wys_field(ui, eq, field, text, w, hint, true, true, 13.5, true);
 }
 
 fn label(ui: &mut Ui, text: &str) {
@@ -983,14 +841,30 @@ fn left_col(ui: &mut Ui, ctx: &egui::Context, draft: &mut Draft, key: UiId, w: f
     // Stem with the equation hook.
     let eq = EqCtx { ctx: ctx.clone(), key };
     label(ui, "Question");
-    let (frect, out) = field_multi(ui, &mut draft.stem, w, 3, Some(14.5), 34, "Write the question...");
-    let idx = out.cursor_range.map_or(draft.stem.chars().count(), |cr| cr.primary.index.into());
-    if sigma_button(ui, &eq, &EqField::Stem, Pos2::new(frect.right() - 20.0, frect.top() + 20.0), 26.0).clicked() {
-        eq.request(EqField::Stem, idx, None, String::new());
+    let is_blank = matches!(draft.kind, Kind::Blank { .. });
+    let mut mirror = is_blank.then(|| blank_mirror(ctx, key, draft));
+    let hint = if is_blank { "Write the sentence, then select a word and make it a Blank..." } else { "Write the question..." };
+    let inner = (w - 26.0).max(60.0);
+    let sid = field_editor_id(key, &EqField::Stem);
+    let fr = field_frame(Margin::symmetric(12, 8)).show(ui, |ui| {
+        ui.set_width(inner);
+        crate::wysiwyg::editor(
+            ui,
+            sid,
+            &mut draft.stem,
+            crate::wysiwyg::Opts { size: 14.5, width: inner, structured: true, newlines: true, hint, blanks: mirror.as_mut(), toolbar: true },
+        )
+    });
+    let out = fr.inner;
+    if let Some(m) = mirror {
+        ctx.data_mut(|d| d.get_temp_mut_or_default::<Temp>(key).blank_texts = Some(m));
     }
-    slash_hook(ui, &eq, EqField::Stem, &mut draft.stem, &out);
-    stem_toolbar(ui, &mut draft.stem, &out);
-    stem_preview(ui, &eq, &draft.stem, w);
+    if let Some(a) = out.eq {
+        eq.request(EqField::Stem, a.caret, a.span, a.initial);
+    }
+    if has_picture(&draft.stem) {
+        stem_preview(ui, &eq, &draft.stem, w);
+    }
     equation_panel(ctx, draft, key);
     ui.add_space(12.0);
 
@@ -1184,7 +1058,6 @@ fn mc_editor(ui: &mut Ui, eq: &EqCtx, answers: &mut Vec<Answer>, max: usize, w: 
                 ui.add_space(24.0);
             }
         });
-        eq_preview(ui, eq, fld(i), &answers[i].text, 28.0, 13.0);
         ui.add_space(2.0);
     }
     if let Some(i) = to_remove {
@@ -1221,8 +1094,6 @@ fn matching_editor(ui: &mut Ui, eq: &EqCtx, pairs: &mut Vec<Pair>, distractors: 
                 remove_pair = Some(i);
             }
         });
-        eq_preview(ui, eq, EqField::MatchL(i), &pairs[i].left, 0.0, 13.0);
-        eq_preview(ui, eq, EqField::MatchR(i), &pairs[i].right, 0.0, 13.0);
         ui.add_space(2.0);
     }
     if let Some(i) = remove_pair {
@@ -1246,7 +1117,6 @@ fn matching_editor(ui: &mut Ui, eq: &EqCtx, pairs: &mut Vec<Pair>, distractors: 
                 remove_dis = Some(i);
             }
         });
-        eq_preview(ui, eq, EqField::Distractor(i), &distractors[i], 0.0, 13.0);
         ui.add_space(2.0);
     }
     if let Some(i) = remove_dis {
@@ -1255,6 +1125,25 @@ fn matching_editor(ui: &mut Ui, eq: &EqCtx, pairs: &mut Vec<Pair>, distractors: 
     if ghost_button(ui, "+ Add distractor").clicked() {
         distractors.push(String::new());
     }
+}
+
+/// The Fill-in-the-blank answer rows (raw text, alternatives joined with " OR "), one per `___`
+/// in the stem, from context memory (or the stored answers the first time).
+fn blank_mirror(ctx: &egui::Context, key: UiId, draft: &Draft) -> Vec<String> {
+    let n = blank_count(&draft.stem);
+    ctx.data_mut(|d| {
+        let st = d.get_temp_mut_or_default::<Temp>(key);
+        if st.blank_texts.is_none()
+            && let Kind::Blank { accept } = &draft.kind
+        {
+            st.blank_texts = Some(accept.iter().map(|v| v.join(" OR ")).collect());
+        }
+        let mut v = st.blank_texts.clone().unwrap_or_default();
+        while v.len() < n {
+            v.push(String::new());
+        }
+        v
+    })
 }
 
 /// Fill in the blank: one accepted-alternatives row per "___" in the stem.
@@ -1279,7 +1168,6 @@ fn blank_editor(ui: &mut Ui, eq: &EqCtx, draft: &mut Draft, w: f32) {
     for i in 0..blanks {
         label(ui, &format!("Blank {}  -  accepted answers, separate alternatives with OR", i + 1));
         eq_line(ui, eq, EqField::Blank(i), &mut texts[i], w, "e.g. 1 OR one");
-        eq_preview(ui, eq, EqField::Blank(i), &texts[i], 0.0, 13.0);
         ui.add_space(4.0);
     }
     // Mirror -> draft; the text the user types stays in the mirror.
@@ -1311,7 +1199,6 @@ fn multipart_editor(ui: &mut Ui, eq: &EqCtx, parts: &mut Vec<Part>, w: f32) {
                 remove = Some(i);
             }
         });
-        eq_preview(ui, eq, EqField::PartStem(i), &parts[i].stem, 20.0, 13.0);
         if sel != cur {
             parts[i].kind = match sel {
                 0 => PartKind::Mc {
@@ -1458,34 +1345,6 @@ fn draw_image_row(
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn markup_helpers_wrap_toggle_and_insert() {
-        // Bold wraps the selection (spaces stay outside) and keeps it selected.
-        let (t, s) = apply_markup("the most one", 3..9, Markup::Bold);
-        assert_eq!(t, "the **most** one");
-        assert_eq!(&t.chars().collect::<Vec<_>>()[s.clone()].iter().collect::<String>(), "most");
-        // Italic with no selection inserts a selected placeholder.
-        let (t, s) = apply_markup("ab", 1..1, Markup::Italic);
-        assert_eq!(t, "a*italic text*b");
-        assert_eq!(s, 2..13);
-        // Bullets toggle on every touched line.
-        let (t, _) = apply_markup("Do:\nDraw\nCount", 5..12, Markup::Bullets);
-        assert_eq!(t, "Do:\n• Draw\n• Count");
-        let (t, _) = apply_markup(&t, 5..14, Markup::Bullets);
-        assert_eq!(t, "Do:\nDraw\nCount");
-        let (t, _) = apply_markup("", 0..0, Markup::Bullets);
-        assert_eq!(t, "• ");
-        // Table goes on its own lines and parses as a table with a header.
-        let (t, s) = apply_markup("Name these.", 11..11, Markup::Table);
-        assert!(t.starts_with("Name these.\nColumn 1 | "), "{t}");
-        assert_eq!(t.chars().skip(s.start).take(s.end - s.start).collect::<String>(), "Column 1");
-        let blocks = crate::richtext::parse(&t);
-        assert!(matches!(&blocks[1], crate::richtext::Block::Table { header: true, rows } if rows.len() == 3));
-        // Selection past the end is clamped.
-        let (t, _) = apply_markup("x", 5..9, Markup::Bold);
-        assert_eq!(t, "x**bold text**");
-    }
-
     #[test]
     fn rich_preview_only_for_markup_or_math() {
         assert!(!renders_rich("What is 2+2?"));
@@ -1705,14 +1564,30 @@ fn field_text<'a>(draft: &'a mut Draft, f: &EqField) -> Option<&'a mut String> {
 /// Splice `$linear$` into the requested field (replacing the clicked equation, if any).
 fn apply_equation(ctx: &egui::Context, draft: &mut Draft, key: UiId, req: &EqReq, linear: &str) {
     let wrapped = crate::equation::wrap_math(linear);
+    let at = req.span.as_ref().map_or(req.caret, |r| r.start);
+    let caret = at + wrapped.chars().count();
+    let id = field_editor_id(key, &req.field);
     if let EqField::Blank(i) = req.field {
         ctx.data_mut(|d| {
             if let Some(t) = d.get_temp_mut_or_default::<Temp>(key).blank_texts.as_mut().and_then(|v| v.get_mut(i)) {
+                let old = t.clone();
                 *t = crate::equation::splice(t, req.span.clone(), req.caret, &wrapped);
+                crate::wysiwyg::record_external(ctx, id, &old, caret, None);
             }
         });
-    } else if let Some(t) = field_text(draft, &req.field) {
-        *t = crate::equation::splice(t, req.span.clone(), req.caret, &wrapped);
+    } else {
+        let is_blank = matches!(draft.kind, Kind::Blank { .. });
+        let rows = (req.field == EqField::Stem && is_blank).then(|| blank_mirror(ctx, key, draft));
+        if let Some(t) = field_text(draft, &req.field) {
+            let old = t.clone();
+            *t = crate::equation::splice(t, req.span.clone(), req.caret, &wrapped);
+            let new = t.clone();
+            crate::wysiwyg::record_external(ctx, id, &old, caret, rows.as_deref());
+            if let Some(r) = rows {
+                let r = crate::wysiwyg::remap_blanks(&old, &new, &r);
+                ctx.data_mut(|d| d.get_temp_mut_or_default::<Temp>(key).blank_texts = Some(r));
+            }
+        }
     }
 }
 
