@@ -100,6 +100,30 @@ impl App {
         let _ = store::save_json("settings.json", &self.settings);
     }
 
+    /// Re-installs the app's fonts and palette after a host tab switch in a shared context.
+    pub fn context_changed(&mut self, ctx: &egui::Context) {
+        theme::setup(ctx);
+        theme::set_dark(self.settings.dark, Some(ctx));
+        ctx.request_repaint();
+    }
+
+    /// Opens a file from a path (native host: officecraft, command line).
+    pub fn open_path(&mut self, path: &std::path::Path) {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        match crate::platform::read(path) {
+            Ok(bytes) => self.open_import_bytes(&name, bytes),
+            Err(e) => self.toast_err(format!("Couldn't read {name}: {e}")),
+        }
+    }
+
+    /// Opens a file already in memory (browser drop/picker, officecraft `deliver`).
+    pub fn open_import_bytes(&mut self, name: &str, bytes: Vec<u8>) {
+        crate::importui::open_external(self, name, bytes);
+    }
+
     pub fn new_from(ctx: &egui::Context) -> Self {
         theme::setup(ctx);
         let mut settings: Settings = store::load_json("settings.json").unwrap_or_default();

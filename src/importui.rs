@@ -617,6 +617,15 @@ impl crate::App {
     }
 }
 
+/// Stages a file handed over by a host (officecraft drag/drop, browser picker) and opens Imports.
+pub fn open_external(app: &mut crate::App, name: &str, bytes: Vec<u8>) {
+    let mut st = ST.with(|s| std::mem::take(&mut *s.borrow_mut()));
+    st.inited = true;
+    add_bytes(app, &mut st, name, bytes, "file");
+    ST.with(|s| *s.borrow_mut() = st);
+    app.screen = crate::Screen::Imports;
+}
+
 // ----- the bank's Import modal (the same import, in place over the bank) -----
 
 fn modal_key() -> egui::Id {
