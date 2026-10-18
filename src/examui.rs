@@ -28,6 +28,7 @@ use egui::{
     StrokeKind, UiBuilder, Vec2,
 };
 use crate::kit::{self, ViewMode};
+use crate::layout::KeyLayout;
 use crate::model::{self, ExamItem, Id, Kind, PartKind, QKind};
 use crate::{bankui, screens, store, theme};
 type DocImg = crate::layout::DocImage;
@@ -77,6 +78,7 @@ fn same_items(a: &[ExamItem], b: &[ExamItem]) -> bool {
                 && x.work_lines == y.work_lines
                 && x.answer_order == y.answer_order
                 && x.part_work == y.part_work
+                && x.answer_cols() == y.answer_cols()
         })
 }
 
@@ -90,6 +92,8 @@ struct ListUi {
     mode: ViewMode,
     confirm_delete: Option<Id>,
     rename: Option<(Id, String)>,
+    /// A card's "…" menu chose Open.
+    open: Option<Id>,
 }
 
 /// Where a drag started: a page question (reorder) or a shelf row (add).
@@ -157,6 +161,8 @@ struct ExportUi {
     versions: u32,
     /// Export although questions still have `[picture]` placeholders (reset when the dialog closes).
     anyway: bool,
+    /// The answer key's layout (Test Parrot's answer section by default).
+    key_layout: KeyLayout,
 }
 impl Default for ExportUi {
     fn default() -> Self {
@@ -168,6 +174,7 @@ impl Default for ExportUi {
             shuffle_a: false,
             versions: 2,
             anyway: false,
+            key_layout: KeyLayout::Section,
         }
     }
 }
@@ -514,6 +521,10 @@ impl crate::App {
             });
         });
 
+        // "Open" from a card's "…" menu.
+        if let Some(id) = st.open.take() {
+            open_exam_screen(self, &id);
+        }
         // Delete-confirm modal (raised from a card's "…" menu above).
         if let Some(id) = st.confirm_delete.clone() {
             match self.exams_name(&id) {
@@ -629,6 +640,9 @@ fn exam_menu(ui: &mut egui::Ui, rect: Rect, row: &ExamRow, st: &mut ListUi) {
     ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| {
         ui.spacing_mut().button_padding = Vec2::new(6.0, 2.0);
         ui.menu_button("…", |ui| {
+            if ui.button("Open").clicked() {
+                st.open = Some(row.id.clone());
+            }
             if ui.button("Rename").clicked() {
                 st.rename = Some((row.id.clone(), row.name.clone()));
             }
@@ -1575,7 +1589,8 @@ fn ruled_line(ui: &mut egui::Ui, width: f32, bp: f32, style: model::PaperStyle) 
 /// True when a stem (or option) needs the structured renderer: markup (`crate::richtext`) or math.
 /// Everything else keeps the original single-label layout exactly.
 fn needs_rich(s: &str) -> bool {
-    crate::richtext::has_markup(s) || s.contains('*')
+    // `___` blanks draw as writing lines (the rich renderer does that), as they print.
+    crate::richtext::has_markup(s) || s.contains('*') || s.contains("___")
 }
 
 /// THE stem renderer. Everything that prints a question stem on the preview page goes through
@@ -1886,7 +1901,7 @@ fn draw_page_article(
                 "{} question{}{}",
                 items.len(),
                 if items.len() == 1 { "" } else { "s" },
-                if pts > 0.0 { format!(" · {} points", fmt_number(pts)) } else { String::new() }
+                if pts > 0.0 { format!(" · {} point{}", fmt_number(pts), if pts == 1.0 { "" } else { "s" }) } else { String::new() }
             ))
             .family(theme::serif_family())
             .size(bp * 0.92)
@@ -2373,6 +2388,20 @@ fn draw_item(
                 }
             }
             ui.separator();
+            if is_mc {
+                let cur = app.store.exam(exam_id).and_then(|e| e.items.get(i)).map(|it| it.answer_cols()).unwrap_or(1);
+                ui.label(kit::small_caps_text("Answer format"));
+                // Test Parrot's 1 / 2 / 4 column switch, right in the menu.
+                ui.horizontal(|ui| {
+                    ui.label("Answer columns");
+                    ui.add_space(8.0);
+                    let mut n = cur;
+                    if answer_columns_switch(ui, &mut n).changed() {
+                        act = Some(QAct::Columns(n));
+                    }
+                });
+                ui.separator();
+            }
             ui.label(kit::small_caps_text("Vary"));
             if ui.button("Shuffle question order").on_hover_text("Shuffles the questions in this section").clicked() {
                 act = Some(QAct::ShuffleQ);
@@ -2411,6 +2440,8 @@ enum QAct {
     PartWork(usize, u8),
     ShuffleQ,
     ShuffleA,
+    /// Multiple choice: answer columns (1 / 2 / 4).
+    Columns(u8),
     Remove,
 }
 
@@ -2456,8 +2487,58 @@ fn question_action(app: &mut crate::App, ctx: &egui::Context, exam_id: &Id, st: 
                 screens::toast(app, "Nothing to shuffle: fewer than two unlocked answers", true);
             }
         }
+        QAct::Columns(n) => apply_items_fn(app, exam_id, |mut it| {
+            if let Some(x) = it.get_mut(i) {
+                x.answer_columns = n.clamp(1, 4);
+            }
+            it
+        }),
         QAct::Remove => remove_item(app, exam_id, i),
     }
+}
+
+/// Test Parrot's answer-columns switch for a multiple-choice card: three segments showing
+/// 1, 2 and 4 columns of choices. Clicking one sets `cols` and marks the response changed.
+/// Shared with the bank's Pop-over (Worker Y), so both look the same.
+pub fn answer_columns_switch(ui: &mut egui::Ui, cols: &mut u8) -> egui::Response {
+    let seg = Vec2::new(22.0, 18.0);
+    let (rect, mut resp) = ui.allocate_exact_size(Vec2::new(seg.x * 3.0 + 4.0, seg.y + 4.0), Sense::click());
+    let p = ui.painter();
+    p.rect(rect, CornerRadius::same(4), theme::paper(), Stroke::new(1.0, PAPER_RULE), StrokeKind::Inside);
+    let names = ["1 column", "2 columns", "4 columns"];
+    let mut hovered_k = None;
+    for (k, n) in model::ANSWER_COLUMNS.into_iter().enumerate() {
+        let r = Rect::from_min_size(rect.min + Vec2::new(2.0 + k as f32 * seg.x, 2.0), seg);
+        let on = *cols == n || (k == 0 && !(1..=4).contains(cols));
+        let hov = resp.hovered() && ui.ctx().pointer_hover_pos().is_some_and(|q| r.contains(q));
+        if hov {
+            hovered_k = Some(k);
+        }
+        if on {
+            p.rect_filled(r, CornerRadius::same(3), theme::accent_col());
+        } else if hov {
+            p.rect_filled(r, CornerRadius::same(3), theme::accent_col().gamma_multiply(0.15));
+        }
+        let ink = if on { theme::paper() } else { PAPER_SOFT };
+        let inner = r.shrink2(Vec2::new(5.0, 5.0));
+        let per = n as usize;
+        let gap = 2.0;
+        let cw = (inner.width() - gap * (per as f32 - 1.0)) / per as f32;
+        let rows = if per == 4 { 1 } else { 4 / per };
+        for c in 0..per {
+            for rr in 0..rows {
+                let y = if rows == 1 { inner.center().y } else { inner.top() + rr as f32 * inner.height() / (rows as f32 - 1.0) };
+                let x0 = inner.left() + c as f32 * (cw + gap);
+                p.line_segment([Pos2::new(x0, y), Pos2::new(x0 + cw, y)], Stroke::new(1.3, ink));
+            }
+        }
+        if resp.clicked() && hov && *cols != n {
+            *cols = n;
+            resp.mark_changed();
+        }
+    }
+    let tip = hovered_k.map(|k| names[k]).unwrap_or("Answer columns");
+    resp.on_hover_text(tip)
 }
 
 /// The question's work space under it: `lines` printed lines (blank room, or ruled /
@@ -2692,8 +2773,23 @@ fn paper_question_ws(
                 ui.label(RichText::new("(question missing from its bank)").size(bp).color(PAPER_SOFT));
                 return;
             };
-            render_stem(ui, &q.stem, if board_points { None } else { q.points }, bp, q.image.is_some());
-            draw_item_body(app, ui, ctx, q, number, body_w, bp, style, pws.as_mut().map(|(e, i, st)| (*e, *i, &mut **st)));
+            let pts = if board_points { None } else { q.points };
+            // An attached picture sits at the stem's first `[picture]` marker (as print does);
+            // without a marker it goes under the stem.
+            let at_marker = q.image.as_ref().and_then(|_| crate::layout::split_at_picture(&q.stem));
+            if let Some((before, after)) = at_marker {
+                render_stem(ui, &before, pts, bp, false);
+                draw_image(app, ui, ctx, q.image.as_ref());
+                if !after.trim().is_empty() {
+                    render_stem(ui, &after, None, bp, false);
+                }
+                let mut rest = q.clone();
+                rest.image = None;
+                draw_item_body(app, ui, ctx, &rest, number, body_w, bp, style, pws.as_mut().map(|(e, i, st)| (*e, *i, &mut **st)));
+            } else {
+                render_stem(ui, &q.stem, pts, bp, q.image.is_some());
+                draw_item_body(app, ui, ctx, q, number, body_w, bp, style, pws.as_mut().map(|(e, i, st)| (*e, *i, &mut **st)));
+            }
         });
     });
     let r = Rect::from_min_size(inner.response.rect.min, Vec2::new(cw, inner.response.rect.height().max(bp * 1.45)));
@@ -2756,6 +2852,21 @@ fn draw_item_body(
             draw_image(app, ui, ctx, q.image.as_ref());
             ui.add_space(bp * 0.25);
             let labels: Vec<String> = answers.iter().enumerate().map(|(ci, a)| styled_choice(style, ci, &a.text)).collect();
+            // The exam item's answer columns (2 / 4): equal columns, filled column-major as print does.
+            let fixed = pws
+                .as_ref()
+                .and_then(|(e, i, _)| app.store.exam(e).and_then(|x| x.items.get(*i)).map(|it| it.answer_cols()))
+                .filter(|&c| c > 1 && labels.len() > 1);
+            if let Some(n) = fixed {
+                for row in crate::layout::choice_grid(labels.len(), n) {
+                    ui.columns(n as usize, |cs| {
+                        for (k, &ci) in row.iter().enumerate() {
+                            popt(&mut cs[k], labels[ci].clone(), bp);
+                        }
+                    });
+                }
+                return;
+            }
             // Condensed prints the choices across when every one fits its column.
             let across = style.choices_across() && labels.len() > 1 && !labels.iter().any(|l| needs_rich(l) || l.contains("[picture"));
             let cols = if across {
@@ -2869,11 +2980,13 @@ fn draw_image(
 ) {
     let Some(img) = img else { return };
     if let Some(tex) = app.image_texture(ctx, &img.file) {
-        ui.add(
-            egui::Image::new(&tex)
-                .max_size(egui::vec2(170.0, 120.0))
-                .maintain_aspect_ratio(true),
-        );
+        // The printed size (`layout::picture_size_pt` in this column), in page pixels.
+        let [tw, th] = tex.size();
+        let (w_px, h_px) = if img.width > 0 && img.height > 0 { (img.width, img.height) } else { (tw as u32, th as u32) };
+        let (w, h) = crate::layout::picture_size_pt(w_px, h_px, (ui.available_width() / PT) as f64);
+        ui.add_space(6.0 * PT);
+        ui.add(egui::Image::new(&tex).fit_to_exact_size(egui::vec2(w as f32 * PT, h as f32 * PT)));
+        ui.add_space(6.0 * PT);
     }
 }
 
@@ -3735,11 +3848,17 @@ fn map_question_raw_style(number: u32, q: &model::Question, style: model::PaperS
             } else {
                 ks.iter().map(|i| letter(*i)).collect::<Vec<_>>().join(", ")
             };
+            if !ks.is_empty() {
+                dq.key_marks = vec![ktext.clone()];
+            }
+            dq.correct = ks;
         }
         Kind::Tf { correct } => {
             dq.text = vec![q.stem.clone()];
             dq.choices = vec!["True".to_string(), "False".to_string()];
             ktext = if *correct { "True" } else { "False" }.to_string();
+            dq.correct = vec![if *correct { 0 } else { 1 }];
+            dq.key_marks = vec![ktext.clone()];
         }
         Kind::Matching { pairs, distractors } => {
             // Every text entry is a left-column item (no stem line); the
@@ -3754,6 +3873,10 @@ fn map_question_raw_style(number: u32, q: &model::Question, style: model::PaperS
                 .iter()
                 .enumerate()
                 .map(|(i, r)| format!("{}. {}", letter(i), r))
+                .collect();
+            dq.key_marks = pairs
+                .iter()
+                .map(|p| rights.iter().position(|r| **r == p.right).map(letter).unwrap_or_else(|| "?".to_string()))
                 .collect();
             ktext = pairs
                 .iter()
@@ -3870,11 +3993,12 @@ pub fn headless_export(index: usize, dir: &std::path::Path) -> Result<(), String
     }
     let mapped = map_placed(&placed, exam.paper_style);
     let student = build_doc(exam, &mapped, None, false);
-    let key = build_doc(exam, &mapped, None, true);
+    let key = build_key(exam, &mapped, None, env_key_layout());
     let write = |name: &str, bytes: Vec<u8>| std::fs::write(dir.join(name), bytes).map_err(|e| format!("{name}: {e}"));
     write("exam.pdf", crate::export::render_pdf(&student)?)?;
     write("exam.docx", crate::export::render_docx(&student)?)?;
     write("key.pdf", crate::export::render_pdf(&key)?)?;
+    write("key.docx", crate::export::render_docx(&key)?)?;
     Ok(())
 }
 
@@ -3958,6 +4082,9 @@ fn map_placed(placed: &[Placed], style: model::PaperStyle) -> Vec<Mapped> {
             let mut m = map_question_style(numbers[i], &p.q, style);
             m.dq.section = p.item.section.as_ref().map(|s| crate::layout::DocSection { title: s.title.clone(), directions: s.directions.clone() });
             m.dq.work_lines = p.item.work_lines;
+            if matches!(p.q.kind, Kind::Mc { .. }) && p.item.answer_cols() > 1 {
+                m.dq.answer_columns = p.item.answer_cols();
+            }
             apply_part_work(&mut m, &p.item.part_work);
             m
         })
@@ -3998,6 +4125,7 @@ fn build_doc(
         ruled_blanks: exam.ruled_blanks,
         style: exam.paper_style,
         margins: exam.margins,
+        key_layout: KeyLayout::List,
         questions: mapped
             .iter()
             .map(|m| {
@@ -4014,6 +4142,37 @@ fn build_doc(
                 dq
             })
             .collect(),
+    }
+}
+
+/// The answer-key document in `layout`: the compact list ([`build_doc`] with `is_key`), Test
+/// Parrot's answer section (the list plus section headings and written answers under
+/// blanks), or the whole test with the correct answers marked.
+fn build_key(exam: &model::Exam, mapped: &[Mapped], label: Option<String>, layout: KeyLayout) -> ExamDoc {
+    let mut doc = match layout {
+        KeyLayout::Marked => {
+            let mut d = build_doc(exam, mapped, label, false);
+            d.is_key = true;
+            d.title = build_doc(exam, &[], None, true).title;
+            d
+        }
+        _ => build_doc(exam, mapped, label, true),
+    };
+    if layout == KeyLayout::Section {
+        for (dq, m) in doc.questions.iter_mut().zip(mapped) {
+            dq.section = m.dq.section.clone();
+        }
+    }
+    doc.key_layout = layout;
+    doc
+}
+
+/// `QUESHION_KEY_LAYOUT=list|section|marked` (headless export; default: the dialog's default).
+fn env_key_layout() -> KeyLayout {
+    match std::env::var("QUESHION_KEY_LAYOUT").unwrap_or_default().trim() {
+        "list" => KeyLayout::List,
+        "marked" => KeyLayout::Marked,
+        _ => KeyLayout::Section,
     }
 }
 
@@ -4125,6 +4284,13 @@ struct SnapDoc {
     pub style: model::PaperStyle,
     #[serde(default)]
     pub margins: Option<model::Margins>,
+    /// Answer-key layout; snapshots before R7 have none (= the compact list they printed).
+    #[serde(default, skip_serializing_if = "is_list_key")]
+    pub key_layout: KeyLayout,
+}
+
+fn is_list_key(k: &KeyLayout) -> bool {
+    *k == KeyLayout::List
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
@@ -4142,6 +4308,17 @@ struct SnapQ {
     pub work_lines: u8,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub space_after: Vec<u8>,
+    /// Answer columns (0 = the style's own layout); absent in snapshots before R7.
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub answer_columns: u8,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub correct: Vec<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub key_marks: Vec<String>,
+}
+
+fn is_zero_u8(v: &u8) -> bool {
+    *v == 0
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
@@ -4159,7 +4336,12 @@ impl SnapDoc {
         is_key: bool,
         out_file: String,
     ) -> SnapDoc {
-        let doc = build_doc(exam, mapped, label.clone(), is_key);
+        SnapDoc::from_doc(&build_doc(exam, mapped, label.clone(), is_key), mapped, label, out_file)
+    }
+
+    /// The snapshot of an already built document (`mapped` supplies the image files).
+    fn from_doc(doc: &ExamDoc, mapped: &[Mapped], label: Option<String>, out_file: String) -> SnapDoc {
+        let doc = doc.clone();
             let questions = mapped
                 .iter()
                 .enumerate()
@@ -4178,6 +4360,9 @@ impl SnapDoc {
                     section: doc.questions[i].section.as_ref().map(|s| model::ExamSection { title: s.title.clone(), directions: s.directions.clone() }),
                     work_lines: doc.questions[i].work_lines,
                     space_after: doc.questions[i].space_after.clone(),
+                    answer_columns: doc.questions[i].answer_columns,
+                    correct: doc.questions[i].correct.clone(),
+                    key_marks: doc.questions[i].key_marks.clone(),
                 })
                 .collect::<Vec<_>>();
         SnapDoc {
@@ -4194,6 +4379,7 @@ impl SnapDoc {
             out_file,
             style: doc.style,
             margins: doc.margins,
+            key_layout: doc.key_layout,
         }
     }
 
@@ -4210,6 +4396,7 @@ impl SnapDoc {
             ruled_blanks: self.ruled_blanks,
             style: self.style,
             margins: self.margins,
+            key_layout: self.key_layout,
             questions: self
                 .questions
                 .iter()
@@ -4231,6 +4418,10 @@ impl SnapDoc {
                     section: q.section.as_ref().map(|s| crate::layout::DocSection { title: s.title.clone(), directions: s.directions.clone() }),
                     work_lines: q.work_lines,
                     space_after: q.space_after.clone(),
+                    answer_columns: q.answer_columns,
+                    correct: q.correct.clone(),
+                    key_marks: q.key_marks.clone(),
+                    ..Default::default()
                 })
                 .collect(),
         }
@@ -4492,7 +4683,7 @@ fn paint_pdf_page(p: &egui::Painter, rect: Rect, page_w: f64, page_h: f64, ops: 
 }
 
 /// The export preview's pages, cached in temp memory per exam content + what is exported.
-fn export_preview(app: &mut crate::App, ctx: &egui::Context, exam_id: &Id, key: bool) -> Option<(crate::export::PdfPreview, Vec<Option<egui::TextureId>>)> {
+fn export_preview(app: &mut crate::App, ctx: &egui::Context, exam_id: &Id, key: Option<KeyLayout>) -> Option<(crate::export::PdfPreview, Vec<Option<egui::TextureId>>)> {
     let exam = app.store.exam(exam_id)?.clone();
     let placed = resolve_items(&app.store, &exam);
     if placed.is_empty() {
@@ -4503,7 +4694,7 @@ fn export_preview(app: &mut crate::App, ctx: &egui::Context, exam_id: &Id, key: 
         for p in &placed {
             h = h.rotate_left(7) ^ fnv1a(serde_json::to_string(&p.q).unwrap_or_default().as_bytes());
         }
-        h ^ key as u64
+        h ^ key.map_or(0, |k| 1 + k as u64)
     };
     let id = egui::Id::new(("qs_export_preview", exam_id));
     let cached: Option<(u64, crate::export::PdfPreview, Vec<String>)> = ctx.data(|d| d.get_temp(id));
@@ -4511,7 +4702,10 @@ fn export_preview(app: &mut crate::App, ctx: &egui::Context, exam_id: &Id, key: 
         Some((s, pv, files)) if s == sig => (pv, files),
         _ => {
             let mapped = map_placed(&placed, exam.paper_style);
-            let doc = build_doc(&exam, &mapped, None, key);
+            let doc = match key {
+                Some(k) => build_key(&exam, &mapped, None, k),
+                None => build_doc(&exam, &mapped, None, false),
+            };
             let pv = crate::export::preview_pages(&doc).ok()?;
             let files: Vec<String> = mapped
                 .iter()
@@ -4531,7 +4725,7 @@ fn export_preview(app: &mut crate::App, ctx: &egui::Context, exam_id: &Id, key: 
 /// layout the export uses, fitted into `area` (centered, drop shadow, thin edge). Returns
 /// the page rect, or None when the exam has no questions yet (callers draw their blank sheet).
 pub(crate) fn paint_exam_thumb(app: &mut crate::App, ctx: &egui::Context, p: &egui::Painter, area: Rect, exam_id: &Id) -> Option<Rect> {
-    let (pv, texs) = export_preview(app, ctx, exam_id, false)?;
+    let (pv, texs) = export_preview(app, ctx, exam_id, None)?;
     let ops = pv.pages.first()?;
     let aspect = (pv.page_w / pv.page_h) as f32;
     let h = area.height().min(area.width() / aspect);
@@ -4715,7 +4909,7 @@ pub(crate) fn page_svg(page_w: f64, page_h: f64, ops: &[u8], fallback: &[char]) 
 }
 
 /// The export dialog's preview strip: page thumbnails of the document that will export.
-fn draw_export_preview(app: &mut crate::App, ui: &mut egui::Ui, exam_id: &Id, key: bool) {
+fn draw_export_preview(app: &mut crate::App, ui: &mut egui::Ui, exam_id: &Id, key: Option<KeyLayout>) {
     let ctx = ui.ctx().clone();
     let Some((pv, texs)) = export_preview(app, &ctx, exam_id, key) else {
         ui.add(egui::Label::new(muted("Add questions to see the pages.")));
@@ -4723,7 +4917,7 @@ fn draw_export_preview(app: &mut crate::App, ui: &mut egui::Ui, exam_id: &Id, ke
     };
     let n = pv.pages.len();
     ui.horizontal(|ui| {
-        ui.add(egui::Label::new(muted(RichText::new(if key { "Answer key preview" } else { "Preview" }).size(11.5))));
+        ui.add(egui::Label::new(muted(RichText::new(if key.is_some() { "Answer key preview" } else { "Preview" }).size(11.5))));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add(egui::Label::new(muted(RichText::new(format!("{n} page{}", if n == 1 { "" } else { "s" })).size(11.5))));
         });
@@ -4769,6 +4963,7 @@ impl crate::App {
     fn draw_export_dialog(&mut self, ctx: &egui::Context, exam_id: &Id) {
         let mut exu: ExportUi = mem_load(ctx, export_id());
         let mut open = self.export_open;
+        let mut cancel = false;
 
         let name = self.exams_name(exam_id).unwrap_or_default();
         let n_items = self.store.exam(exam_id).map(|e| e.items.len()).unwrap_or(0);
@@ -4806,7 +5001,7 @@ impl crate::App {
                     });
                     ui.add_space(4.0);
                     // What will export: the student test, or the key when only the key is ticked.
-                    draw_export_preview(self, ui, exam_id, exu.key && !exu.student);
+                    draw_export_preview(self, ui, exam_id, (exu.key && !exu.student).then_some(exu.key_layout));
                 });
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
@@ -4823,6 +5018,22 @@ impl crate::App {
                 ui.add_space(2.0);
                 ui.checkbox(&mut exu.student, "Student test");
                 ui.checkbox(&mut exu.key, "Answer key");
+                ui.add_enabled_ui(exu.key, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.add_space(22.0);
+                        ui.add(egui::Label::new(muted(egui::RichText::new("Key layout").size(11.5))));
+                        for k in KeyLayout::ALL {
+                            let tip = match k {
+                                KeyLayout::Section => "Test Parrot's answer section: each number with its answer written on a blank",
+                                KeyLayout::Marked => "The whole test with the correct answers marked",
+                                KeyLayout::List => "One short line per question",
+                            };
+                            if kit::chip_toggle(ui, k.label(), exu.key_layout == k).on_hover_text(tip).clicked() {
+                                exu.key_layout = k;
+                            }
+                        }
+                    });
+                });
                 ui.add_space(6.0);
                 ui.checkbox(&mut exu.shuffle_q, "Shuffle question order");
                 ui.checkbox(&mut exu.shuffle_a, "Shuffle answer order");
@@ -4849,6 +5060,14 @@ impl crate::App {
                             .to_string(),
                     ).size(11.5)),
                 );
+                ui.add_space(4.0);
+                ui.add(
+                    egui::Label::new(muted(
+                        "Export History is kept only on this computer, in queShion's data folder. It is useful for re-exporting an earlier copy, but it is not an archival backup."
+                            .to_string(),
+                    ).size(11.5))
+                    .wrap(),
+                );
                 // Gate: questions with unresolved [picture] placeholders block the download
                 // unless the teacher chooses to export anyway.
                 let gaps = self.store.exam(exam_id).map(|e| picture_gaps(&self.store, e)).unwrap_or_default();
@@ -4867,9 +5086,15 @@ impl crate::App {
                     if clicked {
                         do_export(self, exam_id, exu.clone());
                     }
+                    if kit::ghost_button(ui, "Cancel").clicked() {
+                        cancel = true;
+                    }
                 });
             });
 
+        if cancel {
+            open = false;
+        }
         self.export_open = open;
         if !open {
             exu.anyway = false;
@@ -4988,10 +5213,9 @@ fn do_export_inner(
             files.push(out_path.to_string_lossy().to_string());
             wrote += 1;
             snap_write(
-                &exam,
+                &doc,
                 &mapped,
                 label.clone(),
-                false,
                 &dir,
                 &format!("{stem}{suffix}.doc.json"),
                 &out_name,
@@ -5000,7 +5224,7 @@ fn do_export_inner(
             );
         }
         if exu.key {
-            let doc = build_doc(&exam, &mapped, label.clone(), true);
+            let doc = build_key(&exam, &mapped, label.clone(), exu.key_layout);
             let out_name = if n_versions > 1 {
                 format!("{stem}{suffix}-Answer Key.{ext}")
             } else {
@@ -5021,10 +5245,9 @@ fn do_export_inner(
                 String::new()
             };
             snap_write(
-                &exam,
+                &doc,
                 &mapped,
                 label,
-                true,
                 &dir,
                 &format!("{stem}{snap_suffix}-key.doc.json"),
                 &out_name,
@@ -5071,17 +5294,16 @@ fn do_export_inner(
 
 #[allow(clippy::too_many_arguments)]
 fn snap_write(
-    exam: &model::Exam,
+    doc: &ExamDoc,
     mapped: &[Mapped],
     label: Option<String>,
-    is_key: bool,
     dir: &std::path::Path,
     json_name: &str,
     out_file: &str,
     files: &mut Vec<String>,
     wrote: &mut usize,
 ) {
-    let snap = SnapDoc::from_parts(exam, mapped, label, is_key, out_file.to_string());
+    let snap = SnapDoc::from_doc(doc, mapped, label, out_file.to_string());
     match serde_json::to_string_pretty(&snap) {
         Ok(json) => {
             let json_path = dir.join(json_name);
@@ -5618,6 +5840,83 @@ mod tests {
         assert_eq!(m.dq.rule_lines, 0, "table blanks are answer cells");
         let m = map_question(1, &q("q2", "A: ___  B: ___", Kind::Blank { accept: vec![] }));
         assert_eq!(m.dq.rule_lines, 2);
+    }
+
+    #[test]
+    fn answer_columns_are_stored_and_reach_the_print_for_mc_only() {
+        // Old exam items (no field) read as 1 and save without it.
+        let old: ExamItem = serde_json::from_str(r#"{"bank_id":"b","question_id":"q"}"#).unwrap();
+        assert_eq!((old.answer_columns, old.answer_cols()), (1, 1));
+        assert!(!serde_json::to_string(&old).unwrap().contains("answer_columns"));
+        let mut two = old.clone();
+        two.answer_columns = 2;
+        let js = serde_json::to_string(&two).unwrap();
+        assert!(js.contains(r#""answer_columns":2"#));
+        assert_eq!(serde_json::from_str::<ExamItem>(&js).unwrap().answer_cols(), 2);
+        let mut junk = old.clone();
+        junk.answer_columns = 9;
+        assert_eq!(junk.answer_cols(), 1);
+        assert_eq!(model::ANSWER_COLUMNS, [1, 2, 4]);
+        assert!(!same_items(&[old.clone()], &[two.clone()]), "a column change is an edit (undo, dirty)");
+        // Mapping: MC questions carry the columns, other kinds never do.
+        let mcq = q("q1", "Pick.", mc(&[("a", false, false), ("b", true, false)]));
+        let tfq = q("q2", "True?", Kind::Tf { correct: true });
+        let placed = vec![Placed { item: two.clone(), q: mcq }, Placed { item: two, q: tfq }];
+        let m = map_placed(&placed, model::PaperStyle::Standard);
+        assert_eq!(m[0].dq.answer_columns, 2);
+        assert_eq!(m[1].dq.answer_columns, 0);
+        // The snapshot keeps it (and old snapshots read as 0).
+        let e = exam(vec![item("b", "q1")]);
+        let snap = SnapDoc::from_parts(&e, &m[..1], None, false, "x.pdf".into());
+        assert_eq!(serde_json::from_str::<SnapDoc>(&serde_json::to_string(&snap).unwrap()).unwrap().to_doc().questions[0].answer_columns, 2);
+    }
+
+    #[test]
+    fn key_marks_and_correct_choices_are_mapped() {
+        let m = map_question(1, &q("q1", "Pick.", mc(&[("a", false, false), ("b", true, false), ("c", true, false)])));
+        assert_eq!(m.dq.correct, vec![1, 2]);
+        assert_eq!(m.dq.key_marks, vec!["B, C".to_string()]);
+        let m = map_question(1, &q("q2", "T?", Kind::Tf { correct: false }));
+        assert_eq!((m.dq.correct.clone(), m.dq.key_marks.clone()), (vec![1], vec!["False".to_string()]));
+        let kind = Kind::Matching {
+            pairs: vec![Pair { left: "Dog".into(), right: "Bark".into() }, Pair { left: "Cat".into(), right: "Meow".into() }],
+            distractors: vec![],
+        };
+        let m = map_question(1, &q("q3", "", kind));
+        assert_eq!(m.dq.key_marks, vec!["A".to_string(), "B".to_string()]);
+        let m = map_question(1, &q("q4", "Why?", Kind::Short { sample: "Because.".into() }));
+        assert!(m.dq.key_marks.is_empty() && m.dq.correct.is_empty());
+    }
+
+    #[test]
+    fn key_layouts_build_and_old_snapshots_stay_lists() {
+        let mut e = exam(vec![item("b", "q1"), item("b", "q2")]);
+        e.items[0].section = Some(model::ExamSection { title: "Part A".into(), directions: String::new() });
+        let mut st = store::Store::default();
+        let _ = &mut st;
+        let mapped = vec![
+            map_question(1, &q("q1", "Pick.", mc(&[("a", false, false), ("b", true, false)]))),
+            map_question(2, &q("q2", "Why?", Kind::Short { sample: "Because.".into() })),
+        ];
+        let mut mapped = mapped;
+        mapped[0].dq.section = Some(crate::layout::DocSection { title: "Part A".into(), directions: String::new() });
+        let list = build_key(&e, &mapped, None, KeyLayout::List);
+        assert_eq!(list.key_layout, KeyLayout::List);
+        assert!(list.questions[0].section.is_none() && list.questions[0].choices.is_empty());
+        let sec = build_key(&e, &mapped, None, KeyLayout::Section);
+        assert!(sec.is_key && sec.questions[0].section.is_some() && sec.questions[0].choices.is_empty());
+        let marked = build_key(&e, &mapped, None, KeyLayout::Marked);
+        assert!(marked.is_key && !marked.questions[0].choices.is_empty() && marked.title.ends_with("Answer Key"));
+        assert!(crate::export::render_pdf(&marked).is_ok() && crate::export::render_docx(&sec).is_ok());
+        // Snapshots: the layout round-trips; one written before R7 reads as the list.
+        let snap = SnapDoc::from_doc(&sec, &mapped, None, "k.pdf".into());
+        let back: SnapDoc = serde_json::from_str(&serde_json::to_string(&snap).unwrap()).unwrap();
+        assert_eq!(back.to_doc().key_layout, KeyLayout::Section);
+        assert_eq!(back.to_doc().questions[0].key_marks, vec!["B".to_string()]);
+        let old = r#"{"title":"T","header_line":"","heading_pt":16,"body_pt":11,"margin_mm":18,"answers_inline":true,"is_key":true,"version_label":null,"ruled_blanks":0,"questions":[{"number":1,"text":[],"choices":[],"image":null,"key_text":"B","rule_lines":0,"points":null}],"out_file":"o.pdf"}"#;
+        let old: SnapDoc = serde_json::from_str(old).unwrap();
+        assert_eq!(old.to_doc().key_layout, KeyLayout::List);
+        assert!(!serde_json::to_string(&old).unwrap().contains("key_layout"));
     }
 }
 

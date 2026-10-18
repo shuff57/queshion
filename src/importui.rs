@@ -48,8 +48,11 @@ struct Source {
     image: Option<ImportFile>,
     /// Read by the AI this session (tagged in the list).
     fresh: bool,
-    /// The file format's own version, when it states one.
+    /// The file format's own version, when it states one (a package's question-bank record
+    /// version, which is what the bank row shows).
     version: Option<String>,
+    /// Each test's own format version, as the source states it (a package's exams).
+    exam_versions: Vec<Option<String>>,
     /// Which of the doc's tests (exams) to import.
     exam_sel: Vec<bool>,
     /// Preview texture of a photo / PDF page waiting for the AI.
@@ -217,10 +220,71 @@ fn text_kind(name: &str, ext: &str, text: &str) -> &'static str {
     }
 }
 
+/// Format versions a source states: the question bank's own (for a Test Parrot package that
+/// is the embedded question-bank record's `formatVersion`, e.g. 0.10.0, not the package's
+/// 0.1.0) and each test's (`exams[i].formatVersion`, e.g. 0.5.0) — as Test Parrot's import
+/// preview shows them for the picked item.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct SourceVersions {
+    bank: Option<String>,
+    exams: Vec<Option<String>>,
+}
+
+fn source_versions(data: &[u8]) -> SourceVersions {
+    fn ver(v: &serde_json::Value) -> Option<String> {
+        match v.get("formatVersion").or_else(|| v.get("version"))? {
+            serde_json::Value::String(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+            serde_json::Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        }
+    }
+    let whole = crate::formats::format_version(data);
+    let head = String::from_utf8_lossy(&data[..data.len().min(64)]).to_string();
+    if !head.trim_start().starts_with('{') {
+        return SourceVersions { bank: whole, exams: Vec::new() };
+    }
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(data) else {
+        return SourceVersions { bank: whole, exams: Vec::new() };
+    };
+    let bank = v
+        .get("questionBanks")
+        .and_then(|b| b.as_array())
+        .and_then(|b| b.first())
+        .and_then(|e| e.get("record"))
+        .and_then(ver)
+        .or(whole);
+    let exams = v.get("exams").and_then(|e| e.as_array()).map(|a| a.iter().map(ver).collect()).unwrap_or_default();
+    SourceVersions { bank, exams }
+}
+
+/// The name an import source goes by in the preview: the bank / package title the file states
+/// (Test Parrot shows "Chemistry Chapter 4 Quiz (5A and 5B)", not the file name), else the
+/// file name.
+fn source_title(s: &Source) -> String {
+    s.doc.as_ref().map(|d| d.name.trim().to_string()).filter(|n| !n.is_empty()).unwrap_or_else(|| s.name.clone())
+}
+
+/// The footer line of the import review: what Import will do, tests included (Test Parrot:
+/// "Will create the new Question Bank “X” and 2 Tests." / "Will create 2 Tests and merge “X”
+/// into “Y”.").
+fn import_footer(n: usize, tests: usize, source: Option<&str>, dest: Option<&str>, new_name: &str) -> String {
+    let qs = plural(n, "question");
+    match (dest, tests) {
+        (Some(d), 0) => format!("Will add {qs} to “{d}”."),
+        (Some(d), t) => match source {
+            Some(src) if src != d => format!("Will create {} and merge “{src}” ({qs}) into “{d}”.", plural(t, "test")),
+            _ => format!("Will create {} and add {qs} to “{d}”.", plural(t, "test")),
+        },
+        (None, 0) => format!("Will create the new bank “{new_name}” with {qs}."),
+        (None, t) => format!("Will create the new bank “{new_name}” ({qs}) and {}.", plural(t, "test")),
+    }
+}
+
 impl State {
-    fn push_doc(&mut self, name: &str, kind: &str, how: &'static str, icon: Ic, doc: ImportDoc, version: Option<String>) {
+    fn push_doc(&mut self, name: &str, kind: &str, how: &'static str, icon: Ic, doc: ImportDoc, versions: SourceVersions) {
         let n = doc.questions.len();
         let ne = doc.exams.len();
+        let SourceVersions { bank: version, exams: exam_versions } = versions;
         self.sources.push(Source {
             name: name.to_string(),
             kind: kind.to_string(),
@@ -232,6 +296,7 @@ impl State {
             image: None,
             fresh: false,
             version,
+            exam_versions,
             exam_sel: vec![true; ne],
             tex: None,
             page: None,
@@ -250,6 +315,7 @@ impl State {
             image: Some(ImportFile { name: name.to_string(), mime: mime.to_string(), bytes }),
             fresh: false,
             version: None,
+            exam_versions: Vec::new(),
             exam_sel: Vec::new(),
             tex: None,
             page: None,
@@ -274,6 +340,20 @@ fn add_bytes_inner(app: &mut crate::App, st: &mut State, name: &str, bytes: Vec<
             return;
         }
         "pdf" => {
+            // A bank-file PDF (queShion's, or Test Parrot's) carries its questions as data:
+            // read those instead of sending page pictures to the AI.
+            if let Some(data) = crate::bankexport::embedded_data(&bytes) {
+                let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
+                match crate::formats::detect_and_parse(&data, &format!("{stem}.json")) {
+                    Ok(doc) if !doc.questions.is_empty() => {
+                        crate::bankexport::restore_media(&data);
+                        let versions = source_versions(&data);
+                        st.push_doc(name, "Question bank file (PDF)", how, Ic::File, doc, versions);
+                        return;
+                    }
+                    _ => {} // not readable as questions: fall back to the pages
+                }
+            }
             match pdf_pages_png(&bytes) {
                 Ok(pages) => {
                     let n = pages.len();
@@ -319,8 +399,12 @@ fn add_bytes_inner(app: &mut crate::App, st: &mut State, name: &str, bytes: Vec<
             app.toast_err(format!("Couldn't find any questions in {name}."))
         }
         Ok(doc) => {
-            let version = crate::formats::format_version(&text_bytes);
-            st.push_doc(name, &kind, how, icon, doc, version)
+            if text_bytes.iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'{') {
+                // a bank file's pictures travel inside it
+                crate::bankexport::restore_media(&text_bytes);
+            }
+            let versions = source_versions(&text_bytes);
+            st.push_doc(name, &kind, how, icon, doc, versions)
         }
         Err(e) => app.toast_err(format!("Couldn't read {name}: {e}")),
     }
@@ -654,8 +738,10 @@ impl crate::App {
                 if big {
                     let flags = dup_flags(self, &st);
                     let n: usize = st.sources.iter().enumerate().map(|(si, s)| (0..s.sel.len()).filter(|&i| included(st.skip_dups, s, &flags[si], i)).count()).sum();
-                    let into = st.dest.as_ref().and_then(|id| self.store.bank(id)).map(|b| format!("“{}”", b.name)).unwrap_or_else(|| format!("the new bank “{}”", bank_name_for(&st)));
-                    ui.label(theme::muted(format!("Will add {} to {into}.", plural(n, "question"))).size(12.5));
+                    let dest = st.dest.as_ref().and_then(|id| self.store.bank(id)).map(|b| b.name.clone());
+                    let tests = tests_ticked(&st);
+                    let source = (st.sources.len() == 1).then(|| source_title(&st.sources[0]));
+                    ui.label(theme::muted(import_footer(n, tests, source.as_deref(), dest.as_deref(), &bank_name_for(&st))).size(12.5));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if ui.add_enabled_ui(n > 0, |ui| kit::primary_button(ui, "Import")).inner.clicked() {
                             go = true;
@@ -1090,7 +1176,8 @@ fn list_pane(app: &mut crate::App, ui: &mut egui::Ui, ctx: &egui::Context, st: &
             Status::Ready => None,
         };
         let picked = st.pick == Some(Pick::Source(i));
-        match list_row(ui, egui::Id::new(("imp_src", i)), picked, on, &s.name, &sub, tag, s.status != Status::Converting) {
+        let title = source_title(s);
+        match list_row(ui, egui::Id::new(("imp_src", i)), picked, on, &title, &sub, tag, s.status != Status::Converting) {
             RowHit::Check if nq > 0 => {
                 for b in s.sel.iter_mut() {
                     *b = !on;
@@ -1114,9 +1201,10 @@ fn list_pane(app: &mut crate::App, ui: &mut egui::Ui, ctx: &egui::Context, st: &
         group_head(ui, "Tests", n_exams);
         for (i, s) in st.sources.iter_mut().enumerate() {
             let Some(doc) = &s.doc else { continue };
+            let from = truncate_chars(&source_title(s), 28);
             for (e, ex) in doc.exams.iter().enumerate() {
                 let on = s.exam_sel.get(e).copied().unwrap_or(true);
-                let sub = format!("{} · from {}", plural(ex.items.len(), "question"), s.name);
+                let sub = format!("{} · from {from}", plural(ex.items.len(), "question"));
                 let picked = st.pick == Some(Pick::Exam(i, e));
                 match list_row(ui, egui::Id::new(("imp_exam", i, e)), picked, on, &ex.name, &sub, None, false) {
                     RowHit::Check => {
@@ -1524,11 +1612,11 @@ fn detail_pane(app: &mut crate::App, ui: &mut egui::Ui, st: &mut State, flags: &
             ui.horizontal(|ui| {
                 let (r, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
                 paint_icon(ui.painter(), if e.is_some() { Ic::File } else { s.icon }, r.center(), theme::accent_col(), 0.7);
-                kit::small_caps(ui, if e.is_some() { "Test" } else { "Questions" });
+                kit::small_caps(ui, if e.is_some() { "Test" } else if s.doc.is_some() { "Question bank" } else { "Questions" });
             });
             let name = match (e, &s.doc) {
                 (Some(e), Some(d)) => d.exams[e].name.clone(),
-                _ => s.name.clone(),
+                _ => source_title(s),
             };
             ui.add(egui::Label::new(theme::serif(name).size(18.0).color(theme::ink())).wrap());
             ui.add_space(8.0);
@@ -1547,8 +1635,38 @@ fn detail_pane(app: &mut crate::App, ui: &mut egui::Ui, st: &mut State, flags: &
                 }
             }
             detail_row(ui, "Format", &s.kind, false);
-            if let Some(v) = &s.version {
+            if source_title(s) != s.name {
+                detail_row(ui, "File", &truncate_chars(&s.name, 34), false);
+            }
+            let version = match e {
+                Some(e) => s.exam_versions.get(e).cloned().flatten(),
+                None => s.version.clone(),
+            };
+            if let Some(v) = &version {
                 detail_row(ui, "Format version", v, true);
+            }
+            // A bank that comes with tests: which of them use it (Test Parrot's "Used by").
+            if let (None, Some(d)) = (e, &s.doc) {
+                if !d.exams.is_empty() {
+                    ui.add_space(8.0);
+                    kit::small_caps(ui, "Used by");
+                    ui.add_space(4.0);
+                    for ex in &d.exams {
+                        egui::Frame::new()
+                            .stroke(Stroke::new(1.0, theme::border()))
+                            .corner_radius(CornerRadius::same(8))
+                            .inner_margin(Margin::symmetric(10, 5))
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.horizontal(|ui| {
+                                    let (r, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+                                    paint_icon(ui.painter(), Ic::File, r.center(), theme::accent_col(), 0.6);
+                                    ui.label(theme::strong(truncate_chars(&ex.name, 30)).size(12.5));
+                                });
+                            });
+                        ui.add_space(3.0);
+                    }
+                }
             }
             if e.is_some() {
                 ui.add_space(8.0);
@@ -1562,7 +1680,7 @@ fn detail_pane(app: &mut crate::App, ui: &mut egui::Ui, st: &mut State, flags: &
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.horizontal(|ui| {
-                            ui.label(theme::strong(truncate_chars(&s.name, 22)).size(12.5));
+                            ui.label(theme::strong(truncate_chars(&source_title(s), 22)).size(12.5));
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 ui.label(theme::muted(plural(nq, "question")).size(11.5));
                             });
@@ -1588,11 +1706,7 @@ fn options_and_finish(app: &mut crate::App, ui: &mut egui::Ui, st: &mut State, f
         .enumerate()
         .map(|(si, s)| (0..s.sel.len()).filter(|&i| included(skip, s, &flags[si], i)).count())
         .sum();
-    let tests: usize = st
-        .sources
-        .iter()
-        .filter_map(|s| s.doc.as_ref().map(|d| (0..d.exams.len()).filter(|&e| s.exam_sel.get(e).copied().unwrap_or(true)).count()))
-        .sum();
+    let tests = tests_ticked(st);
 
     let y = ui.cursor().top();
     ui.painter().hline(ui.max_rect().x_range(), y, Stroke::new(1.0, theme::rule()));
@@ -1645,6 +1759,14 @@ fn options_and_finish(app: &mut crate::App, ui: &mut egui::Ui, st: &mut State, f
     if ui.add_enabled_ui(n > 0, |ui| kit::primary_button(ui, &label)).inner.clicked() {
         commit(app, st, flags);
     }
+}
+
+/// Tests (exams) ticked for import across the sources.
+fn tests_ticked(st: &State) -> usize {
+    st.sources
+        .iter()
+        .filter_map(|s| s.doc.as_ref().map(|d| (0..d.exams.len()).filter(|&e| s.exam_sel.get(e).copied().unwrap_or(true)).count()))
+        .sum()
 }
 
 fn default_bank_name(st: &State) -> String {
@@ -2007,6 +2129,482 @@ fn attach_dialog(app: &mut crate::App, ctx: &egui::Context, st: &mut State) {
     }
 }
 
+// ----- Resolve Images (the bank page's "N pictures needed" link) -----
+
+/// The bank's Resolve Images dialog: every picture placeholder of the bank, with an upload,
+/// a crop from the original PDF / photo, a picture from the original Word file, or the
+/// placeholder's description in words; "Use these pictures" applies them all at once.
+#[derive(Default)]
+struct Resolve {
+    bank: Id,
+    /// Placeholders when the dialog opened (re-checked before applying).
+    slots: Vec<crate::bankops::PictureSlot>,
+    /// Pages a picture can be cropped from (PDF pages, photos): (name, PNG/JPEG bytes).
+    pages: Vec<(String, Vec<u8>)>,
+    /// Pictures found inside a dropped Word document.
+    doc_images: Vec<(String, Vec<u8>)>,
+    /// Slot index -> the picture chosen for it.
+    staged: std::collections::HashMap<usize, Vec<u8>>,
+    /// Slots resolved by writing their description instead.
+    described: HashSet<usize>,
+    /// Slot whose crop / Word-picture panel is open.
+    panel: Option<usize>,
+    page: usize,
+    sel: Option<[f32; 4]>,
+    drag_from: Option<Pos2>,
+    /// Texture cache: key -> texture (pages, staged pictures, Word pictures).
+    tex: std::collections::HashMap<String, egui::TextureHandle>,
+}
+
+thread_local! {
+    static RESOLVE: RefCell<Option<Resolve>> = const { RefCell::new(None) };
+}
+
+/// Opens Resolve Images for a bank.
+pub fn open_resolve_images(app: &crate::App, bank_id: &Id) {
+    let slots = app.store.bank(bank_id).map(|b| crate::bankops::picture_slots(&b.questions)).unwrap_or_default();
+    RESOLVE.with(|r| *r.borrow_mut() = Some(Resolve { bank: bank_id.clone(), slots, ..Default::default() }));
+}
+
+/// "k of N pictures ready. …" (Test Parrot's dialog subtitle).
+fn resolve_subtitle(ready: usize, total: usize) -> String {
+    format!("{ready} of {} ready. Any left unresolved stay as “picture needed” and can be added later.", plural(total, "picture"))
+}
+
+/// Applies the chosen pictures and descriptions to a bank's questions: an attached picture
+/// becomes the question's picture (it fills the first stem placeholder); a described
+/// placeholder is replaced by its words. Returns how many placeholders were resolved.
+fn apply_resolution(
+    qs: &mut [Question],
+    slots: &[crate::bankops::PictureSlot],
+    pictures: &std::collections::HashMap<usize, model::ImageRef>,
+    described: &HashSet<usize>,
+    now: i64,
+) -> usize {
+    let mut n = 0;
+    for (k, slot) in slots.iter().enumerate() {
+        if let (true, Some(img)) = (slot.attachable, pictures.get(&k)) {
+            if let Some(q) = qs.get_mut(slot.qi) {
+                q.image = Some(img.clone());
+                q.modified = now;
+                n += 1;
+            }
+        }
+    }
+    // Later markers of a field first, so earlier ones keep their position.
+    let mut desc: Vec<&crate::bankops::PictureSlot> = described.iter().filter(|k| !pictures.contains_key(k)).filter_map(|&k| slots.get(k)).collect();
+    desc.sort_by(|a, b| (a.qi, b.nth).cmp(&(b.qi, a.nth)));
+    for slot in desc {
+        let Some(q) = qs.get_mut(slot.qi) else { continue };
+        // An attached picture covers the first stem marker: describing it would be lost.
+        if let Some(t) = crate::bankops::field_text_mut(q, slot.field) {
+            let next = crate::bankops::describe_marker(t, slot.nth);
+            if next != *t {
+                *t = next;
+                q.modified = now;
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+/// Pictures inside a .docx (word/media), in archive order.
+fn docx_images(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
+    use std::io::Read;
+    let Ok(mut z) = zip::ZipArchive::new(std::io::Cursor::new(bytes)) else { return Vec::new() };
+    let mut out = Vec::new();
+    for i in 0..z.len() {
+        let Ok(mut f) = z.by_index(i) else { continue };
+        let name = f.name().to_string();
+        let lower = name.to_ascii_lowercase();
+        if !lower.starts_with("word/media/") || !(lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg") || lower.ends_with(".gif")) {
+            continue;
+        }
+        let mut b = Vec::new();
+        if f.read_to_end(&mut b).is_ok() {
+            out.push((name.rsplit('/').next().unwrap_or(&name).to_string(), b));
+        }
+    }
+    out
+}
+
+/// Adds a dropped / chosen original: PDF pages and photos to crop from, a Word file's pictures.
+fn resolve_add_file(app: &mut crate::App, rs: &mut Resolve, name: &str, bytes: Vec<u8>) {
+    let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    match ext.as_str() {
+        "pdf" => match pdf_pages_png(&bytes) {
+            Ok(pages) => {
+                let n = pages.len();
+                for (i, png) in pages.into_iter().enumerate() {
+                    rs.pages.push((if n == 1 { name.to_string() } else { format!("{name} · page {}", i + 1) }, png));
+                }
+            }
+            Err(e) => app.toast_err(e),
+        },
+        "docx" => {
+            let imgs = docx_images(&bytes);
+            if imgs.is_empty() {
+                app.toast_err(format!("{name} has no pictures in it."));
+            }
+            rs.doc_images.extend(imgs.into_iter().map(|(n, b)| (format!("{name} · {n}"), b)));
+        }
+        _ if image::guess_format(&bytes).is_ok() => rs.pages.push((name.to_string(), bytes)),
+        _ => app.toast_err(format!("{name}: drop the original PDF, Word document or a photo of it.")),
+    }
+}
+
+fn tex_of(ctx: &egui::Context, cache: &mut std::collections::HashMap<String, egui::TextureHandle>, key: &str, bytes: &[u8]) -> Option<egui::TextureHandle> {
+    if let Some(t) = cache.get(key) {
+        return Some(t.clone());
+    }
+    let img = image::load_from_memory(bytes).ok()?;
+    let rgba = img.to_rgba8();
+    let ci = egui::ColorImage::from_rgba_unmultiplied([rgba.width() as usize, rgba.height() as usize], rgba.as_raw());
+    let t = ctx.load_texture(format!("resolve_{key}"), ci, egui::TextureOptions::LINEAR);
+    cache.insert(key.to_string(), t.clone());
+    Some(t)
+}
+
+/// Red dashed "Picture needed" box (Test Parrot's placeholder thumbnail).
+fn needed_box(ui: &mut egui::Ui, size: Vec2, alt: Option<&str>) {
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+    let p = ui.painter();
+    let red = theme::red();
+    p.rect_filled(rect, CornerRadius::same(4), red.gamma_multiply(0.10));
+    p.extend(Shape::dashed_line(&[rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom(), rect.left_top()], Stroke::new(1.0, red), 4.0, 3.0));
+    let has_alt = alt.is_some_and(|a| !a.trim().is_empty());
+    let cy = if has_alt { rect.center().y - 7.0 } else { rect.center().y };
+    p.text(Pos2::new(rect.center().x, cy), egui::Align2::CENTER_CENTER, "Picture needed", FontId::new(12.5, theme::bold_family()), red);
+    if let Some(a) = alt.filter(|a| !a.trim().is_empty()) {
+        p.text(Pos2::new(rect.center().x, cy + 15.0), egui::Align2::CENTER_CENTER, truncate_chars(a.trim(), 26), FontId::new(10.0, egui::FontFamily::Proportional), theme::muted_col());
+    }
+}
+
+/// A page with a drag-to-select box; returns nothing, updates `sel` / `drag_from`.
+fn crop_canvas(ui: &mut egui::Ui, tex: &egui::TextureHandle, max_h: f32, sel: &mut Option<[f32; 4]>, drag_from: &mut Option<Pos2>) {
+    let ts = tex.size_vec2();
+    let scale = (ui.available_width() / ts.x).min(max_h / ts.y).min(1.0);
+    let (r, resp) = ui.allocate_exact_size(ts * scale, Sense::drag());
+    ui.painter().image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+    ui.painter().rect_stroke(r, CornerRadius::ZERO, Stroke::new(1.0, theme::border()), StrokeKind::Outside);
+    let norm = |p: Pos2| Pos2::new(((p.x - r.left()) / r.width()).clamp(0.0, 1.0), ((p.y - r.top()) / r.height()).clamp(0.0, 1.0));
+    if resp.drag_started() {
+        *drag_from = resp.interact_pointer_pos().map(norm);
+    }
+    if let (Some(a), Some(p)) = (*drag_from, resp.interact_pointer_pos()) {
+        if resp.dragged() || resp.drag_stopped() {
+            let b = norm(p);
+            *sel = Some([a.x.min(b.x), a.y.min(b.y), a.x.max(b.x), a.y.max(b.y)]);
+        }
+    }
+    if resp.drag_stopped() {
+        *drag_from = None;
+    }
+    if let Some(s) = *sel {
+        let sr = Rect::from_min_max(Pos2::new(r.left() + s[0] * r.width(), r.top() + s[1] * r.height()), Pos2::new(r.left() + s[2] * r.width(), r.top() + s[3] * r.height()));
+        let dim = Color32::from_black_alpha(90);
+        let p = ui.painter();
+        p.rect_filled(Rect::from_min_max(r.min, Pos2::new(r.right(), sr.top())), CornerRadius::ZERO, dim);
+        p.rect_filled(Rect::from_min_max(Pos2::new(r.left(), sr.bottom()), r.max), CornerRadius::ZERO, dim);
+        p.rect_filled(Rect::from_min_max(Pos2::new(r.left(), sr.top()), Pos2::new(sr.left(), sr.bottom())), CornerRadius::ZERO, dim);
+        p.rect_filled(Rect::from_min_max(Pos2::new(sr.right(), sr.top()), Pos2::new(r.right(), sr.bottom())), CornerRadius::ZERO, dim);
+        p.rect_stroke(sr, CornerRadius::ZERO, Stroke::new(1.5, theme::accent_col()), StrokeKind::Outside);
+    }
+}
+
+impl crate::App {
+    /// Draws the Resolve Images dialog when it is open (call every frame on the bank screen).
+    pub fn draw_resolve_images(&mut self, ctx: &egui::Context, on_screen: &Id) {
+        // QA hooks: QUESHION_RESOLVE=1 opens it for the bank on screen; QUESHION_RESOLVE_FILES=<paths>
+        // adds originals; QUESHION_RESOLVE_CROP=<slot n> opens slot n's crop panel with a selection.
+        if std::env::var("QUESHION_RESOLVE").is_ok() {
+            let hid = egui::Id::new("qs_resolve_hook");
+            if !ctx.data(|d| d.get_temp::<bool>(hid).unwrap_or(false)) {
+                ctx.data_mut(|d| d.insert_temp(hid, true));
+                {
+                    open_resolve_images(self, on_screen);
+                    if let Ok(v) = std::env::var("QUESHION_RESOLVE_FILES") {
+                        let mut rs = RESOLVE.with(|r| r.borrow_mut().take()).unwrap();
+                        for p in std::env::split_paths(&v) {
+                            let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                            if let Ok(b) = std::fs::read(&p) {
+                                resolve_add_file(self, &mut rs, &name, b);
+                            }
+                        }
+                        if let Ok(n) = std::env::var("QUESHION_RESOLVE_CROP").map(|v| v.trim().parse::<usize>().unwrap_or(1)) {
+                            rs.panel = Some(n.saturating_sub(1));
+                            rs.sel = Some([0.1, 0.2, 0.6, 0.45]);
+                        }
+                        RESOLVE.with(|r| *r.borrow_mut() = Some(rs));
+                    }
+                }
+            }
+        }
+        let Some(mut rs) = RESOLVE.with(|r| r.borrow_mut().take()) else { return };
+        let Some(bank) = self.store.bank(&rs.bank).cloned() else { return };
+        // Originals dropped onto the window while the dialog is open.
+        for f in ctx.input(|i| i.raw.dropped_files.clone()) {
+            let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped file".into());
+            match f.bytes() {
+                Ok(b) => resolve_add_file(self, &mut rs, &name, b),
+                Err(e) => self.toast_err(format!("Couldn't read {name}: {e}")),
+            }
+        }
+        let total = rs.slots.len();
+        let ready = rs.staged.len() + rs.described.iter().filter(|k| !rs.staged.contains_key(k)).count();
+        let screen = ctx.content_rect();
+        let w = 620.0_f32.min(screen.width() - 40.0);
+        let mut close = false;
+        let mut apply = false;
+        let mut open_q: Option<usize> = None;
+        let modal = egui::Modal::new(egui::Id::new("qs_resolve_modal")).show(ctx, |ui| {
+            ui.set_width(w);
+            ui.label(theme::serif("Resolve Images").size(22.0).color(theme::ink()));
+            ui.label(theme::muted(resolve_subtitle(ready, total)).size(12.5));
+            ui.add_space(8.0);
+            // Drop zone for the original document.
+            let dz = egui::Frame::new()
+                .stroke(Stroke::new(1.0, theme::red().gamma_multiply(0.7)))
+                .corner_radius(CornerRadius::same(8))
+                .inner_margin(Margin::symmetric(12, 10))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        let (r, _) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::hover());
+                        paint_icon(ui.painter(), Ic::Upload, r.center(), theme::red(), 0.75);
+                        let have = rs.pages.len() + rs.doc_images.len();
+                        let msg = if have == 0 {
+                            "Drop your original PDF or Word document here to take pictures from it, or upload each picture below.".to_string()
+                        } else {
+                            format!("{} from your original{} to take pictures from. Drop more here.", plural(rs.pages.len(), "page"), if rs.doc_images.is_empty() { String::new() } else { format!(" and {}", plural(rs.doc_images.len(), "picture")) })
+                        };
+                        ui.add(egui::Label::new(theme::text(msg).size(12.5)).wrap());
+                    });
+                    ui.horizontal(|ui| {
+                        ui.add_space(26.0);
+                        if kit::ghost_button(ui, "Choose original…").clicked() {
+                            if let Some(paths) = rfd::FileDialog::new().add_filter("PDF, Word or photo", &["pdf", "docx", "png", "jpg", "jpeg", "gif", "webp"]).pick_files() {
+                                for p in paths {
+                                    let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                                    match std::fs::read(&p) {
+                                        Ok(b) => resolve_add_file(self, &mut rs, &name, b),
+                                        Err(e) => self.toast_err(format!("Couldn't read {name}: {e}")),
+                                    }
+                                }
+                            }
+                        }
+                    });
+                });
+            if ctx.input(|i| !i.raw.hovered_files.is_empty()) {
+                ui.painter().rect_stroke(dz.response.rect, CornerRadius::same(8), Stroke::new(2.0, theme::accent_col()), StrokeKind::Inside);
+            }
+            ui.add_space(8.0);
+            let list_h = (screen.height() - 300.0).max(240.0);
+            egui::ScrollArea::vertical().id_salt("resolve_list").max_height(list_h).auto_shrink([false, true]).show(ui, |ui| {
+                if rs.slots.is_empty() {
+                    ui.label(theme::muted("Every picture is in place.").size(13.0));
+                }
+                for k in 0..rs.slots.len() {
+                    let slot = rs.slots[k].clone();
+                    let n = slot.qi + 1;
+                    kit::card().inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal_top(|ui| {
+                            let thumb = Vec2::new(170.0, 74.0);
+                            if let Some(bytes) = rs.staged.get(&k).cloned() {
+                                match tex_of(ctx, &mut rs.tex, &format!("staged_{k}_{}", bytes.len()), &bytes) {
+                                    Some(t) => {
+                                        let sz = t.size_vec2();
+                                        let s = (thumb.x / sz.x).min(thumb.y * 1.4 / sz.y).min(1.0);
+                                        ui.allocate_ui(Vec2::new(thumb.x, thumb.y), |ui| {
+                                            ui.add(egui::Image::new(&t).fit_to_exact_size(sz * s));
+                                        });
+                                    }
+                                    None => needed_box(ui, thumb, Some("unreadable picture")),
+                                }
+                            } else if rs.described.contains(&k) {
+                                let (r, _) = ui.allocate_exact_size(thumb, Sense::hover());
+                                ui.painter().rect_filled(r, CornerRadius::same(4), theme::field());
+                                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, "Described in words", FontId::new(12.0, theme::bold_family()), theme::text_col());
+                            } else {
+                                needed_box(ui, thumb, None);
+                            }
+                            ui.add_space(8.0);
+                            ui.vertical(|ui| {
+                                ui.label(theme::strong(slot.label(n)).size(13.5));
+                                if let Some(a) = &slot.alt {
+                                    ui.add(egui::Label::new(theme::text(a).size(12.0)).wrap());
+                                }
+                                if !slot.attachable {
+                                    ui.add(egui::Label::new(theme::muted("In an answer key or part: these have no picture of their own. Describe it in words, or edit it in the question.").size(11.0)).wrap());
+                                }
+                                ui.add_space(4.0);
+                                ui.horizontal_wrapped(|ui| {
+                                    if slot.attachable {
+                                        let up = if rs.staged.contains_key(&k) { "Change file" } else { "Upload a file" };
+                                        if kit::ghost_button(ui, up).clicked() {
+                                            if let Some(path) = rfd::FileDialog::new().add_filter("Pictures", &["png", "jpg", "jpeg", "gif", "webp"]).pick_file() {
+                                                match std::fs::read(&path) {
+                                                    Ok(b) if image::guess_format(&b).is_ok() => {
+                                                        rs.staged.insert(k, b);
+                                                        rs.described.remove(&k);
+                                                    }
+                                                    Ok(_) => self.toast_err("That file is not a picture."),
+                                                    Err(e) => self.toast_err(format!("Couldn't read that file: {e}")),
+                                                }
+                                            }
+                                        }
+                                        if !rs.pages.is_empty() && kit::ghost_button(ui, "Crop from original").clicked() {
+                                            rs.panel = if rs.panel == Some(k) { None } else { Some(k) };
+                                            rs.sel = None;
+                                        }
+                                        if !rs.doc_images.is_empty() && rs.pages.is_empty() && kit::ghost_button(ui, "Pick from document").clicked() {
+                                            rs.panel = if rs.panel == Some(k) { None } else { Some(k) };
+                                        }
+                                    }
+                                    let described = rs.described.contains(&k);
+                                    let dl = if described { "Undo description" } else { "Describe in words" };
+                                    if !rs.staged.contains_key(&k) && ui.add(egui::Button::new(theme::accent(dl).size(12.0)).frame(false)).on_hover_text("Replace the placeholder with its description, e.g. “(Picture: Lewis structure of NH3)”").clicked() {
+                                        if described {
+                                            rs.described.remove(&k);
+                                        } else {
+                                            rs.described.insert(k);
+                                        }
+                                    }
+                                    if rs.staged.contains_key(&k) && ui.add(egui::Button::new(theme::accent("Remove").size(12.0)).frame(false)).clicked() {
+                                        rs.staged.remove(&k);
+                                    }
+                                    if ui.add(egui::Button::new(theme::accent("Open question").size(12.0)).frame(false)).clicked() {
+                                        open_q = Some(slot.qi);
+                                    }
+                                });
+                            });
+                        });
+                        // Crop / Word-picture panel for this placeholder.
+                        if rs.panel == Some(k) && slot.attachable {
+                            ui.add_space(8.0);
+                            if !rs.doc_images.is_empty() {
+                                ui.label(theme::strong("Pictures in your document").size(12.5));
+                                ui.horizontal_wrapped(|ui| {
+                                    for (i, (name, bytes)) in rs.doc_images.clone().iter().enumerate() {
+                                        if let Some(t) = tex_of(ctx, &mut rs.tex, &format!("doc_{i}"), bytes) {
+                                            let sz = t.size_vec2();
+                                            let s = (110.0 / sz.x).min(80.0 / sz.y).min(1.0);
+                                            let resp = ui.add(egui::Button::image(egui::Image::new(&t).fit_to_exact_size(sz * s))).on_hover_text(name);
+                                            if resp.clicked() {
+                                                rs.staged.insert(k, bytes.clone());
+                                                rs.described.remove(&k);
+                                                rs.panel = None;
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+                            if !rs.pages.is_empty() {
+                                rs.page = rs.page.min(rs.pages.len() - 1);
+                                ui.horizontal(|ui| {
+                                    ui.label(theme::strong("Drag a box around the picture").size(12.5));
+                                    if rs.pages.len() > 1 {
+                                        let mut pg = rs.page;
+                                        egui::ComboBox::from_id_salt(("resolve_page", k)).selected_text(truncate_chars(&rs.pages[pg].0, 30)).show_ui(ui, |ui| {
+                                            for (i, (name, _)) in rs.pages.iter().enumerate() {
+                                                ui.selectable_value(&mut pg, i, name.clone());
+                                            }
+                                        });
+                                        if pg != rs.page {
+                                            rs.page = pg;
+                                            rs.sel = None;
+                                        }
+                                    }
+                                });
+                                let (name, bytes) = rs.pages[rs.page].clone();
+                                if let Some(t) = tex_of(ctx, &mut rs.tex, &format!("page_{}_{name}", rs.page), &bytes) {
+                                    let (mut sel, mut from) = (rs.sel, rs.drag_from);
+                                    crop_canvas(ui, &t, 460.0, &mut sel, &mut from);
+                                    rs.sel = sel;
+                                    rs.drag_from = from;
+                                }
+                                ui.add_space(4.0);
+                                ui.horizontal(|ui| {
+                                    if ui.add_enabled_ui(rs.sel.is_some(), |ui| kit::primary_button(ui, "Use selected area")).inner.clicked() {
+                                        if let Some(sel) = rs.sel {
+                                            match crop_png(&bytes, sel) {
+                                                Ok(b) => {
+                                                    rs.staged.insert(k, b);
+                                                    rs.described.remove(&k);
+                                                    rs.panel = None;
+                                                    rs.sel = None;
+                                                }
+                                                Err(e) => self.toast_err(format!("Couldn't crop: {e}")),
+                                            }
+                                        }
+                                    }
+                                    if kit::ghost_button(ui, "Close").clicked() {
+                                        rs.panel = None;
+                                    }
+                                });
+                            }
+                        }
+                    });
+                    ui.add_space(6.0);
+                }
+            });
+            ui.add_space(8.0);
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.add_enabled_ui(ready > 0, |ui| kit::primary_button(ui, "Use these pictures")).inner.clicked() {
+                        apply = true;
+                    }
+                    if kit::ghost_button(ui, "Cancel").clicked() {
+                        close = true;
+                    }
+                });
+            });
+        });
+        if apply {
+            let fresh = crate::bankops::picture_slots(&bank.questions);
+            if fresh != rs.slots {
+                self.toast_err("The bank changed while this was open. Open Resolve Images again.");
+                return;
+            }
+            let mut pics = std::collections::HashMap::new();
+            for (k, b) in &rs.staged {
+                match crate::store::put_image(b) {
+                    Ok(img) => {
+                        pics.insert(*k, img);
+                    }
+                    Err(e) => self.toast_err(format!("Couldn't use a picture: {e}")),
+                }
+            }
+            let t = now_secs();
+            let mut n = 0;
+            if let Some(b) = self.store.bank_mut(&rs.bank) {
+                n = apply_resolution(&mut b.questions, &rs.slots, &pics, &rs.described, t);
+                if n > 0 {
+                    b.modified = t;
+                }
+            }
+            if n > 0 {
+                self.store.save_banks();
+                self.toast(format!("Resolved {}", plural(n, "picture")));
+            }
+            return;
+        }
+        if let Some(qi) = open_q {
+            if let Some(q) = bank.questions.get(qi) {
+                self.qedit = Some(crate::qedit::Draft::from_question(rs.bank.clone(), q));
+            }
+            return;
+        }
+        if close || modal.should_close() {
+            return;
+        }
+        RESOLVE.with(|r| *r.borrow_mut() = Some(rs));
+    }
+}
+
 // ----- import history (secondary) -----
 
 fn history(app: &mut crate::App, ui: &mut egui::Ui) {
@@ -2156,5 +2754,90 @@ mod tests {
     #[test]
     fn norm_collapses_space_and_case() {
         assert_eq!(norm("  Hello   World "), "hello world");
+    }
+
+    #[test]
+    fn source_versions_read_the_bank_record_and_each_test() {
+        let pkg = br#"{"format":"test-parrot/package","formatVersion":"0.1.0","questionBanks":[{"id":"bank","record":{"format":"test-parrot/question-bank","formatVersion":"0.10.0","bank":{"name":"B","questions":[]}}}],
+            "exams":[{"format":"test-parrot/exam","formatVersion":"0.5.0","name":"A"},{"name":"B"}]}"#;
+        let v = source_versions(pkg);
+        assert_eq!(v.bank.as_deref(), Some("0.10.0"));
+        assert_eq!(v.exams, vec![Some("0.5.0".to_string()), None]);
+        let rec = br#"{"format":"test-parrot/question-bank","formatVersion":"0.10.0","bank":{"name":"B","questions":[]}}"#;
+        assert_eq!(source_versions(rec), SourceVersions { bank: Some("0.10.0".into()), exams: vec![] });
+        assert_eq!(source_versions(b"MC\nWhat?\n*a\nb\n"), SourceVersions::default());
+        assert_eq!(source_versions(b"<questestinterop><item/></questestinterop>").bank.as_deref(), Some("QTI 1.2"));
+    }
+
+    #[test]
+    fn source_title_prefers_the_stated_bank_name() {
+        let mut st = State::default();
+        let doc = ImportDoc { name: "Chemistry Chapter 4 Quiz (5A and 5B)".into(), questions: Vec::new(), exams: Vec::new() };
+        st.push_doc("ch4-quiz-5a-5b.parrot.json", "Test Parrot file", "file", Ic::File, doc, SourceVersions::default());
+        assert_eq!(source_title(&st.sources[0]), "Chemistry Chapter 4 Quiz (5A and 5B)");
+        st.sources[0].doc.as_mut().unwrap().name = "  ".into();
+        assert_eq!(source_title(&st.sources[0]), "ch4-quiz-5a-5b.parrot.json");
+    }
+
+    #[test]
+    fn import_footer_mentions_tests_like_the_reference() {
+        assert_eq!(import_footer(9, 0, None, Some("Ch4"), "x"), "Will add 9 questions to “Ch4”.");
+        assert_eq!(
+            import_footer(9, 2, Some("Chemistry Chapter 4 Quiz (5A and 5B)"), Some("Untitled Question Bank"), "x"),
+            "Will create 2 tests and merge “Chemistry Chapter 4 Quiz (5A and 5B)” (9 questions) into “Untitled Question Bank”."
+        );
+        assert_eq!(import_footer(1, 1, Some("B"), Some("B"), "x"), "Will create 1 test and add 1 question to “B”.");
+        assert_eq!(import_footer(9, 2, None, None, "Chem"), "Will create the new bank “Chem” (9 questions) and 2 tests.");
+        assert_eq!(import_footer(3, 0, None, None, "Chem"), "Will create the new bank “Chem” with 3 questions.");
+    }
+
+    #[test]
+    fn resolution_attaches_and_describes_without_shifting_markers() {
+        use crate::bankops::{picture_slots, pictures_needed};
+        use crate::formats::make_question;
+        use crate::model::{Kind, Part, PartKind};
+        let mut qs = vec![
+            make_question("Bonds: [picture: acetyl chloride] ___".into(), Kind::Blank { accept: vec![vec!["14".into()]] }),
+            make_question(
+                "Do all: [picture: a] and [picture: b]".into(),
+                Kind::Multipart { parts: vec![Part { stem: "a. NH3".into(), kind: PartKind::Short { sample: "[picture: key]".into() } }] },
+            ),
+        ];
+        let slots = picture_slots(&qs);
+        assert_eq!(slots.len(), 4);
+        let img = model::ImageRef { file: "media/x.png".into(), width: 2, height: 2 };
+        let pics: std::collections::HashMap<usize, model::ImageRef> = [(0, img.clone())].into_iter().collect();
+        // describe both stem markers of question 2 and the part's key; slot 0 gets a picture
+        let described: HashSet<usize> = [0, 1, 2, 3].into_iter().collect();
+        let n = apply_resolution(&mut qs, &slots, &pics, &described, 7);
+        assert_eq!(n, 4);
+        assert_eq!(qs[0].image.as_ref().map(|i| i.file.as_str()), Some("media/x.png"));
+        assert_eq!(qs[0].stem, "Bonds: [picture: acetyl chloride] ___", "the picture fills the marker; the text stays");
+        assert_eq!(qs[1].stem, "Do all: (Picture: a) and (Picture: b)");
+        assert!(matches!(&qs[1].kind, Kind::Multipart { parts } if matches!(&parts[0].kind, PartKind::Short { sample } if sample == "(Picture: key)")));
+        assert_eq!(qs.iter().map(pictures_needed).sum::<usize>(), 0);
+        assert_eq!(qs[1].modified, 7);
+        assert_eq!(resolve_subtitle(0, 5), "0 of 5 pictures ready. Any left unresolved stay as “picture needed” and can be added later.");
+    }
+
+    #[test]
+    fn docx_pictures_are_found_in_word_media() {
+        use std::io::Write;
+        let mut buf = Vec::new();
+        {
+            let mut z = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let o = zip::write::SimpleFileOptions::default();
+            z.start_file("word/document.xml", o).unwrap();
+            z.write_all(b"<w:document/>").unwrap();
+            z.start_file("word/media/image1.png", o).unwrap();
+            z.write_all(b"\x89PNG").unwrap();
+            z.start_file("word/media/notes.txt", o).unwrap();
+            z.write_all(b"x").unwrap();
+            z.finish().unwrap();
+        }
+        let imgs = docx_images(&buf);
+        assert_eq!(imgs.len(), 1);
+        assert_eq!(imgs[0].0, "image1.png");
+        assert!(docx_images(b"not a zip").is_empty());
     }
 }

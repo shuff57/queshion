@@ -9,6 +9,7 @@ licence, and nothing is downloaded at build or run time.
 |---|---|---|---|
 | Source Serif 4 (Adobe, 4.005) | Regular, Bold, It, BoldIt (compiled into the binary by `src/fonts.rs`); Semibold (read at startup) | OFL 1.1, `assets/fonts/OFL-SourceSerif4.txt` | Printed exams: PDF body and headings, the on-page exam preview, card and export thumbnails, and headings across the app |
 | Source Sans 3 (Adobe) | Regular, It, Semibold, Bold (read at startup) | OFL 1.1, `assets/fonts/OFL-SourceSans3.txt` | App interface text |
+| Liberation Mono (Red Hat / Google, 2.1.5) | Regular (compiled in by `src/fonts.rs`, `fonts::Style::Mono`) | OFL 1.1 (Reserved Font Name "Liberation"), `assets/fonts/OFL-LiberationMono.txt` | `` `code` `` spans in PDFs (font F10, embedded as a subset only when a document has code) |
 | STIX Two Math (The STIX Fonts Project, 2.x) | Regular (compiled in by the `equashion-font` crate; queShion reuses those bytes, `fonts::fallback_bytes`) | OFL 1.1, `assets/fonts/OFL-STIXTwoMath.txt` | Equations (equaSHion), and in PDFs the fallback for symbols Source Serif 4 lacks (`⇒ ⇔ ↔ ∈ ∉ ⊂ ∪ ∩ ∠ ⊥ ∥ ≡ ∝ ∴ ⋅` ...), embedded as a Type 3 font of only the glyphs drawn |
 | egui defaults (Ubuntu-Light, Hack, Noto Emoji, emoji-icon-font) | as shipped in egui (`default_fonts` feature) | Ubuntu Font Licence 1.0, Hack (MIT / Bitstream Vera), OFL; see the `epaint_default_fonts` crate's `fonts/` folder; emoji-icon-font is MIT | Fallback glyphs behind the house faces on screen only; never embedded in exports |
 
@@ -73,9 +74,29 @@ the upright face slanted.
 
 ## Mono
 
-Stem markup has no monospace span (see `docs/stem-format.md`), so the exports and the
-preview set no text in a monospace face. If a code span is added later, Source Code Pro
-(Adobe, OFL) would match the family.
+Round 7 added `` `code` `` spans (`docs/stem-format.md`).
+
+- **PDF.** Code prints in **Liberation Mono Regular 2.1.5** (SIL OFL 1.1, Reserved Font Name
+  "Liberation"; copied unmodified from Fedora's `liberation-mono-fonts` package, licence text
+  in `assets/fonts/OFL-LiberationMono.txt`). It is metric-compatible with Courier New, the face
+  the DOCX names, so a code span measures the same in both.
+  - Font F10 is a TrueType subset with WinAnsiEncoding, FixedPitch flag and `/Widths` from the
+    font's own advances, like F1..F4. It is written only when the document draws code, so
+    other documents are byte-identical to the round-6 output.
+  - Code prints at 0.92 of the surrounding size (the on-screen preview's ratio), on a light
+    gray tint (`0.92 g`). The width the line breaker measures includes that scale.
+  - There is one mono face. Bold or italic code prints in the regular mono, as on screen.
+  - A code character outside WinAnsi prints through the regular serif's CID font F5, or the
+    STIX fallback F9, so the export preview can still read it back.
+  - Tests: `fonts::mono_face_covers_winansi_with_one_advance`,
+    `export::r7_markup_tests::code_prints_in_the_embedded_mono` and
+    `documents_without_code_embed_no_mono_and_keep_the_font_table`.
+- **DOCX.** Code runs set `w:rFonts` to **Courier New**, which every Word install has, at the
+  same 0.92 size, shaded `EBEBEB`. Only when a document has code, `word/fontTable.xml` lists
+  Courier New, with Liberation Mono as its alternate, the modern family and fixed pitch, so
+  LibreOffice substitutes the same mono the PDF uses.
+- **On screen.** The editor and preview draw code in egui's monospace family (Hack, from
+  egui's default fonts).
 
 ## Adding a font
 

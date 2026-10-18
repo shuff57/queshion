@@ -1566,6 +1566,12 @@ fn task_checked(item: &serde_json::Value) -> bool {
     item.get("checked").or_else(|| item.get("attrs").and_then(|a| a.get("checked"))).and_then(serde_json::Value::as_bool).unwrap_or(false)
 }
 
+/// A plain list item that carries a tick anyway (Milkdown, which Test Parrot's editor is,
+/// keeps `checked: true|false` on `list_item`; `null` is an ordinary item).
+fn has_tick(item: &serde_json::Value) -> bool {
+    item.get("checked").or_else(|| item.get("attrs").and_then(|a| a.get("checked"))).is_some_and(serde_json::Value::is_boolean)
+}
+
 /// The box a task item prints with: ☑ ticked, ☐ open (both in Source Serif 4).
 fn task_box(checked: bool) -> &'static str {
     if checked { "\u{2611} " } else { "\u{2610} " }
@@ -1587,7 +1593,7 @@ fn flatten_block(block: &serde_json::Value, chunks: &mut Vec<String>, blanks: &m
             for n in children(block) {
                 flatten_inline(n, &mut line, blanks, images);
             }
-            push(chunks, line);
+            push(chunks, if tp_centered(block) { center_markup(&line) } else { line });
         }
         "heading" => {
             let mut line = String::new();
@@ -1599,7 +1605,8 @@ fn flatten_block(block: &serde_json::Value, chunks: &mut Vec<String>, blanks: &m
                 .or_else(|| block.get("attrs").and_then(|a| a.get("level")))
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(1);
-            push(chunks, heading_markup(line.trim(), level));
+            let h = heading_markup(line.trim(), level);
+            push(chunks, if tp_centered(block) { center_markup(&h) } else { h });
         }
         "blockquote" => {
             let mut inner: Vec<String> = Vec::new();
@@ -1723,7 +1730,7 @@ fn list_lines(list: &serde_json::Value, depth: usize, lines: &mut Vec<String>, b
         // A task list is a bullet list whose items start with their box.
         let marker = if ordered {
             format!("{}. ", start + i)
-        } else if tasks || is_task_item(node_type(item)) {
+        } else if tasks || is_task_item(node_type(item)) || has_tick(item) {
             format!("• {}", task_box(task_checked(item)))
         } else {
             "• ".to_string()
@@ -1821,10 +1828,28 @@ fn heading_markup(core: &str, level: u64) -> String {
 /// Side-by-side panels' markup; nested groups inside a panel are unwrapped (no nesting), and
 /// a single panel is just its content.
 fn side_markup(panels: &[String]) -> String {
-    let clean: Vec<String> = panels
-        .iter()
-        .map(|p| p.lines().filter(|l| crate::richtext::fence(l).is_none()).collect::<Vec<_>>().join("\n").trim_matches('\n').to_string())
-        .collect();
+    // nested side-by-side fences go; a centred group inside a panel stays
+    let clean_panel = |p: &str| -> String {
+        use crate::richtext::Fence;
+        let mut in_center = false;
+        let mut out: Vec<&str> = Vec::new();
+        for l in p.lines() {
+            match crate::richtext::fence(l) {
+                None => out.push(l),
+                Some(Fence::Center) if !in_center => {
+                    in_center = true;
+                    out.push(l);
+                }
+                Some(Fence::Close) if in_center => {
+                    in_center = false;
+                    out.push(l);
+                }
+                Some(_) => {}
+            }
+        }
+        out.join("\n").trim_matches('\n').to_string()
+    };
+    let clean: Vec<String> = panels.iter().map(|p| clean_panel(p)).collect();
     if clean.len() < 2 {
         return clean.join("\n\n");
     }
@@ -1837,6 +1862,29 @@ fn side_markup(panels: &[String]) -> String {
     }
     out.push(crate::richtext::FENCE_CLOSE.to_string());
     out.join("\n")
+}
+
+/// A Test Parrot paragraph or heading aligned to the centre: `"align": "center"` on the node
+/// (its export) or in its `attrs` (`align`, or `textAlign` as TipTap writes it).
+fn tp_centered(node: &serde_json::Value) -> bool {
+    let attrs = node.get("attrs");
+    [node.get("align"), attrs.and_then(|a| a.get("align")), attrs.and_then(|a| a.get("textAlign"))]
+        .into_iter()
+        .flatten()
+        .any(|v| v.as_str().is_some_and(|a| a.eq_ignore_ascii_case("center") || a.eq_ignore_ascii_case("centre")))
+}
+
+/// `body` (blocks of markup) as a centred group: `::: center` ... `:::` around it. Centred
+/// groups do not nest, so fence lines already inside are dropped; empty text stays empty.
+pub(crate) fn center_markup(body: &str) -> String {
+    use crate::richtext::Fence;
+    let inner: Vec<&str> = body.lines().filter(|l| !matches!(crate::richtext::fence(l), Some(Fence::Center | Fence::Close))).collect();
+    let inner = inner.join("\n");
+    let inner = inner.trim_matches('\n');
+    if inner.trim().is_empty() {
+        return String::new();
+    }
+    format!("{}\n{inner}\n{}", crate::richtext::FENCE_CENTER, crate::richtext::FENCE_CLOSE)
 }
 
 fn node_alt(node: &serde_json::Value) -> &str {
@@ -1894,6 +1942,11 @@ fn marked_text(node: &serde_json::Value) -> String {
     let lead = &text[..text.len() - text.trim_start().len()];
     let trail = &text[text.trim_end().len()..];
     let mut core = text.trim().to_string();
+    // inline code (Test Parrot `inline-code`, Milkdown `inlineCode`, TipTap `code`) when the
+    // markup can hold it (no backtick or `___` inside)
+    if has(&["inline-code", "inlineCode", "inline_code", "code"]) && code_ok(&core) {
+        core = format!("`{core}`");
+    }
     let sub = has(&["subscript", "sub"]);
     let sup = has(&["superscript", "sup"]);
     if sub || sup {
@@ -1913,6 +1966,12 @@ fn marked_text(node: &serde_json::Value) -> String {
         core = link_markup(&core, href);
     }
     format!("{lead}{core}{trail}")
+}
+
+/// Can `core` be written as `` `core` `` and read back as exactly that code?
+fn code_ok(core: &str) -> bool {
+    let l = crate::richtext::inline(&format!("`{core}`"));
+    l.len() == 1 && l[0].code && l[0].text == core
 }
 
 /// RFC 4648 base64, standard alphabet. Whitespace ignored, trailing padding optional;
@@ -2249,6 +2308,19 @@ const HTML_BLOCKS: [&str; 41] = [
 
 fn is_html_block(name: &str) -> bool {
     HTML_BLOCKS.contains(&name)
+}
+
+/// A paragraph-like HTML block set to the centre: `<center>`, `align="center"`, or a
+/// `text-align: center` style (tables, rows and list parts are left as they are).
+fn html_centered(node: &HNode) -> bool {
+    let HNode::El { name, .. } = node else { return false };
+    if name == "center" {
+        return true;
+    }
+    const CAN: [&str; 16] = ["p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "section", "article", "header", "footer", "main", "figure", "figcaption", "address"];
+    CAN.contains(&name.as_str())
+        && (node.attr("align").is_some_and(|a| a.trim().eq_ignore_ascii_case("center"))
+            || node.attr("style").is_some_and(|st| st.to_ascii_lowercase().replace([' ', '\t'], "").contains("text-align:center")))
 }
 
 struct OpenEl {
@@ -2592,6 +2664,17 @@ impl HtmlOut {
     }
 
     fn block(&mut self, node: &HNode, chunks: &mut Vec<String>) {
+        // `<center>`, `align="center"` or `text-align: center`: the block's markup, centred
+        if html_centered(node) {
+            let mut sub = Vec::new();
+            self.block_inner(node, &mut sub);
+            push_chunk(chunks, center_markup(&sub.join("\n\n")));
+            return;
+        }
+        self.block_inner(node, chunks);
+    }
+
+    fn block_inner(&mut self, node: &HNode, chunks: &mut Vec<String>) {
         let HNode::El { name, kids, .. } = node else { return };
         match name.as_str() {
             "head" | "title" => {}
@@ -2650,6 +2733,7 @@ impl HtmlOut {
                 "br" => out.push('\n'),
                 "b" | "strong" => self.wrap(kids, out, "**"),
                 "s" | "del" | "strike" => self.wrap(kids, out, "~~"),
+                "code" | "kbd" | "samp" | "tt" => self.wrap(kids, out, "`"),
                 "span" | "font" if n.attr("style").is_some_and(|st| st.to_ascii_lowercase().replace(' ', "").contains("text-decoration:line-through") || st.to_ascii_lowercase().contains("line-through")) => {
                     self.wrap(kids, out, "~~")
                 }
@@ -2723,6 +2807,11 @@ impl HtmlOut {
         let trail = &s[s.trim_end().len()..];
         // strikethrough markers only count when they hug the text (`~~ a~~` would stay literal)
         if mark == "~~" && !crate::richtext::inline(&format!("{mark}{core}{mark}")).iter().filter(|sp| !sp.text.is_empty()).all(|sp| sp.strike) {
+            out.push_str(&s);
+            return;
+        }
+        // code only when it reads back as exactly that code (no backtick, no blank inside)
+        if mark == "`" && !code_ok(core) {
             out.push_str(&s);
             return;
         }
@@ -6127,6 +6216,48 @@ mod import_format_tests {
         // Test Parrot marks
         let t = tp_stem(serde_json::json!([{"type": "paragraph", "content": [{"type": "text", "text": "old", "marks": ["strike"]}, {"type": "text", "text": " new"}]}]));
         assert_eq!(t, "~~old~~ new");
+    }
+
+    #[test]
+    fn centred_text_and_inline_code_import() {
+        // a stem as Test Parrot's bank export writes it (round 7: r7/pw/exported-bank.parrot.json)
+        let t = tp_stem(serde_json::json!([
+            {"type": "paragraph", "align": "center", "content": [{"type": "text", "text": "Centered intro line"}]},
+            {"type": "paragraph", "content": [{"type": "text", "text": "Run "}, {"type": "text", "text": "print(x)", "marks": [{"type": "inline-code"}]}, {"type": "text", "text": " now."}]},
+            {"type": "heading", "level": 4, "content": [{"type": "text", "text": "Sub heading four"}]},
+            {"type": "bullet-list", "content": [
+                {"type": "list-item", "content": [
+                    {"type": "paragraph", "content": [{"type": "text", "text": "Parent bullet"}]},
+                    {"type": "bullet-list", "content": [{"type": "list-item", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Child bullet"}]}]}]}
+                ]}
+            ]}
+        ]));
+        assert_eq!(t, "::: center\nCentered intro line\n:::\n\nRun `print(x)` now.\n\n**Sub heading four**\n\n\u{2022} Parent bullet\n  \u{2022} Child bullet");
+        let n = crate::richtext::parse_tree(&t);
+        assert!(matches!(&n[0], crate::richtext::Node::Block { center: true, .. }));
+        assert!(crate::richtext::parse(&t).iter().any(|b| matches!(b, crate::richtext::Block::Para(ls) if ls[0].iter().any(|sp| sp.code && sp.text == "print(x)"))));
+        assert!(matches!(n.last(), Some(crate::richtext::Node::Block { depths, .. }) if depths == &vec![0, 1]));
+        // TipTap / Milkdown spellings: attrs.textAlign / attrs.align, `inlineCode` / `code` marks
+        let t2 = tp_stem(serde_json::json!([
+            {"type": "heading", "attrs": {"level": 2, "textAlign": "center"}, "content": [{"type": "text", "text": "Title"}]},
+            {"type": "paragraph", "attrs": {"align": "left"}, "content": [{"type": "text", "text": "a", "marks": [{"type": "inlineCode"}, {"type": "bold"}]}, {"type": "text", "text": " b`c", "marks": ["code"]}]}
+        ]));
+        assert_eq!(t2, "::: center\n## Title\n:::\n\n**`a`** b`c", "a code run the markup cannot hold stays plain");
+        // a list item with a boolean `checked` is a task item (Milkdown keeps it there)
+        let t3 = tp_stem(serde_json::json!([{"type": "bullet-list", "content": [
+            {"type": "list-item", "attrs": {"checked": true}, "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Done"}]}]},
+            {"type": "list-item", "attrs": {"checked": null}, "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Plain"}]}]}
+        ]}]));
+        assert_eq!(t3, "\u{2022} \u{2611} Done\n\u{2022} Plain");
+        // HTML (every HTML source shares the converter)
+        assert_eq!(html_to_markup("<p style=\"text-align: center\">Title</p><p>Use <code>ls -l</code> then <kbd>Enter</kbd>.</p>").0, "::: center\nTitle\n:::\n\nUse `ls -l` then `Enter`.");
+        assert_eq!(html_to_markup("<center><h2>T</h2><p>sub</p></center>").0, "::: center\n## T\n\nsub\n:::");
+        assert_eq!(html_to_markup("<div align=\"center\"><center>x</center></div>").0, "::: center\nx\n:::", "groups do not nest");
+        assert_eq!(html_inline("<code>a`b</code> <code> </code>c"), "a`b c");
+        // a centred group in a side-by-side panel survives the panel clean-up
+        let s = side_markup(&["::: center\nL\n:::".to_string(), "R".to_string()]);
+        assert_eq!(s, "::: side\n::: center\nL\n:::\n::: next\nR\n:::");
+        assert!(matches!(&crate::richtext::parse_tree(&s)[0], crate::richtext::Node::Side(p) if matches!(&p[0][0], crate::richtext::Node::Block { center: true, .. })));
     }
 
     #[test]

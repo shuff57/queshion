@@ -133,6 +133,8 @@ pub struct EBlock {
     pub units: Vec<Unit>,
     /// (index of the side-by-side block, panel) for the blocks inside a panel.
     pub panel: Option<(usize, usize)>,
+    /// The lines (fences included) of the `::: center` group this block is in.
+    pub center: Option<Range<usize>>,
 }
 
 /// The stem cut into editable blocks.
@@ -142,7 +144,7 @@ pub struct Doc {
     pub line_start: Vec<usize>,
     pub line_len: Vec<usize>,
     pub len: usize,
-    /// Fence lines of the side-by-side groups (structure, not text).
+    /// Fence lines of the side-by-side and centred groups (structure, not text).
     pub fences: Vec<usize>,
 }
 
@@ -218,19 +220,20 @@ pub fn doc(stem: &str, structured: bool) -> Doc {
     }
     let len = clen(stem);
     if !structured {
-        let blocks = vec![flow_block(&line_start, &line_len, 0, lines.len(), None)];
+        let blocks = vec![flow_block(&line_start, &line_len, 0, lines.len(), None, None)];
         return Doc { blocks, line_start, line_len, len, fences: Vec::new() };
     }
     let mut blocks = Vec::new();
     let mut fences = Vec::new();
-    build_blocks(&lines, 0, lines.len(), &line_start, &line_len, None, &mut blocks, &mut fences);
+    build_blocks(&lines, 0, lines.len(), &line_start, &line_len, None, None, &mut blocks, &mut fences);
     let virt = |v: Virt, at: usize| EBlock {
         kind: BlockKind::Flow,
         lines: 0..0,
         units: vec![Unit { start: at, end: at, kind: UKind::Flow, virt: Some(v) }],
         panel: None,
+        center: None,
     };
-    if blocks.first().is_some_and(|b| b.kind != BlockKind::Flow) {
+    if blocks.first().is_some_and(|b| b.kind != BlockKind::Flow || b.center.is_some()) {
         blocks.insert(0, virt(Virt::Before, 0));
         for b in &mut blocks {
             if let Some((si, _)) = &mut b.panel {
@@ -238,24 +241,25 @@ pub fn doc(stem: &str, structured: bool) -> Doc {
             }
         }
     }
-    if blocks.iter().rev().find(|b| b.panel.is_none()).is_some_and(|b| b.kind != BlockKind::Flow) {
+    if blocks.iter().rev().find(|b| b.panel.is_none()).is_some_and(|b| b.kind != BlockKind::Flow || b.center.is_some()) {
         blocks.push(virt(Virt::After, len));
     }
     Doc { blocks, line_start, line_len, len, fences }
 }
 
-fn flow_block(line_start: &[usize], line_len: &[usize], a: usize, b: usize, panel: Option<(usize, usize)>) -> EBlock {
+fn flow_block(line_start: &[usize], line_len: &[usize], a: usize, b: usize, panel: Option<(usize, usize)>, center: Option<Range<usize>>) -> EBlock {
     EBlock {
         kind: BlockKind::Flow,
         lines: a..b,
         units: vec![Unit { start: line_start[a], end: line_start[b - 1] + line_len[b - 1], kind: UKind::Flow, virt: None }],
         panel,
+        center,
     }
 }
 
 /// The blocks of lines `from..to` (a whole stem, or one side-by-side panel).
 #[allow(clippy::too_many_arguments)]
-fn build_blocks(lines: &[&str], from: usize, to: usize, line_start: &[usize], line_len: &[usize], panel: Option<(usize, usize)>, blocks: &mut Vec<EBlock>, fences: &mut Vec<usize>) {
+fn build_blocks(lines: &[&str], from: usize, to: usize, line_start: &[usize], line_len: &[usize], panel: Option<(usize, usize)>, center: Option<Range<usize>>, blocks: &mut Vec<EBlock>, fences: &mut Vec<usize>) {
     let segs: Vec<richtext::Seg> = richtext::segment(&lines[from..to])
         .into_iter()
         .map(|mut s| {
@@ -277,10 +281,20 @@ fn build_blocks(lines: &[&str], from: usize, to: usize, line_start: &[usize], li
                 continue;
             }
             if let Some(f) = flow_from.take() {
-                blocks.push(flow_block(line_start, line_len, f, i, panel));
+                blocks.push(flow_block(line_start, line_len, f, i, panel, center.clone()));
             }
             let mut units = Vec::new();
             let kind = match sg.kind {
+                SegKind::Center => {
+                    // its blocks, centred (the fence lines are structure, never text)
+                    fences.push(sg.start);
+                    fences.push(sg.end - 1);
+                    if sg.start + 1 < sg.end - 1 {
+                        build_blocks(lines, sg.start + 1, sg.end - 1, line_start, line_len, panel, Some(sg.start..sg.end), blocks, fences);
+                    }
+                    i = sg.end;
+                    continue;
+                }
                 SegKind::Side => {
                     let rel = richtext::Seg { kind: SegKind::Side, start: sg.start, end: sg.end };
                     let panels = richtext::side_panels(lines, &rel);
@@ -289,10 +303,10 @@ fn build_blocks(lines: &[&str], from: usize, to: usize, line_start: &[usize], li
                         fences.push(r.end);
                     }
                     let si = blocks.len();
-                    blocks.push(EBlock { kind: BlockKind::Side { panels: panels.clone() }, lines: sg.start..sg.end, units: Vec::new(), panel });
+                    blocks.push(EBlock { kind: BlockKind::Side { panels: panels.clone() }, lines: sg.start..sg.end, units: Vec::new(), panel, center: None });
                     for (pi, r) in panels.iter().enumerate() {
                         if r.start < r.end {
-                            build_blocks(lines, r.start, r.end, line_start, line_len, Some((si, pi)), blocks, fences);
+                            build_blocks(lines, r.start, r.end, line_start, line_len, Some((si, pi)), None, blocks, fences);
                         }
                     }
                     i = sg.end;
@@ -336,7 +350,7 @@ fn build_blocks(lines: &[&str], from: usize, to: usize, line_start: &[usize], li
                     BlockKind::List(list)
                 }
             };
-            blocks.push(EBlock { kind, lines: sg.start..sg.end, units, panel });
+            blocks.push(EBlock { kind, lines: sg.start..sg.end, units, panel, center: center.clone() });
             i = sg.end;
         } else {
             // a blank line: part of the surrounding flow
@@ -345,7 +359,7 @@ fn build_blocks(lines: &[&str], from: usize, to: usize, line_start: &[usize], li
         }
     }
     if let Some(f) = flow_from.take() {
-        blocks.push(flow_block(line_start, line_len, f, to, panel));
+        blocks.push(flow_block(line_start, line_len, f, to, panel, center));
     }
 }
 
@@ -407,6 +421,11 @@ fn rebuild(stem: &str, lines: &[&str], from: usize, to: usize, d: &Doc) -> Resul
         sg.end += from;
         if sg.kind == SegKind::Para {
             out.push(richtext::Block::Para(lines[sg.start..sg.end].iter().map(|l| richtext::inline(l.trim_end())).collect()));
+            continue;
+        }
+        if sg.kind == SegKind::Center {
+            // the group's blocks stand in its place (as `richtext::parse` reads it)
+            out.extend(rebuild(stem, lines, sg.start + 1, sg.end - 1, d)?);
             continue;
         }
         let Some(b) = d.blocks.iter().find(|b| b.lines.start == sg.start && b.kind != BlockKind::Flow) else {
@@ -487,6 +506,8 @@ pub struct Ana {
     pub atoms: Vec<Atom>,
     /// Chars of a `[text](url)` link's text (shown blue and underlined).
     pub link: Vec<bool>,
+    /// Chars of `` `code` `` (shown in a monospace face on a tint).
+    pub code: Vec<bool>,
 }
 
 /// Roles of `text`'s chars; `math_ok` says whether a `$..$` content typesets.
@@ -494,6 +515,7 @@ pub fn analyze(text: &str, math_ok: &dyn Fn(&str) -> bool) -> Ana {
     let ch: Vec<char> = text.chars().collect();
     let mut role = vec![Role::Text { b: false, i: false, sub: false, sup: false, s: false }; ch.len()];
     let mut link = vec![false; ch.len()];
+    let mut code = vec![false; ch.len()];
     let mut atoms: Vec<Atom> = Vec::new();
     let mut base = 0;
     for line in text.split('\n') {
@@ -504,6 +526,7 @@ pub fn analyze(text: &str, math_ok: &dyn Fn(&str) -> bool) -> Ana {
                 RunKind::Text => {
                     role[s..e].fill(Role::Text { b: r.bold, i: r.italic, sub: r.sub, sup: r.sup, s: r.strike });
                     link[s..e].fill(r.link);
+                    code[s..e].fill(r.code);
                 }
                 RunKind::Math => {
                     let content: String = ch[s + 1..e - 1].iter().collect();
@@ -534,7 +557,7 @@ pub fn analyze(text: &str, math_ok: &dyn Fn(&str) -> bool) -> Ana {
             *r = Role::Tail(k);
         }
     }
-    Ana { role, atoms, link }
+    Ana { role, atoms, link, code }
 }
 
 impl Ana {
@@ -635,7 +658,23 @@ pub fn decode_line(line: &str) -> (Vec<Item>, Vec<usize>) {
     let ch: Vec<char> = line.chars().collect();
     let mut items = Vec::new();
     let mut starts = Vec::new();
+    let mut in_code = false;
     for r in richtext::inline_runs(line) {
+        // `code` is kept whole and raw too (its backticks are its only markers)
+        let tick = !r.link && r.kind == RunKind::Marker && ch[r.start] == '`';
+        if tick || (in_code && !r.link) {
+            if tick && !in_code {
+                starts.push(r.start);
+                items.push(Item::Atom(String::new()));
+            }
+            if let Some(Item::Atom(raw)) = items.last_mut() {
+                raw.extend(&ch[r.start..r.end]);
+            }
+            if tick {
+                in_code = !in_code;
+            }
+            continue;
+        }
         if r.link {
             // A `[text](url)` link is kept whole, raw (like `$math$`): formatting toggles and
             // blanks never cut into it.
@@ -1298,14 +1337,16 @@ fn numbered_prefix(l: &str) -> Option<(String, u32, char, usize)> {
     Some((ws.clone(), d.parse().ok()?, delim, clen(&ws) + d.len() + 2))
 }
 
-/// Rewrite the numbers of the numbered lines `range` as 1, 2, 3...
+/// Rewrite the numbers of the numbered lines `range` as 1, 2, 3... (each nesting level
+/// counts on its own: `richtext::item_ordinals`).
 fn renumber(lines: &mut [String], range: Range<usize>) {
-    let mut n = 1;
-    for l in &mut lines[range] {
-        if let Some((ws, _, d, p)) = numbered_prefix(l) {
-            let rest: String = l.chars().skip(p).collect();
-            *l = format!("{ws}{n}{d} {rest}");
-            n += 1;
+    let idx: Vec<usize> = range.filter(|&l| numbered_prefix(&lines[l]).is_some()).collect();
+    let refs: Vec<&str> = idx.iter().map(|&l| lines[l].as_str()).collect();
+    let ords = richtext::item_ordinals(&richtext::item_depths(&refs));
+    for (k, &l) in idx.iter().enumerate() {
+        if let Some((ws, _, d, p)) = numbered_prefix(&lines[l]) {
+            let rest: String = lines[l].chars().skip(p).collect();
+            lines[l] = format!("{ws}{}{d} {rest}", ords[k]);
         }
     }
 }
@@ -1666,7 +1707,15 @@ pub fn enter_op(stem: &str, d: &Doc, fi: usize, a: usize, b: usize, newlines: bo
         UKind::Item { list, line } => {
             let mut lines = lines_of(stem);
             let p = richtext::item_prefix_len(list.seg(), &lines[line]);
-            if visibly_empty(&text) {
+            let task = task_state(&text).is_some();
+            let body_empty = if task { visibly_empty(&slice(&text, 2..clen(&text))) } else { visibly_empty(&text) };
+            // an empty nested item moves out a level first
+            if body_empty && item_depth(stem, d, fi).is_some_and(|k| k > 0) {
+                let g = u.start + a.max(b);
+                return indent_op(stem, d, fi, (g, g), false);
+            }
+            if body_empty {
+                let text = if task { String::new() } else { text.clone() };
                 // leave the list: the line becomes an empty paragraph line
                 lines[line] = text.clone();
                 if list == ListKind::Numbered {
@@ -1680,10 +1729,14 @@ pub fn enter_op(stem: &str, d: &Doc, fi: usize, a: usize, b: usize, newlines: bo
             }
             let (left, right) = split_line(&text, a, b);
             let prefix: String = lines[line].chars().take(p).collect();
-            let next_prefix = match list {
+            let mut next_prefix = match list {
                 ListKind::Numbered => numbered_prefix(&lines[line]).map_or(prefix.clone(), |(ws, n, dl, _)| format!("{ws}{}{dl} ", n + 1)),
                 _ => prefix.clone(),
             };
+            // a task item continues as an open task item
+            if task && a.min(b) >= 2 {
+                next_prefix.push_str(&format!("{TASK_OPEN} "));
+            }
             lines[line] = format!("{prefix}{left}");
             lines.insert(line + 1, format!("{next_prefix}{right}"));
             if list == ListKind::Numbered {
@@ -1692,7 +1745,7 @@ pub fn enter_op(stem: &str, d: &Doc, fi: usize, a: usize, b: usize, newlines: bo
             }
             let s = lines.join("\n");
             let ls = line_starts(&lines);
-            let np = richtext::item_prefix_len(list.seg(), &lines[line + 1]);
+            let np = richtext::item_prefix_len(list.seg(), &lines[line + 1]) + if task && a.min(b) >= 2 { 2 } else { 0 };
             Some(Change::at(s, ls[line + 1] + np))
         }
         UKind::Cell { .. } => None,
@@ -1728,6 +1781,25 @@ pub fn enter_op(stem: &str, d: &Doc, fi: usize, a: usize, b: usize, newlines: bo
             let line = d.line_of(ga);
             let ls = d.line_start[line];
             let lt = slice(stem, ls..d.line_end(line));
+            // Enter at the end of a centred group's last line starts a plain paragraph below it
+            if let Some(g) = &d.blocks[at.0].center
+                && ga == gb
+                && line + 2 == g.end
+                && ga == d.line_end(line)
+                && !lt.trim().is_empty()
+            {
+                let mut lines = lines_of(stem);
+                let mut at_line = g.end;
+                lines.insert(at_line, String::new());
+                if at_line + 1 < lines.len() && !lines[at_line + 1].trim().is_empty() {
+                    lines.insert(at_line + 1, String::new());
+                } else if at_line + 1 < lines.len() {
+                    // the blank line already there separates it
+                    at_line = g.end;
+                }
+                let ls2 = line_starts(&lines);
+                return Some(Change::at(lines.join("\n"), ls2[at_line]));
+            }
             // "1. text" lines continue as a numbered list
             if let Some((ws, n, dl, p)) = numbered_prefix(&lt)
                 && ga >= ls + p
@@ -1788,6 +1860,7 @@ pub fn backspace_op(stem: &str, d: &Doc, fi: usize) -> Option<Change> {
     let at = flat[fi];
     let u = d.unit(at).clone();
     match u.kind {
+        UKind::Item { .. } if item_depth(stem, d, fi).is_some_and(|k| k > 0) => indent_op(stem, d, fi, (u.start, u.start), false),
         UKind::Item { list, line } => {
             let mut lines = lines_of(stem);
             let p = richtext::item_prefix_len(list.seg(), &lines[line]);
@@ -1953,10 +2026,16 @@ pub enum Slash {
     H1,
     H2,
     H3,
+    /// Heading 4-6: a line of its own in bold / bold italic / italic.
+    H4,
+    H5,
+    H6,
     Quote,
     Divider,
     Bullets,
     Numbered,
+    /// A bullet item starting with an open box (`• ☐ `).
+    Task,
     Image,
     Table,
     Math,
@@ -1980,10 +2059,14 @@ pub const SLASH_ITEMS: &[SlashItem] = &[
     SlashItem { cmd: Slash::H1, name: "Heading 1", group: 0, keys: "title h1 big", icon: "H1" },
     SlashItem { cmd: Slash::H2, name: "Heading 2", group: 0, keys: "subtitle h2", icon: "H2" },
     SlashItem { cmd: Slash::H3, name: "Heading 3", group: 0, keys: "h3 small", icon: "H3" },
+    SlashItem { cmd: Slash::H4, name: "Heading 4", group: 0, keys: "h4 bold minor", icon: "H4" },
+    SlashItem { cmd: Slash::H5, name: "Heading 5", group: 0, keys: "h5 minor", icon: "H5" },
+    SlashItem { cmd: Slash::H6, name: "Heading 6", group: 0, keys: "h6 italic minor", icon: "H6" },
     SlashItem { cmd: Slash::Quote, name: "Quote", group: 0, keys: "blockquote citation", icon: "❝" },
     SlashItem { cmd: Slash::Divider, name: "Divider", group: 0, keys: "rule line separator hr", icon: "—" },
     SlashItem { cmd: Slash::Bullets, name: "Bullet list", group: 1, keys: "unordered points", icon: "•≡" },
     SlashItem { cmd: Slash::Numbered, name: "Numbered list", group: 1, keys: "ordered steps", icon: "1≡" },
+    SlashItem { cmd: Slash::Task, name: "Task list", group: 1, keys: "checklist todo checkbox tick", icon: "☑" },
     SlashItem { cmd: Slash::Image, name: "Image placeholder", group: 2, keys: "picture photo figure diagram", icon: "▣" },
     SlashItem { cmd: Slash::Table, name: "Table", group: 2, keys: "grid rows columns", icon: "▦" },
     SlashItem { cmd: Slash::Math, name: "Math", group: 2, keys: "equation formula latex", icon: "Σ" },
@@ -2095,6 +2178,19 @@ pub fn slash_apply(stem: &str, slash: usize, caret: usize, cmd: Slash, blanks: b
             let at = (g.saturating_sub(removed)).max(ls) + n + 1;
             done(Change::at(lines.join("\n"), at))
         }
+        Slash::H4 | Slash::H5 | Slash::H6 => {
+            let level = match cmd {
+                Slash::H4 => 4,
+                Slash::H5 => 5,
+                _ => 6,
+            };
+            let (t, _) = strip(&lines[line]);
+            let (styled, x, y) = minor_heading_line(&t, level)?;
+            lines[line] = styled;
+            let ls = d.line_start[line];
+            done(Change { stem: lines.join("\n"), anchor: ls + x, caret: ls + y, virt: None, blank: None, keep: None })
+        }
+        Slash::Task => done(make_task(&s, &d, fi, g)?),
         Slash::Divider => {
             if lines[line].trim().is_empty() {
                 lines[line] = "---".to_string();
@@ -2205,6 +2301,8 @@ struct Mem {
     last_unit: Option<UiId>,
     markup: bool,
     float_rect: Option<Rect>,
+    /// The selection rect the floating toolbar was last placed for.
+    float_sel: Option<Rect>,
     /// (block, row, col) of the last focused table cell.
     cell: Option<(usize, usize, usize)>,
     active: bool,
@@ -2220,6 +2318,8 @@ struct Mem {
     caret_rect: Option<Rect>,
     /// The link popover, while open.
     link: Option<LinkSt>,
+    /// The top-level block whose rail grip is being dragged.
+    drag: Option<usize>,
 }
 
 /// The link popover: the selection it was opened on (global chars), its unit, the address
@@ -2279,6 +2379,8 @@ struct Sty {
     family: FontFamily,
     bold: FontFamily,
     blank_w: f32,
+    /// Rows centred in the unit's width (a `::: center` group).
+    center: bool,
 }
 
 thread_local! {
@@ -2340,7 +2442,7 @@ fn build_job(ui: &Ui, text: &str, wrap: f32, st: &Sty, ana: &Ana, blank_label: &
     let mut job = LayoutJob::default();
     job.wrap.max_width = wrap;
     job.keep_trailing_whitespace = true;
-    job.halign = Align::LEFT;
+    job.halign = if st.center { Align::Center } else { Align::LEFT };
     let ch: Vec<char> = text.chars().collect();
     let mut i = 0;
     while i < ch.len() {
@@ -2350,7 +2452,7 @@ fn build_job(ui: &Ui, text: &str, wrap: f32, st: &Sty, ana: &Ana, blank_label: &
         match r {
             Role::Head(k) => j = ana.atoms[k].start + 2,
             _ => {
-                while j < ch.len() && ana.role[j] == r && ana.link[j] == ana.link[i] && !matches!(r, Role::Head(_)) {
+                while j < ch.len() && ana.role[j] == r && ana.link[j] == ana.link[i] && ana.code[j] == ana.code[i] && !matches!(r, Role::Head(_)) {
                     j += 1;
                 }
             }
@@ -2372,6 +2474,11 @@ fn build_job(ui: &Ui, text: &str, wrap: f32, st: &Sty, ana: &Ana, blank_label: &
                 if is_link {
                     f.color = crate::equation::link_color(st.color);
                     f.underline = Stroke::new((st.size / 14.0).max(1.0), f.color);
+                }
+                if ana.code[i] {
+                    f.font_id = FontId::new(f.font_id.size * 0.92, FontFamily::Monospace);
+                    f.background = crate::equation::code_tint(st.color);
+                    f.italics = it;
                 }
                 f
             }
@@ -2441,8 +2548,10 @@ fn show_unit(ui: &mut Ui, uid: UiId, text: &mut String, width: f32, st: &Sty, hi
         .desired_width(width)
         .desired_rows(1)
         .return_key(None)
-        // in a table Tab moves between cells (handled by the editor), so egui must not move focus
+        // in a table Tab moves between cells, in a list it nests the item (both handled by the
+        // editor), so egui must not move focus
         .lock_focus(cell)
+        .horizontal_align(if st.center { Align::Center } else { Align::LEFT })
         .layouter(&mut lay);
     if !hint.is_empty() {
         te = te.hint_text(RichText::new(hint.to_string()).size(st.size));
@@ -2577,6 +2686,16 @@ enum Act {
     Redo,
     Markup,
     TableOp(TOp),
+    /// Inline code on the selection (Ctrl+E).
+    Code,
+    /// Centre the caret's paragraph or heading, or end its centring (Ctrl+Shift+E).
+    Center,
+    /// Tab (true) / Shift+Tab in a list item.
+    Indent(bool),
+    /// Tick / untick the caret's task item (Ctrl+Enter, or a click on its box).
+    Task,
+    /// Move the caret's top-level block up (true) / down (Alt+Up / Alt+Down).
+    Move(bool),
 }
 
 /// The context the toolbar reflects: style at the caret and the block kind.
@@ -2593,6 +2712,12 @@ struct Here {
     on_blank: bool,
     /// The selection or caret is in a link.
     link: bool,
+    /// The selection or caret is in `` `code` ``.
+    code: bool,
+    /// The caret's block is centred.
+    center: bool,
+    /// The Centre button applies here (a paragraph or heading, or a centred block).
+    center_ok: bool,
 }
 
 fn tool_btn(ui: &mut Ui, label: RichText, tip: &str, on: bool, enabled: bool) -> bool {
@@ -2620,7 +2745,9 @@ fn toolbar(ui: &mut Ui, here: Here, blanks: bool, markup: bool, structured: bool
         b(ui, RichText::new("S").strikethrough(), "Strikethrough (Ctrl+Shift+S)", here.s, vis, Act::Inline(IOp::Strike));
         b(ui, RichText::new("x₂"), "Subscript (Ctrl+,)", here.sub, vis, Act::Inline(IOp::Sub));
         b(ui, RichText::new("x²"), "Superscript (Ctrl+.)", here.sup, vis, Act::Inline(IOp::Sup));
+        b(ui, RichText::new("code").family(FontFamily::Monospace), "Inline code (Ctrl+E)", here.code, vis && (here.sel || here.code), Act::Code);
         if structured {
+            b(ui, RichText::new("Centre"), "Centre the paragraph or heading (Ctrl+Shift+E)", here.center, vis && here.center_ok, Act::Center);
             ui.add_space(4.0);
             b(ui, RichText::new("•  ≡"), "Bullet list (Ctrl+Shift+8 or Ctrl+Alt+8)", here.list == Some(ListKind::Bullets), vis && !here.table, Act::List(ListKind::Bullets));
             b(ui, RichText::new("1. ≡"), "Numbered list (Ctrl+Shift+7 or Ctrl+Alt+7)", here.list == Some(ListKind::Numbered), vis && !here.table, Act::List(ListKind::Numbered));
@@ -2642,6 +2769,12 @@ fn toolbar(ui: &mut Ui, here: Here, blanks: bool, markup: bool, structured: bool
     act
 }
 
+/// Width of the block rail's gutter at the left of a stem.
+const RAIL_W: f32 = 34.0;
+
+/// Height of a table's control row (above the grid).
+const TABLE_BAR_H: f32 = 24.0;
+
 /// Where the floating toolbar goes for selection rect `sel`: above it, unless that would cover
 /// the fixed toolbar (`fixed`) or leave the window, then below it. `size`: the bar's size last
 /// frame (estimated before it was first drawn).
@@ -2657,7 +2790,8 @@ fn float_place(sel: Rect, size: Option<Vec2>, fixed: Option<Rect>, screen: Rect)
 }
 
 /// The floating toolbar over a selection.
-fn float_bar(ui: &Ui, id: UiId, at: Pos2, pivot: egui::Align2, here: Here, blanks: bool) -> (Option<Act>, Rect) {
+#[allow(clippy::too_many_arguments)]
+fn float_bar(ui: &Ui, id: UiId, at: Pos2, pivot: egui::Align2, here: Here, blanks: bool, structured: bool) -> (Option<Act>, Rect) {
     let mut act = None;
     let r = egui::Area::new(id.with("wys_float"))
         .order(egui::Order::Foreground)
@@ -2687,6 +2821,11 @@ fn float_bar(ui: &Ui, id: UiId, at: Pos2, pivot: egui::Align2, here: Here, blank
                         b(ui, RichText::new("S").strikethrough(), "Strikethrough", here.s, Act::Inline(IOp::Strike));
                         b(ui, RichText::new("x₂"), "Subscript", here.sub, Act::Inline(IOp::Sub));
                         b(ui, RichText::new("x²"), "Superscript", here.sup, Act::Inline(IOp::Sup));
+                        if structured && here.center_ok {
+                            b(ui, RichText::new("Centre"), "Centre the paragraph (Ctrl+Shift+E)", here.center, Act::Center);
+                        }
+                        ui.add_space(3.0);
+                        b(ui, RichText::new("code").family(FontFamily::Monospace), "Inline code (Ctrl+E)", here.code, Act::Code);
                         b(ui, RichText::new("Σ"), "Turn into an equation", false, Act::Equation);
                         b(ui, RichText::new("Link").underline(), "Link to a web or e-mail address (Ctrl+K)", here.link, Act::Link);
                         if blanks {
@@ -2727,7 +2866,7 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
     let ctx = ui.ctx().clone();
     let mut m: Mem = ctx.data_mut(|d| d.get_temp::<Mem>(id)).unwrap_or_default();
     let mut out = Out::default();
-    let st = Sty { size: o.size, color: theme::text_col(), family: theme::serif_family(), bold: theme::serif_bold_family(), blank_w: o.size * 4.5 };
+    let st = Sty { size: o.size, color: theme::text_col(), family: theme::serif_family(), bold: theme::serif_bold_family(), blank_w: o.size * 4.5, center: false };
     let has_blanks = o.blanks.is_some();
     let unsafe_reason = check(stem).err();
     let top = ui.cursor().min;
@@ -2827,6 +2966,9 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
         let (lo, hi) = (lc(sel.0.min(sel.1)), lc(sel.0.max(sel.1)));
         let on_blank = ana.atoms.iter().any(|a| matches!(a.kind, AtomKind::Blank(_)) && ((lo == a.start && hi == a.end) || (lo == hi && (lo == a.end || lo == a.start))));
         let link = link_spans(&text).iter().any(|&(s, _, e)| s < hi.max(lo + 1) && lo <= e);
+        let code = code_spans(&text).iter().any(|&(s, e)| s < hi.max(lo + 1) && lo <= e);
+        let center = is_centered(d, fi);
+        let center_ok = center || (u.virt.is_none() && matches!(u.kind, UKind::Flow | UKind::Head { .. }));
         Here {
             b,
             i,
@@ -2841,6 +2983,9 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
             sel: lo < hi,
             on_blank,
             link,
+            code,
+            center,
+            center_ok,
         }
     };
 
@@ -2896,8 +3041,22 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
             act = Some(Act::Inline(IOp::Bold));
         } else if take_key(ui, cmd, Key::I) {
             act = Some(Act::Inline(IOp::Italic));
-        } else if take_key(ui, cs, Key::S) {
+        } else if take_key(ui, cs, Key::S) || take_key(ui, Modifiers::COMMAND | Modifiers::ALT, Key::X) {
             act = Some(Act::Inline(IOp::Strike));
+        } else if o.structured && take_key(ui, cs, Key::E) {
+            act = Some(Act::Center);
+        } else if take_key(ui, cmd, Key::E) {
+            act = Some(Act::Code);
+        } else if o.structured && task_state(&text).is_some() && matches!(u.kind, UKind::Item { .. }) && take_key(ui, cmd, Key::Enter) {
+            act = Some(Act::Task);
+        } else if o.structured && matches!(u.kind, UKind::Item { list, .. } if list != ListKind::Quote) && take_key(ui, Modifiers::SHIFT, Key::Tab) {
+            act = Some(Act::Indent(false));
+        } else if o.structured && matches!(u.kind, UKind::Item { list, .. } if list != ListKind::Quote) && take_key(ui, Modifiers::NONE, Key::Tab) {
+            act = Some(Act::Indent(true));
+        } else if o.structured && u.virt.is_none() && take_key(ui, Modifiers::ALT, Key::ArrowUp) {
+            act = Some(Act::Move(true));
+        } else if o.structured && u.virt.is_none() && take_key(ui, Modifiers::ALT, Key::ArrowDown) {
+            act = Some(Act::Move(false));
         } else if take_key(ui, cmd, Key::Comma) {
             act = Some(Act::Inline(IOp::Sub));
         } else if take_key(ui, cmd, Key::Period) {
@@ -3134,6 +3293,7 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
                     let plain: String = decode_line(&words.replace('\n', " ")).0.iter().map(|it| match it {
                         Item::Ch { c, .. } => c.to_string(),
                         Item::Atom(r) if r.starts_with('[') => richtext::line_text(&richtext::inline(r)),
+                        Item::Atom(r) if r.starts_with('`') => r.trim_matches('`').to_string(),
                         Item::Atom(r) => r.trim_matches('$').to_string(),
                     }).collect();
                     EqAsk { caret: g(lo), span: Some(g(lo)..g(hi)), initial: plain }
@@ -3161,6 +3321,26 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
                 let url = cur.map(|&(_, close, e)| ch[close + 2..e].iter().collect()).unwrap_or_default();
                 m.link = Some(LinkSt { sel, unit: fi, url, existing: cur.is_some(), focused: false, at: m.caret_rect.map(|r| r.left_bottom()), err: false });
                 None
+            }
+            Act::Code => {
+                let (t, x, y) = code_op(&text, la, lb)?;
+                let s = apply_unit(stem, &u, &t);
+                let g0 = if u.virt.is_some() { d.global(&u, 0) } else { u.start };
+                Some(Change { stem: s, anchor: g0 + x, caret: g0 + y, virt: u.virt, blank: None, keep: None })
+            }
+            Act::Center => center_op(stem, d, fi, sel),
+            // (Tab where an item cannot go deeper still stays in the item)
+            Act::Indent(deeper) => indent_op(stem, d, fi, sel, deeper).or_else(|| Some(Change { stem: stem.clone(), anchor: sel.0, caret: sel.1, virt: None, blank: None, keep: None })),
+            Act::Task => toggle_task(stem, d, fi, sel),
+            Act::Move(up) => {
+                let line = d.line_of(sel.1);
+                let k = rail_block_of(stem, line)?;
+                let start = d.line_start[rail_blocks(stem)[k].1.start];
+                let mut c = move_block(stem, k, if up { k.checked_sub(1)? } else { k + 2 })?;
+                let base = c.caret;
+                c.anchor = base + sel.0.saturating_sub(start);
+                c.caret = base + sel.1.saturating_sub(start);
+                Some(c)
             }
             Act::LinkApply | Act::LinkRemove => None,
             Act::Undo | Act::Redo | Act::Markup => None,
@@ -3251,7 +3431,10 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
     let mut edit: Option<(usize, String)> = None;
     let mut clicked: Option<(usize, Atom)> = None;
     let mut sel_rect: Option<Rect> = None;
-    let width = o.width;
+    // the block rail ("+" and the drag grip) lives in a gutter at the left of a stem
+    let rail = o.structured && o.toolbar;
+    let rail_w = if rail { RAIL_W } else { 0.0 };
+    let width = o.width - rail_w;
     let empty_stem = stem.is_empty();
     let (asc, _l) = metrics(ui, &FontId::new(st.size, st.family.clone()));
     let active = focused.is_some() || m.active;
@@ -3260,7 +3443,13 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
     let rows_ro = blanks_rows.clone();
     let mut div_act: Option<usize> = None;
     let mut side_act: Option<(usize, SOp)> = None;
-    ui.scope(|ui| {
+    let mut task_click: Option<usize> = None;
+    // screen top / bottom of each source line drawn (for the block rail)
+    let line_ys: std::cell::RefCell<std::collections::HashMap<usize, (f32, f32)>> = Default::default();
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::ZERO;
+        ui.add_space(rail_w);
+        ui.vertical(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(0.0, 0.0);
         let mut draw = |ui: &mut Ui, bi: usize, width: f32| {
             let bl = &d.blocks[bi];
@@ -3271,6 +3460,11 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
                     let k = fidx(0);
                     let uf = Some(k) == focused;
                     if u.virt.is_some() && !(active || uf) {
+                        // keep the room of the "add text above" line, so the first click (which
+                        // shows it) does not move the text under the pointer
+                        if u.virt == Some(Virt::Before) {
+                            ui.add_space(metrics(ui, &FontId::new(st.size, st.family.clone())).1);
+                        }
                         return;
                     }
                     let mut t = slice(stem, u.start..u.end);
@@ -3280,35 +3474,80 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
                         Some(Virt::After) => "(type here to add text below)",
                         None => "",
                     };
-                    let sh = show_unit(ui, ids[k], &mut t, width, &st, hint, blank_base(u.start), rows_ro.as_deref(), false);
+                    let cst = Sty { center: bl.center.is_some(), ..st.clone() };
+                    let sh = show_unit(ui, ids[k], &mut t, width, &cst, hint, blank_base(u.start), rows_ro.as_deref(), false);
+                    // where each source line starts on screen (the rail lines up with them)
+                    for l in bl.lines.clone() {
+                        let la = d.line_start[l].saturating_sub(u.start);
+                        let lb = d.line_end(l).saturating_sub(u.start);
+                        let r0 = sh.out.galley.pos_from_cursor(CCursor::new(CharIndex::from(la))).translate(sh.origin.to_vec2());
+                        let r1 = sh.out.galley.pos_from_cursor(CCursor::new(CharIndex::from(lb))).translate(sh.origin.to_vec2());
+                        line_ys.borrow_mut().insert(l, (r0.top(), r1.bottom()));
+                    }
                     after_unit(&ctx, &mut m, k, ids[k], &sh, &t, stem, u, &mut edit, &mut clicked, &mut sel_rect);
                 }
                 BlockKind::List(kind) => {
                     let n = bl.units.len();
-                    let indent = match kind {
+                    let depths = if *kind == ListKind::Quote { vec![0; n] } else { block_depths(stem, bl) };
+                    let ords = richtext::item_ordinals(&depths);
+                    let step = st.size * 1.3;
+                    let label_w = |j: usize| -> f32 {
+                        let lab = richtext::number_label(depths[j], ords[j]);
+                        st.size * (0.55 + 0.55 * lab.chars().count() as f32)
+                    };
+                    let indent0 = match kind {
                         ListKind::Bullets => st.size * 1.3,
-                        ListKind::Numbered => st.size * (1.1 + 0.55 * n.to_string().len() as f32),
+                        ListKind::Numbered => (0..n).map(label_w).fold(st.size * 1.1, f32::max),
                         ListKind::Quote => st.size * 1.1,
                     };
                     let top_y = ui.cursor().top();
                     for (j, u) in bl.units.iter().enumerate() {
                         let k = fidx(j);
                         let mut t = slice(stem, u.start..u.end);
+                        let indent = indent0 + depths[j] as f32 * step;
                         let r = ui.horizontal_top(|ui| {
                             ui.add_space(indent);
-                            show_unit(ui, ids[k], &mut t, width - indent, &st, "", blank_base(u.start), rows_ro.as_deref(), false)
+                            // (Tab nests a bullet or numbered item, so egui must not move focus on it)
+                            show_unit(ui, ids[k], &mut t, width - indent, &st, "", blank_base(u.start), rows_ro.as_deref(), *kind != ListKind::Quote)
                         });
                         let sh = r.inner;
                         let rr = sh.out.response.response.rect;
+                        line_ys.borrow_mut().insert(bl.lines.start + j, (rr.top(), rr.bottom()));
                         let base_y = rr.top() + asc;
-                        let left = rr.left() - indent;
+                        // the marker column of this item (its level's indent included)
+                        let left = rr.left() - indent0;
+                        let task = task_state(&t);
                         match kind {
+                            ListKind::Bullets if task.is_some() => {
+                                // the box is the item's first char: a click on it ticks / unticks
+                                let g0 = sh.out.galley.pos_from_cursor(CCursor::new(CharIndex::from(0usize))).translate(sh.origin.to_vec2());
+                                let g1 = sh.out.galley.pos_from_cursor(CCursor::new(CharIndex::from(1usize))).translate(sh.origin.to_vec2());
+                                let br = Rect::from_min_max(Pos2::new(g0.left() - 2.0, g0.top()), Pos2::new(g1.left() + 2.0, g0.bottom()));
+                                let resp = &sh.out.response.response;
+                                if resp.hover_pos().is_some_and(|p| br.contains(p)) {
+                                    ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+                                }
+                                if resp.clicked() && resp.interact_pointer_pos().is_some_and(|p| br.contains(p)) {
+                                    task_click = Some(k);
+                                }
+                            }
                             ListKind::Bullets => {
-                                ui.painter().circle_filled(Pos2::new(left + st.size * 0.5, base_y - st.size * 0.3), st.size * 0.14, st.color);
+                                let c = Pos2::new(left + st.size * 0.5, base_y - st.size * 0.3);
+                                match depths[j] % 3 {
+                                    0 => {
+                                        ui.painter().circle_filled(c, st.size * 0.14, st.color);
+                                    }
+                                    1 => {
+                                        ui.painter().circle_stroke(c, st.size * 0.13, Stroke::new(1.0, st.color));
+                                    }
+                                    _ => {
+                                        ui.painter().rect_filled(Rect::from_center_size(c, Vec2::splat(st.size * 0.22)), 0.0, st.color);
+                                    }
+                                }
                             }
                             ListKind::Numbered => {
-                                let g = ui.painter().layout_no_wrap(format!("{}.", j + 1), FontId::new(st.size, st.family.clone()), st.color);
-                                ui.painter().galley(Pos2::new(left + indent - st.size * 0.35 - g.size().x, rr.top()), g, st.color);
+                                let g = ui.painter().layout_no_wrap(richtext::number_label(depths[j], ords[j]), FontId::new(st.size, st.family.clone()), st.color);
+                                ui.painter().galley(Pos2::new(rr.left() - st.size * 0.35 - g.size().x, rr.top()), g, st.color);
                             }
                             ListKind::Quote => {}
                         }
@@ -3326,42 +3565,38 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
                     let ncols = (*ncols).max(1);
                     let rows = bl.units.len() / ncols;
                     let in_table = focused.is_some_and(|f| flat[f].0 == bi) || m.cell.is_some_and(|c| c.0 == bi) && active;
-                    if in_table {
-                        // table controls float above the table (no layout jump when a cell takes focus)
+                    // the table's control row: always there (focusing a cell never shifts the
+                    // layout) and in the flow, so it never covers the text above or the next row
+                    let bar_top = ui.cursor().top();
+                    ui.allocate_ui_with_layout(Vec2::new(width, TABLE_BAR_H), egui::Layout::left_to_right(Align::Center), |ui| {
+                        ui.set_height(TABLE_BAR_H);
+                        ui.spacing_mut().item_spacing = Vec2::new(2.0, 0.0);
+                        if !in_table {
+                            ui.label(RichText::new("Table · click a cell for rows and columns").size(11.0).color(theme::muted_col()));
+                            return;
+                        }
                         let ok_header = header_toggle_ok(stem, &d, bi);
-                        let at = ui.cursor().left_top() - Vec2::new(0.0, 3.0);
-                        egui::Area::new(id.with(("wys_table_bar", bi)))
-                            .order(egui::Order::Foreground)
-                            .fixed_pos(at)
-                            .pivot(egui::Align2::LEFT_BOTTOM)
-                            .show(ui.ctx(), |ui| {
-                                Frame::new()
-                                    .fill(theme::card())
-                                    .stroke(Stroke::new(1.0, theme::border()))
-                                    .corner_radius(CornerRadius::same(9))
-                                    .shadow(egui::epaint::Shadow { offset: [0, 2], blur: 8, spread: 0, color: Color32::from_black_alpha(30) })
-                                    .inner_margin(egui::Margin::same(3))
-                                    .show(ui, |ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing = Vec2::new(2.0, 2.0);
-                                            let mut tb = |ui: &mut Ui, l: &str, tip: &str, on: bool, en: bool, op: TOp| {
-                                                if tool_btn(ui, RichText::new(l).size(11.5), tip, on, en) {
-                                                    table_bar = Some((bi, Act::TableOp(op)));
-                                                }
-                                            };
-                                            tb(ui, "+ Row ↑", "Insert a row above", false, true, TOp::RowAbove);
-                                            tb(ui, "+ Row ↓", "Insert a row below (also Tab in the last cell)", false, true, TOp::RowBelow);
-                                            tb(ui, "+ Col ←", "Insert a column to the left", false, true, TOp::ColLeft);
-                                            tb(ui, "+ Col →", "Insert a column to the right", false, true, TOp::ColRight);
-                                            tb(ui, "− Row", "Delete this row", false, rows > 2, TOp::DelRow);
-                                            tb(ui, "− Col", "Delete this column", false, ncols > 2, TOp::DelCol);
-                                            tb(ui, "Header", if ok_header { "First row is a header" } else { "The blanks below make the first row a header" }, *header, ok_header, TOp::Header);
-                                            tb(ui, "Delete table", "Remove the whole table", false, true, TOp::DelTable);
-                                        });
-                                    });
-                            });
-                        let _ = sep;
-                    }
+                        let mut tb = |ui: &mut Ui, l: &str, tip: &str, on: bool, en: bool, op: TOp| {
+                            let b = egui::Button::new(RichText::new(l).size(11.0).color(if on { theme::accent_col() } else { theme::text_col() }))
+                                .fill(if on { theme::accent_faded() } else { Color32::TRANSPARENT })
+                                .stroke(Stroke::new(1.0, if on { theme::accent_col().gamma_multiply(0.5) } else { theme::border() }))
+                                .corner_radius(CornerRadius::same(6))
+                                .min_size(Vec2::new(0.0, 20.0));
+                            if ui.add_enabled(en, b).on_hover_text(tip).clicked() {
+                                table_bar = Some((bi, Act::TableOp(op)));
+                            }
+                        };
+                        ui.spacing_mut().button_padding = Vec2::new(5.0, 1.0);
+                        tb(ui, "+Row↑", "Insert a row above", false, true, TOp::RowAbove);
+                        tb(ui, "+Row↓", "Insert a row below (also Tab in the last cell)", false, true, TOp::RowBelow);
+                        tb(ui, "+Col←", "Insert a column to the left", false, true, TOp::ColLeft);
+                        tb(ui, "+Col→", "Insert a column to the right", false, true, TOp::ColRight);
+                        tb(ui, "−Row", "Delete this row", false, rows > 2, TOp::DelRow);
+                        tb(ui, "−Col", "Delete this column", false, ncols > 2, TOp::DelCol);
+                        tb(ui, "Header", if ok_header { "First row is a header" } else { "The blanks below make the first row a header" }, *header, ok_header, TOp::Header);
+                        tb(ui, "Delete", "Remove the whole table", false, true, TOp::DelTable);
+                    });
+                    let _ = sep;
                     // column widths from the cells' natural widths
                     let hpad = st.size * 0.45;
                     let vpad = st.size * 0.25;
@@ -3417,6 +3652,9 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
                     for y in &ys {
                         p.hline(x0..=x0 + tw, *y, stroke);
                     }
+                    for l in bl.lines.clone() {
+                        line_ys.borrow_mut().insert(l, (bar_top, bottom));
+                    }
                     let mut x = x0;
                     p.vline(x, y0..=bottom, stroke);
                     for w in &widths {
@@ -3428,13 +3666,16 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
                     let u = &bl.units[0];
                     let k = fidx(0);
                     let mut t = slice(stem, u.start..u.end);
-                    let hs = Sty { size: st.size * crate::equation::heading_scale(*level), family: st.bold.clone(), ..st.clone() };
+                    let hs = Sty { size: st.size * crate::equation::heading_scale(*level), family: st.bold.clone(), center: bl.center.is_some(), ..st.clone() };
                     ui.add_space(st.size * 0.1);
                     let sh = show_unit(ui, ids[k], &mut t, width, &hs, "Heading", blank_base(u.start), rows_ro.as_deref(), false);
+                    let rr = sh.out.response.response.rect;
+                    line_ys.borrow_mut().insert(bl.lines.start, (rr.top(), rr.bottom()));
                     after_unit(&ctx, &mut m, k, ids[k], &sh, &t, stem, u, &mut edit, &mut clicked, &mut sel_rect);
                 }
                 BlockKind::Divider => {
                     let (r, resp) = ui.allocate_exact_size(Vec2::new(width, st.size * 1.0), egui::Sense::hover());
+                    line_ys.borrow_mut().insert(bl.lines.start, (r.top(), r.bottom()));
                     let y = r.center().y.round() + 0.5;
                     let hot = resp.hovered() || (active && ui.rect_contains_pointer(r.expand(4.0)));
                     ui.painter().hline(r.left()..=r.right() - if hot { st.size * 1.4 } else { 0.0 }, y, Stroke::new(1.0, st.color.gamma_multiply(if hot { 0.8 } else { 0.5 })));
@@ -3463,6 +3704,7 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
                 continue;
             };
             // side by side: one column per panel, the panels' own blocks inside
+            let group_top = ui.cursor().top();
             let n = panels.len().max(1);
             let gap = st.size * 1.0;
             let pad = 6.0;
@@ -3518,6 +3760,9 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
                 }
             });
             let bottom = boxes.iter().map(|r| r.bottom()).fold(top_y, f32::max);
+            for l in bl.lines.clone() {
+                line_ys.borrow_mut().insert(l, (group_top, bottom));
+            }
             let p = ui.painter().clone();
             for (pi, r) in boxes.iter().enumerate() {
                 let r = Rect::from_min_max(Pos2::new(r.left(), top_y), Pos2::new(r.right(), bottom));
@@ -3535,8 +3780,10 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
             }
             let _ = x0;
         }
+        });
     });
     let structural = match (div_act, side_act) {
+        _ if task_click.is_some() => task_click.and_then(|k| toggle_task(stem, &d, k, m.sel.unwrap_or((0, 0)))),
         (Some(l), _) => Some(delete_line(stem, l)),
         (None, Some((si, op))) => side_op(stem, &d, si, op),
         _ => None,
@@ -3653,13 +3900,19 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
     // ----- floating toolbar over a selection (or a blank) -----
     let mut float_act = None;
     let float_keep = m.float_rect.is_some_and(|r| ui.input(|i| i.pointer.interact_pos().or(i.pointer.hover_pos()).is_some_and(|p| r.expand(4.0).contains(p))));
-    if let Some(sr) = sel_rect.filter(|_| focused.is_some() || float_keep) {
+    // A click on the bar makes the text field give up focus as it is drawn (egui surrenders
+    // focus on a click elsewhere), so on that frame no unit reports a selection: the bar stays
+    // where it was while the pointer is on it, or its buttons could never be clicked.
+    let float_at = sel_rect.or(if float_keep { m.float_sel } else { None });
+    if let Some(sr) = float_at.filter(|_| focused.is_some() || float_keep) {
         let (at, pivot) = float_place(sr, m.float_rect.map(|r| r.size()), fixed_bar, ui.ctx().content_rect());
-        let (a, r) = float_bar(ui, id, at, pivot, here, has_blanks);
+        let (a, r) = float_bar(ui, id, at, pivot, here, has_blanks, o.structured);
         float_act = a;
         m.float_rect = Some(r);
+        m.float_sel = Some(sr);
     } else if !float_keep {
         m.float_rect = None;
+        m.float_sel = None;
     }
 
     // ----- equation chips, blank chips -----
@@ -3745,6 +3998,120 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
     }
     if let Some(c) = change.take() {
         commit(&mut m, stem, c, None, &mut blanks_rows, &mut out);
+    }
+
+    // ----- the block rail: "+" and the drag grip beside the hovered top-level block -----
+    let mut rail_change: Option<(Change, Option<usize>)> = None;
+    if rail {
+        let segs = rail_blocks(stem);
+        let spans: Vec<Option<(f32, f32)>> = segs
+            .iter()
+            .map(|(_, r)| {
+                let ys: Vec<(f32, f32)> = r.clone().filter_map(|l| line_ys.borrow().get(&l).copied()).collect();
+                (!ys.is_empty()).then(|| (ys.iter().map(|y| y.0).fold(f32::MAX, f32::min), ys.iter().map(|y| y.1).fold(f32::MIN, f32::max)))
+            })
+            .collect();
+        let pointer = ui.input(|i| i.pointer.hover_pos());
+        let x0 = top.x;
+        let hovered = pointer
+            .filter(|p| p.x >= x0 && p.x <= x0 + o.width)
+            .and_then(|p| spans.iter().position(|s| s.is_some_and(|(a, b)| p.y >= a - 3.0 && p.y <= b + 3.0)));
+        if m.drag.is_some_and(|k| k >= segs.len()) {
+            m.drag = None;
+        }
+        if let Some(k) = m.drag.or(hovered)
+            && let Some((y0, y1)) = spans[k]
+        {
+            let row_h = (st.size * 1.4).min(y1 - y0).max(16.0);
+            let cy = y0 + row_h / 2.0;
+            let plus_r = Rect::from_center_size(Pos2::new(x0 + 8.0, cy), Vec2::new(15.0, 18.0));
+            let grip_r = Rect::from_center_size(Pos2::new(x0 + 23.0, cy), Vec2::new(13.0, 18.0));
+            let pr = ui.interact(plus_r, id.with("wys_rail_plus"), egui::Sense::click());
+            let gr = ui.interact(grip_r, id.with("wys_rail_grip"), egui::Sense::click_and_drag());
+            pr.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Add a block below"));
+            gr.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Move this block (drag, or Alt+Up / Alt+Down)"));
+            let pr = pr.on_hover_text("Add a block below (or type / at the start of a line)");
+            let gr = gr.on_hover_text("Drag to move this block (or Alt+↑ / Alt+↓ with the caret in it). Click to select it");
+            let p = ui.painter();
+            let ink = theme::muted_col();
+            for (r, hot) in [(plus_r, pr.hovered()), (grip_r, gr.hovered() || gr.dragged())] {
+                if hot {
+                    p.rect_filled(r, 4.0, theme::accent_faded());
+                }
+            }
+            let c = plus_r.center();
+            let sk = Stroke::new(1.4, if pr.hovered() { theme::text_col() } else { ink });
+            p.line_segment([c - Vec2::new(4.5, 0.0), c + Vec2::new(4.5, 0.0)], sk);
+            p.line_segment([c - Vec2::new(0.0, 4.5), c + Vec2::new(0.0, 4.5)], sk);
+            let gc = grip_r.center();
+            for dx in [-2.5f32, 2.5] {
+                for dy in [-5.0f32, 0.0, 5.0] {
+                    p.circle_filled(gc + Vec2::new(dx, dy), 1.3, if gr.hovered() || gr.dragged() { theme::text_col() } else { ink });
+                }
+            }
+            if gr.hovered() || gr.dragged() {
+                ctx.set_cursor_icon(if gr.dragged() { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
+            }
+            if pr.clicked() {
+                rail_change = plus_op(stem, k).map(|(c, g)| (c, Some(g)));
+            }
+            // the block is picked up on the press (the pointer may leave every block before
+            // egui calls it a drag; the rail then stays with this block until the release)
+            if (gr.is_pointer_button_down_on() || gr.drag_started()) && m.drag.is_none() {
+                m.drag = Some(k);
+            }
+            // where a drop would land: the gap whose neighbours' middles straddle the pointer
+            let gap_at = |y: f32| spans.iter().filter(|s| s.is_some_and(|(a, b)| (a + b) / 2.0 < y)).count();
+            let drop = ui.input(|i| i.pointer.interact_pos()).map(|p| gap_at(p.y));
+            if let (Some(from), Some(g)) = (m.drag, drop)
+                && (gr.dragged() || gr.drag_stopped())
+            {
+                let y = match (g.checked_sub(1).and_then(|i| spans[i]), spans.get(g).copied().flatten()) {
+                    (Some((_, b)), Some((a, _))) => (a + b) / 2.0,
+                    (Some((_, b)), None) => b + 2.0,
+                    (None, Some((a, _))) => a - 2.0,
+                    _ => y0,
+                };
+                if g != from && g != from + 1 {
+                    p.line_segment([Pos2::new(x0 + rail_w, y), Pos2::new(x0 + o.width, y)], Stroke::new(2.0, theme::accent_col()));
+                }
+                if gr.drag_stopped() {
+                    m.drag = None;
+                    rail_change = move_block(stem, from, g).map(|c| (c, None));
+                }
+                ctx.request_repaint();
+            } else if gr.drag_stopped() {
+                m.drag = None;
+            } else if gr.clicked() {
+                m.drag = None;
+                // select the block (a paragraph or heading whole; else the caret goes to its start)
+                let (kind, r) = segs[k].clone();
+                let a = d.line_start[r.start];
+                let b = d.line_end(r.end - 1);
+                let want = match kind {
+                    SegKind::Para => Want { anchor: a, caret: b, virt: None },
+                    SegKind::Heading(_) => Want { anchor: a + richtext::heading_prefix_len(stem.split('\n').nth(r.start).unwrap_or("")), caret: b, virt: None },
+                    _ => {
+                        let g = d.find(a, None).map(|fi| d.unit(d.flat()[fi]).start).unwrap_or(a);
+                        Want { anchor: g, caret: g, virt: None }
+                    }
+                };
+                m.want = Some(want);
+                ctx.request_repaint();
+            } else if !ui.input(|i| i.pointer.any_down()) {
+                m.drag = None;
+            }
+        } else if !ui.input(|i| i.pointer.any_down()) {
+            m.drag = None;
+        }
+    }
+    if let Some((c, slash_at)) = rail_change {
+        bar_act = None;
+        edit = None;
+        commit(&mut m, stem, c, None, &mut blanks_rows, &mut out);
+        if let Some(g) = slash_at {
+            m.slash = Some(SlashSt { at: g, hi: 0, tab: None });
+        }
     }
 
     // ----- apply this frame's typing / toolbar action -----
@@ -3914,6 +4281,9 @@ pub fn record_external(ctx: &egui::Context, id: UiId, old: &str, caret: usize, b
         m.want = Some(Want { anchor: caret, caret, virt: None });
     });
 }
+
+mod blockops;
+pub use blockops::*;
 
 #[cfg(test)]
 mod tests;

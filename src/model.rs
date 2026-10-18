@@ -170,13 +170,27 @@ pub struct ExamItem {
     /// Multipart questions: extra work space under each part, in printed lines (index = part
     /// index, 0..=23 each; missing entries mean 0). Exams saved before P3 have none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")] pub part_work: Vec<u8>,
+    /// Multiple-choice questions: how many columns the choices print across in (Test
+    /// Parrot's 1 / 2 / 4 switch). 1 (the default, not written) = the paper style's own
+    /// layout: one per line, or Condensed's automatic across-layout. See `answer_cols()`.
+    #[serde(default = "one_u8", skip_serializing_if = "is_one_u8")] pub answer_columns: u8,
 }
 
 fn is_zero_u8(v: &u8) -> bool { *v == 0 }
+fn one_u8() -> u8 { 1 }
+fn is_one_u8(v: &u8) -> bool { *v == 1 }
+
+/// The answer-column choices the exam page and the Pop-over offer.
+pub const ANSWER_COLUMNS: [u8; 3] = [1, 2, 4];
 
 impl ExamItem {
     pub fn new(bank_id: impl Into<Id>, question_id: impl Into<Id>) -> ExamItem {
-        ExamItem { bank_id: bank_id.into(), question_id: question_id.into(), section: None, work_lines: 0, answer_order: Vec::new(), part_work: Vec::new() }
+        ExamItem { bank_id: bank_id.into(), question_id: question_id.into(), section: None, work_lines: 0, answer_order: Vec::new(), part_work: Vec::new(), answer_columns: 1 }
+    }
+
+    /// `answer_columns` clamped to 1..=4 (0 or garbage from a hand-edited file reads as 1).
+    pub fn answer_cols(&self) -> u8 {
+        if (1..=4).contains(&self.answer_columns) { self.answer_columns } else { 1 }
     }
 }
 

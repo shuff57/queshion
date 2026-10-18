@@ -258,6 +258,179 @@ pub fn picture_markers(q: &Question) -> usize {
     c
 }
 
+// ---------- resolving pictures ----------
+
+/// Where a `[picture]` marker sits in a question.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PicField {
+    Stem,
+    Choice(usize),
+    Sample,
+    MatchLeft(usize),
+    MatchRight(usize),
+    Distractor(usize),
+    PartStem(usize),
+    PartChoice(usize, usize),
+    PartSample(usize),
+}
+
+/// One "picture needed" placeholder of a bank: question index, field, which marker of that
+/// field (0-based), its description, and whether the question's own picture can fill it
+/// (the first stem marker of a question with no picture yet). Others live in answer keys and
+/// parts, which have no picture of their own: they can be described in words instead.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PictureSlot {
+    pub qi: usize,
+    pub field: PicField,
+    pub nth: usize,
+    pub alt: Option<String>,
+    pub attachable: bool,
+}
+
+fn letter(i: usize) -> char {
+    char::from(b'a' + (i % 26) as u8)
+}
+
+impl PictureSlot {
+    /// "Question 4, Part a, Suggested Answer" (Test Parrot's wording); `n` = the question's
+    /// number on the bank page.
+    pub fn label(&self, n: usize) -> String {
+        let tail = match self.field {
+            PicField::Stem => String::new(),
+            PicField::Choice(i) => format!(", Choice {}", letter(i).to_ascii_uppercase()),
+            PicField::Sample => ", Suggested Answer".to_string(),
+            PicField::MatchLeft(i) => format!(", Match {}", i + 1),
+            PicField::MatchRight(i) => format!(", Match {} (right)", i + 1),
+            PicField::Distractor(i) => format!(", Extra choice {}", i + 1),
+            PicField::PartStem(p) => format!(", Part {}", letter(p)),
+            PicField::PartChoice(p, i) => format!(", Part {}, Choice {}", letter(p), letter(i).to_ascii_uppercase()),
+            PicField::PartSample(p) => format!(", Part {}, Suggested Answer", letter(p)),
+        };
+        format!("Question {n}{tail}")
+    }
+}
+
+/// The text of one field of a question (None when the field is not there).
+pub fn field_text(q: &Question, f: PicField) -> Option<&String> {
+    match (f, &q.kind) {
+        (PicField::Stem, _) => Some(&q.stem),
+        (PicField::Choice(i), Kind::Mc { answers }) => answers.get(i).map(|a| &a.text),
+        (PicField::Sample, Kind::Short { sample }) => Some(sample),
+        (PicField::MatchLeft(i), Kind::Matching { pairs, .. }) => pairs.get(i).map(|p| &p.left),
+        (PicField::MatchRight(i), Kind::Matching { pairs, .. }) => pairs.get(i).map(|p| &p.right),
+        (PicField::Distractor(i), Kind::Matching { distractors, .. }) => distractors.get(i),
+        (PicField::PartStem(p), Kind::Multipart { parts }) => parts.get(p).map(|x| &x.stem),
+        (PicField::PartChoice(p, i), Kind::Multipart { parts }) => match parts.get(p).map(|x| &x.kind) {
+            Some(PartKind::Mc { answers }) => answers.get(i).map(|a| &a.text),
+            _ => None,
+        },
+        (PicField::PartSample(p), Kind::Multipart { parts }) => match parts.get(p).map(|x| &x.kind) {
+            Some(PartKind::Short { sample }) => Some(sample),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Mutable access to one field's text.
+pub fn field_text_mut(q: &mut Question, f: PicField) -> Option<&mut String> {
+    match (f, &mut q.kind) {
+        (PicField::Stem, _) => Some(&mut q.stem),
+        (PicField::Choice(i), Kind::Mc { answers }) => answers.get_mut(i).map(|a| &mut a.text),
+        (PicField::Sample, Kind::Short { sample }) => Some(sample),
+        (PicField::MatchLeft(i), Kind::Matching { pairs, .. }) => pairs.get_mut(i).map(|p| &mut p.left),
+        (PicField::MatchRight(i), Kind::Matching { pairs, .. }) => pairs.get_mut(i).map(|p| &mut p.right),
+        (PicField::Distractor(i), Kind::Matching { distractors, .. }) => distractors.get_mut(i),
+        (PicField::PartStem(p), Kind::Multipart { parts }) => parts.get_mut(p).map(|x| &mut x.stem),
+        (PicField::PartChoice(p, i), Kind::Multipart { parts }) => match parts.get_mut(p).map(|x| &mut x.kind) {
+            Some(PartKind::Mc { answers }) => answers.get_mut(i).map(|a| &mut a.text),
+            _ => None,
+        },
+        (PicField::PartSample(p), Kind::Multipart { parts }) => match parts.get_mut(p).map(|x| &mut x.kind) {
+            Some(PartKind::Short { sample }) => Some(sample),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Every field of a question that can hold markers, in reading order.
+fn fields(q: &Question) -> Vec<PicField> {
+    let mut f = vec![PicField::Stem];
+    match &q.kind {
+        Kind::Mc { answers } => f.extend((0..answers.len()).map(PicField::Choice)),
+        Kind::Short { .. } => f.push(PicField::Sample),
+        Kind::Matching { pairs, distractors } => {
+            for i in 0..pairs.len() {
+                f.push(PicField::MatchLeft(i));
+                f.push(PicField::MatchRight(i));
+            }
+            f.extend((0..distractors.len()).map(PicField::Distractor));
+        }
+        Kind::Multipart { parts } => {
+            for (p, part) in parts.iter().enumerate() {
+                f.push(PicField::PartStem(p));
+                match &part.kind {
+                    PartKind::Mc { answers } => f.extend((0..answers.len()).map(|i| PicField::PartChoice(p, i))),
+                    PartKind::Short { .. } => f.push(PicField::PartSample(p)),
+                    PartKind::Tf { .. } => {}
+                }
+            }
+        }
+        Kind::Tf { .. } | Kind::Blank { .. } => {}
+    }
+    f
+}
+
+/// The pictures a bank still needs, in question order then reading order. Agrees with
+/// [`pictures_needed`]: a question's attached picture covers its first marker.
+pub fn picture_slots(qs: &[Question]) -> Vec<PictureSlot> {
+    let mut out = Vec::new();
+    for (qi, q) in qs.iter().enumerate() {
+        let mut covered = q.image.is_some();
+        for f in fields(q) {
+            let Some(text) = field_text(q, f) else { continue };
+            let alts: Vec<Option<String>> = split_pictures(text)
+                .into_iter()
+                .filter_map(|p| match p {
+                    StemPart::Picture(a) => Some(a),
+                    StemPart::Text(_) => None,
+                })
+                .collect();
+            for (nth, alt) in alts.into_iter().enumerate() {
+                if covered {
+                    covered = false;
+                    continue;
+                }
+                let attachable = q.image.is_none() && f == PicField::Stem && nth == 0;
+                out.push(PictureSlot { qi, field: f, nth, alt, attachable });
+            }
+        }
+    }
+    out
+}
+
+/// `text` with its `nth` `[picture]` marker replaced by the words that describe it:
+/// "[picture: Lewis structure of NH3]" -> "(Picture: Lewis structure of NH3)". Unchanged when
+/// there is no such marker.
+pub fn describe_marker(text: &str, nth: usize) -> String {
+    let mut from = 0;
+    let mut k = 0;
+    while let Some(i) = find_marker(&text[from..]) {
+        let at = from + i;
+        let close = at + text[at..].find(']').expect("find_marker checks the bracket");
+        if k == nth {
+            let inner = &text[at + 1..close];
+            let alt = inner.strip_prefix("picture").unwrap_or("").trim_start_matches(':').trim();
+            let words = if alt.is_empty() { "(Picture)".to_string() } else { format!("(Picture: {alt})") };
+            return format!("{}{}{}", &text[..at], words, &text[close + 1..]);
+        }
+        k += 1;
+        from = close + 1;
+    }
+    text.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -415,5 +588,56 @@ mod tests {
         let mut mt = q("t", &[]);
         mt.kind = Kind::Matching { pairs: vec![crate::model::Pair { left: "[picture]".into(), right: "x".into() }], distractors: vec!["[picture: y]".into()] };
         assert_eq!(pictures_needed(&mt), 2);
+    }
+
+    // ---------- resolving pictures ----------
+
+    fn pq(stem: &str, kind: Kind) -> Question {
+        crate::formats::make_question(stem.into(), kind)
+    }
+
+    #[test]
+    fn picture_slots_follow_pictures_needed_and_name_their_place() {
+        use crate::model::{Part, PartKind};
+        let multi = pq(
+            "For each compound: [picture: CO2 sketch]",
+            Kind::Multipart {
+                parts: vec![
+                    Part { stem: "a. NH3".into(), kind: PartKind::Short { sample: "[picture: NH3 key] Clouds: 4".into() } },
+                    Part { stem: "b. CO2".into(), kind: PartKind::Short { sample: "[picture]".into() } },
+                ],
+            },
+        );
+        let fill = pq("Bonds [picture: acetyl chloride] ___", Kind::Blank { accept: vec![vec!["14".into()]] });
+        let mut done = fill.clone();
+        done.image = Some(crate::model::ImageRef { file: "media/x.png".into(), width: 1, height: 1 });
+        let qs = vec![fill, multi, done];
+        let slots = picture_slots(&qs);
+        assert_eq!(slots.len(), qs.iter().map(pictures_needed).sum::<usize>());
+        assert_eq!(slots.len(), 4);
+        assert!(slots[0].attachable && slots[0].qi == 0 && slots[0].alt.as_deref() == Some("acetyl chloride"));
+        assert_eq!(slots[0].label(1), "Question 1");
+        assert!(slots[1].attachable && slots[1].field == PicField::Stem);
+        assert_eq!((slots[2].field, slots[2].attachable), (PicField::PartSample(0), false));
+        assert_eq!(slots[2].label(2), "Question 2, Part a, Suggested Answer");
+        assert_eq!(slots[3].label(2), "Question 2, Part b, Suggested Answer");
+        assert_eq!(slots[3].alt, None);
+    }
+
+    #[test]
+    fn describing_a_marker_resolves_exactly_that_one() {
+        let t = "Draw [picture: NH3] and [picture] then [picture: CO2].";
+        assert_eq!(describe_marker(t, 0), "Draw (Picture: NH3) and [picture] then [picture: CO2].");
+        assert_eq!(describe_marker(t, 1), "Draw [picture: NH3] and (Picture) then [picture: CO2].");
+        assert_eq!(describe_marker(t, 2), "Draw [picture: NH3] and [picture] then (Picture: CO2).");
+        assert_eq!(describe_marker(t, 3), t);
+        // the described marker no longer counts
+        let mut q = pq(t, Kind::Short { sample: String::new() });
+        q.stem = describe_marker(&q.stem, 1);
+        assert_eq!(pictures_needed(&q), 2);
+        let f = field_text_mut(&mut q, PicField::Sample).unwrap();
+        f.push_str("[picture]");
+        assert_eq!(pictures_needed(&q), 3);
+        assert!(field_text_mut(&mut q, PicField::Choice(0)).is_none());
     }
 }

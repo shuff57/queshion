@@ -95,3 +95,73 @@ paragraphs that share them, which had printed a run of ruled lines as a single l
 bank question, so other exams using the same question are unaffected. Locked answers keep
 their slot. A stale order (the bank question gained or lost answers) falls back to the bank's
 order. Edit > Restore bank answer order clears every stored order.
+
+## Answer columns (round 7)
+
+Multiple-choice questions can print their choices in 1, 2 or 4 columns, like Test Parrot's
+"Answer format > Answer columns" (observed 2026-10-18: a three-way 1 column / 2 columns /
+4 columns choice in each multiple-choice question's actions menu). In queShion the question's
+actions menu on the exam page has an **Answer format** row with the same three-segment switch
+(`examui::answer_columns_switch`, shared with the bank Pop-over).
+
+- Stored per exam item as `ExamItem.answer_columns` (serde default 1, not written when 1, so
+  exams saved before it load and save unchanged). 1 means the paper style's own layout: one
+  choice per line, or Condensed's automatic across-layout.
+- 2 and 4 print equal-width columns filled **column-major**, as Test Parrot does: 4 choices in
+  2 columns read A C / B D (`layout::choice_grid`). A long choice wraps inside its column, and a
+  row never splits across pages.
+- The page preview, the PDF (`DocQ.answer_columns`) and the DOCX (a borderless fixed-width
+  table) all follow it. True/false and matching questions keep their own layouts.
+
+## Print follows the page (round 7)
+
+The PDF and DOCX now lay the title area and pictures out the way the exam page preview does:
+
+- **Title area.** The header line (Name / Class / Date) at the top with a thin rule under it,
+  the title centred, then a muted centred "N questions · M points" line. Continuation pages
+  repeat the header line with its rule. Answer keys keep the plain title line.
+- **Pictures.** A question's picture prints at the stem's left edge (not centred), at its
+  natural size at 96 dpi, scaled down to the stem column and to at most 3 inches tall
+  (`layout::picture_size_pt`; the preview draws the same box). When the stem still has a
+  `[picture]` marker, the picture prints at the marker (text before, picture, text after), as
+  Test Parrot does; otherwise it prints under the stem, before choices and answer lines.
+- **Blanks.** A `___` run (three or more underscores) prints at least 4.5 em long, the width the
+  preview draws a blank; longer runs keep their length (`export::widen_blanks`). Plain stems with
+  blanks now also take the preview's rich path, so the blank shows as a writing line on screen.
+- Points labels keep each style's placement (`(2 points)` at the right; `[2]` on Exam Board),
+  as documented in the table above; the preview's inline "(2 pts)" is a screen-only cue.
+
+Pagination check (2026-10-18): the 16 fixture exams (the P2 fixtures in all four styles)
+were exported before and after. All 16 compact-list keys are byte-identical. 9 of the 16 exams
+keep every question on the same page; 7 move by one question at a page break, all because
+pictures are now smaller (the fixture's 637x512 diagram printed 368 pt wide, now 268 x 216 pt)
+or because of the taller title area. Quiz 5A Standard now breaks before question 4, the same
+place the page preview breaks.
+
+## DOCX pictures (round 7)
+
+The DOCX embeds each question's picture as an inline drawing (`word/media/imageN.png|jpeg`,
+an image relationship and the content type), sized and placed as in the PDF. PNG and JPEG embed
+byte for byte; other formats are re-encoded to PNG. Only a picture whose bytes do not decode
+prints the `[picture]` placeholder; `[picture]` markers left in a stem without a picture still
+print as written.
+
+## Answer key layouts (round 7)
+
+The export dialog has a **Key layout** choice under "Answer key":
+
+- **Answer section** (the default, Test Parrot's printed key): the title, "Answer Section",
+  each section's title (or "Section N"), then every question's number with a short blank and
+  the answer written on it: the letter(s) for multiple choice, True/False, one blank per left
+  item for matching. Written answers (short answer, fill-in, multipart) print under an empty
+  blank.
+- **Marked test**: the whole test as the students get it, with the correct choices checked and
+  in bold, and "Answer: ..." printed before the answer lines of written questions.
+- **Compact list**: the original "N. answer" lines.
+
+The layout is stored in the `.doc.json` snapshot (`key_layout`, default list), so snapshots
+written before round 7 regenerate exactly as they printed. The headless hook takes
+`QUESHION_KEY_LAYOUT=list|section|marked` (default section) and also writes `key.docx`.
+The export dialog now also has a **Cancel** button and a note that Export History is kept only
+on this computer and is not an archival backup (Test Parrot's wording, adapted). The Exams
+screen's card menu has **Open** above Rename and Delete, as on Test Parrot.

@@ -802,13 +802,15 @@ fn side_by_side_blocks_and_ops() {
 fn slash_menu_filters_and_contexts() {
     let names = |q: &str, w: SlashWhere| slash_matches(q, w).iter().map(|i| i.name).collect::<Vec<_>>();
     assert_eq!(names("si", SlashWhere::Top), vec!["Side by side"]);
-    assert_eq!(names("head", SlashWhere::Top), vec!["Heading 1", "Heading 2", "Heading 3"]);
+    assert_eq!(names("head", SlashWhere::Top), vec!["Heading 1", "Heading 2", "Heading 3", "Heading 4", "Heading 5", "Heading 6"]);
     assert!(names("", SlashWhere::Top).len() == SLASH_ITEMS.len());
     assert!(!names("", SlashWhere::Panel).contains(&"Side by side"));
     assert_eq!(names("", SlashWhere::Cell), vec!["Image placeholder", "Math"]);
     assert_eq!(names("eq", SlashWhere::Top), vec!["Math"]);
     assert_eq!(names("di", SlashWhere::Top), vec!["Divider", "Image placeholder"]);
-    assert_eq!(names("li", SlashWhere::Top), vec!["Divider", "Bullet list", "Numbered list"]);
+    assert_eq!(names("li", SlashWhere::Top), vec!["Divider", "Bullet list", "Numbered list", "Task list"]);
+    assert_eq!(names("task", SlashWhere::Top), vec!["Task list"]);
+    assert_eq!(names("h5", SlashWhere::Top), vec!["Heading 5"]);
     assert!(names("zzz", SlashWhere::Top).is_empty());
 }
 
@@ -921,4 +923,292 @@ fn links_show_styled_and_survive_formatting() {
     assert_eq!(richtext::inline(&b).iter().filter(|s| s.link.is_some()).count(), 2);
     assert!(inline_op(text, 5, 8, IOp::Italic).is_none());
     assert_eq!(link_spans("x\n[a](https://a.org) [b](http://b.org)"), vec![(2, 4, 19), (21, 23, 37)]);
+}
+
+
+// ---------------------------------------------------------------------------------------
+// Round 7: inline code, centring, list nesting, task items, Heading 4-6, the block rail
+// ---------------------------------------------------------------------------------------
+
+/// Stems that also use round-7 markup: centred groups (sometimes unclosed, sometimes in a
+/// panel), nested bullet / numbered items, task items and inline code.
+fn stem_r7(r: &mut Rng) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    for _ in 0..r.below(6) + 1 {
+        let inl = |r: &mut Rng| {
+            let mut t = markup(r, 4).replace('\n', " ");
+            if r.below(3) == 0 {
+                t.push_str(r.pick(&[" `code`", " `a*b*`", "`x`", " ` y`", " it`s"]));
+            }
+            t
+        };
+        match r.below(8) {
+            0 | 1 => {
+                lines.push("::: center".to_string());
+                for _ in 0..r.below(3) + 1 {
+                    match r.below(3) {
+                        0 => lines.push(format!("## {}", inl(r))),
+                        _ => lines.push(format!("word {}", inl(r))),
+                    }
+                }
+                if r.below(6) > 0 {
+                    lines.push(":::".to_string());
+                }
+            }
+            2 | 3 => {
+                let mark = if r.below(2) == 0 { "• " } else { "1. " };
+                let box_ = if r.below(3) == 0 && mark == "• " { "☐ " } else { "" };
+                let mut depth = 0usize;
+                for k in 0..r.below(5) + 1 {
+                    if k > 0 {
+                        depth = match r.below(3) {
+                            0 => depth + 1,
+                            1 => depth.saturating_sub(1),
+                            _ => depth,
+                        };
+                    }
+                    lines.push(format!("{}{mark}{box_}{}", "  ".repeat(depth), inl(r)));
+                }
+            }
+            4 => {
+                lines.push("::: side".to_string());
+                lines.push("::: center".to_string());
+                lines.push(format!("left {}", inl(r)));
+                lines.push(":::".to_string());
+                lines.push("::: next".to_string());
+                lines.push(format!("right {}", inl(r)));
+                lines.push(":::".to_string());
+            }
+            5 => lines.push(String::new()),
+            _ => lines.extend(stem_ext(r).split('\n').map(str::to_string)),
+        }
+    }
+    lines.join("\n")
+}
+
+#[test]
+fn property_r7_units_reassemble_and_self_check() {
+    let mut r = Rng(0x7_0007_cafe);
+    let (mut centred, mut nested) = (0, 0);
+    for _ in 0..12_000 {
+        let s = stem_r7(&mut r);
+        let d = doc(&s, true);
+        centred += d.blocks.iter().filter(|b| b.center.is_some()).count();
+        nested += d.blocks.iter().filter(|b| matches!(b.kind, BlockKind::List(_)) && block_depths(&s, b).iter().any(|&x| x > 0)).count();
+        assert_eq!(reassemble(&s, &d), s);
+        assert_eq!(check(&s), Ok(()), "self-check failed on {s:?}");
+        for b in &d.blocks {
+            if let Some(g) = &b.center {
+                assert!(g.start < b.lines.start && b.lines.end < g.end, "{s:?} {b:?}");
+                assert!(d.fences.contains(&g.start) && d.fences.contains(&(g.end - 1)));
+            }
+        }
+    }
+    assert!(centred > 3_000 && nested > 1_000, "{centred} {nested}");
+}
+
+#[test]
+fn property_r7_ops_keep_the_editor_consistent() {
+    let mut r = Rng(0xb10c_0b5);
+    let mut moved = 0;
+    for _ in 0..6_000 {
+        let s = stem_r7(&mut r);
+        let d = doc(&s, true);
+        let flat = d.flat();
+        let fi = r.below(flat.len());
+        let u = d.unit(flat[fi]).clone();
+        let n = u.end - u.start;
+        let (a, b) = (r.below(n + 1), r.below(n + 1));
+        let (ga, gb) = (d.global(&u, a), d.global(&u, b));
+        let text = slice(&s, u.start..u.end);
+        let mut outs: Vec<String> = Vec::new();
+        if u.virt.is_none()
+            && let Some((t, x, y)) = code_op(&text, a, b)
+        {
+            assert!(x <= y && y <= clen(&t), "{text:?} -> {t:?}");
+            outs.push(apply_unit(&s, &u, &t));
+        }
+        for c in [
+            center_op(&s, &d, fi, (ga, gb)),
+            indent_op(&s, &d, fi, (ga, gb), true),
+            indent_op(&s, &d, fi, (ga, gb), false),
+            toggle_task(&s, &d, fi, (ga, gb)),
+            make_task(&s, &d, fi, gb),
+            enter_op(&s, &d, fi, a.min(b), a.max(b), true),
+            backspace_op(&s, &d, fi),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            assert!(c.caret <= clen(&c.stem) + 1, "{s:?} -> {c:?}");
+            outs.push(c.stem);
+        }
+        let blocks = rail_blocks(&s);
+        if !blocks.is_empty() {
+            let (from, to) = (r.below(blocks.len()), r.below(blocks.len() + 1));
+            if let Some(c) = move_block(&s, from, to) {
+                moved += 1;
+                // the same blocks, in the new order
+                let text_of = |st: &str, rg: &Range<usize>| st.split('\n').collect::<Vec<_>>()[rg.clone()].join("\n");
+                let mut want: Vec<String> = blocks.iter().map(|(_, rg)| text_of(&s, rg)).collect();
+                let mut got: Vec<String> = rail_blocks(&c.stem).iter().map(|(_, rg)| text_of(&c.stem, rg)).collect();
+                want.sort();
+                got.sort();
+                assert_eq!(want, got, "{s:?} move {from} -> {to}: {:?}", c.stem);
+                outs.push(c.stem);
+            }
+            if let Some((c, g)) = plus_op(&s, r.below(blocks.len())) {
+                assert_eq!(slice(&c.stem, g..g + 1), "/");
+                outs.push(c.stem);
+            }
+        }
+        for o in outs {
+            assert_eq!(check(&o), Ok(()), "{s:?} -> {o:?}");
+        }
+    }
+    assert!(moved > 1_000, "{moved}");
+}
+
+#[test]
+fn inline_code_button() {
+    // wrap a word, then unwrap it
+    let (t, x, y) = code_op("Use print here", 4, 9).unwrap();
+    assert_eq!((t.as_str(), x, y), ("Use `print` here", 5, 10));
+    let (t2, ..) = code_op(&t, 6, 6 + 1).unwrap();
+    assert_eq!(t2, "Use print here");
+    // edge spaces stay outside; inside bold it stays bold
+    assert_eq!(code_op("**a bc d**", 3, 7).unwrap().0, "**a `bc` d**");
+    // a bare caret does nothing; markers, equations, links and blanks cannot be code
+    assert!(code_op("abc", 1, 1).is_none());
+    assert!(code_op("**a** b", 0, 7).is_none());
+    assert!(code_op("x $y$ z", 0, 7).is_none());
+    assert!(code_op("[l](https://a.org) x", 0, 20).is_none());
+    assert!(code_op("fill ___ in", 0, 11).is_none());
+    // the editor keeps code whole: bold over it does not cut into it
+    let (b, ..) = inline_op("a `x*y` b", 0, 9, IOp::Bold).unwrap();
+    assert!(richtext::inline(&b).iter().any(|sp| sp.code && sp.text == "x*y" && sp.bold), "{b:?}");
+    let ana = analyze("a `c` d", &ok_math);
+    assert_eq!(ana.code, vec![false, false, false, true, false, false, false]);
+}
+
+#[test]
+fn centring_paragraphs_and_headings() {
+    let s = "Intro line\nsecond\n\nOther";
+    let d = doc(s, true);
+    let c = center_op(s, &d, 0, (3, 3)).unwrap();
+    assert_eq!(c.stem, "::: center\nIntro line\nsecond\n:::\n\nOther");
+    assert_eq!(c.caret, 3 + 11);
+    assert_eq!(check(&c.stem), Ok(()));
+    let d2 = doc(&c.stem, true);
+    let fi = d2.find(c.caret, None).unwrap();
+    assert!(is_centered(&d2, fi));
+    // again: the centring goes
+    let back = center_op(&c.stem, &d2, fi, (c.caret, c.caret)).unwrap();
+    assert_eq!((back.stem.as_str(), back.caret), (s, 3));
+    // a heading; a selection over two paragraphs takes both
+    let h = "# Title\nbody";
+    let dh = doc(h, true);
+    assert_eq!(center_op(h, &dh, unit_of(&dh, |u| matches!(u.kind, UKind::Head { .. })), (3, 3)).unwrap().stem, "::: center\n# Title\n:::\nbody");
+    let two = "a\n\nb\n\nc";
+    let dt = doc(two, true);
+    assert_eq!(center_op(two, &dt, 0, (0, 3)).unwrap().stem, "::: center\na\n\nb\n:::\n\nc");
+    // Enter at the end of the centred group's last line: a plain paragraph after it
+    let cs = "::: center\nTitle\n:::\nnext";
+    let dc = doc(cs, true);
+    let fi = dc.find(16, None).unwrap();
+    let e = enter_op(cs, &dc, fi, 5, 5, true).unwrap();
+    assert_eq!(e.stem, "::: center\nTitle\n:::\n\n\nnext");
+    assert_eq!(e.caret, 21);
+    assert!(!is_centered(&doc(&e.stem, true), doc(&e.stem, true).find(e.caret, None).unwrap()));
+}
+
+#[test]
+fn list_nesting_with_tab() {
+    let s = "• a\n• b\n• c";
+    let d = doc(s, true);
+    let b = unit_of(&d, |u| matches!(u.kind, UKind::Item { line: 1, .. }));
+    // the first item cannot go in
+    assert!(indent_op(s, &d, 0, (2, 2), true).is_none());
+    let t = indent_op(s, &d, b, (7, 7), true).unwrap();
+    assert_eq!(t.stem, "• a\n  • b\n• c");
+    assert_eq!(t.caret, 9);
+    let dt = doc(&t.stem, true);
+    // once nested it cannot go two levels below the item above
+    assert!(indent_op(&t.stem, &dt, b, (9, 9), true).is_none());
+    let back = indent_op(&t.stem, &dt, b, (9, 9), false).unwrap();
+    assert_eq!((back.stem.as_str(), back.caret), (s, 7));
+    // children move with their item; numbers count per level
+    let n = "1. a\n2. b\n  1. b1\n  2. b2\n3. c";
+    let dn = doc(n, true);
+    let bi = unit_of(&dn, |u| matches!(u.kind, UKind::Item { line: 1, .. }));
+    let g = dn.unit(dn.flat()[bi]).start;
+    assert_eq!(indent_op(n, &dn, bi, (g, g), true).unwrap().stem, "1. a\n  1. b\n    1. b1\n    2. b2\n2. c");
+    // Enter on an empty nested item moves it out; Backspace at its start too
+    let e = "• a\n  • ";
+    let de = doc(e, true);
+    let fi = unit_of(&de, |u| matches!(u.kind, UKind::Item { line: 1, .. }));
+    assert_eq!(enter_op(e, &de, fi, 0, 0, true).unwrap().stem, "• a\n• ");
+    assert_eq!(backspace_op("• a\n  • x", &doc("• a\n  • x", true), fi).unwrap().stem, "• a\n• x");
+    assert_eq!(item_depth("• a\n  • x", &doc("• a\n  • x", true), fi), Some(1));
+}
+
+#[test]
+fn task_items_tick_continue_and_end() {
+    let s = "• ☐ milk\n• ☑ eggs";
+    let d = doc(s, true);
+    let item = |d: &Doc, l: usize| unit_of(d, |u| matches!(u.kind, UKind::Item { line, .. } if line == l));
+    let t = toggle_task(s, &d, item(&d, 0), (4, 4)).unwrap();
+    assert_eq!(t.stem, "• ☑ milk\n• ☑ eggs");
+    let dt = doc(&t.stem, true);
+    assert_eq!(toggle_task(&t.stem, &dt, item(&dt, 1), (0, 0)).unwrap().stem, "• ☑ milk\n• ☐ eggs");
+    // Enter continues with an open box; Enter on an empty task item leaves the list
+    let e = enter_op(s, &d, item(&d, 0), 6, 6, true).unwrap();
+    assert_eq!((e.stem.as_str(), e.caret), ("• ☐ milk\n• ☐ \n• ☑ eggs", 13));
+    let de = doc(&e.stem, true);
+    let fi = de.find(e.caret, None).unwrap();
+    assert_eq!(enter_op(&e.stem, &de, fi, 2, 2, true).unwrap().stem, "• ☐ milk\n\n• ☑ eggs");
+    // the slash menu's Task list
+    let k = slash_apply("Buy\n/ta", 4, 7, Slash::Task, false).unwrap().change;
+    assert_eq!((k.stem.as_str(), k.caret), ("Buy\n• ☐ ", 8));
+    assert_eq!(slash_apply("• x/", 3, 4, Slash::Task, false).unwrap().change.stem, "• ☐ x");
+    assert_eq!(task_state("☐ a"), Some(false));
+    assert_eq!(task_state("☑"), Some(true));
+    assert_eq!(task_state("☐a"), None);
+}
+
+#[test]
+fn minor_headings_from_the_slash_menu() {
+    let run = |s: &str, at: usize, cmd| slash_apply(s, at, at + 3, cmd, false).unwrap().change;
+    let h4 = run("Intro\n/h4", 6, Slash::H4);
+    assert_eq!(h4.stem, "Intro\n**Heading 4**");
+    assert_eq!(slice(&h4.stem, h4.anchor..h4.caret), "Heading 4");
+    assert_eq!(run("Gas laws /h5", 9, Slash::H5).stem, "***Gas laws***");
+    assert_eq!(run("## Old /h6", 7, Slash::H6).stem, "*Old*");
+    // they print as P3 imports h4-h6 do (formats::heading_markup)
+    for (lvl, mark) in [(4u8, "**"), (5, "***"), (6, "*")] {
+        assert_eq!(minor_heading_line("Rates", lvl).unwrap().0, format!("{mark}Rates{mark}"));
+    }
+}
+
+#[test]
+fn moving_blocks_keeps_every_block_intact() {
+    let s = "First para\n• one\n• two\n\nLast para";
+    // the list up: a blank line keeps the paragraphs apart where they would merge
+    let up = move_block(s, 1, 0).unwrap();
+    assert_eq!(up.stem, "• one\n• two\nFirst para\n\nLast para");
+    assert_eq!(up.caret, 0);
+    let down = move_block(s, 0, 3).unwrap();
+    assert_eq!(down.stem, "• one\n• two\n\nLast para\n\nFirst para");
+    // a numbered list moved under a paragraph gets a blank line (else the paragraph eats it)
+    let n = "1. a\n2. b\n\nText";
+    assert_eq!(move_block(n, 0, 2).unwrap().stem, "Text\n\n1. a\n2. b");
+    // no-ops
+    assert!(move_block(s, 1, 1).is_none() && move_block(s, 1, 2).is_none() && move_block(s, 7, 0).is_none());
+    // Alt+Up keeps the caret's place inside the moved block (via the editor), and "+" adds a
+    // slash line under a block
+    let (p, g) = plus_op(s, 1).unwrap();
+    assert_eq!(p.stem, "First para\n• one\n• two\n\n/\n\nLast para");
+    assert_eq!((g, p.caret), (24, 25));
+    let (p2, _) = plus_op("a", 0).unwrap();
+    assert_eq!(p2.stem, "a\n\n/");
 }

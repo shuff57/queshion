@@ -10,10 +10,18 @@
 //!    line, or a sentence ending before a capitalised one) gets real line breaks back.
 //! 2. **Spacing.** Windows line endings, trailing spaces, runs of empty lines and empty lines
 //!    at the start or end.
-//! 3. **Hard wraps.** A long prose line that stops mid-sentence (no closing punctuation) and is
-//!    followed by a prose line starting in lowercase is one line that a PDF wrapped: rejoined.
+//! 3. **Hard wraps.** A long prose line that stops mid-sentence (no closing punctuation; a
+//!    trailing comma counts as mid-sentence) and is followed by a prose line starting in
+//!    lowercase is one line that a PDF wrapped: rejoined. A word the PDF split at the line end
+//!    ("electro-" / "negative") is rejoined without its hyphen, unless it is a compound
+//!    ("self-assembled", "water-based", or a hyphenated form the stem uses elsewhere).
 //! 4. **Tables.** The label-repeating table of blanks (`KI | Ionic or Covalent? ___ | Name ___`,
 //!    header rows carrying blanks): [`crate::ditto::normalize_tables`], the import's own fix.
+//!
+//! Round-7 markup is current markup and is left alone: list items indented under an item
+//! (`  • child`) keep their indentation, `::: center` / `:::` fence lines are never joined
+//! to a neighbour, and `` `code` `` spans are literal (a ` — ` inside one is not a joiner, a
+//! line ending in one is not unwrapped into the next).
 //!
 //! A stem that is already clean comes back byte for byte (property-tested below). Fill-in-the-
 //! blank answers stay one per `___`: when a table fix removes a header row's stray blanks the
@@ -137,11 +145,41 @@ fn starts_line(seg: &str) -> bool {
     seg.trim_start().chars().next().is_some_and(|c| c.is_uppercase() || c.is_ascii_digit() || c == '(')
 }
 
+/// Char ranges of a line's `` `code` `` spans, backticks included (`richtext::inline_runs`).
+fn code_ranges(line: &str) -> Vec<std::ops::Range<usize>> {
+    if !line.contains('`') {
+        return Vec::new();
+    }
+    richtext::inline_runs(line).iter().filter(|r| r.code).map(|r| r.start.saturating_sub(1)..r.end + 1).collect()
+}
+
+/// Is char `i` of the line inside one of its code spans?
+fn in_code(ranges: &[std::ops::Range<usize>], i: usize) -> bool {
+    ranges.iter().any(|r| r.contains(&i))
+}
+
+/// The pieces of a one-line stem between its ` — ` joiners (a joiner inside a code span is
+/// code, not a joiner).
+fn joiner_pieces(s: &str) -> Vec<&str> {
+    let code = code_ranges(s);
+    let mut out = Vec::new();
+    let mut from = 0;
+    for (b, _) in s.match_indices(JOINER) {
+        if b < from || in_code(&code, s[..b].chars().count()) {
+            continue;
+        }
+        out.push(&s[from..b]);
+        from = b + JOINER.len();
+    }
+    out.push(&s[from..]);
+    out
+}
+
 fn split_joiners(s: &str) -> String {
     if s.contains('\n') || !s.contains(JOINER) {
         return s.to_string();
     }
-    let segs: Vec<&str> = s.split(JOINER).collect();
+    let segs: Vec<&str> = joiner_pieces(s);
     let mut out = segs[0].to_string();
     for w in segs.windows(2) {
         let (a, b) = (w[0], w[1]);
@@ -198,24 +236,76 @@ fn prose(l: &str) -> bool {
     joinable_text(l).is_some_and(|t| t.len() == l.len()) && richtext::bullet(l).is_none() && richtext::numbered(l).is_none() && richtext::quote(l).is_none()
 }
 
+/// Words that keep their hyphen when a line breaks right after them ("self-", "well-"): they
+/// start compounds, not syllables.
+const COMPOUND_HEADS: &[&str] = &["self", "well", "ill", "all", "half", "ex", "cross", "non", "anti", "pre", "post", "co", "re", "high", "low", "long", "short", "so", "one", "two", "three", "four", "first", "second", "third"];
+/// Words that keep the hyphen in front of them ("water-based", "salt-like").
+const COMPOUND_TAILS: &[&str] = &["based", "like", "free", "related", "dependent", "independent", "specific", "sized", "shaped", "known", "level", "term", "rich", "poor", "soluble", "containing", "bonded", "neutral"];
+
+/// How a line that ends in a hyphen joins the next one: `Some(true)` drops the hyphen (a word
+/// a PDF split at a syllable: "electro-" + "negative"), `Some(false)` keeps it (a compound:
+/// "self-" + "assembled", or a hyphenated form the text uses elsewhere), `None` when the line
+/// does not end in a word-hyphen at all.
+fn hyphen_join(prev: &str, next: &str, whole: &str) -> Option<bool> {
+    let p = prev.trim_end();
+    let head = p.strip_suffix('-')?;
+    let left: String = head.chars().rev().take_while(|c| c.is_alphabetic()).collect::<Vec<_>>().into_iter().rev().collect();
+    // "--", " -", "5-": not a word broken at the line end.
+    if left.chars().count() < 2 || head.ends_with('-') {
+        return None;
+    }
+    let right: String = next.trim_start().chars().take_while(|c| c.is_alphabetic()).collect();
+    if right.is_empty() || !right.chars().next().is_some_and(char::is_lowercase) {
+        return None;
+    }
+    let (l, r) = (left.to_lowercase(), right.to_lowercase());
+    let lower = whole.to_lowercase();
+    if lower.contains(&format!("{l}-{r}")) {
+        return Some(false);
+    }
+    if lower.contains(&format!("{l}{r}")) {
+        return Some(true);
+    }
+    Some(!(COMPOUND_HEADS.contains(&l.as_str()) || COMPOUND_TAILS.contains(&r.as_str())))
+}
+
 fn unwrap_lines(s: &str) -> String {
+    let lines: Vec<&str> = s.split('\n').collect();
     let mut out: Vec<String> = Vec::new();
-    for l in s.split('\n') {
-        let join = out.last().is_some_and(|p| {
-            joinable_text(p).is_some_and(|t| {
-                let t = t.trim_end();
-                t.chars().count() >= 40 && !t.ends_with(['.', '?', '!', ':', ';', ')', ']', '"', '”', '’', '\'', '-', '—', '–', ','])
-            }) && prose(l)
-                && l.trim_start().chars().next().is_some_and(char::is_lowercase)
-        });
-        if join {
-            let p = out.last_mut().unwrap();
-            let keep = p.trim_end().len();
-            p.truncate(keep);
-            p.push(' ');
-            p.push_str(l.trim_start());
-        } else {
-            out.push(l.to_string());
+    for l in lines {
+        let next_ok = prose(l) && l.trim_start().chars().next().is_some_and(char::is_lowercase);
+        let mut how: Option<Option<bool>> = None; // Some(None) = join with a space
+        if let Some(p) = out.last() {
+            if next_ok {
+                if let Some(t) = joinable_text(p) {
+                    let t = t.trim_end();
+                    // A line that ends in a code span is not a wrapped sentence.
+                    let ends_in_code = t.ends_with('`') && in_code(&code_ranges(p.trim_end()), p.trim_end().chars().count() - 1);
+                    if t.chars().count() >= 40 && !ends_in_code {
+                        if let Some(drop) = hyphen_join(t, l, s) {
+                            how = Some(Some(drop));
+                        } else if !t.ends_with(['.', '?', '!', ':', ';', ')', ']', '"', '”', '’', '\'', '-', '—', '–']) {
+                            how = Some(None);
+                        }
+                    }
+                }
+            }
+        }
+        match how {
+            Some(h) => {
+                let p = out.last_mut().unwrap();
+                let keep = p.trim_end().len();
+                p.truncate(keep);
+                match h {
+                    Some(true) => {
+                        p.pop(); // the hyphen
+                    }
+                    Some(false) => {}
+                    None => p.push(' '),
+                }
+                p.push_str(l.trim_start());
+            }
+            None => out.push(l.to_string()),
         }
     }
     out.join("\n")
@@ -566,10 +656,78 @@ mod tests {
         assert_eq!(tidy_stem(wrapped, &[]).stem, "A milliliter of cow's milk contains 0.026 g of casein protein. How many grams are in a cup?");
         let bullet = "• Draw a valid Lewis structure for each of the\nmolecules below.";
         assert_eq!(tidy_stem(bullet, &[]).stem, "• Draw a valid Lewis structure for each of the molecules below.");
+        // A trailing comma is mid-sentence too.
+        let comma = "Of the following compounds, the ones that are ionic,\nwhich are listed first, are named below.";
+        assert_eq!(tidy_stem(comma, &[]).stem, "Of the following compounds, the ones that are ionic, which are listed first, are named below.");
         // Short lines, finished sentences, capitals, blanks and tables are never joined.
         for s in ["a. NH₃\nnumber of clouds", "Show each step explicitly, with units included.\nanswer with units", "Number of charge clouds: ___\nmolecule shape", "This line is long enough to be a wrapped one\nBut the next starts with a capital", "Formula | Name\nKI | potassium iodide"] {
             assert_eq!(tidy_stem(s, &[]).stem, s, "{s}");
         }
+    }
+
+    #[test]
+    fn hyphenated_wraps_rejoin_without_the_syllable_hyphen() {
+        let cases = [
+            // a word a PDF split at a syllable
+            ("Which of the following elements is the least electro-\nnegative of the four?", "Which of the following elements is the least electronegative of the four?"),
+            // a bullet's text
+            ("• Determine whether each molecule is polar or non-\npolar in water.", "• Determine whether each molecule is polar or non-polar in water."),
+            // compounds keep the hyphen
+            ("Describe how a self-assembled monolayer forms on a self-\nassembled surface.", "Describe how a self-assembled monolayer forms on a self-assembled surface."),
+            ("Explain why paint that is mostly water-based is safer than paint that is oil-\nbased today.", "Explain why paint that is mostly water-based is safer than paint that is oil-based today."),
+            // the stem spells the word joined elsewhere: drop the hyphen even after a compound head
+            ("Nonpolar molecules dissolve in other nonpolar solvents; name a non-\npolar one.", "Nonpolar molecules dissolve in other nonpolar solvents; name a nonpolar one."),
+            ("A milliliter of cow's milk contains 0.026 g of ca-\nsein protein. How many grams?", "A milliliter of cow's milk contains 0.026 g of casein protein. How many grams?"),
+        ];
+        for (a, b) in cases {
+            let t = tidy_stem(a, &[]);
+            assert_eq!(t.stem, b, "{a}");
+            assert_eq!(t.fixes, vec![Fix::Wraps], "{a}");
+            assert_eq!(tidy_stem(&t.stem, &[]).stem, t.stem, "idempotent: {a}");
+        }
+        // Not a word broken at the line end, or nothing to join onto: unchanged.
+        for s in [
+            "Short line ending in a hyphen elec-\ntronegative",                      // too short to be wrapped
+            "The temperature range for this experiment is 5 -\nten degrees Celsius", // spaced dash
+            "The temperature range for this experiment is from 5-\n10 degrees Celsius", // digits
+            "A long line of prose that ends in a double dash--\nthen continues here",
+            "A long line of prose that ends in a broken word Electro-\nNegative",       // capital next
+            "A long line of prose that ends in a broken word here: ___ elec-\ntro",      // blank on the line
+        ] {
+            assert_eq!(tidy_stem(s, &[]).stem, s, "{s}");
+        }
+    }
+
+    #[test]
+    fn round7_markup_is_left_alone() {
+        for s in [
+            // nested list items keep their indentation (2 spaces or a tab per level)
+            "• Parent item that is long enough to look like a wrapped line\n  • child item that is long enough to look like a wrapped line\n    • grandchild",
+            "1. First step of the procedure, which is quite long indeed\n  1. sub step that continues the line above in lowercase\n  2. another sub step",
+            "• Parent\n\t• tab-indented child",
+            // centre fences are never joined to their neighbours
+            "Simplify the expression below and show every step of your work\n::: center\nthe expression to simplify goes here on its own line\n:::\nand then write the answer underneath it",
+            "::: center\n## Part A\n:::",
+            // code spans are literal
+            "Type this command exactly as it is printed: `echo. — Done` and press Enter.",
+            "Type the command that lists every file, including hidden ones: `ls -la`\nand explain what each column of the output shows.",
+            "In Python a line that ends in a hyphen inside code like `x = a -`\nnegative numbers follow",
+            // task items
+            "• ☐ Goggles on\n• ☑ Gloves on",
+        ] {
+            let t = tidy_stem(s, &[]);
+            assert_eq!(t.stem, s, "{s:?}");
+            assert!(t.fixes.is_empty(), "{s:?}");
+        }
+        // Old messes around round-7 markup are still fixed, the markup kept.
+        let s = "Name these:  \r\n• Parent item\r\n  • child item  \r\n\r\n\r\n::: center\r\n`H2O`\r\n:::";
+        assert_eq!(tidy_stem(s, &[]).stem, "Name these:\n• Parent item\n  • child item\n\n::: center\n`H2O`\n:::");
+        let s = "Use the formula `a — b` — • Step one — • Step two";
+        assert_eq!(tidy_stem(s, &[]).stem, "Use the formula `a — b`\n• Step one\n• Step two");
+        // A wrapped prose line inside a centred group still unwraps (it is one paragraph).
+        let s = "::: center\nA long centred sentence of prose that a PDF has wrapped onto\ntwo lines here.\n:::";
+        assert_eq!(tidy_stem(s, &[]).stem, "::: center\nA long centred sentence of prose that a PDF has wrapped onto two lines here.\n:::");
+        assert!(richtext::uses_r7(&tidy_stem(s, &[]).stem));
     }
 
     // ---------- properties ----------
@@ -612,6 +770,14 @@ mod tests {
             "---",
             "::: side\nLeft panel.\n::: next\nRight panel.\n:::",
             "Number of charge clouds: ___\nMolecule shape: ___",
+            // round 7
+            "• Parent item.\n  • Child item.\n    • Grandchild item.",
+            "1. One\n  1. Sub one, which is long enough to be a wrapped line\n  2. sub two",
+            "::: center\nCentred text.\n:::",
+            "::: center\nthe centred line that is long enough to look wrapped\n:::",
+            "Run `ls -la` — then read it.",
+            "Type the command that lists every hidden file here: `ls -la`\nand explain it.",
+            "• ☐ Milk\n• ☑ Eggs",
         ];
         let n = 1 + (r.next() % 5) as usize;
         let mut out = String::new();
@@ -640,7 +806,8 @@ mod tests {
         const TOK: &[&str] = &[
             "Formula | Ionic or Covalent? ___ | Name ___", "KI | Ionic or Covalent? ___ | Name ___", "NO | ___ | ___", "Name ___", " | ",
             "___", "______", " — ", " — ", "\n", "\n", "\n\n\n", "  ", "\r\n", "• ", "1. ", "> ", "# ", "---", "::: side", "::: next", ":::",
-            "this is a fairly long line of prose that wraps", "continues here", "A long wrapped sentence of prose that keeps going on\nand on until", "\nand more", "Capital", ".", ":", "?", "word", "a", " ", "|", "$x$", "**b**",
+            "this is a fairly long line of prose that wraps", "continues here", "A long wrapped sentence of prose that keeps going on\nand on until", "\nand more", "A long wrapped sentence of prose that breaks a word in electro-", "negative", "-", "self-", "\nassembled", "Capital", ".", ":", "?", "word", "a", " ", "|", "$x$", "**b**",
+            "::: center", "`code`", "`a — b`", "`x-`", "  • ", "\t• ", "    ",
         ];
         let n = (r.next() % 30) as usize;
         (0..n).map(|_| r.pick(TOK)).collect()

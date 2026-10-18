@@ -27,7 +27,7 @@
 //! * `key_text` may carry the same markup (lines, inline styles); the key prints it.
 
 /// A raster image resolved (with `store::media_path`) by the exam worker; the exporters
-/// re-encode to JPEG for the PDF and print `[picture]` in the DOCX.
+/// re-encode to JPEG for the PDF and embed it as an inline drawing in the DOCX.
 #[derive(Clone, Debug)]
 pub struct DocImage {
     pub bytes: Vec<u8>,
@@ -61,6 +61,86 @@ pub struct DocQ {
     /// `text` entry k (the parts are then split into one entry each, entry 0 holding the
     /// stem and part a). Empty (the default) for every other question.
     pub space_after: Vec<u8>,
+    /// Multiple choice: columns the choices print across in (Test Parrot's 1 / 2 / 4 switch,
+    /// `model::ExamItem::answer_columns`). 0 or 1 (the default) = the paper style's own
+    /// layout (one per line; Condensed's automatic across-layout). 2..=4 = that many equal
+    /// columns, filled column-major ([`choice_grid`]), each choice wrapping inside its column.
+    pub answer_columns: u8,
+    /// Indices of the correct `choices` (multiple choice / true-false), for the marked answer
+    /// key ([`KeyLayout::Marked`]). Empty = none known.
+    pub correct: Vec<usize>,
+    /// The short answers an answer section writes on its blanks, one per printed number:
+    /// `["C"]`, `["True"]`, matching `["B", "A", ...]` (one per left item). Empty for written
+    /// answers (the key then prints `key_text` under an empty blank).
+    pub key_marks: Vec<String>,
+    /// No answer room at all: no default ruled lines (short answer, fill-in), no work space.
+    /// The bank-file PDF sets it; exams leave it false.
+    pub no_answer_space: bool,
+}
+
+/// How the answer-key document lays out (the export dialog's choice).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum KeyLayout {
+    /// "N. answer" lines (the original key; also what a snapshot without the field means).
+    #[default]
+    List,
+    /// Test Parrot's printed key: the title, "Answer Section", section headings, and per
+    /// question its number and a blank with the answer written on it (letters, True/False,
+    /// matching letters); written answers print under an empty blank.
+    Section,
+    /// The whole test with the correct choices marked (check mark, bold, underlined) and the
+    /// expected answers printed in place of the answer lines.
+    Marked,
+}
+
+impl KeyLayout {
+    pub const ALL: [KeyLayout; 3] = [KeyLayout::Section, KeyLayout::Marked, KeyLayout::List];
+    pub fn label(self) -> &'static str {
+        match self {
+            KeyLayout::Section => "Answer section",
+            KeyLayout::Marked => "Marked test",
+            KeyLayout::List => "Compact list",
+        }
+    }
+}
+
+/// Printed size (pt) of a picture `w_px` x `h_px` in a column `avail_w` pt wide: its natural
+/// size at 96 dpi (0.75 pt per pixel), scaled down to the column width and to at most
+/// [`PICTURE_MAX_H_PT`] tall, never enlarged. The exam page preview draws the same box (times
+/// its pt-to-px factor) and the PDF prints it at the stem's left edge, so the two agree.
+pub fn picture_size_pt(w_px: u32, h_px: u32, avail_w: f64) -> (f64, f64) {
+    let (w, h) = (w_px.max(1) as f64, h_px.max(1) as f64);
+    let s = 0.75_f64.min(avail_w.max(36.0) / w).min(PICTURE_MAX_H_PT / h);
+    (w * s, h * s)
+}
+
+/// Tallest a question's picture prints (3 inches).
+pub const PICTURE_MAX_H_PT: f64 = 216.0;
+
+/// Splits a stem at its first `[picture]` / `[picture: ...]` marker: (text before, text after,
+/// with any later markers kept as written). None when the stem has no marker. The attached
+/// picture prints at that spot (Test Parrot puts it where the marker is).
+pub fn split_at_picture(stem: &str) -> Option<(String, String)> {
+    use crate::bankops::StemPart;
+    let parts = crate::bankops::split_pictures(stem);
+    let first = parts.iter().position(|p| matches!(p, StemPart::Picture(_)))?;
+    let text = |p: &StemPart| match p {
+        StemPart::Text(t) => t.clone(),
+        StemPart::Picture(None) => "[picture]".to_string(),
+        StemPart::Picture(Some(a)) => format!("[picture: {a}]"),
+    };
+    let before: Vec<String> = parts[..first].iter().map(text).collect();
+    let after: Vec<String> = parts[first + 1..].iter().map(text).collect();
+    Some((before.join("\n"), after.join("\n")))
+}
+
+/// Rows of choice indices for `n` choices in `cols` columns, filled column-major as Test
+/// Parrot does (4 choices in 2 columns: rows `[0, 2]`, `[1, 3]`, i.e. A C / B D). `cols` 0 or
+/// 1 gives one choice per row. A short last column leaves the trailing rows short.
+pub fn choice_grid(n: usize, cols: u8) -> Vec<Vec<usize>> {
+    let cols = (cols.max(1) as usize).min(n.max(1));
+    let rows = n.div_ceil(cols);
+    (0..rows).map(|r| (0..cols).map(|c| c * rows + r).filter(|&i| i < n).collect()).collect()
 }
 
 /// A section heading (title and directions; either may be empty).
@@ -105,6 +185,8 @@ pub struct ExamDoc {
     pub style: crate::model::PaperStyle,
     /// Per-side margins in mm; None = `margin_mm` on all four sides.
     pub margins: Option<crate::model::Margins>,
+    /// Answer-key documents only (`is_key`): the key's layout. Default `List`.
+    pub key_layout: KeyLayout,
 }
 
 impl ExamDoc {

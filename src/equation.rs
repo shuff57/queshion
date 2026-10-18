@@ -429,6 +429,8 @@ pub fn stem_ui_with(ui: &mut Ui, text: &str, size: f32, color: Color32, family: 
 pub(crate) struct Deco {
     pub strike: bool,
     pub under: bool,
+    /// `` `code` ``: a tint behind the (monospace) text.
+    pub code: bool,
 }
 
 /// The colour links show in on a background whose text is `ink` (dark blue on paper, light
@@ -438,19 +440,26 @@ pub(crate) fn link_color(ink: Color32) -> Color32 {
     if lum < 128.0 { Color32::from_rgb(0x0d, 0x45, 0xad) } else { Color32::from_rgb(0x8a, 0xb4, 0xf8) }
 }
 
+/// The tint behind `` `code` `` on a background whose text is `ink`.
+pub(crate) fn code_tint(ink: Color32) -> Color32 {
+    let lum = 0.3 * ink.r() as f32 + 0.59 * ink.g() as f32 + 0.11 * ink.b() as f32;
+    if lum < 128.0 { Color32::from_rgba_unmultiplied(0, 0, 0, 18) } else { Color32::from_rgba_unmultiplied(255, 255, 255, 26) }
+}
+
 fn word_galley(ui: &Ui, w: &str, font: &FontId, color: Color32, italics: bool, deco: Deco) -> Arc<Galley> {
     // A real italic face where the family has one; egui's slant only as the fallback.
     let (font, italics) = match italics.then(|| theme::italic_family(ui.ctx(), &font.family)).flatten() {
         Some(family) => (&FontId::new(font.size, family), false),
         None => (font, italics),
     };
-    if italics || deco.strike || deco.under {
+    if italics || deco.strike || deco.under || deco.code {
         let line = egui::Stroke::new((font.size / 14.0).max(1.0), color);
         let strikethrough = if deco.strike { line } else { egui::Stroke::NONE };
         let underline = if deco.under { line } else { egui::Stroke::NONE };
+        let background = if deco.code { code_tint(color) } else { Color32::TRANSPARENT };
         let job = egui::text::LayoutJob::single_section(
             w.to_string(),
-            egui::TextFormat { font_id: font.clone(), color, italics, strikethrough, underline, ..Default::default() },
+            egui::TextFormat { font_id: font.clone(), color, italics, strikethrough, underline, background, ..Default::default() },
         );
         ui.painter().layout_job(job)
     } else {
@@ -468,23 +477,27 @@ fn push_word(elems: &mut Vec<Elem>, ui: &Ui, w: &str, font: &FontId, color: Colo
 /// Words of `t` (each `\n` a hard break). With `blank_w`, runs of three or more `_` become
 /// writing lines that wide.
 #[allow(clippy::too_many_arguments)]
-fn push_text(elems: &mut Vec<Elem>, ui: &Ui, t: &str, font: &FontId, color: Color32, italics: bool, dy: f32, blank_w: Option<f32>) {
+fn push_text(elems: &mut Vec<Elem>, ui: &Ui, t: &str, font: &FontId, color: Color32, italics: bool, dy: f32, blank_w: Option<(f32, f32)>) {
     push_text_s(elems, ui, t, font, color, italics, Deco::default(), dy, blank_w);
 }
 
 /// [`push_text`] with strikethrough.
 #[allow(clippy::too_many_arguments)]
-fn push_text_s(elems: &mut Vec<Elem>, ui: &Ui, t: &str, font: &FontId, color: Color32, italics: bool, deco: Deco, dy: f32, blank_w: Option<f32>) {
+fn push_text_s(elems: &mut Vec<Elem>, ui: &Ui, t: &str, font: &FontId, color: Color32, italics: bool, deco: Deco, dy: f32, blank_w: Option<(f32, f32)>) {
     for (li, line) in t.split('\n').enumerate() {
         if li > 0 {
             elems.push(Elem::Break);
         }
         for w in split_words(line) {
             match blank_w {
-                Some(bw) if w.contains("___") => {
+                Some((bw, most)) if w.contains("___") => {
                     for (piece, is_blank) in split_blanks(w) {
                         if is_blank {
-                            elems.push(Elem::Blank { w: bw, breakable: piece.ends_with(' '), color });
+                            // at least the house blank; a longer run keeps its own length (as it
+                            // prints), never wider than the line
+                            let us = ui.painter().layout_no_wrap("_".to_string(), font.clone(), color).size().x;
+                            let own = piece.trim_end().chars().count() as f32 * us;
+                            elems.push(Elem::Blank { w: bw.max(own).min(most.max(bw)), breakable: piece.ends_with(' '), color });
                         } else {
                             push_word(elems, ui, piece, font, color, italics, deco, dy);
                         }
@@ -671,24 +684,51 @@ pub fn stem_ui_edit(ui: &mut Ui, text: &str, size: f32, color: Color32, family: 
 
 /// Draw parsed blocks at the cursor, `avail` wide. `top`: the stem's own blocks (the lead run
 /// goes before the first one); panels of a side-by-side group draw their blocks with `top` false.
-fn blocks_ui(ui: &mut Ui, rc: &mut RichCtx, blocks: &[crate::richtext::Block], avail: f32, top: bool) -> Option<EqHit> {
-    use crate::richtext::Block;
+fn blocks_ui(ui: &mut Ui, rc: &mut RichCtx, blocks: &[crate::richtext::Node], avail: f32, top: bool) -> Option<EqHit> {
+    use crate::richtext::{Block, Node};
     let o = rc.o;
     let size = o.size;
     let gap = size * 0.4;
     let leading = size * o.leading;
     let mut hit = None;
-    for (bi, block) in blocks.iter().enumerate() {
+    for (bi, node) in blocks.iter().enumerate() {
         if bi > 0 {
             ui.add_space(gap);
         }
         let first = bi == 0 && top;
-        if first && o.lead.is_some() && !matches!(block, Block::Para(_)) {
+        if first && o.lead.is_some() && !matches!(node, Node::Block { block: Block::Para(_), .. }) {
             let mut e = Vec::new();
             rc.lead_elems(ui, &mut e);
             rc.place(ui, &e, 0.0, avail);
             ui.add_space(gap * 0.5);
         }
+        let (block, depths) = match node {
+            Node::Block { block, center, depths } => {
+                // only paragraphs and headings centre (as the editor's Centre button does)
+                rc.center = *center && matches!(block, Block::Para(_) | Block::Heading(..));
+                (block, depths.as_slice())
+            }
+            Node::Side(panels) => {
+                rc.center = false;
+                let n = panels.len().max(1) as f32;
+                let col_gap = size * 1.2;
+                let w = ((avail - col_gap * (n - 1.0)) / n).max(size * 2.0);
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::ZERO;
+                    for (pi, p) in panels.iter().enumerate() {
+                        if pi > 0 {
+                            ui.add_space(col_gap);
+                        }
+                        ui.allocate_ui_with_layout(Vec2::new(w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                            ui.set_width(w);
+                            ui.spacing_mut().item_spacing = Vec2::ZERO;
+                            hit = hit.take().or(blocks_ui(ui, rc, p, w, false));
+                        });
+                    }
+                });
+                continue;
+            }
+        };
         match block {
             Block::Para(lines) => {
                 let mut e = Vec::new();
@@ -709,9 +749,14 @@ fn blocks_ui(ui: &mut Ui, rc: &mut RichCtx, blocks: &[crate::richtext::Block], a
                     Block::Numbered(_) => 1,
                     _ => 2,
                 };
-                let indent = match kind {
+                // nesting: one step per level; bullets and numbers per level (richtext)
+                let depth = |k: usize| depths.get(k).copied().unwrap_or(0);
+                let ords = crate::richtext::item_ordinals(&(0..items.len()).map(depth).collect::<Vec<_>>());
+                let step = size * 1.25;
+                let label = |k: usize| crate::richtext::number_label(depth(k), ords[k]);
+                let indent0 = match kind {
                     0 => size * 1.25,
-                    1 => size * (1.0 + 0.55 * (items.len().to_string().len() as f32)),
+                    1 => (0..items.len()).map(|k| size * (0.45 + 0.55 * label(k).chars().count() as f32)).fold(size * 1.0, f32::max),
                     _ => size * 1.1,
                 };
                 let mut qtop = f32::NAN;
@@ -720,20 +765,35 @@ fn blocks_ui(ui: &mut Ui, rc: &mut RichCtx, blocks: &[crate::richtext::Block], a
                     if k > 0 {
                         ui.add_space(leading);
                     }
+                    let indent = indent0 + depth(k) as f32 * step;
                     let mut e = Vec::new();
                     rc.line_elems(ui, &mut e, l, avail - indent, false, true);
                     let (r, h) = rc.place(ui, &e, indent, avail - indent);
                     hit = hit.take().or(h);
                     let font = FontId::new(size, o.family.clone());
                     let base_y = r.top() + size * 0.8;
+                    let lx = r.left() + depth(k) as f32 * step;
                     match kind {
+                        // a task item's box stands in for its bullet
+                        0 if crate::richtext::task_item(l).is_some() => {}
                         0 => {
-                            ui.painter().circle_filled(Pos2::new(r.left() + size * 0.45, base_y - size * 0.3), size * 0.13, o.color);
+                            let c = Pos2::new(lx + size * 0.45, base_y - size * 0.3);
+                            match depth(k) % 3 {
+                                0 => {
+                                    ui.painter().circle_filled(c, size * 0.13, o.color);
+                                }
+                                1 => {
+                                    ui.painter().circle_stroke(c, size * 0.12, egui::Stroke::new(1.0, o.color));
+                                }
+                                _ => {
+                                    ui.painter().rect_filled(Rect::from_center_size(c, Vec2::splat(size * 0.2)), 0.0, o.color);
+                                }
+                            }
                         }
                         1 => {
-                            let g = ui.painter().layout_no_wrap(format!("{}.", k + 1), font, o.color);
+                            let g = ui.painter().layout_no_wrap(label(k), font, o.color);
                             let (asc, _) = galley_asc_desc(&g);
-                            let x = r.left() + indent - size * 0.35 - g.size().x;
+                            let x = lx + indent0 - size * 0.35 - g.size().x;
                             ui.painter().galley(Pos2::new(x, base_y - asc), g, o.color);
                         }
                         _ => {
@@ -756,7 +816,7 @@ fn blocks_ui(ui: &mut Ui, rc: &mut RichCtx, blocks: &[crate::richtext::Block], a
                 // bold, a step larger per level (1 is largest)
                 let scale = heading_scale(*level);
                 let ho = Rich { size: size * scale, family: o.bold_family.clone(), lead: None, ..o.clone() };
-                let mut hc = RichCtx { o: &ho, ctx: rc.ctx.clone(), spans: std::mem::take(&mut rc.spans), next_span: rc.next_span };
+                let mut hc = RichCtx { o: &ho, ctx: rc.ctx.clone(), spans: std::mem::take(&mut rc.spans), next_span: rc.next_span, center: rc.center };
                 let mut e = Vec::new();
                 hc.line_elems(ui, &mut e, line, avail, true, true);
                 let h = hc.place(ui, &e, 0.0, avail).1;
@@ -769,25 +829,10 @@ fn blocks_ui(ui: &mut Ui, rc: &mut RichCtx, blocks: &[crate::richtext::Block], a
                 let y = r.center().y.round() + 0.5;
                 ui.painter().hline(r.left()..=r.left() + avail, y, egui::Stroke::new(1.0, o.color.gamma_multiply(0.55)));
             }
-            Block::Side(panels) => {
-                let n = panels.len().max(1) as f32;
-                let col_gap = size * 1.2;
-                let w = ((avail - col_gap * (n - 1.0)) / n).max(size * 2.0);
-                ui.horizontal_top(|ui| {
-                    ui.spacing_mut().item_spacing = Vec2::ZERO;
-                    for (pi, p) in panels.iter().enumerate() {
-                        if pi > 0 {
-                            ui.add_space(col_gap);
-                        }
-                        ui.allocate_ui_with_layout(Vec2::new(w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                            ui.set_width(w);
-                            ui.spacing_mut().item_spacing = Vec2::ZERO;
-                            hit = hit.take().or(blocks_ui(ui, rc, p, w, false));
-                        });
-                    }
-                });
-            }
+            // (side-by-side groups are `Node::Side`, drawn above)
+            Block::Side(_) => {}
         }
+        rc.center = false;
     }
     hit
 }
@@ -864,6 +909,8 @@ struct RichCtx<'a> {
     ctx: egui::Context,
     spans: Vec<(String, Range<usize>)>,
     next_span: usize,
+    /// The block being placed is in a `::: center` group: its lines are centred.
+    center: bool,
 }
 
 impl RichCtx<'_> {
@@ -874,7 +921,7 @@ impl RichCtx<'_> {
     /// Elements of one richtext line, `avail` wide (equations wider than that are wrapped).
     fn line_elems(&mut self, ui: &Ui, elems: &mut Vec<Elem>, line: &crate::richtext::Line, avail: f32, force_bold: bool, blanks: bool) {
         let size = self.o.size;
-        let bw = blanks.then_some((self.o.blank_em * size).min(avail.max(size * 2.0)));
+        let bw = blanks.then_some(((self.o.blank_em * size).min(avail.max(size * 2.0)), avail.max(size * 2.0)));
         for sp in line {
             let color = self.o.color;
             if sp.math {
@@ -906,10 +953,11 @@ impl RichCtx<'_> {
             } else {
                 (size, 0.0)
             };
-            let font = FontId::new(fsize, fam);
+            // `code` in a monospace face on a tint (blanks are never code)
+            let font = if sp.code { FontId::new(fsize * 0.92, FontFamily::Monospace) } else { FontId::new(fsize, fam) };
             // Links show blue and underlined (as they print).
             let (color, under) = if sp.link.is_some() { (link_color(color), true) } else { (color, false) };
-            push_text_s(elems, ui, &sp.text, &font, color, sp.italic, Deco { strike: sp.strike, under }, dy, bw);
+            push_text_s(elems, ui, &sp.text, &font, color, sp.italic, Deco { strike: sp.strike, under, code: sp.code }, dy, if sp.code { None } else { bw });
         }
     }
 
@@ -923,7 +971,15 @@ impl RichCtx<'_> {
     fn place(&self, ui: &mut Ui, elems: &[Elem], indent: f32, avail: f32) -> (Rect, Option<EqHit>) {
         let size = self.o.size;
         let leading = size * self.o.leading;
-        let lines = flow(elems, avail, size, self.pad());
+        let mut lines = flow(elems, avail, size, self.pad());
+        if self.center {
+            for l in &mut lines {
+                let dx = ((avail - l.w) / 2.0).max(0.0);
+                for p in &mut l.items {
+                    p.x += dx;
+                }
+            }
+        }
         let h = flow_height(&lines, leading).max(size);
         let full = ui.available_width().max(indent + avail);
         let (rect, _) = ui.allocate_exact_size(Vec2::new(full, h), Sense::hover());
@@ -938,11 +994,10 @@ impl RichCtx<'_> {
 /// and numbered lists with a hanging indent, quotes, bordered tables (header row in bold),
 /// bold/italic/strikethrough, sub/superscripts, `___` blanks as writing lines and typeset `$math$`.
 pub fn rich_ui(ui: &mut Ui, text: &str, o: &Rich) -> (Response, Option<EqHit>) {
-    use crate::richtext::parse;
     let avail = ui.available_width().max(40.0);
-    let mut rc = RichCtx { o, ctx: ui.ctx().clone(), spans: math_spans(text), next_span: 0 };
+    let mut rc = RichCtx { o, ctx: ui.ctx().clone(), spans: math_spans(text), next_span: 0, center: false };
     let mut hit = None;
-    let blocks = parse(text);
+    let blocks = crate::richtext::parse_tree(text);
     let resp = ui
         .scope(|ui| {
             ui.spacing_mut().item_spacing = Vec2::ZERO;

@@ -9,6 +9,7 @@
 use eframe::egui;
 
 pub mod ai;
+pub mod bankexport;
 pub mod bankops;
 pub mod bankui;
 pub mod ditto;
@@ -250,6 +251,29 @@ impl eframe::App for App {
                 raw.events.push(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: false, modifiers: mods });
             }
             "move" => raw.events.push(egui::Event::PointerMoved(pt(arg))),
+            // A real pointer click: hover first, press 10 frames later, release 10 after that
+            // (a one-frame "click" teleports the pointer, which no mouse does).
+            "tap" => {
+                raw.events.push(egui::Event::PointerMoved(pt(arg)));
+                self.qa_steps.insert(0, format!("down:{arg}"));
+                self.qa_steps.insert(1, format!("up:{arg}"));
+            }
+            // drag:x1,y1,x2,y2 = hover, press, move in 4 steps, release (one step per 10 frames).
+            "drag" => {
+                let v: Vec<f32> = arg.split(',').filter_map(|t| t.trim().parse().ok()).collect();
+                if let [x1, y1, x2, y2] = v[..] {
+                    raw.events.push(egui::Event::PointerMoved(egui::pos2(x1, y1)));
+                    let mut steps = vec![format!("down:{x1},{y1}")];
+                    steps.extend((1..=4).map(|k| {
+                        let t = k as f32 / 4.0;
+                        format!("move:{},{}", x1 + (x2 - x1) * t, y1 + (y2 - y1) * t)
+                    }));
+                    steps.push(format!("up:{x2},{y2}"));
+                    for (i, s) in steps.into_iter().enumerate() {
+                        self.qa_steps.insert(i, s);
+                    }
+                }
+            }
             // Drag support: down:x,y then move:x,y ... then up:x,y (one step per 10 frames).
             "down" | "up" => {
                 let p = pt(arg);

@@ -14,6 +14,10 @@ pub static SERIF_REGULAR: &[u8] = include_bytes!("../assets/fonts/SourceSerif4-R
 pub static SERIF_BOLD: &[u8] = include_bytes!("../assets/fonts/SourceSerif4-Bold.ttf");
 pub static SERIF_ITALIC: &[u8] = include_bytes!("../assets/fonts/SourceSerif4-It.ttf");
 pub static SERIF_BOLD_ITALIC: &[u8] = include_bytes!("../assets/fonts/SourceSerif4-BoldIt.ttf");
+/// The print mono for `` `code` `` spans: Liberation Mono Regular 2.1.5 (SIL OFL 1.1, see
+/// `assets/fonts/OFL-LiberationMono.txt`), metric-compatible with Courier New, the face the
+/// DOCX names, so PDF and Word lines measure alike.
+pub static MONO_REGULAR: &[u8] = include_bytes!("../assets/fonts/LiberationMono-Regular.ttf");
 
 /// The family name the faces carry in their `name` table (used by SVG `font-family`).
 pub const SERIF_FAMILY: &str = "Source Serif 4";
@@ -24,6 +28,9 @@ pub enum Style {
     Bold,
     Italic,
     BoldItalic,
+    /// The print mono (Liberation Mono Regular), for code spans. Not in [`Style::ALL`],
+    /// which lists the serif faces.
+    Mono,
 }
 
 impl Style {
@@ -42,6 +49,7 @@ impl Style {
             Style::Bold => SERIF_BOLD,
             Style::Italic => SERIF_ITALIC,
             Style::BoldItalic => SERIF_BOLD_ITALIC,
+            Style::Mono => MONO_REGULAR,
         }
     }
     pub fn bold(self) -> bool {
@@ -97,7 +105,7 @@ fn scale(v: f64, upem: f64) -> i32 {
 }
 
 fn load(s: Style) -> FaceMetrics {
-    let f = ttf_parser::Face::parse(s.bytes(), 0).expect("bundled serif face parses");
+    let f = ttf_parser::Face::parse(s.bytes(), 0).expect("bundled face parses");
     let upem = f.units_per_em() as f64;
     let mut widths = [0u16; 256];
     let mut gids = [0u16; 256];
@@ -129,7 +137,7 @@ fn load(s: Style) -> FaceMetrics {
 }
 
 pub fn metrics(s: Style) -> &'static FaceMetrics {
-    static M: [OnceLock<FaceMetrics>; 4] = [OnceLock::new(), OnceLock::new(), OnceLock::new(), OnceLock::new()];
+    static M: [OnceLock<FaceMetrics>; 5] = [OnceLock::new(), OnceLock::new(), OnceLock::new(), OnceLock::new(), OnceLock::new()];
     M[s.idx()].get_or_init(|| load(s))
 }
 
@@ -343,9 +351,9 @@ fn build_charmap(bytes: &[u8]) -> CharMap {
     cm
 }
 
-/// The character map of one serif face (what its Identity-H CID font can print).
+/// The character map of one face (what its Identity-H CID font can print).
 pub fn charmap(s: Style) -> &'static CharMap {
-    static M: [OnceLock<CharMap>; 4] = [OnceLock::new(), OnceLock::new(), OnceLock::new(), OnceLock::new()];
+    static M: [OnceLock<CharMap>; 5] = [OnceLock::new(), OnceLock::new(), OnceLock::new(), OnceLock::new(), OnceLock::new()];
     M[s.idx()].get_or_init(|| build_charmap(s.bytes()))
 }
 
@@ -495,6 +503,26 @@ mod tests {
         // Real italics have their own (narrower) advances, not the regular's.
         assert_ne!(metrics(Style::Italic).widths[b'a' as usize], metrics(Style::Regular).widths[b'a' as usize]);
         assert_ne!(metrics(Style::Bold).widths[b'a' as usize], metrics(Style::Regular).widths[b'a' as usize]);
+    }
+
+    #[test]
+    fn mono_face_covers_winansi_with_one_advance() {
+        let m = metrics(Style::Mono);
+        assert!(m.ps_name.starts_with("LiberationMono"), "{}", m.ps_name);
+        let adv = m.widths[b'i' as usize];
+        assert_eq!(adv, 600, "Courier New metrics");
+        for b in 0x20..=0x7eu8 {
+            assert!(m.gids[b as usize] != 0, "mono lacks byte {b:#x}");
+            assert_eq!(m.widths[b as usize], adv, "mono byte {b:#x} not fixed pitch");
+        }
+        assert!(!Style::Mono.bold() && !Style::Mono.italic() && !Style::ALL.contains(&Style::Mono));
+        let mut used = [false; 256];
+        b"let x = 1;".iter().for_each(|&b| used[b as usize] = true);
+        let sub = subset(Style::Mono, &used);
+        assert!(sub.len() < MONO_REGULAR.len() / 3);
+        let f = ttf_parser::Face::parse(&sub, 0).expect("mono subset parses");
+        assert!(f.glyph_bounding_box(f.glyph_index('x').unwrap()).is_some());
+        assert_eq!(checksum(&sub), 0xB1B0_AFBA);
     }
 
     #[test]

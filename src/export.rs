@@ -18,7 +18,8 @@
 //! (F5..F8, Type0/CIDFontType2 sharing the face's program, with a ToUnicode CMap) or, when
 //! Source Serif 4 lacks them, the STIX Two Math fallback (F9, a Type 3 font of the drawn
 //! outlines with a ToUnicode CMap); only what neither has becomes '?' (see [`enc`] and
-//! `docs/fonts.md`). Images decode via the `image` crate and
+//! `docs/fonts.md`). `` `code` `` prints in Liberation Mono (F10, a subset embedded only when
+//! a document has code) on a light tint. Images decode via the `image` crate and
 //! re-encode to JPEG quality 85, embedded as DCTDecode XObjects. Content streams are
 //! uncompressed; the xref table carries exact byte offsets, verified by a unit test that
 //! resolves every object entry to its `N obj` header.
@@ -32,17 +33,29 @@
 //! with a repeating shaded header row and content-sized columns, list paragraphs, quote
 //! border, bold/italic/sub/superscript runs). Matching
 //! questions print linearly (left items numbered, then the lettered right column
-//! indented); images become a centered italic `[picture]` paragraph.
+//! indented); pictures embed as inline drawings (`word/media`, PNG / JPEG as they are, other
+//! formats re-encoded to PNG) at the PDF's size and place; only undecodable bytes fall back to
+//! a centered italic `[picture]` paragraph.
+//!
+//! # Shared print rules (PDF and DOCX, matched by the exam page preview)
+//! Title area: header line with a rule under it, the title centred, a muted "N questions ·
+//! M points" line. Pictures: `layout::picture_size_pt` at the stem's left edge, at the stem's
+//! first `[picture]` marker or under the stem. Blanks: `___` runs print at least
+//! [`BLANK_EM`] long. Answer columns: `DocQ.answer_columns` 2..=4, column-major. Answer keys:
+//! `ExamDoc.key_layout` (compact list, Test Parrot's answer section, or the marked test).
+//! Round-7 markup (`richtext::parse_tree`): code in a mono (PDF Liberation Mono, DOCX Courier
+//! New), `::: center` groups centred line by line (DOCX `jc` center), nested list items
+//! indented per level with per-level bullets / numbers (DOCX `w:ilvl`, multilevel numbering),
+//! task items without a bullet. Stems without it print exactly as before.
 
 use crate::fonts;
-use crate::layout::{DocImage, DocQ, DocSection, ExamDoc};
+use crate::layout::{DocImage, DocQ, DocSection, ExamDoc, KeyLayout};
 use crate::model::PaperStyle;
-use crate::richtext::{self, Block};
+use crate::richtext::{self, Block, Node};
 
 #[cfg(test)]
 const PAGE_H: f64 = 792.0; // Letter, 72pt/inch (Exam Board prints A4; see PaperStyle::page_pt)
 const MM_PT: f64 = 72.0 / 25.4;
-const IMG_MAX_PT: f64 = 130.0 * MM_PT; // images fit 130 mm square
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Face {
@@ -51,7 +64,15 @@ enum Face {
     /// The real italic face (its own outlines and advance widths).
     Ital,
     BoldItal,
+    /// `` `code` ``: the print mono (Liberation Mono, `fonts::Style::Mono`), set
+    /// [`MONO_SCALE`] of the size asked for. Its simple font F10 is embedded only when used;
+    /// characters beyond WinAnsi print through the regular serif's CID font F5 (or F9).
+    Mono,
 }
+
+/// Code prints this much smaller than the text around it (a mono's x-height is taller than
+/// the serif's; the on-screen preview uses the same ratio).
+const MONO_SCALE: f64 = 0.92;
 
 impl Face {
     fn name(self) -> &'static str {
@@ -60,6 +81,7 @@ impl Face {
             Face::Bold => "F2",
             Face::Ital => "F3",
             Face::BoldItal => "F4",
+            Face::Mono => "F10",
         }
     }
     fn style(self) -> fonts::Style {
@@ -68,7 +90,16 @@ impl Face {
             Face::Bold => fonts::Style::Bold,
             Face::Ital => fonts::Style::Italic,
             Face::BoldItal => fonts::Style::BoldItalic,
+            Face::Mono => fonts::Style::Mono,
         }
+    }
+    /// The size text of `pt` points prints at in this face.
+    fn pt(self, pt: f64) -> f64 {
+        if self == Face::Mono { pt * MONO_SCALE } else { pt }
+    }
+    /// The face whose CID font prints this face's characters beyond WinAnsi.
+    fn cid_face(self) -> Face {
+        if self == Face::Mono { Face::Reg } else { self }
     }
     fn idx(self) -> usize {
         self as usize
@@ -89,6 +120,7 @@ impl Face {
         match self {
             Face::Reg | Face::Bold => Face::Bold,
             Face::Ital | Face::BoldItal => Face::BoldItal,
+            Face::Mono => Face::Mono,
         }
     }
 }
@@ -96,11 +128,12 @@ impl Face {
 // ---------------------------------------------------------------- text measuring
 
 fn char_w(c: u8, face: Face, pt: f64) -> f64 {
-    face.widths()[c as usize] as f64 * pt / 1000.0
+    face.widths()[c as usize] as f64 * face.pt(pt) / 1000.0
 }
 
 /// Width of a string, each character measured in the font it prints in ([`enc`]).
 fn text_w(s: &str, face: Face, pt: f64) -> f64 {
+    let pt = face.pt(pt);
     s.chars().map(|c| enc_units(enc(c, face), face) as f64 * pt / 1000.0).sum()
 }
 
@@ -254,7 +287,7 @@ fn enc(c: char, face: Face) -> Enc {
     if c.is_control() {
         return Enc::Ansi(b'?');
     }
-    if let Some((g, w)) = fonts::charmap(face.style()).get(c) {
+    if let Some((g, w)) = fonts::charmap(face.cid_face().style()).get(c) {
         return Enc::Cid(g, w);
     }
     if let Some((g, w)) = fonts::fallback_charmap().get(c) {
@@ -298,6 +331,11 @@ fn fnum(v: f64) -> String {
     s
 }
 
+/// A points total as printed ("5", "2.5").
+fn points_number(p: f64) -> String {
+    if p.fract() == 0.0 { format!("{}", p as i64) } else { format!("{p}") }
+}
+
 #[cfg(test)]
 fn points_label(p: f64) -> String {
     PaperStyle::Standard.points_label(p)
@@ -305,7 +343,9 @@ fn points_label(p: f64) -> String {
 
 /// Ruled answer lines a question gets; the exporters' default when the caller leaves 0.
 fn rule_count(q: &DocQ) -> u8 {
-    if q.rule_lines > 0 {
+    if q.no_answer_space {
+        0
+    } else if q.rule_lines > 0 {
         q.rule_lines
     } else if q.choices.is_empty() {
         if q.text.iter().any(|t| blanks_outside_tables(t) > 0) {
@@ -394,6 +434,8 @@ const SCRIPT_SCALE: f64 = 0.7;
 /// Link colour (a print-safe dark blue): stroke and fill operators.
 const LINK_RGB: &str = "0.05 0.27 0.68";
 const LINK_RGB_FILL: &[u8] = b"0.05 0.27 0.68 rg ";
+/// Gray level of the tint behind `` `code` `` (PDF `g`; DOCX shading [`CODE_SHD`]).
+const CODE_TINT: &str = "0.92";
 const LIST_INDENT: f64 = 16.0;
 const NUM_INDENT: f64 = 20.0;
 const QUOTE_INDENT: f64 = 12.0;
@@ -472,7 +514,12 @@ fn line_frags(line: &richtext::Line, force_bold: bool) -> Vec<Frag> {
             face = face.bolded();
         }
         let base = if s.sup { 1 } else if s.sub { -1 } else { 0 };
-        if s.math {
+        if s.code {
+            // `code`: the mono, literal (no Unicode script folding), on a tint when drawn.
+            if !s.text.is_empty() {
+                out.push(Frag { text: s.text.clone(), face: Face::Mono, script: base, strike: s.strike, link: s.link.clone() });
+            }
+        } else if s.math {
             let t = crate::equation::stem_to_plain(&format!("${}$", s.text));
             split_unicode_scripts(&t, face, 0, &mut out);
         } else {
@@ -716,38 +763,92 @@ fn layout_table(header: bool, rows: &[Vec<richtext::Line>], max_w: f64, body: f6
     out
 }
 
-/// Lays parsed stem blocks into items `avail` points wide; the very first text line gets
-/// `first_w` (room for the points label), a leading table fits `first_w` too.
+/// Lays parsed stem blocks into items `avail` points wide (no round-7 layout: see
+/// [`layout_nodes`]).
+#[cfg(test)]
 fn layout_blocks(blocks: &[Block], avail: f64, first_w: f64, body: f64, lead: f64) -> Vec<Item> {
+    layout_nodes(&nodes_of(blocks), avail, first_w, body, lead)
+}
+
+/// Plain blocks as layout nodes (nothing centred, lists flat).
+fn nodes_of(blocks: &[Block]) -> Vec<Node> {
+    blocks
+        .iter()
+        .map(|b| match b {
+            Block::Side(panels) => Node::Side(panels.iter().map(|p| nodes_of(p)).collect()),
+            Block::Bullets(ls) | Block::Numbered(ls) => Node::Block { block: b.clone(), center: false, depths: vec![0; ls.len()] },
+            _ => Node::Block { block: b.clone(), center: false, depths: Vec::new() },
+        })
+        .collect()
+}
+
+/// Right end of a laid-out line (points from its start), its runs measured at `body`.
+fn placed_w(line: &[Placed], body: f64) -> f64 {
+    line.iter().map(|p| p.dx + text_w(&p.text, p.face, frag_size(p.script, body))).fold(0.0, f64::max)
+}
+
+/// Left offset that centres a line `w` wide in `room`.
+fn center_off(w: f64, room: f64) -> f64 {
+    ((room - w) / 2.0).max(0.0)
+}
+
+/// Lays a stem's nodes (`richtext::parse_tree`) into items `avail` points wide; the very
+/// first text line gets `first_w` (room for the points label), a leading table fits
+/// `first_w` too. Round-7 layout: paragraphs and headings of a `::: center` group centre
+/// each wrapped line in the width it was wrapped to, a centred table centres in the column;
+/// list items indent [`LIST_INDENT`] per nesting level, with that level's bullet
+/// (`richtext::bullet_glyph`) or number (`richtext::number_label`); a task item (`☐ ` /
+/// `☑ `) prints its box without a bullet. Without round-7 markup the items are exactly the
+/// pre-round-7 ones.
+fn layout_nodes(nodes: &[Node], avail: f64, first_w: f64, body: f64, lead: f64) -> Vec<Item> {
     let mut items: Vec<Item> = Vec::new();
     let mut first = true;
     let gap = body * 0.35;
-    for (bi, b) in blocks.iter().enumerate() {
+    for (bi, n) in nodes.iter().enumerate() {
         if bi > 0 {
             items.push(Item::Gap(gap));
         }
         let fw = |first: bool, indent: f64| if first { first_w - indent } else { avail - indent };
+        let (b, center, depths) = match n {
+            Node::Block { block, center, depths } => (block, *center, depths.as_slice()),
+            Node::Side(panels) => {
+                let n = panels.len().max(1) as f64;
+                let gap = body * 1.2;
+                let w = ((if first { first_w } else { avail } - gap * (n - 1.0)) / n).max(body * 3.0);
+                let cols: Vec<(f64, Vec<Item>)> = panels.iter().enumerate().map(|(k, p)| (k as f64 * (w + gap), layout_nodes(p, w, w, body, lead))).collect();
+                let h = cols.iter().map(|(_, it)| items_h(it, lead)).fold(lead, f64::max);
+                items.push(Item::Cols { cols, h });
+                first = false;
+                continue;
+            }
+        };
         match b {
             Block::Para(lines) => {
                 for l in lines {
-                    for pl in wrap_frags(&line_frags(l, false), fw(first, 0.0), avail, body) {
-                        items.push(Item::Line { indent: 0.0, frags: pl, marker: None, bar: false, scale: 1.0 });
+                    for (j, pl) in wrap_frags(&line_frags(l, false), fw(first, 0.0), avail, body).into_iter().enumerate() {
+                        let room = if j == 0 { fw(first, 0.0) } else { avail };
+                        let indent = if center { center_off(placed_w(&pl, body), room) } else { 0.0 };
+                        items.push(Item::Line { indent, frags: pl, marker: None, bar: false, scale: 1.0 });
                         first = false;
                     }
                 }
             }
             Block::Bullets(lines) | Block::Numbered(lines) | Block::Quote(lines) => {
-                let (indent, bar) = match b {
+                let (base, bar) = match b {
                     Block::Bullets(_) => (LIST_INDENT, false),
                     Block::Numbered(_) => (NUM_INDENT, false),
                     _ => (QUOTE_INDENT, true),
                 };
+                let depth = |k: usize| depths.get(k).copied().unwrap_or(0);
+                let ords = richtext::item_ordinals(&(0..lines.len()).map(depth).collect::<Vec<_>>());
                 for (k, l) in lines.iter().enumerate() {
+                    let indent = base + depth(k) as f64 * LIST_INDENT;
                     let wrapped = wrap_frags(&line_frags(l, false), fw(first, indent), avail - indent, body);
                     for (j, pl) in wrapped.into_iter().enumerate() {
                         let marker = (j == 0).then(|| match b {
-                            Block::Bullets(_) => Some("\u{2022}".to_string()),
-                            Block::Numbered(_) => Some(format!("{}.", k + 1)),
+                            Block::Bullets(_) if richtext::task_item(l).is_some() => None,
+                            Block::Bullets(_) => Some(richtext::bullet_glyph(depth(k)).to_string()),
+                            Block::Numbered(_) => Some(richtext::number_label(depth(k), ords[k])),
                             _ => None,
                         });
                         items.push(Item::Line { indent, frags: pl, marker: marker.flatten(), bar, scale: 1.0 });
@@ -757,8 +858,19 @@ fn layout_blocks(blocks: &[Block], avail: f64, first_w: f64, body: f64, lead: f6
             }
             Block::Table { header, rows } => {
                 let base = items.len();
-                items.extend(layout_table(*header, rows, if first { first_w } else { avail }, body, lead, base));
-                if bi + 1 == blocks.len() {
+                let room = if first { first_w } else { avail };
+                let mut rows_it = layout_table(*header, rows, room, body, lead, base);
+                if center {
+                    for it in &mut rows_it {
+                        if let Item::Row { cols, .. } = it {
+                            let total: f64 = cols.iter().map(|c| c.1).sum();
+                            let off = center_off(total, room);
+                            cols.iter_mut().for_each(|c| c.0 += off);
+                        }
+                    }
+                }
+                items.extend(rows_it);
+                if bi + 1 == nodes.len() {
                     items.push(Item::Gap(body * 0.5)); // breathing room under a closing table
                 }
                 first = false;
@@ -766,8 +878,10 @@ fn layout_blocks(blocks: &[Block], avail: f64, first_w: f64, body: f64, lead: f6
             Block::Heading(level, l) => {
                 let scale = crate::equation::heading_scale(*level) as f64;
                 let hb = body * scale;
-                for pl in wrap_frags(&line_frags(l, true), fw(first, 0.0), avail, hb) {
-                    items.push(Item::Line { indent: 0.0, frags: pl, marker: None, bar: false, scale });
+                for (j, pl) in wrap_frags(&line_frags(l, true), fw(first, 0.0), avail, hb).into_iter().enumerate() {
+                    let room = if j == 0 { fw(first, 0.0) } else { avail };
+                    let indent = if center { center_off(placed_w(&pl, hb), room) } else { 0.0 };
+                    items.push(Item::Line { indent, frags: pl, marker: None, bar: false, scale });
                     first = false;
                 }
             }
@@ -776,12 +890,8 @@ fn layout_blocks(blocks: &[Block], avail: f64, first_w: f64, body: f64, lead: f6
                 first = false;
             }
             Block::Side(panels) => {
-                let n = panels.len().max(1) as f64;
-                let gap = body * 1.2;
-                let w = ((if first { first_w } else { avail } - gap * (n - 1.0)) / n).max(body * 3.0);
-                let cols: Vec<(f64, Vec<Item>)> = panels.iter().enumerate().map(|(k, p)| (k as f64 * (w + gap), layout_blocks(p, w, w, body, lead))).collect();
-                let h = cols.iter().map(|(_, it)| items_h(it, lead)).fold(lead, f64::max);
-                items.push(Item::Cols { cols, h });
+                // (`parse_tree` keeps side-by-side groups as `Node::Side`; never reached)
+                items.extend(layout_nodes(&[Node::Side(panels.iter().map(|p| nodes_of(p)).collect())], avail, if first { first_w } else { avail }, body, lead));
                 first = false;
             }
         }
@@ -789,8 +899,9 @@ fn layout_blocks(blocks: &[Block], avail: f64, first_w: f64, body: f64, lead: f6
     items
 }
 
-fn stem_blocks(text: &[String]) -> Vec<Block> {
-    text.iter().flat_map(|t| richtext::parse(t)).collect()
+/// The nodes of a question's text entries, one after another.
+fn stem_nodes(text: &[String]) -> Vec<Node> {
+    text.iter().flat_map(|t| richtext::parse_tree(t)).collect()
 }
 
 // ---------------------------------------------------------------- PDF writer
@@ -825,13 +936,16 @@ struct R {
     running: Option<String>,
     /// WinAnsi bytes drawn in each face (index `Face::idx`): the glyphs the embedded font
     /// subsets keep.
-    glyphs: [[bool; 256]; 4],
-    /// Glyphs drawn through each face's Identity-H CID font, with the character drawn.
-    cids: [std::collections::BTreeMap<u16, char>; 4],
+    glyphs: [[bool; 256]; 5],
+    /// Glyphs drawn through each face's Identity-H CID font, with the character drawn
+    /// (the mono's go through the regular serif's, index 0).
+    cids: [std::collections::BTreeMap<u16, char>; 5],
     /// Fallback (Type 3) glyphs in code order: (glyph id, character, advance).
     fb: Vec<(u16, char, u16)>,
     /// Link annotations: (page index, [x0 y0 x1 y1], URL).
     annots: Vec<(usize, [f64; 4], String)>,
+    /// Marked answer key: correct choices print checked and bold, expected answers in place.
+    mark: bool,
 }
 
 impl R {
@@ -882,6 +996,9 @@ impl R {
         if let Some(h) = self.running.clone() {
             let x0 = self.x0;
             self.line(x0, &h, Face::Reg);
+            // A rule under the repeated header, as the page preview draws it.
+            let (x1, y) = (self.x1, self.y - self.body * 0.15);
+            self.rule(x0, y, x1, y);
             self.y -= self.body * 0.6;
         }
     }
@@ -889,6 +1006,7 @@ impl R {
     /// in F1..F4; other characters split the string into runs in the CID font (F5..F8) or
     /// the fallback font (F9), each placed where the measured runs before it end.
     fn text(&mut self, x: f64, y: f64, face: Face, size: f64, s: &str) {
+        let size = face.pt(size);
         let encs: Vec<(char, Enc)> = s.chars().map(|c| (c, enc(c, face))).collect();
         if encs.iter().all(|(_, e)| e.kind() == 0) {
             let raw: Vec<u8> = encs.iter().map(|(_, e)| if let Enc::Ansi(b) = e { *b } else { b'?' }).collect();
@@ -911,12 +1029,12 @@ impl R {
                     hex.push('<');
                     for (c, e) in run {
                         if let Enc::Cid(g, _) = e {
-                            self.cids[face.idx()].entry(*g).or_insert(*c);
+                            self.cids[face.cid_face().idx()].entry(*g).or_insert(*c);
                             hex.push_str(&format!("{g:04X}"));
                         }
                     }
                     hex.push('>');
-                    self.text_op(cx, y, &format!("F{}", 5 + face.idx()), size, hex.as_bytes());
+                    self.text_op(cx, y, &format!("F{}", 5 + face.cid_face().idx()), size, hex.as_bytes());
                 }
                 _ => {
                     // One byte per glyph: at most 256 distinct fallback glyphs per document
@@ -1021,6 +1139,12 @@ impl R {
                 1 => 0.36 * self.body,
                 _ => 0.0,
             };
+            if p.face == Face::Mono {
+                // Code sits on a light tint, as on screen.
+                let w = text_w(p.text.trim_end(), p.face, size);
+                let (x0, y0) = (x + p.dx - 1.2, by + dy - 0.24 * size);
+                self.cur.extend_from_slice(format!("{CODE_TINT} g {} {} {} {} re f 0 g\n", fnum(x0), fnum(y0), fnum(w + 2.4), fnum(1.04 * size)).as_bytes());
+            }
             if let Some(url) = &p.link {
                 // Links print blue and underlined, with a URI link annotation over the run.
                 let w = text_w(p.text.trim_end(), p.face, size);
@@ -1148,8 +1272,10 @@ impl R {
         let top = self.y;
         let total: f64 = cols.iter().map(|c| c.1).sum();
         if *header {
+            // (from the first column: a centred table's columns start right of `x`)
+            let x0 = x + cols.first().map_or(0.0, |c| c.0);
             self.cur.extend_from_slice(
-                format!("0.93 g {} {} {} {} re f 0 g\n", fnum(x), fnum(top - h), fnum(total), fnum(*h)).as_bytes(),
+                format!("0.93 g {} {} {} {} re f 0 g\n", fnum(x0), fnum(top - h), fnum(total), fnum(*h)).as_bytes(),
             );
         }
         self.cur.extend_from_slice(b"0.6 w 0.25 0.25 0.25 RG ");
@@ -1170,6 +1296,57 @@ impl R {
             }
         }
     }
+}
+
+/// Shortest printed blank: a `___` run (3+ underscores) prints at least this many ems long,
+/// the width the page preview draws a blank (`equation::Rich::blank_em`); longer runs keep
+/// their own length.
+const BLANK_EM: f64 = 4.5;
+
+/// Widens every `___` run (3+ underscores) to at least [`BLANK_EM`] of underscores, so a
+/// fill-in blank prints as a writing line of a proper length (Test Parrot prints them long).
+/// Text without such a run comes back unchanged.
+pub(crate) fn widen_blanks(s: &str) -> String {
+    if !s.contains("___") {
+        return s.to_string();
+    }
+    let min = (BLANK_EM / char_w(b'_', Face::Reg, 1.0)).ceil() as usize;
+    let mut out = String::with_capacity(s.len() + 16);
+    let mut run = 0usize;
+    let flush = |out: &mut String, run: usize| {
+        let n = if run >= 3 { run.max(min) } else { run };
+        out.extend(std::iter::repeat_n('_', n));
+    };
+    for c in s.chars() {
+        if c == '_' {
+            run += 1;
+        } else {
+            flush(&mut out, run);
+            run = 0;
+            out.push(c);
+        }
+    }
+    flush(&mut out, run);
+    out
+}
+
+/// The questions as they print: blanks widened ([`widen_blanks`]) in stems and choices.
+fn printed_questions(doc: &ExamDoc) -> Vec<DocQ> {
+    doc.questions
+        .iter()
+        .map(|q| {
+            let mut q = q.clone();
+            if q.no_answer_space {
+                q.work_lines = 0;
+                q.space_after.clear();
+            }
+            if !doc.is_key || doc.key_layout == KeyLayout::Marked {
+                q.text.iter_mut().for_each(|t| *t = widen_blanks(t));
+                q.choices.iter_mut().for_each(|t| *t = widen_blanks(t));
+            }
+            q
+        })
+        .collect()
 }
 
 /// Stem text starts this far inside the left margin (number column is right-aligned
@@ -1298,20 +1475,59 @@ fn layout_pdf(doc: &ExamDoc, encode: bool) -> Result<R, String> {
         lead: body * doc.style.lead() as f64,
         imgs,
         running: None,
-        glyphs: [[false; 256]; 4],
+        glyphs: [[false; 256]; 5],
         cids: Default::default(),
         fb: Vec::new(),
         annots: Vec::new(),
+        mark: false,
     };
 
-    // Title area (also printed on the answer-key document).
-    if !doc.title.is_empty() {
-        r.text(r.x0, r.y - r.head * 0.75, Face::Bold, head, doc.title.trim());
-        r.y -= head * 1.35;
-    }
-    if !doc.is_key {
-        if !doc.header_line.is_empty() {
+    let questions = printed_questions(doc);
+    // A marked key prints the whole test (the student layout) with the answers marked.
+    let marked = doc.is_key && doc.key_layout == KeyLayout::Marked;
+    let section_key = doc.is_key && doc.key_layout == KeyLayout::Section;
+    let list_key = doc.is_key && !marked && !section_key;
+    r.mark = marked;
+    if doc.is_key {
+        // Answer key: the title on its own (no header line).
+        if !doc.title.is_empty() {
+            r.text(r.x0, r.y - r.head * 0.75, Face::Bold, head, doc.title.trim());
+            r.y -= head * 1.35;
+        }
+        if section_key {
+            // Test Parrot's key heading.
+            let sz = body * 1.25;
+            r.text(r.x0, r.y - R::ascent_of(sz), Face::Bold, sz, "Answer Section");
+            r.y -= sz * 1.5;
+        }
+    } else {
+        // Title area as the page preview lays it out: the header line (Name / Class / Date)
+        // at the top with a rule under it, then the title centred, then a muted centred
+        // "N questions · M points" line.
+        if !doc.header_line.trim().is_empty() {
             r.line(r.x0, doc.header_line.trim(), Face::Reg);
+            let (x0, x1, y) = (r.x0, r.x1, r.y - body * 0.15);
+            r.rule(x0, y, x1, y);
+            r.y -= body * 0.15 + 14.0;
+        }
+        if !doc.title.trim().is_empty() {
+            let mid = (r.x0 + r.x1) / 2.0;
+            for l in wrap(doc.title.trim(), r.x1 - r.x0, Face::Bold, head) {
+                let w = text_w(&l, Face::Bold, head);
+                r.text(mid - w / 2.0, r.y - head * 0.8, Face::Bold, head, &l);
+                r.y -= head * 1.25;
+            }
+            let n = questions.len();
+            let pts: f64 = questions.iter().filter_map(|q| q.points).sum();
+            let sub = format!(
+                "{n} question{}{}",
+                if n == 1 { "" } else { "s" },
+                if pts > 0.0 { format!(" \u{b7} {} point{}", points_number(pts), if pts == 1.0 { "" } else { "s" }) } else { String::new() }
+            );
+            let sz = body * 0.92;
+            let w = text_w(&sub, Face::Reg, sz);
+            r.text_muted(mid - w / 2.0, r.y - R::ascent_of(sz), sz, &sub);
+            r.y -= sz * 1.45 + 8.0;
         }
         for _ in 0..doc.ruled_blanks {
             let (xa, xb) = (r.x0, r.x1);
@@ -1330,34 +1546,43 @@ fn layout_pdf(doc: &ExamDoc, encode: bool) -> Result<R, String> {
             r.y -= sz * 1.4;
         }
     }
-    if !doc.questions.is_empty() {
+    if !questions.is_empty() {
         r.y -= body * 0.5; // small gap before question 1
     }
 
     let mut next_img = 0usize;
-    for qi in 0..doc.questions.len() {
-        let q = &doc.questions[qi];
+    for qi in 0..questions.len() {
+        let q = &questions[qi];
         // Index into `imgs`, which holds only the questions that carry an image.
         let img_idx = q.image.as_ref().map(|_| {
             next_img += 1;
             next_img - 1
         });
-        let sec = q.section.as_ref().filter(|_| !doc.is_key);
-        let est = q_est_height(&r, q, img_idx, doc.is_key) + sec.map_or(0.0, |s| section_h(&r, s));
+        let sec = q.section.as_ref().filter(|_| !list_key);
+        let est = if section_key { section_key_h(&r, q) } else { q_est_height(&r, q, img_idx, list_key) } + sec.map_or(0.0, |s| section_h(&r, s));
         // Keep-together: break before a question (with its section heading) that will not
         // comfortably fit.
         if r.remaining() < 40.0 || (est <= r.full_height() && est > r.remaining()) {
             r.new_page();
         }
         if let Some(s) = sec {
-            render_section(&mut r, s);
+            if section_key {
+                // The key names each section (its title, or "Section N").
+                let k = questions[..=qi].iter().filter(|x| x.section.is_some()).count();
+                let t = if s.title.trim().is_empty() { format!("Section {k}") } else { s.title.trim().to_string() };
+                render_section(&mut r, &DocSection { title: t, directions: String::new() });
+            } else {
+                render_section(&mut r, s);
+            }
         }
-        if doc.is_key {
+        if section_key {
+            render_section_key_q(&mut r, q);
+        } else if list_key {
             render_key_q(&mut r, q);
         } else {
             render_q(&mut r, q, img_idx);
         }
-        r.y -= body * doc.style.q_gap() as f64; // separator between questions
+        r.y -= body * if section_key { 0.25 } else { doc.style.q_gap() as f64 }; // separator between questions
     }
     if !r.cur.is_empty() {
         let cur = std::mem::take(&mut r.cur);
@@ -1373,7 +1598,7 @@ fn render_key_q(r: &mut R, q: &DocQ) {
     }
     let stem_x = r.x0 + STEM_INSET;
     let avail = r.x1 - stem_x;
-    let items = layout_blocks(&richtext::parse(q.key_text.trim()), avail, avail, r.body, r.lead);
+    let items = layout_nodes(&richtext::parse_tree(q.key_text.trim()), avail, avail, r.body, r.lead);
     if r.remaining() < r.lead {
         r.new_page();
     }
@@ -1382,13 +1607,58 @@ fn render_key_q(r: &mut R, q: &DocQ) {
     r.items(stem_x, &items);
 }
 
+/// Width of an answer-section blank holding `mark`.
+fn key_blank_w(r: &R, mark: &str) -> f64 {
+    (text_w(mark, Face::Reg, r.body) + 16.0).max(48.0)
+}
+
+/// Height of one question's entry in the answer section.
+fn section_key_h(r: &R, q: &DocQ) -> f64 {
+    let rows = q.key_marks.len().max(1) as f64 * r.lead * 1.1;
+    if !q.key_marks.is_empty() || q.key_text.trim().is_empty() {
+        return rows;
+    }
+    let avail = r.x1 - r.x0 - STEM_INSET - NUM_GAP;
+    rows + items_h(&layout_nodes(&richtext::parse_tree(q.key_text.trim()), avail, avail, r.body, r.lead), r.lead)
+}
+
+/// One question in Test Parrot's answer section: its number and a short blank with the
+/// answer written on it (one per left item for matching); a written answer prints under an
+/// empty blank.
+fn render_section_key_q(r: &mut R, q: &DocQ) {
+    let stem_x = r.x0 + STEM_INSET;
+    let blank_x = stem_x + NUM_GAP;
+    let marks: Vec<String> = if q.key_marks.is_empty() { vec![String::new()] } else { q.key_marks.clone() };
+    for (i, m) in marks.iter().enumerate() {
+        let row = r.lead * 1.1;
+        if r.remaining() < row {
+            r.new_page();
+        }
+        let by = r.y - R::ascent_of(r.body);
+        let lbl = r.style.number_label(q.number + i as u32);
+        r.num_right(stem_x - NUM_GAP, &lbl, Face::Reg);
+        let w = key_blank_w(r, m);
+        if !m.is_empty() {
+            let tw = text_w(m, Face::Reg, r.body);
+            r.text(blank_x + (w - tw) / 2.0, by, Face::Reg, r.body, m);
+        }
+        r.stroke_line(blank_x, by - 2.5, blank_x + w, by - 2.5, 0.7, "0 0 0");
+        r.y -= row;
+    }
+    if q.key_marks.is_empty() && !q.key_text.trim().is_empty() {
+        let avail = r.x1 - blank_x;
+        let items = layout_nodes(&richtext::parse_tree(q.key_text.trim()), avail, avail, r.body, r.lead);
+        r.items(blank_x, &items);
+    }
+}
+
 /// Stem items of an ordinary question plus the points label and its reserved width.
 fn stem_items(r: &R, q: &DocQ) -> (Vec<Item>, Option<String>) {
     let avail = r.x1 - q_stem_x(r, q);
     let pt_label = q.points.map(|p| r.style.points_label(p));
     let label_w = pt_label.as_deref().map(|l| text_w(l, Face::Reg, r.body) + 6.0).unwrap_or(0.0);
     if q.space_after.iter().all(|&n| n == 0) {
-        return (layout_blocks(&stem_blocks(&q.text), avail, avail - label_w, r.body, r.lead), pt_label);
+        return (layout_nodes(&stem_nodes(&q.text), avail, avail - label_w, r.body, r.lead), pt_label);
     }
     // Per-part work space: each text entry (one part) lays out on its own, its work space
     // right under it.
@@ -1398,7 +1668,7 @@ fn stem_items(r: &R, q: &DocQ) -> (Vec<Item>, Option<String>) {
         if !first {
             items.push(Item::Gap(r.body * 0.35));
         }
-        items.extend(layout_blocks(&richtext::parse(t), avail, if first { avail - label_w } else { avail }, r.body, r.lead));
+        items.extend(layout_nodes(&richtext::parse_tree(t), avail, if first { avail - label_w } else { avail }, r.body, r.lead));
         if let Some(&n) = q.space_after.get(k).filter(|&&n| n > 0) {
             items.push(Item::Work { lines: n, h: n as f64 * r.pitch() });
         }
@@ -1461,10 +1731,23 @@ fn render_q(r: &mut R, q: &DocQ, img_idx: Option<usize>) {
             }
             r.y = top - row_h;
         }
+        let ans = marked_answer_items(r, q, r.x1 - stem_x);
+        r.items(stem_x, &ans);
         work_space(r, q, stem_x);
         return;
     }
 
+    // An attached picture prints where the stem's first `[picture]` marker is (the text
+    // before it, the picture, then the rest); without a marker it prints under the stem.
+    let split = picture_split(q, img_idx);
+    let q_head;
+    let q = match &split {
+        Some((head, _)) => {
+            q_head = head.clone();
+            &q_head
+        }
+        None => q,
+    };
     // Stem blocks; the first line carries the number and a right-aligned "(N points)"
     // label, and wraps narrower so label and stem never collide.
     let (items, pt_label) = stem_items(r, q);
@@ -1495,10 +1778,14 @@ fn render_q(r: &mut R, q: &DocQ, img_idx: Option<usize>) {
     }
     r.items(stem_x, &items);
 
-    // Picture right under the stem, before choices and ruled lines (as the page preview
-    // draws it; page breaks first if it does not fit).
+    // Picture under the stem (or at its marker), before choices and ruled lines, at the
+    // stem's left edge, as the page preview draws it; page breaks first if it does not fit.
     if let Some(idx) = img_idx {
-        draw_pdf_image(r, idx);
+        draw_pdf_image(r, idx, stem_x);
+    }
+    if let Some((_, rest)) = &split {
+        let rest: Vec<Item> = layout_nodes(&stem_nodes(rest), avail, avail, r.body, r.lead);
+        r.items(stem_x, &rest);
     }
 
     // Choices.
@@ -1506,18 +1793,58 @@ fn render_q(r: &mut R, q: &DocQ, img_idx: Option<usize>) {
         if r.remaining() < r.lead {
             r.new_page();
         }
-        r.text(stem_x, r.y - R::ascent_of(r.body), Face::Reg, r.body, "True   False");
+        let by = r.y - R::ascent_of(r.body);
+        if r.mark && !q.correct.is_empty() {
+            // Marked key: the correct one checked and bold.
+            let mut x = stem_x;
+            for (i, t) in ["True", "False"].into_iter().enumerate() {
+                let ok = q.correct.contains(&i);
+                let f = if ok { Face::Bold } else { Face::Reg };
+                if ok {
+                    draw_check(r, x, by);
+                }
+                r.text(x, by, f, r.body, t);
+                x += text_w(t, f, r.body) + text_w("   ", Face::Reg, r.body);
+            }
+        } else {
+            r.text(stem_x, by, Face::Reg, r.body, "True   False");
+        }
         r.y -= r.lead;
+    } else if let Some(grid) = explicit_grid(r, q, avail) {
+        // Answer columns 2 / 4 (the exam item's switch): equal columns, filled column-major,
+        // each choice wrapping inside its column; a row never splits across pages.
+        let col_w = avail / grid.cols as f64;
+        for row in &grid.rows {
+            let h = row.iter().map(|(_, ls)| ls.len()).max().unwrap_or(1).max(1) as f64 * r.lead;
+            if r.remaining() < h {
+                r.new_page();
+            }
+            let top = r.y;
+            for (k, (ci, lines)) in row.iter().enumerate() {
+                for (j, l) in lines.iter().enumerate() {
+                    let by = top - j as f64 * r.lead - R::ascent_of(r.body);
+                    if j == 0 && r.mark && q.correct.contains(ci) {
+                        draw_check(r, stem_x + k as f64 * col_w, by);
+                    }
+                    r.placed(stem_x + k as f64 * col_w, by, l);
+                }
+            }
+            r.y = top - h;
+        }
     } else if let Some(cols) = choice_columns(r, q, avail) {
         // Condensed: choices across in a grid of `cols` columns.
         let col_w = avail / cols as f64;
-        for row in q.choices.chunks(cols) {
+        for (ri, row) in q.choices.chunks(cols).enumerate() {
             if r.remaining() < r.lead {
                 r.new_page();
             }
             let by = r.y - R::ascent_of(r.body);
-            for (k, c) in row.iter().enumerate() {
-                let c = r.style.choice_label(c);
+            for (k, _) in row.iter().enumerate() {
+                let ci = ri * cols + k;
+                let c = choice_text(r, q, ci);
+                if r.mark && q.correct.contains(&ci) {
+                    draw_check(r, stem_x + k as f64 * col_w, by);
+                }
                 if let Some(l) = text_lines(&c, col_w, col_w, r.body).first() {
                     r.placed(stem_x + k as f64 * col_w, by, l);
                 }
@@ -1525,18 +1852,24 @@ fn render_q(r: &mut R, q: &DocQ, img_idx: Option<usize>) {
             r.y -= r.lead;
         }
     } else {
-        for c in &q.choices {
-            let c = r.style.choice_label(c);
-            for l in text_lines(&c, avail, avail, r.body) {
+        for ci in 0..q.choices.len() {
+            let c = choice_text(r, q, ci);
+            for (j, l) in text_lines(&c, avail, avail, r.body).into_iter().enumerate() {
                 if r.remaining() < r.lead {
                     r.new_page();
                 }
                 let by = r.y - R::ascent_of(r.body);
+                if j == 0 && r.mark && q.correct.contains(&ci) {
+                    draw_check(r, stem_x, by);
+                }
                 r.placed(stem_x, by, &l);
                 r.y -= r.lead;
             }
         }
     }
+    // Marked key: the expected answer of a written question, before its answer lines.
+    let ans = marked_answer_items(r, q, avail);
+    r.items(stem_x, &ans);
 
     // Ruled answer lines.
     for _ in 0..rule_count(q) {
@@ -1546,9 +1879,92 @@ fn render_q(r: &mut R, q: &DocQ, img_idx: Option<usize>) {
     work_space(r, q, stem_x);
 }
 
+/// Choice `i` as printed: the style's label, bold on a marked key when it is correct.
+fn choice_text(r: &R, q: &DocQ, i: usize) -> String {
+    let c = r.style.choice_label(&q.choices[i]);
+    if r.mark && q.correct.contains(&i) && !c.contains("**") && !c.contains('\n') {
+        format!("**{c}**")
+    } else {
+        c
+    }
+}
+
+/// A check mark just left of `x` on baseline `by` (stroked, so no font needs the glyph).
+fn draw_check(r: &mut R, x: f64, by: f64) {
+    let s = r.body;
+    let (x0, y0) = (x - s * 0.95, by + s * 0.3);
+    r.cur.extend_from_slice(
+        format!(
+            "{} w 0.1 0.45 0.25 RG 1 J 1 j {} {} m {} {} l {} {} l S 0 J 0 j\n",
+            fnum(s / 9.0),
+            fnum(x0),
+            fnum(y0),
+            fnum(x0 + s * 0.22),
+            fnum(by + s * 0.05),
+            fnum(x0 + s * 0.62),
+            fnum(by + s * 0.68)
+        )
+        .as_bytes(),
+    );
+}
+
+/// Marked key: "Answer: ..." items for a question without checkable choices (written
+/// answers, fill-ins, matching), printed before its answer lines. Empty otherwise.
+fn marked_answer_items(r: &R, q: &DocQ, avail: f64) -> Vec<Item> {
+    if !r.mark || !q.correct.is_empty() || q.key_text.trim().is_empty() {
+        return Vec::new();
+    }
+    let t = format!("**Answer:** {}", q.key_text.trim());
+    let mut items = vec![Item::Gap(r.body * 0.25)];
+    items.extend(layout_nodes(&richtext::parse_tree(&t), avail, avail, r.body, r.lead));
+    items
+}
+
+/// A question with a picture and a `[picture]` marker in its stem: (the question cut before
+/// the marker, the stem text after it). Per-part work space keeps the picture under the stem.
+fn picture_split(q: &DocQ, img_idx: Option<usize>) -> Option<(DocQ, Vec<String>)> {
+    img_idx?;
+    if q.space_after.iter().any(|&n| n > 0) {
+        return None;
+    }
+    let (before, after) = crate::layout::split_at_picture(q.text.first()?)?;
+    let mut head = q.clone();
+    head.text = vec![before];
+    head.image = None;
+    let mut rest: Vec<String> = Vec::new();
+    if !after.trim().is_empty() {
+        rest.push(after);
+    }
+    rest.extend(q.text[1..].iter().cloned());
+    Some((head, rest))
+}
+
 /// The question's extra work space: ruled / dotted lines (Classic, Exam Board) or blank room.
 fn work_space(r: &mut R, q: &DocQ, stem_x: f64) {
     r.work_lines(stem_x, q.work_lines);
+}
+
+/// Choices laid out in the exam item's explicit answer columns (2..=4).
+struct ChoiceGrid {
+    cols: usize,
+    /// Rows of (choice index, wrapped lines), column-major order (`layout::choice_grid`).
+    rows: Vec<Vec<(usize, Vec<Vec<Placed>>)>>,
+}
+
+/// The explicit answer-column grid for a multiple-choice question (None: one per line or the
+/// style's own layout). True/False and matching questions keep their own layouts.
+fn explicit_grid(r: &R, q: &DocQ, avail: f64) -> Option<ChoiceGrid> {
+    if q.answer_columns < 2 || q.choices.len() < 2 || is_tf(&q.choices) {
+        return None;
+    }
+    let grid = crate::layout::choice_grid(q.choices.len(), q.answer_columns.min(4));
+    let col_w = avail / q.answer_columns.min(4) as f64;
+    let w = (col_w - 10.0).max(24.0);
+    let rows = grid
+        .into_iter()
+        .map(|row| row.into_iter().map(|i| (i, text_lines(&choice_text(r, q, i), w, w, r.body))).collect())
+        .collect();
+    Some(ChoiceGrid { cols: q.answer_columns.min(4) as usize, rows })
 }
 
 /// Condensed: how many columns the choices print across in (None = one per line). Every
@@ -1574,15 +1990,18 @@ fn q_est_height(r: &R, q: &DocQ, img_idx: Option<usize>, is_key: bool) -> f64 {
         if q.key_text.trim().is_empty() {
             return 0.0;
         }
-        return items_h(&layout_blocks(&richtext::parse(q.key_text.trim()), avail, avail, r.body, r.lead), r.lead);
+        return items_h(&layout_nodes(&richtext::parse_tree(q.key_text.trim()), avail, avail, r.body, r.lead), r.lead);
     }
     let tf = is_tf(&q.choices);
+    let ans = items_h(&marked_answer_items(r, q, avail), r.lead);
     if looks_matching(q, tf) {
-        return matching_rows(r, q).iter().map(|x| x.2).sum::<f64>() + r.body + q.work_lines as f64 * r.pitch();
+        return matching_rows(r, q).iter().map(|x| x.2).sum::<f64>() + r.body + q.work_lines as f64 * r.pitch() + ans;
     }
-    let mut h = items_h(&stem_items(r, q).0, r.lead);
+    let mut h = items_h(&stem_items(r, q).0, r.lead) + ans;
     let lines = if tf {
         1
+    } else if let Some(g) = explicit_grid(r, q, avail) {
+        g.rows.iter().map(|row| row.iter().map(|(_, ls)| ls.len()).max().unwrap_or(1).max(1)).sum::<usize>()
     } else if let Some(cols) = choice_columns(r, q, avail) {
         q.choices.len().div_ceil(cols)
     } else {
@@ -1590,25 +2009,24 @@ fn q_est_height(r: &R, q: &DocQ, img_idx: Option<usize>, is_key: bool) -> f64 {
     };
     h += lines as f64 * r.lead + (rule_count(q) as f64 + q.work_lines as f64) * r.pitch();
     if let Some(idx) = img_idx {
-        h += 12.0 + pdf_image_size(r, idx).1;
+        h += 12.0 + pdf_image_size(r, idx, stem_x).1;
     }
     h
 }
 
-fn pdf_image_size(r: &R, idx: usize) -> (f64, f64) {
+/// The picture's printed size: `layout::picture_size_pt` in the stem column (the page
+/// preview draws the same box).
+fn pdf_image_size(r: &R, idx: usize, x: f64) -> (f64, f64) {
     let px = &r.imgs[idx];
-    let max_w = (r.x1 - r.x0).min(IMG_MAX_PT);
-    let s = (max_w / px.w as f64).min(IMG_MAX_PT / px.h as f64).min(1.0);
-    (px.w as f64 * s, px.h as f64 * s)
+    crate::layout::picture_size_pt(px.w, px.h, r.x1 - x)
 }
 
-fn draw_pdf_image(r: &mut R, idx: usize) {
-    let (w, h) = pdf_image_size(r, idx);
+fn draw_pdf_image(r: &mut R, idx: usize, x: f64) {
+    let (w, h) = pdf_image_size(r, idx, x);
     if r.remaining() < h + r.body {
         r.new_page();
     }
     r.y -= 6.0;
-    let x = (r.x0 + (r.x1 - r.x0 - w) / 2.0).max(r.x0);
     let yb = r.y - h;
     r.cur.extend_from_slice(b"q ");
     r.cur.extend_from_slice(fnum(w).as_bytes());
@@ -1668,8 +2086,8 @@ fn font_objects(face: Face, used: &[bool; 256], cids: &[u16], desc_obj: usize) -
         "<< /Type /Font /Subtype /TrueType /BaseFont /{name} /FirstChar 32 /LastChar 255 /Widths [{}] /Encoding /WinAnsiEncoding /FontDescriptor {desc_obj} 0 R >>\n",
         widths.join(" ")
     );
-    // Flags: Serif (2) + Nonsymbolic (32) [+ Italic (64)].
-    let flags = 2 + 32 + if face.style().italic() { 64 } else { 0 };
+    // Flags: Serif (2) + Nonsymbolic (32) [+ Italic (64)]; the mono: FixedPitch (1) + Nonsymbolic.
+    let flags = if face == Face::Mono { 1 + 32 } else { 2 + 32 + if face.style().italic() { 64 } else { 0 } };
     let stem_v = if face.style().bold() { 140 } else { 80 };
     let [x0, y0, x1, y1] = m.bbox;
     let desc = format!(
@@ -1718,7 +2136,8 @@ fn flate_stream(data: &[u8]) -> Vec<u8> {
 
 /// The fonts beyond F1..F4, numbered from object `first`: per face whose CID font is used a
 /// Type0 font, its CIDFontType2 (sharing the face's descriptor and program) and a ToUnicode
-/// CMap; then the fallback Type 3 font F9 with its ToUnicode CMap and glyph procedures.
+/// CMap; then the fallback Type 3 font F9 with its ToUnicode CMap and glyph procedures; then
+/// the mono F10 when code was drawn.
 /// Returns the objects and the page resource entries naming them.
 fn extra_font_objects(r: &R, first: usize, desc_of: impl Fn(Face) -> usize) -> (Vec<Vec<u8>>, String) {
     let mut objs: Vec<Vec<u8>> = Vec::new();
@@ -1778,6 +2197,13 @@ fn extra_font_objects(r: &R, first: usize, desc_of: impl Fn(Face) -> usize) -> (
             objs.push(b);
         }
         res.push_str(&format!(" /F9 {at} 0 R"));
+    }
+    // The mono F10 (font dict, descriptor, subset program), only when code was drawn.
+    if r.glyphs[Face::Mono.idx()].iter().any(|&u| u) {
+        let at = first + objs.len();
+        let (dict, desc, file) = font_objects(Face::Mono, &r.glyphs[Face::Mono.idx()], &[], at + 1);
+        objs.extend([dict, desc, file]);
+        res.push_str(&format!(" /F10 {at} 0 R"));
     }
     (objs, res)
 }
@@ -1982,10 +2408,28 @@ fn wrun(xml: &mut String, text: &str, bold: bool, italic: bool, script: i8, sz: 
 
 /// [`wrun`] with strikethrough.
 fn wrun_s(xml: &mut String, text: &str, bold: bool, italic: bool, strike: bool, script: i8, sz: i64) {
+    wrun_x(xml, text, bold, italic, strike, false, script, sz);
+}
+
+/// The DOCX face of `` `code` `` runs: Courier New (every Word install has it; the font
+/// table gives Liberation Mono, the PDF's mono and metric-compatible, as its alternate).
+const CODE_FONT: &str = "<w:rFonts w:ascii=\"Courier New\" w:hAnsi=\"Courier New\" w:cs=\"Courier New\" w:eastAsia=\"Courier New\"/>";
+/// The light shading behind code runs (the PDF's [`CODE_TINT`]).
+const CODE_SHD: &str = "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"EBEBEB\"/>";
+
+/// [`wrun_s`] that can be a code run (mono face, [`MONO_SCALE`] of `sz`, shaded).
+#[allow(clippy::too_many_arguments)]
+fn wrun_x(xml: &mut String, text: &str, bold: bool, italic: bool, strike: bool, code: bool, script: i8, sz: i64) {
     if text.is_empty() {
         return;
     }
     xml.push_str("<w:r><w:rPr>");
+    let sz = if code {
+        xml.push_str(CODE_FONT);
+        ((sz as f64) * MONO_SCALE).round() as i64
+    } else {
+        sz
+    };
     if bold {
         xml.push_str("<w:b/>");
     }
@@ -2000,7 +2444,11 @@ fn wrun_s(xml: &mut String, text: &str, bold: bool, italic: bool, strike: bool, 
         -1 => xml.push_str("<w:vertAlign w:val=\"subscript\"/>"),
         _ => {}
     }
-    xml.push_str(&format!("<w:sz w:val=\"{sz}\"/><w:szCs w:val=\"{sz}\"/></w:rPr><w:t xml:space=\"preserve\">"));
+    xml.push_str(&format!("<w:sz w:val=\"{sz}\"/><w:szCs w:val=\"{sz}\"/>"));
+    if code {
+        xml.push_str(CODE_SHD);
+    }
+    xml.push_str("</w:rPr><w:t xml:space=\"preserve\">");
     xml.push_str(&xml_esc(text));
     xml.push_str("</w:t></w:r>");
 }
@@ -2015,16 +2463,18 @@ fn wfrags(xml: &mut String, frags: &[Frag], sz: i64) {
     for f in frags {
         let bold = matches!(f.face, Face::Bold | Face::BoldItal);
         let italic = matches!(f.face, Face::Ital | Face::BoldItal);
+        let code = f.face == Face::Mono;
         match &f.link {
             Some(url) if !f.text.is_empty() => {
                 // A placeholder relationship id, numbered in `docx_link_rels` once the body is done.
                 xml.push_str(&format!("<w:hyperlink r:id=\"{LINK_RID}{}\" w:history=\"1\">", xml_esc(url)));
                 let at = xml.len();
-                wrun_s(xml, &f.text, bold, italic, f.strike, f.script, sz);
-                xml.insert_str(at + "<w:r><w:rPr>".len(), "<w:color w:val=\"0563C1\"/><w:u w:val=\"single\"/>");
+                wrun_x(xml, &f.text, bold, italic, f.strike, code, f.script, sz);
+                let fonts = if code { CODE_FONT.len() } else { 0 };
+                xml.insert_str(at + "<w:r><w:rPr>".len() + fonts, "<w:color w:val=\"0563C1\"/><w:u w:val=\"single\"/>");
                 xml.push_str("</w:hyperlink>");
             }
-            _ => wrun_s(xml, &f.text, bold, italic, f.strike, f.script, sz),
+            _ => wrun_x(xml, &f.text, bold, italic, f.strike, code, f.script, sz),
         }
     }
 }
@@ -2082,8 +2532,27 @@ fn docx_stem(b: &mut String, q: &DocQ, pt_label: Option<&str>, body_sz: i64, tex
         }
     };
     for (k, entry) in q.text.iter().enumerate() {
-    for block in richtext::parse(entry) {
-        match &block {
+    for node in richtext::parse_tree(entry) {
+        let (block, center, depths) = match &node {
+            Node::Block { block, center, depths } => (block, *center, depths.as_slice()),
+            Node::Side(_) => {
+                flush_prefix(b, &mut prefix);
+                docx_nodes(b, std::slice::from_ref(&node), ind_w, body_sz, text_w_tw - ind_w, num_lists);
+                continue;
+            }
+        };
+        if center && !matches!(block, Block::Bullets(_) | Block::Numbered(_) | Block::Quote(_)) {
+            // A centred block opening the stem: the number stands on its own line first.
+            flush_prefix(b, &mut prefix);
+        }
+        match block {
+            Block::Para(lines) if center => {
+                for l in lines {
+                    b.push_str(&format!("<w:p><w:pPr><w:ind w:left=\"{ind_w}\"/><w:jc w:val=\"center\"/></w:pPr>"));
+                    wline(b, l, body_sz, false);
+                    b.push_str("</w:p>");
+                }
+            }
             Block::Para(lines) => {
                 for l in lines {
                     match prefix.take() {
@@ -2104,21 +2573,9 @@ fn docx_stem(b: &mut String, q: &DocQ, pt_label: Option<&str>, body_sz: i64, tex
                     b.push_str("</w:p>");
                 }
             }
-            Block::Bullets(lines) | Block::Numbered(lines) => {
+            Block::Bullets(_) | Block::Numbered(_) => {
                 flush_prefix(b, &mut prefix);
-                let num_id = if matches!(block, Block::Bullets(_)) {
-                    1
-                } else {
-                    *num_lists += 1;
-                    1 + *num_lists
-                };
-                for l in lines {
-                    b.push_str(&format!(
-                        "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"{num_id}\"/></w:numPr></w:pPr>"
-                    ));
-                    wline(b, l, body_sz, false);
-                    b.push_str("</w:p>");
-                }
+                docx_list(b, block, depths, body_sz, num_lists);
             }
             Block::Quote(lines) => {
                 flush_prefix(b, &mut prefix);
@@ -2133,11 +2590,11 @@ fn docx_stem(b: &mut String, q: &DocQ, pt_label: Option<&str>, body_sz: i64, tex
             }
             Block::Table { header, rows } => {
                 flush_prefix(b, &mut prefix);
-                docx_table(b, *header, rows, body_sz, text_w_tw - ind_w, ind_w);
+                docx_table(b, *header, rows, body_sz, text_w_tw - ind_w, if center { None } else { Some(ind_w) });
             }
             Block::Heading(..) | Block::Divider | Block::Side(_) => {
                 flush_prefix(b, &mut prefix);
-                docx_blocks(b, std::slice::from_ref(&block), ind_w, body_sz, text_w_tw - ind_w, num_lists);
+                docx_nodes(b, std::slice::from_ref(&node), ind_w, body_sz, text_w_tw - ind_w, num_lists);
             }
         }
     }
@@ -2150,31 +2607,54 @@ fn docx_stem(b: &mut String, q: &DocQ, pt_label: Option<&str>, body_sz: i64, tex
     flush_prefix(b, &mut prefix);
 }
 
+/// One bullet or numbered list (`depths`: each item's nesting level, `w:ilvl`). Bullets share
+/// numId 1; each numbered list gets its own numId (counted in `num_lists`) so it restarts at
+/// 1. A task item (`☐ ` / `☑ `) is a plain paragraph at its level's text indent: its box
+/// stands in for the bullet.
+fn docx_list(b: &mut String, block: &Block, depths: &[u8], body_sz: i64, num_lists: &mut usize) {
+    let (Block::Bullets(lines) | Block::Numbered(lines)) = block else { return };
+    let bullets = matches!(block, Block::Bullets(_));
+    let num_id = if bullets {
+        1
+    } else {
+        *num_lists += 1;
+        1 + *num_lists
+    };
+    for (k, l) in lines.iter().enumerate() {
+        let lvl = depths.get(k).copied().unwrap_or(0).min(richtext::MAX_DEPTH);
+        if bullets && richtext::task_item(l).is_some() {
+            b.push_str(&format!("<w:p><w:pPr><w:ind w:left=\"{}\"/></w:pPr>", docx_list_left(lvl)));
+        } else {
+            b.push_str(&format!("<w:p><w:pPr><w:numPr><w:ilvl w:val=\"{lvl}\"/><w:numId w:val=\"{num_id}\"/></w:numPr></w:pPr>"));
+        }
+        wline(b, l, body_sz, false);
+        b.push_str("</w:p>");
+    }
+}
+
 /// Blocks with no question number in front (side-by-side panels, and the heading / divider /
-/// side-by-side blocks of a stem), indented `ind` twips within `max_tw`.
-fn docx_blocks(b: &mut String, blocks: &[Block], ind: i64, body_sz: i64, max_tw: i64, num_lists: &mut usize) {
-    for block in blocks {
+/// side-by-side blocks of a stem), indented `ind` twips within `max_tw`, from the stem's
+/// nodes (`richtext::parse_tree`): centred paragraphs and headings get `<w:jc w:val="center"/>`,
+/// a centred table `jc` center in its `tblPr`, list items their nesting level.
+fn docx_nodes(b: &mut String, nodes: &[Node], ind: i64, body_sz: i64, max_tw: i64, num_lists: &mut usize) {
+    for node in nodes {
+        let (block, center, depths) = match node {
+            Node::Block { block, center, depths } => (block, *center, depths.as_slice()),
+            Node::Side(panels) => {
+                docx_side(b, panels, ind, body_sz, max_tw, num_lists);
+                continue;
+            }
+        };
+        let jc = if center { "<w:jc w:val=\"center\"/>" } else { "" };
         match block {
             Block::Para(lines) => {
                 for l in lines {
-                    b.push_str(&format!("<w:p><w:pPr><w:ind w:left=\"{ind}\"/></w:pPr>"));
+                    b.push_str(&format!("<w:p><w:pPr><w:ind w:left=\"{ind}\"/>{jc}</w:pPr>"));
                     wline(b, l, body_sz, false);
                     b.push_str("</w:p>");
                 }
             }
-            Block::Bullets(lines) | Block::Numbered(lines) => {
-                let num_id = if matches!(block, Block::Bullets(_)) {
-                    1
-                } else {
-                    *num_lists += 1;
-                    1 + *num_lists
-                };
-                for l in lines {
-                    b.push_str(&format!("<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"{num_id}\"/></w:numPr></w:pPr>"));
-                    wline(b, l, body_sz, false);
-                    b.push_str("</w:p>");
-                }
-            }
+            Block::Bullets(_) | Block::Numbered(_) => docx_list(b, block, depths, body_sz, num_lists),
             Block::Quote(lines) => {
                 for l in lines {
                     b.push_str(&format!(
@@ -2185,10 +2665,10 @@ fn docx_blocks(b: &mut String, blocks: &[Block], ind: i64, body_sz: i64, max_tw:
                     b.push_str("</w:p>");
                 }
             }
-            Block::Table { header, rows } => docx_table(b, *header, rows, body_sz, max_tw, ind),
+            Block::Table { header, rows } => docx_table(b, *header, rows, body_sz, max_tw, if center { None } else { Some(ind) }),
             Block::Heading(level, l) => {
                 let sz = (body_sz as f64 * crate::equation::heading_scale(*level) as f64).round() as i64;
-                b.push_str(&format!("<w:p><w:pPr><w:keepNext/><w:spacing w:before=\"80\" w:after=\"40\"/><w:ind w:left=\"{ind}\"/></w:pPr>"));
+                b.push_str(&format!("<w:p><w:pPr><w:keepNext/><w:spacing w:before=\"80\" w:after=\"40\"/><w:ind w:left=\"{ind}\"/>{jc}</w:pPr>"));
                 wline(b, l, sz, true);
                 b.push_str("</w:p>");
             }
@@ -2198,39 +2678,46 @@ fn docx_blocks(b: &mut String, blocks: &[Block], ind: i64, body_sz: i64, max_tw:
                 ));
             }
             Block::Side(panels) => {
-                // a borderless table, one cell per panel
-                let n = panels.len().max(1) as i64;
-                let w = (max_tw / n).max(400);
-                let none = |side: &str| format!("<w:{side} w:val=\"nil\"/>");
-                b.push_str(&format!(
-                    "<w:tbl><w:tblPr><w:tblW w:w=\"{}\" w:type=\"dxa\"/><w:tblInd w:w=\"{ind}\" w:type=\"dxa\"/><w:tblBorders>{}{}{}{}{}{}</w:tblBorders><w:tblLayout w:type=\"fixed\"/><w:tblCellMar><w:left w:w=\"0\" w:type=\"dxa\"/><w:right w:w=\"180\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr><w:tblGrid>",
-                    w * n,
-                    none("top"), none("left"), none("bottom"), none("right"), none("insideH"), none("insideV")
-                ));
-                for _ in 0..n {
-                    b.push_str(&format!("<w:gridCol w:w=\"{w}\"/>"));
-                }
-                b.push_str("</w:tblGrid><w:tr><w:trPr><w:cantSplit/></w:trPr>");
-                for p in panels {
-                    b.push_str(&format!("<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/></w:tcPr>"));
-                    let before = b.len();
-                    docx_blocks(b, p, 0, body_sz, w - 180, num_lists);
-                    // a cell must end with a paragraph
-                    if b.len() == before || b.ends_with("</w:tbl>") {
-                        b.push_str("<w:p/>");
-                    }
-                    b.push_str("</w:tc>");
-                }
-                b.push_str("</w:tr></w:tbl>");
+                // (`parse_tree` keeps side-by-side groups as `Node::Side`; never reached)
+                let panels: Vec<Vec<Node>> = panels.iter().map(|p| nodes_of(p)).collect();
+                docx_side(b, &panels, ind, body_sz, max_tw, num_lists);
             }
         }
     }
 }
 
+/// Side-by-side panels: a borderless table, one cell per panel.
+fn docx_side(b: &mut String, panels: &[Vec<Node>], ind: i64, body_sz: i64, max_tw: i64, num_lists: &mut usize) {
+    let n = panels.len().max(1) as i64;
+    let w = (max_tw / n).max(400);
+    let none = |side: &str| format!("<w:{side} w:val=\"nil\"/>");
+    b.push_str(&format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"{}\" w:type=\"dxa\"/><w:tblInd w:w=\"{ind}\" w:type=\"dxa\"/><w:tblBorders>{}{}{}{}{}{}</w:tblBorders><w:tblLayout w:type=\"fixed\"/><w:tblCellMar><w:left w:w=\"0\" w:type=\"dxa\"/><w:right w:w=\"180\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr><w:tblGrid>",
+        w * n,
+        none("top"), none("left"), none("bottom"), none("right"), none("insideH"), none("insideV")
+    ));
+    for _ in 0..n {
+        b.push_str(&format!("<w:gridCol w:w=\"{w}\"/>"));
+    }
+    b.push_str("</w:tblGrid><w:tr><w:trPr><w:cantSplit/></w:trPr>");
+    for p in panels {
+        b.push_str(&format!("<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/></w:tcPr>"));
+        let before = b.len();
+        docx_nodes(b, p, 0, body_sz, w - 180, num_lists);
+        // a cell must end with a paragraph
+        if b.len() == before || b.ends_with("</w:tbl>") {
+            b.push_str("<w:p/>");
+        }
+        b.push_str("</w:tc>");
+    }
+    b.push_str("</w:tr></w:tbl>");
+}
+
 /// A bordered Word table indented `ind` twips; column widths come from the same content
 /// measure as the PDF (Source Serif 4 metrics, a little wider than Times), header row bold and shaded and
 /// repeated on each page.
-fn docx_table(b: &mut String, header: bool, rows: &[Vec<richtext::Line>], body_sz: i64, max_tw: i64, ind: i64) {
+/// `ind` None: the table is centred (`jc` center, no indent).
+fn docx_table(b: &mut String, header: bool, rows: &[Vec<richtext::Line>], body_sz: i64, max_tw: i64, ind: Option<i64>) {
     let body = body_sz as f64 / 2.0;
     let fr: Vec<Vec<Vec<Frag>>> = rows
         .iter()
@@ -2244,8 +2731,12 @@ fn docx_table(b: &mut String, header: bool, rows: &[Vec<richtext::Line>], body_s
         .collect();
     let total: i64 = widths.iter().sum();
     let bd = |side: &str| format!("<w:{side} w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"404040\"/>");
+    let place = match ind {
+        Some(ind) => format!("<w:tblInd w:w=\"{ind}\" w:type=\"dxa\"/>"),
+        None => "<w:jc w:val=\"center\"/>".to_string(),
+    };
     b.push_str(&format!(
-        "<w:tbl><w:tblPr><w:tblW w:w=\"{total}\" w:type=\"dxa\"/><w:tblInd w:w=\"{ind}\" w:type=\"dxa\"/><w:tblBorders>{}{}{}{}{}{}</w:tblBorders><w:tblLayout w:type=\"fixed\"/><w:tblCellMar><w:left w:w=\"80\" w:type=\"dxa\"/><w:right w:w=\"80\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr><w:tblGrid>",
+        "<w:tbl><w:tblPr><w:tblW w:w=\"{total}\" w:type=\"dxa\"/>{place}<w:tblBorders>{}{}{}{}{}{}</w:tblBorders><w:tblLayout w:type=\"fixed\"/><w:tblCellMar><w:left w:w=\"80\" w:type=\"dxa\"/><w:right w:w=\"80\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr><w:tblGrid>",
         bd("top"), bd("left"), bd("bottom"), bd("right"), bd("insideH"), bd("insideV")
     ));
     for w in &widths {
@@ -2279,6 +2770,75 @@ fn docx_table(b: &mut String, header: bool, rows: &[Vec<richtext::Line>], body_s
     b.push_str("</w:tbl>");
 }
 
+/// Appends a question's picture as an inline drawing in its own paragraph, indented `ind`
+/// twips, sized by `layout::picture_size_pt` in the column (as the PDF prints it). PNG and
+/// JPEG embed as they are; other formats are re-encoded to PNG. False when the bytes do not
+/// decode (the caller then prints the `[picture]` placeholder).
+fn docx_picture(b: &mut String, media: &mut Vec<(Vec<u8>, &'static str)>, im: &DocImage, ind: i64, text_w_tw: i64) -> bool {
+    let fmt = image::guess_format(&im.bytes).ok();
+    let (bytes, ext, (wpx, hpx)) = match fmt {
+        Some(image::ImageFormat::Png) | Some(image::ImageFormat::Jpeg) => {
+            let dims = image::ImageReader::new(std::io::Cursor::new(&im.bytes))
+                .with_guessed_format()
+                .ok()
+                .and_then(|r| r.into_dimensions().ok());
+            let Some(d) = dims else { return false };
+            (im.bytes.clone(), if fmt == Some(image::ImageFormat::Png) { "png" } else { "jpeg" }, d)
+        }
+        _ => {
+            let Ok(img) = image::load_from_memory(&im.bytes) else { return false };
+            let mut out = std::io::Cursor::new(Vec::new());
+            if img.write_to(&mut out, image::ImageFormat::Png).is_err() {
+                return false;
+            }
+            (out.into_inner(), "png", (img.width(), img.height()))
+        }
+    };
+    if wpx == 0 || hpx == 0 {
+        return false;
+    }
+    let (w, h) = crate::layout::picture_size_pt(wpx, hpx, (text_w_tw - ind) as f64 / 20.0);
+    let (cx, cy) = ((w * 12700.0).round() as i64, (h * 12700.0).round() as i64);
+    media.push((bytes, ext));
+    let n = media.len();
+    b.push_str(&format!(
+        "<w:p><w:pPr><w:keepNext/><w:spacing w:before=\"120\" w:after=\"120\"/><w:ind w:left=\"{ind}\"/></w:pPr><w:r><w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\"><wp:extent cx=\"{cx}\" cy=\"{cy}\"/><wp:docPr id=\"{n}\" name=\"Picture {n}\"/><wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect=\"1\"/></wp:cNvGraphicFramePr><a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"><pic:pic><pic:nvPicPr><pic:cNvPr id=\"{n}\" name=\"image{n}.{ext}\"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed=\"rIdM{n}\"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"
+    ));
+    true
+}
+
+/// Choices in `q.answer_columns` equal columns: a borderless table indented `ind` twips,
+/// rows from `layout::choice_grid` (column-major), rows kept whole across pages.
+fn docx_choice_grid(b: &mut String, q: &DocQ, style: PaperStyle, ind: i64, text_w_tw: i64, body_sz: i64) {
+    let ncols = q.answer_columns.clamp(2, 4) as i64;
+    let w = ((text_w_tw - ind) / ncols).max(400);
+    b.push_str(&format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"{}\" w:type=\"dxa\"/><w:tblInd w:w=\"{ind}\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"nil\"/><w:left w:val=\"nil\"/><w:bottom w:val=\"nil\"/><w:right w:val=\"nil\"/><w:insideH w:val=\"nil\"/><w:insideV w:val=\"nil\"/></w:tblBorders><w:tblLayout w:type=\"fixed\"/><w:tblCellMar><w:left w:w=\"0\" w:type=\"dxa\"/><w:right w:w=\"120\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr><w:tblGrid>",
+        w * ncols
+    ));
+    for _ in 0..ncols {
+        b.push_str(&format!("<w:gridCol w:w=\"{w}\"/>"));
+    }
+    b.push_str("</w:tblGrid>");
+    for row in crate::layout::choice_grid(q.choices.len(), ncols as u8) {
+        b.push_str("<w:tr><w:trPr><w:cantSplit/></w:trPr>");
+        for k in 0..ncols as usize {
+            b.push_str(&format!("<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/></w:tcPr><w:p>"));
+            if let Some(&i) = row.get(k) {
+                for (j, l) in style.choice_label(&q.choices[i]).split('\n').enumerate() {
+                    if j > 0 {
+                        b.push_str("<w:r><w:br/></w:r>");
+                    }
+                    wline(b, &richtext::inline(l), body_sz, false);
+                }
+            }
+            b.push_str("</w:p></w:tc>");
+        }
+        b.push_str("</w:tr>");
+    }
+    b.push_str("</w:tbl>");
+}
+
 /// A choice paragraph indented `ind` twips (inline markup honoured; `\n` breaks lines).
 fn choice_para(b: &mut String, c: &str, ind: i64, body_sz: i64) {
     b.push_str(&format!("<w:p><w:pPr><w:ind w:left=\"{ind}\"/></w:pPr>"));
@@ -2291,8 +2851,26 @@ fn choice_para(b: &mut String, c: &str, ind: i64, body_sz: i64) {
     b.push_str("</w:p>");
 }
 
+/// Left indent (twips) of a list item's text at nesting level `lvl` (the numbering levels'
+/// `w:ind`; the PDF steps [`LIST_INDENT`] = 320 twips per level too).
+fn docx_list_left(lvl: u8) -> i64 {
+    792 + 320 * lvl as i64
+}
+
+/// Does the document body nest list items (`w:ilvl` above 0)?
+fn docx_nests_lists(body: &str) -> bool {
+    (1..=richtext::MAX_DEPTH).any(|l| body.contains(&format!("<w:ilvl w:val=\"{l}\"/>")))
+}
+
 /// numbering.xml: numId 1 = bullets; numIds 2.. = one decimal list each (restart at 1).
-fn numbering_xml(num_lists: usize) -> String {
+/// `nested`: the lists are multilevel (round-7 nesting) with the editor's labels per level,
+/// bullets • ◦ ▪ and numbers 1. / a. / i. (`richtext::bullet_glyph` / `number_label`),
+/// each level [`docx_list_left`]; level 0 is the single-level list's. Without nesting the
+/// part is exactly the pre-round-7 one.
+fn numbering_xml(num_lists: usize, nested: bool) -> String {
+    if nested {
+        return numbering_xml_nested(num_lists);
+    }
     let mut s = String::from(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
 <w:abstractNum w:abstractNumId=\"0\"><w:multiLevelType w:val=\"singleLevel\"/><w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"bullet\"/><w:lvlText w:val=\"\u{2022}\"/><w:lvlJc w:val=\"left\"/><w:pPr><w:ind w:left=\"792\" w:hanging=\"288\"/></w:pPr></w:lvl></w:abstractNum>\
@@ -2304,6 +2882,38 @@ fn numbering_xml(num_lists: usize) -> String {
             "<w:num w:numId=\"{}\"><w:abstractNumId w:val=\"1\"/><w:lvlOverride w:ilvl=\"0\"><w:startOverride w:val=\"1\"/></w:lvlOverride></w:num>",
             2 + k
         ));
+    }
+    s.push_str("</w:numbering>");
+    s
+}
+
+fn numbering_xml_nested(num_lists: usize) -> String {
+    let levels = richtext::MAX_DEPTH;
+    let mut s = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">");
+    s.push_str("<w:abstractNum w:abstractNumId=\"0\"><w:multiLevelType w:val=\"multilevel\"/>");
+    for l in 0..=levels {
+        s.push_str(&format!(
+            "<w:lvl w:ilvl=\"{l}\"><w:start w:val=\"1\"/><w:numFmt w:val=\"bullet\"/><w:lvlText w:val=\"{}\"/><w:lvlJc w:val=\"left\"/><w:pPr><w:ind w:left=\"{}\" w:hanging=\"288\"/></w:pPr></w:lvl>",
+            richtext::bullet_glyph(l),
+            docx_list_left(l)
+        ));
+    }
+    s.push_str("</w:abstractNum><w:abstractNum w:abstractNumId=\"1\"><w:multiLevelType w:val=\"multilevel\"/>");
+    for l in 0..=levels {
+        let fmt = ["decimal", "lowerLetter", "lowerRoman"][l as usize % 3];
+        s.push_str(&format!(
+            "<w:lvl w:ilvl=\"{l}\"><w:start w:val=\"1\"/><w:numFmt w:val=\"{fmt}\"/><w:lvlText w:val=\"%{}.\"/><w:lvlJc w:val=\"left\"/><w:pPr><w:ind w:left=\"{}\" w:hanging=\"360\"/></w:pPr></w:lvl>",
+            l + 1,
+            docx_list_left(l)
+        ));
+    }
+    s.push_str("</w:abstractNum><w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>");
+    for k in 0..num_lists {
+        s.push_str(&format!("<w:num w:numId=\"{}\"><w:abstractNumId w:val=\"1\"/>", 2 + k));
+        for l in 0..=levels {
+            s.push_str(&format!("<w:lvlOverride w:ilvl=\"{l}\"><w:startOverride w:val=\"1\"/></w:lvlOverride>"));
+        }
+        s.push_str("</w:num>");
     }
     s.push_str("</w:numbering>");
     s
@@ -2331,6 +2941,8 @@ const EMPTY_HEADER: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="y
 const FONT_TABLE: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:font w:name="Times New Roman"><w:altName w:val="Liberation Serif"/><w:panose1 w:val="02020603050405020304"/><w:charset w:val="00"/><w:family w:val="roman"/><w:pitch w:val="variable"/></w:font><w:font w:name="Liberation Serif"><w:altName w:val="Times New Roman"/><w:charset w:val="00"/><w:family w:val="roman"/><w:pitch w:val="variable"/></w:font></w:fonts>"#;
 
+const CODE_FONT_TABLE: &str = r#"<w:font w:name="Courier New"><w:altName w:val="Liberation Mono"/><w:panose1 w:val="02070309020205020404"/><w:charset w:val="00"/><w:family w:val="modern"/><w:pitch w:val="fixed"/></w:font><w:font w:name="Liberation Mono"><w:altName w:val="Courier New"/><w:charset w:val="00"/><w:family w:val="modern"/><w:pitch w:val="fixed"/></w:font></w:fonts>"#;
+
 const STYLES: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman" w:eastAsia="Times New Roman"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="120"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="120" w:after="60"/></w:pPr><w:rPr><w:b/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style></w:styles>"#;
 
@@ -2345,20 +2957,27 @@ pub fn render_docx(doc: &ExamDoc) -> Result<Vec<u8>, String> {
         "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body>",
     );
 
-    if !doc.title.is_empty() {
-        wpara(
-            &mut b,
-            &Par {
-                style: Some("Title"),
-                sz: head_sz,
-                bold: true,
-                ..Par::body(doc.title.trim())
-            },
-            body_sz,
-        );
-    }
-    if !doc.header_line.is_empty() {
-        wpara(&mut b, &Par::body(doc.header_line.trim()), body_sz);
+    if doc.is_key {
+        if !doc.title.is_empty() {
+            wpara(&mut b, &Par { style: Some("Title"), sz: head_sz, bold: true, ..Par::body(doc.title.trim()) }, body_sz);
+        }
+    } else {
+        // As the PDF and the page preview: header line with a rule under it, the title
+        // centred, a muted centred "N questions · M points" line.
+        if !doc.header_line.trim().is_empty() {
+            wpara(&mut b, &Par { rule: true, ..Par::body(doc.header_line.trim()) }, body_sz);
+        }
+        if !doc.title.trim().is_empty() {
+            wpara(&mut b, &Par { style: Some("Title"), sz: head_sz, bold: true, center: true, ..Par::body(doc.title.trim()) }, body_sz);
+            let n = doc.questions.len();
+            let pts: f64 = doc.questions.iter().filter_map(|q| q.points).sum();
+            let sub = format!(
+                "{n} question{}{}",
+                if n == 1 { "" } else { "s" },
+                if pts > 0.0 { format!(" \u{b7} {} point{}", points_number(pts), if pts == 1.0 { "" } else { "s" }) } else { String::new() }
+            );
+            wpara(&mut b, &Par { color: Some("808080"), center: true, sz: (body_sz as f64 * 0.92).round() as i64, ..Par::body(&sub) }, body_sz);
+        }
     }
     if let Some(v) = doc.version_label.as_deref().map(str::trim) {
         if !v.is_empty() {
@@ -2386,8 +3005,56 @@ pub fn render_docx(doc: &ExamDoc) -> Result<Vec<u8>, String> {
         wpara(b, &Par { rule: true, dotted: style.dotted(), sz: rule_sz, ind, ..Par::body("") }, body_sz);
     };
     let mut num_lists = 0usize;
-    for q in &doc.questions {
-        if doc.is_key {
+    // Embedded pictures: (bytes, file extension) of word/media/image{k+1}.{ext}.
+    let mut media: Vec<(Vec<u8>, &'static str)> = Vec::new();
+    let questions = printed_questions(doc);
+    let marked = doc.is_key && doc.key_layout == KeyLayout::Marked;
+    let section_key = doc.is_key && doc.key_layout == KeyLayout::Section;
+    if section_key {
+        wpara(&mut b, &Par { bold: true, sz: (body_sz as f64 * 1.25).round() as i64, ..Par::body("Answer Section") }, body_sz);
+    }
+    let mut n_sections = 0usize;
+    for q in &questions {
+        if section_key {
+            if let Some(sec) = &q.section {
+                n_sections += 1;
+                let t = if sec.title.trim().is_empty() { format!("Section {n_sections}") } else { sec.title.trim().to_string() };
+                wpara(&mut b, &Par { bold: true, sz: body_sz + 2, ..Par::body(&t) }, body_sz);
+            }
+            // Number, then a short underlined blank with the answer on it; a written
+            // answer prints under an empty blank.
+            let marks: Vec<String> = if q.key_marks.is_empty() { vec![String::new()] } else { q.key_marks.clone() };
+            for (i, m) in marks.iter().enumerate() {
+                b.push_str("<w:p><w:pPr><w:spacing w:before=\"60\" w:after=\"60\"/><w:ind w:left=\"864\" w:hanging=\"864\"/></w:pPr>");
+                wrun(&mut b, &style.number_label(q.number + i as u32), false, false, 0, body_sz);
+                b.push_str("<w:r><w:tab/></w:r>");
+                let pad = " ".repeat(4);
+                let cell = if m.is_empty() { "\u{a0}".repeat(14) } else { format!("{pad}{m}{pad}") };
+                b.push_str(&format!(
+                    "<w:r><w:rPr><w:u w:val=\"single\"/><w:sz w:val=\"{body_sz}\"/><w:szCs w:val=\"{body_sz}\"/></w:rPr><w:t xml:space=\"preserve\">{}</w:t></w:r></w:p>",
+                    xml_esc(&cell)
+                ));
+            }
+            if q.key_marks.is_empty() && !q.key_text.trim().is_empty() {
+                docx_nodes(&mut b, &richtext::parse_tree(q.key_text.trim()), 864, body_sz, text_w_tw - 864, &mut num_lists);
+            }
+            continue;
+        }
+        // Marked key: correct choices checked and bold (labels are styled here, so the
+        // style's relabelling below leaves them as they are).
+        let marked_q;
+        let q = if marked && !q.correct.is_empty() && !is_tf(&q.choices) {
+            let mut m = q.clone();
+            for (i, c) in m.choices.iter_mut().enumerate() {
+                let l = style.choice_label(c);
+                *c = if q.correct.contains(&i) && !l.contains("**") { format!("\u{2713} **{l}**") } else { l };
+            }
+            marked_q = m;
+            &marked_q
+        } else {
+            q
+        };
+        if doc.is_key && !marked {
             // Bold key lines: "N. answer" then any further lines (the explanation).
             let mut first = true;
             for l in q.key_text.trim().split('\n').filter(|l| !l.trim().is_empty()) {
@@ -2446,19 +3113,36 @@ pub fn render_docx(doc: &ExamDoc) -> Result<Vec<u8>, String> {
                     }
                 }
             };
-            docx_stem(&mut b, q, pt_label.as_deref(), body_sz, text_w_tw, &mut num_lists, style, &part_work);
-
-            if q.image.is_some() {
-                wpara(
-                    &mut b,
-                    &Par { italic: true, center: true, ..Par::body("[picture]") },
-                    body_sz,
-                );
+            // The picture prints at the stem's first `[picture]` marker, or under the stem,
+            // as an inline drawing at the stem's indent (the PDF's size and place).
+            let split = picture_split(q, q.image.as_ref().map(|_| 0));
+            match &split {
+                Some((head, _)) => docx_stem(&mut b, head, pt_label.as_deref(), body_sz, text_w_tw, &mut num_lists, style, &part_work),
+                None => docx_stem(&mut b, q, pt_label.as_deref(), body_sz, text_w_tw, &mut num_lists, style, &part_work),
+            }
+            if let Some(im) = &q.image {
+                if !docx_picture(&mut b, &mut media, im, ind_w, text_w_tw) {
+                    wpara(&mut b, &Par { italic: true, center: true, ..Par::body("[picture]") }, body_sz);
+                }
+            }
+            if let Some((_, rest)) = &split {
+                for t in rest {
+                    docx_nodes(&mut b, &richtext::parse_tree(t), ind_w, body_sz, text_w_tw - ind_w, &mut num_lists);
+                }
             }
 
             // Choices.
-            if tf {
+            if tf && marked && !q.correct.is_empty() {
+                let t = if q.correct.contains(&0) { "\u{2713} **True**   False" } else { "True   \u{2713} **False**" };
+                b.push_str(&format!("<w:p><w:pPr><w:ind w:left=\"{ind}\"/></w:pPr>"));
+                wline(&mut b, &richtext::inline(t), body_sz, false);
+                b.push_str("</w:p>");
+            } else if tf {
                 wpara(&mut b, &Par { ind, ..Par::body("True   False") }, body_sz);
+            } else if q.answer_columns >= 2 && q.choices.len() > 1 {
+                // Answer columns 2 / 4: a borderless fixed-width table, filled column-major,
+                // each choice wrapping inside its cell.
+                docx_choice_grid(&mut b, q, style, ind, text_w_tw, body_sz);
             } else if style.choices_across() && q.choices.len() > 1 && q.choices.iter().all(|c| c.chars().count() <= 24) {
                 // Condensed: the choices across one paragraph on evenly spaced tab stops.
                 let n = q.choices.len().min(4) as i64;
@@ -2483,6 +3167,10 @@ pub fn render_docx(doc: &ExamDoc) -> Result<Vec<u8>, String> {
                 }
             }
 
+            if marked && q.correct.is_empty() && !q.key_text.trim().is_empty() {
+                let t = format!("**Answer:** {}", q.key_text.trim());
+                docx_nodes(&mut b, &richtext::parse_tree(&t), ind, body_sz, text_w_tw - ind, &mut num_lists);
+            }
             for _ in 0..rule_count(q) {
                 rule_par(&mut b, 0);
             }
@@ -2523,7 +3211,17 @@ pub fn render_docx(doc: &ExamDoc) -> Result<Vec<u8>, String> {
         tw(m.left as f64)
     ));
 
-    let numbering = numbering_xml(num_lists);
+    if !media.is_empty() {
+        b = b.replacen(
+            "<w:document ",
+            "<w:document xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\" ",
+            1,
+        );
+    }
+    let numbering = numbering_xml(num_lists, docx_nests_lists(&b));
+    // Code runs name Courier New: the font table then lists it with Liberation Mono (the
+    // PDF's mono, metric-compatible) as its alternate, modern family, fixed pitch.
+    let font_table = if b.contains(CODE_FONT) { FONT_TABLE.replace("</w:fonts>", CODE_FONT_TABLE) } else { FONT_TABLE.to_string() };
     let link_rels = docx_link_rels(&mut b);
     let mut z = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let opt = zip::write::SimpleFileOptions::default()
@@ -2536,13 +3234,26 @@ pub fn render_docx(doc: &ExamDoc) -> Result<Vec<u8>, String> {
         None => (CONTENT_TYPES.to_string(), DOC_RELS.to_string()),
     };
     let rels = if link_rels.is_empty() { rels } else { rels.replace("</Relationships>", &format!("{link_rels}</Relationships>")) };
+    let media_rels: String = media
+        .iter()
+        .enumerate()
+        .map(|(k, (_, ext))| format!("<Relationship Id=\"rIdM{n}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"media/image{n}.{ext}\"/>", n = k + 1))
+        .collect();
+    let rels = if media_rels.is_empty() { rels } else { rels.replace("</Relationships>", &format!("{media_rels}</Relationships>")) };
+    let mut types = types;
+    for ext in ["png", "jpeg"] {
+        if media.iter().any(|m| m.1 == ext) {
+            types = types.replace("<Default Extension=\"xml\"", &format!("<Default Extension=\"{ext}\" ContentType=\"image/{ext}\"/><Default Extension=\"xml\""));
+        }
+    }
+    let media_names: Vec<String> = media.iter().enumerate().map(|(k, (_, ext))| format!("word/media/image{}.{ext}", k + 1)).collect();
     let mut parts: Vec<(&str, &str)> = vec![
         ("[Content_Types].xml", types.as_str()),
         ("_rels/.rels", ROOT_RELS),
         ("word/_rels/document.xml.rels", rels.as_str()),
         ("word/styles.xml", STYLES),
         ("word/numbering.xml", numbering.as_str()),
-        ("word/fontTable.xml", FONT_TABLE),
+        ("word/fontTable.xml", font_table.as_str()),
         ("word/document.xml", b.as_str()),
     ];
     if let Some(h) = &running {
@@ -2553,6 +3264,13 @@ pub fn render_docx(doc: &ExamDoc) -> Result<Vec<u8>, String> {
         z.start_file(name, opt.clone()).map_err(|e| format!("docx zip: {e}"))?;
         use std::io::Write as _;
         z.write_all(data.as_bytes()).map_err(|e| format!("docx zip: {e}"))?;
+    }
+    for (name, (bytes, _)) in media_names.iter().zip(&media) {
+        // Pictures are already compressed: store them.
+        let stored = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        z.start_file(name.as_str(), stored).map_err(|e| format!("docx zip: {e}"))?;
+        use std::io::Write as _;
+        z.write_all(bytes).map_err(|e| format!("docx zip: {e}"))?;
     }
     z.finish()
         .map_err(|e| format!("docx zip: {e}"))
@@ -3603,5 +4321,522 @@ mod style_tests {
         assert!(x.contains("_______ 1.") && x.contains(">a. Venus<"));
         let x = docx_xml(&doc(PaperStyle::Condensed));
         assert!(x.contains("<w:tabs>"), "choices across on tab stops");
+    }
+}
+
+/// Round 7: answer columns, the page-like title area, pictures (size, place, DOCX drawings),
+/// proper-length blanks and the answer-key layouts.
+#[cfg(test)]
+mod r7_tests {
+    use super::*;
+    use crate::layout::{DocSection, KeyLayout};
+    use std::io::Read;
+
+    fn s(pdf: &[u8]) -> String {
+        String::from_utf8_lossy(&super::tests::masked(pdf)).into_owned()
+    }
+
+    /// (x, y, text) of every literal-string text draw.
+    fn text_pos(pdf: &[u8]) -> Vec<(f64, f64, String)> {
+        let t = s(pdf);
+        let parts: Vec<&str> = t.split(" Td (").collect();
+        let mut out = vec![];
+        for k in 1..parts.len() {
+            let mut nums = parts[k - 1].rsplit(' ');
+            let y = nums.next().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            let x = nums.next().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            out.push((x, y, parts[k].split(") Tj").next().unwrap_or("").to_string()));
+        }
+        out
+    }
+
+    fn at(pos: &[(f64, f64, String)], needle: &str) -> (f64, f64) {
+        pos.iter().find(|p| p.2.contains(needle)).map(|p| (p.0, p.1)).unwrap_or_else(|| panic!("{needle} not drawn: {pos:?}"))
+    }
+
+    fn png(w: u32, h: u32) -> Vec<u8> {
+        let img = image::RgbImage::from_fn(w, h, |x, y| image::Rgb([(x % 255) as u8, (y % 255) as u8, 90]));
+        let mut out = Vec::new();
+        image::DynamicImage::ImageRgb8(img).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
+        out
+    }
+
+    fn mc(cols: u8) -> ExamDoc {
+        ExamDoc {
+            title: "Cols".into(),
+            header_line: "Name: ______".into(),
+            heading_pt: 16.0,
+            body_pt: 11.0,
+            margin_mm: 18.0,
+            questions: vec![DocQ {
+                number: 1,
+                text: vec!["Pick one.".into()],
+                choices: vec!["A. Alpha".into(), "B. Beta".into(), "C. Gamma".into(), "D. Delta".into()],
+                answer_columns: cols,
+                correct: vec![2],
+                key_marks: vec!["C".into()],
+                key_text: "C".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn docx_part(d: &ExamDoc, name: &str) -> Option<Vec<u8>> {
+        let bytes = render_docx(d).unwrap();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut f = z.by_name(name).ok()?;
+        let mut v = Vec::new();
+        f.read_to_end(&mut v).unwrap();
+        Some(v)
+    }
+
+    fn docx_xml(d: &ExamDoc) -> String {
+        String::from_utf8(docx_part(d, "word/document.xml").unwrap()).unwrap()
+    }
+
+    #[test]
+    fn choice_grid_fills_columns_like_test_parrot() {
+        use crate::layout::choice_grid;
+        assert_eq!(choice_grid(4, 2), vec![vec![0, 2], vec![1, 3]], "A C / B D");
+        assert_eq!(choice_grid(4, 4), vec![vec![0, 1, 2, 3]]);
+        assert_eq!(choice_grid(5, 2), vec![vec![0, 3], vec![1, 4], vec![2]]);
+        assert_eq!(choice_grid(3, 1), vec![vec![0], vec![1], vec![2]]);
+        assert_eq!(choice_grid(3, 0), vec![vec![0], vec![1], vec![2]], "0 reads as one column");
+        assert_eq!(choice_grid(2, 4), vec![vec![0, 1]]);
+        assert!(choice_grid(0, 2).is_empty());
+    }
+
+    #[test]
+    fn pdf_answer_columns_two_and_four() {
+        let p1 = text_pos(&render_pdf(&mc(1)).unwrap());
+        let (xa, ya) = at(&p1, "A. Alpha");
+        let (xb, yb) = at(&p1, "B. Beta");
+        assert!((xa - xb).abs() < 0.01 && yb < ya, "1 column: one per line");
+        let p2 = text_pos(&render_pdf(&mc(2)).unwrap());
+        let (a, b, c, d) = (at(&p2, "A. Alpha"), at(&p2, "B. Beta"), at(&p2, "C. Gamma"), at(&p2, "D. Delta"));
+        assert!((a.1 - c.1).abs() < 0.01 && (b.1 - d.1).abs() < 0.01 && b.1 < a.1, "rows A C / B D");
+        assert!(c.0 > a.0 + 100.0 && (a.0 - b.0).abs() < 0.01 && (c.0 - d.0).abs() < 0.01);
+        let p4 = text_pos(&render_pdf(&mc(4)).unwrap());
+        let ys: Vec<f64> = ["A. Alpha", "B. Beta", "C. Gamma", "D. Delta"].iter().map(|n| at(&p4, n).1).collect();
+        assert!(ys.iter().all(|y| (y - ys[0]).abs() < 0.01), "4 columns: one row");
+        // A long choice wraps inside its column instead of running into the next.
+        let mut d = mc(2);
+        d.questions[0].choices[0] = format!("A. {}", "word ".repeat(30));
+        let p = text_pos(&render_pdf(&d).unwrap());
+        let c = at(&p, "C. Gamma");
+        let widest_a = p.iter().filter(|t| t.0 < c.0 && t.2.contains("word")).count();
+        assert!(widest_a >= 2, "the long choice wraps over several lines in column 1");
+    }
+
+    #[test]
+    fn docx_answer_columns_are_a_borderless_grid() {
+        let x = docx_xml(&mc(2));
+        assert_eq!(x.matches("<w:gridCol").count(), 2);
+        assert!(x.contains(r#"<w:insideV w:val="nil"/>"#));
+        let a = x.find(">A. Alpha<").unwrap();
+        let c = x.find(">C. Gamma<").unwrap();
+        let b = x.find(">B. Beta<").unwrap();
+        assert!(a < c && c < b, "row 1 holds A then C");
+        assert!(!docx_xml(&mc(1)).contains("<w:tbl>"), "1 column keeps paragraphs");
+    }
+
+    #[test]
+    fn title_area_follows_the_page_preview() {
+        let mut d = mc(1);
+        d.questions[0].points = Some(2.0);
+        let p = text_pos(&render_pdf(&d).unwrap());
+        let (hx, hy) = at(&p, "Name: ");
+        let (tx, ty) = at(&p, "Cols");
+        assert!(hy > ty, "header line above the title");
+        let mid = (18.0 * MM_PT + 612.0 - 18.0 * MM_PT) / 2.0;
+        let tw = text_w("Cols", Face::Bold, 16.0);
+        assert!((tx + tw / 2.0 - mid).abs() < 0.5, "title centred");
+        assert!((hx - 18.0 * MM_PT).abs() < 0.5);
+        let (_, sy) = at(&p, "1 question");
+        assert!(sy < ty);
+        assert!(p.iter().any(|t| t.2.contains("2 points")), "subtitle carries the total");
+        // Answer keys keep the plain title line (no header, no subtitle).
+        let mut k = d.clone();
+        k.is_key = true;
+        let p = text_pos(&render_pdf(&k).unwrap());
+        assert!(!p.iter().any(|t| t.2.contains("Name:") || t.2.contains("1 question")));
+    }
+
+    #[test]
+    fn blanks_print_at_a_proper_length() {
+        let min = (BLANK_EM / char_w(b'_', Face::Reg, 1.0)).ceil() as usize;
+        assert!(min >= 6);
+        assert_eq!(widen_blanks("Water is ___."), format!("Water is {}.", "_".repeat(min)));
+        let long = "_".repeat(min + 10);
+        assert_eq!(widen_blanks(&long), long, "longer blanks keep their length");
+        assert_eq!(widen_blanks("a__b snake_case"), "a__b snake_case", "two underscores are not a blank");
+        assert_eq!(widen_blanks("x | ___"), format!("x | {}", "_".repeat(min)));
+        let mut d = mc(1);
+        d.questions[0].choices.clear();
+        d.questions[0].text = vec!["Fill: ___ and ___".into()];
+        let t = s(&render_pdf(&d).unwrap());
+        assert!(t.contains(&"_".repeat(min)), "PDF widens");
+        assert!(docx_xml(&d).contains(&"_".repeat(min)), "DOCX widens");
+    }
+
+    #[test]
+    fn picture_sits_at_the_stem_edge_sized_like_the_preview() {
+        assert_eq!(crate::layout::picture_size_pt(100, 50, 400.0), (75.0, 37.5), "natural 96 dpi size, never enlarged");
+        let (w, h) = crate::layout::picture_size_pt(2000, 1000, 400.0);
+        assert!((w - 400.0).abs() < 1e-6 && (h - 200.0).abs() < 1e-6, "scaled to the column width");
+        let (_, h) = crate::layout::picture_size_pt(300, 2000, 400.0);
+        assert!((h - crate::layout::PICTURE_MAX_H_PT).abs() < 1e-6, "tall pictures capped");
+        let mut d = mc(1);
+        d.questions[0].choices.clear();
+        d.questions[0].text = vec!["Look:\n[picture: graph]\nWhat is the slope?".into()];
+        d.questions[0].image = Some(DocImage { bytes: png(800, 400), width_px: 800, height_px: 400 });
+        let pdf = render_pdf(&d).unwrap();
+        let t = s(&pdf);
+        assert!(!t.contains("[picture"), "the attached picture replaces its marker");
+        let p = text_pos(&pdf);
+        let (lx, ly) = at(&p, "Look:");
+        let (_, sy) = at(&p, "What is the slope?");
+        // `w 0 0 h x y cm /Im1 Do`
+        let cm = t.split(" cm /Im1 Do").next().unwrap().rsplit("q ").next().unwrap().to_string();
+        let v: Vec<f64> = cm.split(' ').filter_map(|n| n.parse().ok()).collect();
+        let (w, h, x, y) = (v[0], v[3], v[4], v[5]);
+        assert!((x - lx).abs() < 0.01, "left edge = stem x ({x} vs {lx})");
+        assert!(y + h < ly && y > sy, "between the text before and after the marker");
+        assert!(h <= crate::layout::PICTURE_MAX_H_PT + 0.01 && (w / h - 2.0).abs() < 0.01, "aspect kept, capped");
+        assert!(w <= 612.0 - 2.0 * 18.0 * MM_PT - STEM_INSET + 0.01);
+    }
+
+    #[test]
+    fn docx_embeds_pictures_as_inline_drawings() {
+        let mut d = mc(1);
+        d.questions[0].image = Some(DocImage { bytes: png(400, 200), width_px: 400, height_px: 200 });
+        let x = docx_xml(&d);
+        assert!(!x.contains("[picture]"));
+        assert!(x.contains("<wp:inline") && x.contains(r#"r:embed="rIdM1""#) && x.contains("xmlns:wp="));
+        // 400x200 px -> 300x150 pt -> EMU
+        assert!(x.contains(&format!(r#"<wp:extent cx="{}" cy="{}"/>"#, 300 * 12700, 150 * 12700)));
+        let media = docx_part(&d, "word/media/image1.png").expect("media part");
+        assert_eq!(&media[..4], b"\x89PNG");
+        let rels = String::from_utf8(docx_part(&d, "word/_rels/document.xml.rels").unwrap()).unwrap();
+        assert!(rels.contains(r#"Id="rIdM1""#) && rels.contains("media/image1.png"));
+        let types = String::from_utf8(docx_part(&d, "[Content_Types].xml").unwrap()).unwrap();
+        assert!(types.contains(r#"<Default Extension="png" ContentType="image/png"/>"#));
+        // Undecodable bytes keep the placeholder; documents without pictures are unchanged.
+        d.questions[0].image = Some(DocImage { bytes: vec![1, 2, 3], width_px: 4, height_px: 4 });
+        let x = docx_xml(&d);
+        assert!(x.contains("[picture]") && !x.contains("<wp:inline"));
+        let plain = docx_xml(&mc(1));
+        assert!(!plain.contains("xmlns:wp") && docx_part(&mc(1), "word/media/image1.png").is_none());
+        // JPEG embeds as it is.
+        let mut jpg = Vec::new();
+        image::DynamicImage::ImageRgb8(image::RgbImage::new(10, 10)).write_to(&mut std::io::Cursor::new(&mut jpg), image::ImageFormat::Jpeg).unwrap();
+        d.questions[0].image = Some(DocImage { bytes: jpg.clone(), width_px: 10, height_px: 10 });
+        assert_eq!(docx_part(&d, "word/media/image1.jpeg").unwrap(), jpg);
+    }
+
+    fn key(layout: KeyLayout) -> ExamDoc {
+        let mut d = mc(1);
+        d.questions[0].section = Some(DocSection { title: String::new(), directions: "Circle.".into() });
+        d.questions.push(DocQ { number: 2, text: vec!["Explain.".into()], key_text: "Because tides.".into(), rule_lines: 3, ..Default::default() });
+        d.questions.push(DocQ {
+            number: 3,
+            text: vec!["Venus".into(), "Mars".into()],
+            choices: vec!["A. red".into(), "B. hot".into()],
+            key_marks: vec!["B".into(), "A".into()],
+            key_text: "1-B 2-A".into(),
+            ..Default::default()
+        });
+        d.title = "Cols — Answer Key".into();
+        d.is_key = true;
+        d.key_layout = layout;
+        if layout != KeyLayout::Marked {
+            for q in &mut d.questions {
+                q.choices.clear();
+                q.text.clear();
+                q.rule_lines = 0;
+            }
+        }
+        d
+    }
+
+    #[test]
+    fn answer_section_key_writes_answers_on_blanks() {
+        let pdf = render_pdf(&key(KeyLayout::Section)).unwrap();
+        let p = text_pos(&pdf);
+        assert!(p.iter().any(|t| t.2 == "Answer Section"));
+        assert!(p.iter().any(|t| t.2 == "Section 1"), "untitled section named by number");
+        let exact = |n: &str| p.iter().find(|t| t.2 == n).map(|t| (t.0, t.1)).unwrap_or_else(|| panic!("{n} not drawn"));
+        let (cx, cy) = exact("C");
+        let (_, n1) = exact("1.");
+        assert!((cy - n1).abs() < 0.01 && cx > 18.0 * MM_PT + STEM_INSET, "the letter sits on question 1's blank");
+        let (_, e) = exact("Because tides.");
+        let (_, n2) = exact("2.");
+        assert!(e < n2, "a written answer prints under its blank");
+        assert!(p.iter().any(|t| t.2 == "3.") && p.iter().any(|t| t.2 == "4."), "matching: one blank per left item");
+        let x = docx_xml(&key(KeyLayout::Section));
+        assert!(x.contains("Answer Section") && x.contains(r#"<w:u w:val="single"/>"#) && x.contains("    C    "));
+        assert!(x.contains("Because tides."));
+    }
+
+    #[test]
+    fn marked_key_checks_correct_choices() {
+        let pdf = render_pdf(&key(KeyLayout::Marked)).unwrap();
+        let t = s(&pdf);
+        let p = text_pos(&pdf);
+        let (_, cy) = at(&p, "C. Gamma");
+        assert!(t.contains("0.1 0.45 0.25 RG 1 J"), "a check mark is stroked");
+        // The correct choice prints in the bold face.
+        let bold_c = t.split(" Td (C. Gamma) Tj").next().unwrap().rsplit("BT /").next().unwrap().starts_with("F2");
+        assert!(bold_c, "C. Gamma in bold");
+        let plain_a = t.split(" Td (A. Alpha) Tj").next().unwrap().rsplit("BT /").next().unwrap().starts_with("F1");
+        assert!(plain_a);
+        assert!(p.iter().any(|t| t.2.contains("Because tides.")), "written answers print");
+        assert!(cy > 0.0);
+        let x = docx_xml(&key(KeyLayout::Marked));
+        assert!(x.contains("\u{2713}") && x.contains("Because tides."));
+    }
+
+    #[test]
+    fn no_answer_space_drops_lines_and_work_space() {
+        let mut d = mc(1);
+        d.questions[0].choices.clear();
+        d.questions[0].text = vec!["Explain.".into()];
+        d.questions[0].work_lines = 4;
+        let lined = s(&render_pdf(&d).unwrap()).matches(" l S").count();
+        d.questions[0].no_answer_space = true;
+        let bare = s(&render_pdf(&d).unwrap()).matches(" l S").count();
+        assert!(bare + 3 <= lined, "3 default ruled lines gone ({lined} -> {bare})");
+        assert_eq!(docx_xml(&d).matches("<w:between").count(), 1, "only the header line's rule in the DOCX");
+        d.questions[0].text = vec!["Water is ___.".into()];
+        assert_eq!(rule_count(&d.questions[0]), 0);
+    }
+
+    #[test]
+    fn default_key_layout_is_the_compact_list() {
+        assert_eq!(ExamDoc::default().key_layout, KeyLayout::List);
+        let mut d = key(KeyLayout::List);
+        let a = render_pdf(&d).unwrap();
+        d.questions.iter_mut().for_each(|q| {
+            q.correct.clear();
+            q.key_marks.clear();
+            q.section = None;
+        });
+        assert_eq!(super::tests::masked(&a), super::tests::masked(&render_pdf(&d).unwrap()), "list keys ignore the new fields");
+    }
+}
+
+/// Round-7 stem markup in print: `code` in the mono, `::: center` groups, nested lists and
+/// task items, in the PDF (layout items, operators, pdftotext) and the DOCX (XML).
+#[cfg(test)]
+mod r7_markup_tests {
+    use super::*;
+    use std::io::Read;
+
+    fn doc(stem: &str) -> ExamDoc {
+        ExamDoc {
+            title: "R7".into(),
+            heading_pt: 16.0,
+            body_pt: 11.0,
+            margin_mm: 18.0,
+            questions: vec![DocQ { number: 1, text: vec![stem.into()], points: Some(2.0), no_answer_space: true, ..Default::default() }],
+            ..Default::default()
+        }
+    }
+
+    fn part(d: &ExamDoc, name: &str) -> String {
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(render_docx(d).unwrap())).unwrap();
+        let mut s = String::new();
+        z.by_name(name).unwrap().read_to_string(&mut s).unwrap();
+        s
+    }
+
+    /// pdftotext -layout of the PDF (None when poppler is not installed).
+    fn pdftotext(pdf: &[u8], tag: &str) -> Option<String> {
+        std::process::Command::new("pdftotext").arg("-v").output().ok()?;
+        let dir = std::env::temp_dir().join(format!("qs-r7-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("r7.pdf");
+        std::fs::write(&f, pdf).unwrap();
+        let out = std::process::Command::new("pdftotext").args(["-layout", "-enc", "UTF-8"]).arg(&f).arg("-").output().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(out.status.success());
+        Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
+    fn lines(items: &[Item]) -> Vec<(f64, Option<String>, String)> {
+        items
+            .iter()
+            .filter_map(|it| match it {
+                Item::Line { indent, frags, marker, .. } => Some((*indent, marker.clone(), frags.iter().map(|p| p.text.as_str()).collect())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn code_prints_in_the_embedded_mono() {
+        let stem = "Run `ls -la` and then `cd ..` in a terminal.";
+        let pdf = render_pdf(&doc(stem)).unwrap();
+        let t = String::from_utf8_lossy(&pdf);
+        assert!(t.contains("BT /F10 "), "code drawn in F10");
+        assert!(t.contains("(ls -la) Tj") && t.contains("(cd ..) Tj"), "code text in one run each");
+        assert!(t.contains("+LiberationMono /FirstChar 32"), "mono subset embedded");
+        assert!(t.contains(" /F10 ") && t.contains("/FontFile2"));
+        assert!(t.contains(&format!("{CODE_TINT} g ")), "code tint");
+        // Measured with the mono's own advances at MONO_SCALE.
+        let w = text_w("ls -la", Face::Mono, 11.0);
+        assert!((w - 6.0 * 0.6 * 11.0 * MONO_SCALE).abs() < 1e-9, "{w}");
+        // Non-WinAnsi characters inside code fall back to the serif's CID font (F5).
+        let pdf2 = render_pdf(&doc("Type `x \u{2264} \u{3c0}` here.")).unwrap();
+        assert!(String::from_utf8_lossy(&pdf2).contains("BT /F5 "));
+        if let Some(txt) = pdftotext(&pdf, "code") {
+            assert!(txt.contains("Run ls -la and then cd .. in a terminal."), "{txt}");
+        }
+        if let Some(txt) = pdftotext(&pdf2, "code2") {
+            assert!(txt.contains("x \u{2264} \u{3c0}"), "{txt}");
+        }
+        // DOCX: Courier New runs, shaded, with the font in the font table.
+        let d = doc(stem);
+        let x = part(&d, "word/document.xml");
+        assert!(x.contains(&format!("<w:r><w:rPr>{CODE_FONT}<w:sz w:val=\"20\"/><w:szCs w:val=\"20\"/>{CODE_SHD}</w:rPr><w:t xml:space=\"preserve\">ls -la</w:t></w:r>")), "{x}");
+        let ft = part(&d, "word/fontTable.xml");
+        assert!(ft.contains("<w:font w:name=\"Courier New\"><w:altName w:val=\"Liberation Mono\"/>") && ft.contains("<w:pitch w:val=\"fixed\"/>"));
+        // A code link keeps both.
+        let x = part(&doc("See [`man ls`](https://example.com/ls)."), "word/document.xml");
+        assert!(x.contains(&format!("<w:r><w:rPr>{CODE_FONT}<w:color w:val=\"0563C1\"/><w:u w:val=\"single\"/>")), "{x}");
+    }
+
+    #[test]
+    fn documents_without_code_embed_no_mono_and_keep_the_font_table() {
+        let d = doc("Plain **bold** text, a list:\n• one\n• two");
+        let pdf = render_pdf(&d).unwrap();
+        let t = String::from_utf8_lossy(&pdf);
+        assert!(!t.contains("F10") && !t.contains("LiberationMono"));
+        assert_eq!(part(&d, "word/fontTable.xml"), FONT_TABLE);
+        assert_eq!(part(&d, "word/numbering.xml"), numbering_xml(0, false));
+        assert!(!part(&d, "word/document.xml").contains("Courier"));
+    }
+
+    #[test]
+    fn centred_groups_centre_each_line_in_the_pdf() {
+        let stem = "Evaluate:\n::: center\nShort centred line\n## A heading\n:::\nAfter, left aligned.";
+        let items = layout_nodes(&richtext::parse_tree(stem), 400.0, 380.0, 11.0, 15.6);
+        let ls = lines(&items);
+        assert_eq!(ls[0].0, 0.0, "{ls:?}");
+        let w = text_w("Short centred line", Face::Reg, 11.0);
+        assert!((ls[1].0 - (400.0 - w) / 2.0).abs() < 0.01, "{ls:?}");
+        assert!(ls[2].0 > 100.0 && ls[2].2 == "A heading", "heading centred: {ls:?}");
+        assert_eq!(ls[3].0, 0.0);
+        // A long centred paragraph: every wrapped line centred in the width it wrapped to.
+        let long = format!("::: center\n{}\n:::", "word ".repeat(40).trim());
+        let items = layout_nodes(&richtext::parse_tree(&long), 300.0, 260.0, 11.0, 15.6);
+        for (k, it) in items.iter().enumerate() {
+            if let Item::Line { indent, frags, .. } = it {
+                let room = if k == 0 { 260.0 } else { 300.0 };
+                assert!((indent * 2.0 + placed_w(frags, 11.0) - room).abs() < 0.01 || *indent == 0.0, "line {k}");
+                assert!(indent + placed_w(frags, 11.0) <= room + 0.01);
+            }
+        }
+        // A centred table sits in the middle of the column.
+        let items = layout_nodes(&richtext::parse_tree("::: center\na | b\n1 | 2\n:::"), 400.0, 400.0, 11.0, 15.6);
+        let Some(Item::Row { cols, .. }) = items.first() else { panic!("{items:?}") };
+        let total: f64 = cols.iter().map(|c| c.1).sum();
+        assert!((cols[0].0 - (400.0 - total) / 2.0).abs() < 0.01, "{cols:?}");
+        // Its header shading starts at its first column, where its borders do.
+        let pdf = render_pdf(&doc("Fill in:\n::: center\nFormula | Name\nKI | ___\n:::")).unwrap();
+        let t = String::from_utf8_lossy(&pdf);
+        let num_after = |pat: &str| t[t.find(pat).unwrap() + pat.len()..].split(' ').next().unwrap().parse::<f64>().unwrap();
+        let (fill_x, border_x) = (num_after("0.93 g "), num_after("0.6 w 0.25 0.25 0.25 RG "));
+        assert_eq!(fill_x, border_x);
+        assert!(fill_x > 150.0, "{fill_x}");
+        // In the PDF: the centred line's x is right of the stem's left edge; pdftotext keeps the text.
+        let pdf = render_pdf(&doc(stem)).unwrap();
+        if let Some(txt) = pdftotext(&pdf, "center") {
+            let l = txt.lines().find(|l| l.contains("Short centred line")).unwrap();
+            let e = txt.lines().find(|l| l.contains("Evaluate:")).unwrap();
+            assert!(l.find('S').unwrap() > e.find('E').unwrap() + 10, "{txt}");
+        }
+    }
+
+    #[test]
+    fn centred_groups_are_jc_center_in_the_docx() {
+        let x = part(&doc("Evaluate:\n::: center\nShort centred line\n## A heading\n:::\n::: center\na | b\n1 | 2\n:::"), "word/document.xml");
+        assert!(x.contains("<w:p><w:pPr><w:ind w:left=\"432\"/><w:jc w:val=\"center\"/></w:pPr><w:r><w:rPr><w:sz w:val=\"22\"/><w:szCs w:val=\"22\"/></w:rPr><w:t xml:space=\"preserve\">Short centred line</w:t>"), "{x}");
+        assert!(x.contains("<w:ind w:left=\"432\"/><w:jc w:val=\"center\"/></w:pPr>") && x.matches("<w:jc w:val=\"center\"/>").count() >= 4, "{x}");
+        assert!(x.contains("<w:tblW w:w=\"") && x.contains("w:type=\"dxa\"/><w:jc w:val=\"center\"/><w:tblBorders>"), "table jc: {x}");
+        // "Evaluate:" keeps the number in its gutter, left aligned.
+        assert!(x.contains("<w:ind w:left=\"432\" w:hanging=\"432\"/></w:pPr>"));
+        // A stem that opens centred: the number stands on its own line first.
+        let x = part(&doc("::: center\nOnly centred\n:::"), "word/document.xml");
+        let num = x.find(">1.</w:t>").unwrap();
+        assert!(x[num..].find("<w:jc w:val=\"center\"/></w:pPr>").is_some(), "{x}");
+    }
+
+    #[test]
+    fn nested_lists_indent_per_level_with_level_labels() {
+        let stem = "• Fruit\n  • Apple\n    • Fuji\n  • Pear\n• Veg";
+        let ls = lines(&layout_nodes(&richtext::parse_tree(stem), 400.0, 400.0, 11.0, 15.6));
+        let got: Vec<(f64, Option<String>)> = ls.iter().map(|l| (l.0, l.1.clone())).collect();
+        let b = |c: char| Some(c.to_string());
+        assert_eq!(
+            got,
+            vec![(LIST_INDENT, b('\u{2022}')), (2.0 * LIST_INDENT, b('\u{25e6}')), (3.0 * LIST_INDENT, b('\u{25aa}')), (2.0 * LIST_INDENT, b('\u{25e6}')), (LIST_INDENT, b('\u{2022}'))]
+        );
+        let stem = "1. Mix\n  1. Stir\n  2. Shake\n    1. Hard\n2. Heat\n  1. Gently";
+        let ls = lines(&layout_nodes(&richtext::parse_tree(stem), 400.0, 400.0, 11.0, 15.6));
+        let marks: Vec<String> = ls.iter().map(|l| l.1.clone().unwrap()).collect();
+        assert_eq!(marks, ["1.", "a.", "b.", "i.", "2.", "a."]);
+        assert_eq!(ls[3].0, NUM_INDENT + 2.0 * LIST_INDENT);
+        // Print: the labels and glyphs come back out of the PDF (◦ ▪ through the fallback fonts).
+        let pdf = render_pdf(&doc(&format!("Do these:\n\n{stem}\n\nList:\n• Fruit\n  • Apple\n    • Fuji"))).unwrap();
+        if let Some(txt) = pdftotext(&pdf, "nest") {
+            for want in ["1. Mix", "a. Stir", "b. Shake", "i. Hard", "2. Heat", "\u{2022} Fruit", "\u{25e6} Apple", "\u{25aa} Fuji"] {
+                assert!(txt.contains(want), "{want}: {txt}");
+            }
+            let col = |s: &str| txt.lines().find(|l| l.contains(s)).unwrap().find(s.chars().last().unwrap()).unwrap();
+            assert!(col("Stir") > col("Mix") && col("Hard") > col("Stir"), "{txt}");
+        }
+        // DOCX: w:ilvl per level and multilevel abstractNums with the editor's labels.
+        let d = doc(&format!("{stem}\n\n• Fruit\n  • Apple\n    • Fuji"));
+        let x = part(&d, "word/document.xml");
+        for l in ["0", "1", "2"] {
+            assert!(x.contains(&format!("<w:ilvl w:val=\"{l}\"/><w:numId w:val=\"2\"/>")), "numbered lvl {l}");
+            assert!(x.contains(&format!("<w:ilvl w:val=\"{l}\"/><w:numId w:val=\"1\"/>")), "bullet lvl {l}");
+        }
+        let n = part(&d, "word/numbering.xml");
+        assert!(n.contains("<w:multiLevelType w:val=\"multilevel\"/>"));
+        assert!(n.contains("<w:lvl w:ilvl=\"1\"><w:start w:val=\"1\"/><w:numFmt w:val=\"lowerLetter\"/><w:lvlText w:val=\"%2.\"/>"), "{n}");
+        assert!(n.contains("<w:lvl w:ilvl=\"2\"><w:start w:val=\"1\"/><w:numFmt w:val=\"lowerRoman\"/><w:lvlText w:val=\"%3.\"/>"));
+        assert!(n.contains("<w:lvlText w:val=\"\u{25e6}\"/>") && n.contains("<w:lvlText w:val=\"\u{25aa}\"/>"));
+        assert!(n.contains(&format!("<w:ind w:left=\"{}\" w:hanging=\"360\"/>", 792 + 640)));
+    }
+
+    #[test]
+    fn task_items_print_their_box_without_a_bullet() {
+        let stem = "Before you start:\n• \u{2611} Goggles on\n• \u{2610} Gloves on\n• Read the label";
+        let ls = lines(&layout_nodes(&richtext::parse_tree(stem), 400.0, 400.0, 11.0, 15.6));
+        assert_eq!(ls[1].1, None);
+        assert_eq!(ls[2].1, None);
+        assert_eq!(ls[3].1.as_deref(), Some("\u{2022}"), "an ordinary item keeps its bullet");
+        assert_eq!(ls[1].0, LIST_INDENT, "the box sits where the item text does");
+        if let Some(txt) = pdftotext(&render_pdf(&doc(stem)).unwrap(), "task") {
+            assert!(txt.contains("\u{2611} Goggles on") && !txt.contains("\u{2022} \u{2611}"), "{txt}");
+            assert!(txt.contains("\u{2022} Read the label"), "{txt}");
+        }
+        let x = part(&doc(stem), "word/document.xml");
+        assert!(x.contains("<w:p><w:pPr><w:ind w:left=\"792\"/></w:pPr><w:r><w:rPr><w:sz w:val=\"22\"/><w:szCs w:val=\"22\"/></w:rPr><w:t xml:space=\"preserve\">\u{2611} Goggles on"), "{x}");
+        assert_eq!(x.matches("<w:numId w:val=\"1\"/>").count(), 1, "only the ordinary item is a bullet");
+    }
+
+    /// Nodes of a stem without round-7 markup lay out exactly as its plain blocks always did.
+    #[test]
+    fn stems_without_round7_markup_lay_out_as_before() {
+        for stem in ["Do all:\n• Draw it.\n• Count them.\n1. one\n2. two\n> quoted", "a | b\n1 | 2", "::: side\nL\n::: next\nR\n:::", "## H\n---\ntext"] {
+            assert!(!richtext::uses_r7(stem));
+            let a = layout_nodes(&richtext::parse_tree(stem), 400.0, 380.0, 11.0, 15.6);
+            let b = layout_blocks(&richtext::parse(stem), 400.0, 380.0, 11.0, 15.6);
+            assert_eq!(format!("{a:?}"), format!("{b:?}"), "{stem}");
+        }
     }
 }

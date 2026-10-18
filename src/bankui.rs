@@ -607,6 +607,8 @@ impl App {
             }
         }
         self.draw_import_modal(&ctx);
+        self.draw_resolve_images(&ctx, &bank_id);
+        draw_bank_export(self, &ctx);
     }
 
     fn bank_edit_body(&mut self, ui: &mut Ui, ctx: &egui::Context, key: UiId, bank_id: &Id) {
@@ -674,11 +676,23 @@ impl App {
                     let pics: usize = questions.iter().map(crate::bankops::pictures_needed).sum();
                     if pics > 0 {
                         ui.label(theme::muted(" · ").size(13.0));
-                        ui.label(
-                            RichText::new(format!("{pics} picture{} needed", if pics == 1 { "" } else { "s" }))
-                                .size(13.0)
-                                .color(theme::bad()),
-                        );
+                        let link = ui
+                            .add(
+                                egui::Label::new(
+                                    RichText::new(format!("{pics} picture{} needed", if pics == 1 { "" } else { "s" }))
+                                        .size(13.0)
+                                        .color(theme::bad())
+                                        .underline(),
+                                )
+                                .sense(Sense::click()),
+                            )
+                            .on_hover_text("Add the missing pictures: upload, crop from the original, or describe them");
+                        if link.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+                        if link.clicked() {
+                            crate::importui::open_resolve_images(self, bank_id);
+                        }
                     }
                 });
             });
@@ -686,8 +700,8 @@ impl App {
                 if kit::primary_button(ui, "Add question").clicked() {
                     self.qedit = Some(qedit::Draft::new(bank_id.clone()));
                 }
-                if !questions.is_empty() && kit::ghost_button(ui, "Export").clicked() {
-                    export_bank(self, bank_id);
+                if !questions.is_empty() && kit::ghost_button(ui, "Export").on_hover_text("Preview and download the bank file (PDF, answers included) or its JSON").clicked() {
+                    open_bank_export(ctx, bank_id);
                 }
                 if kit::ghost_button(ui, "Import").on_hover_text("Import files or pasted questions into this bank").clicked() {
                     crate::importui::open_import_modal(ctx, bank_id);
@@ -699,13 +713,9 @@ impl App {
                     let d = self.store.bank(bank_id).map(|b| b.details.clone()).unwrap_or_default();
                     with_state(ctx, key, |s: &mut BankEditState| s.details = Some(d));
                 }
+                // (Details has its own button next to this menu; the menu keeps what has none.)
                 ui.menu_button(RichText::new("…").size(16.0).color(theme::muted_col()), |ui| {
                     ui.set_min_width(170.0);
-                    if ui.button("Details…").clicked() {
-                        let d = self.store.bank(bank_id).map(|b| b.details.clone()).unwrap_or_default();
-                        with_state(ctx, key, |s: &mut BankEditState| s.details = Some(d));
-                        ui.close();
-                    }
                     let tidy = ui
                         .add_enabled(!questions.is_empty(), Button::new("Tidy stems…"))
                         .on_hover_text("Clean up stems from older imports: tables of blanks, line breaks, spacing. Shows a preview first.");
@@ -1177,7 +1187,7 @@ fn apply_bank_menu(app: &mut App, ctx: &egui::Context, key: UiId, r: &BankRow, a
     match act {
         Some(BankAct::Open) => app.open_bank(&r.id),
         Some(BankAct::Popover) => open_popover(ctx, &r.id),
-        Some(BankAct::Export) => export_bank(app, &r.id),
+        Some(BankAct::Export) => open_bank_export(ctx, &r.id),
         Some(BankAct::Rename) => with_state(ctx, key, |s: &mut BanksState| s.rename = Some((r.id.clone(), r.name.clone()))),
         Some(BankAct::Delete) => with_state(ctx, key, |s: &mut BanksState| s.confirm_delete = Some(r.id.clone())),
         None => {}
@@ -1292,6 +1302,7 @@ fn bank_list_row(ui: &mut Ui, app: &mut App, ctx: &egui::Context, key: UiId, r: 
 
 /// Rename and delete-confirmation modals for the banks list.
 fn draw_bank_overlays(app: &mut App, ctx: &egui::Context, key: UiId) {
+    draw_bank_export(app, ctx);
     let st = with_state(ctx, key, |s: &mut BanksState| s.clone());
 
     // Rename.
@@ -1388,19 +1399,18 @@ fn draw_bank_overlays(app: &mut App, ctx: &egui::Context, key: UiId) {
     }
 }
 
-/// Serializes a bank as a Test Parrot JSON question-bank file and asks where to
-/// save it (the user picks the location, so the write goes through `rfd` + fs).
+/// Saves a bank as the JSON question-bank file (asks where; the write goes through `rfd` + fs).
 pub fn export_bank(app: &mut App, bank_id: &Id) {
     let Some(bank) = app.store.bank(bank_id).cloned() else {
         app.toast_err("That bank is no longer there.");
         return;
     };
     let path = rfd::FileDialog::new()
-        .set_file_name(format!("{}.json", bank.name))
+        .set_file_name(format!("{}.json", crate::bankexport::file_stem(&bank.name)))
         .add_filter("Question bank JSON", &["json"])
         .save_file();
     let Some(path) = path else { return };
-    let doc = bank_export_json(&bank);
+    let doc = crate::bankexport::bank_data(&bank);
     let written = serde_json::to_string_pretty(&doc)
         .map_err(|e| e.to_string())
         .and_then(|s| std::fs::write(&path, s).map_err(|e| e.to_string()));
@@ -1408,6 +1418,157 @@ pub fn export_bank(app: &mut App, bank_id: &Id) {
         Ok(()) => app.toast(format!("Exported to {}", path.display())),
         Err(e) => app.toast_err(format!("Export failed: {e}")),
     }
+}
+
+fn bank_export_key() -> UiId {
+    UiId::new("qs_bank_export_dialog")
+}
+
+/// Opens the "Export question bank" dialog (preview, then PDF or JSON).
+pub fn open_bank_export(ctx: &egui::Context, bank_id: &Id) {
+    ctx.data_mut(|d| d.insert_temp(bank_export_key(), Some(bank_id.clone())));
+}
+
+/// The rendered bank file for the open dialog: which bank / revision, the PDF, its pages.
+struct BankExportCache {
+    bank: Id,
+    modified: i64,
+    pdf: Result<Vec<u8>, String>,
+    pages: Vec<egui::TextureHandle>,
+}
+
+thread_local! {
+    static BANK_EXPORT: std::cell::RefCell<Option<BankExportCache>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Test Parrot's "Export Question Bank": a preview of the printable bank file (answers
+/// included), then Download PDF, or the JSON file.
+fn draw_bank_export(app: &mut App, ctx: &egui::Context) {
+    if let Ok(v) = std::env::var("QUESHION_BANK_EXPORT") {
+        let hid = UiId::new("qs_bank_export_hook");
+        if !ctx.data(|d| d.get_temp::<bool>(hid).unwrap_or(false)) {
+            ctx.data_mut(|d| d.insert_temp(hid, true));
+            let n: usize = v.trim().parse().unwrap_or(1);
+            if let Some(b) = app.store.banks.get(n.saturating_sub(1)) {
+                open_bank_export(ctx, &b.id.clone());
+            }
+        }
+    }
+    let Some(bank_id) = ctx.data(|d| d.get_temp::<Option<Id>>(bank_export_key())).flatten() else { return };
+    let Some(bank) = app.store.bank(&bank_id).cloned() else {
+        ctx.data_mut(|d| d.insert_temp::<Option<Id>>(bank_export_key(), None));
+        return;
+    };
+    let fresh = BANK_EXPORT.with(|c| c.borrow().as_ref().is_some_and(|c| c.bank == bank_id && c.modified == bank.modified));
+    if !fresh {
+        let pdf = crate::bankexport::bank_pdf(&bank);
+        let mut pages = Vec::new();
+        if let Ok(bytes) = &pdf {
+            if let Ok(pngs) = crate::screens::pdf_pages_png(bytes) {
+                for (i, png) in pngs.iter().enumerate() {
+                    if let Ok(img) = image::load_from_memory(png) {
+                        let img = img.thumbnail(900, 1200).to_rgba8();
+                        let ci = egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], img.as_raw());
+                        pages.push(ctx.load_texture(format!("bank_export_page_{i}"), ci, egui::TextureOptions::LINEAR));
+                    }
+                }
+            }
+        }
+        // QA hook: QUESHION_BANK_EXPORT_OUT=<file> also writes the PDF there.
+        if let (Ok(out), Ok(bytes)) = (std::env::var("QUESHION_BANK_EXPORT_OUT"), &pdf) {
+            let _ = std::fs::write(out, bytes);
+        }
+        BANK_EXPORT.with(|c| *c.borrow_mut() = Some(BankExportCache { bank: bank_id.clone(), modified: bank.modified, pdf, pages }));
+    }
+    let screen = ctx.content_rect();
+    let w = 700.0_f32.min(screen.width() - 40.0);
+    let mut close = false;
+    let mut save_pdf = false;
+    let mut save_json = false;
+    let modal = egui::Modal::new(UiId::new("qs_bank_export_modal")).show(ctx, |ui| {
+        ui.set_width(w);
+        ui.label(theme::serif("Export question bank").size(22.0).color(theme::ink()));
+        ui.add(egui::Label::new(theme::muted("For teachers: this file contains correct answers and suggested answers. It is separate from printing an exam.").size(12.5)).wrap());
+        ui.add_space(8.0);
+        BANK_EXPORT.with(|c| {
+            let c = c.borrow();
+            let Some(c) = c.as_ref() else { return };
+            match &c.pdf {
+                Err(e) => {
+                    ui.label(RichText::new(format!("The PDF couldn't be made: {e}")).color(theme::bad()));
+                }
+                Ok(_) if c.pages.is_empty() => {
+                    ui.label(theme::muted("Preview unavailable (pdftoppm is not installed); the PDF itself is ready.").size(12.5));
+                }
+                Ok(_) => {
+                    Frame::new().fill(theme::field()).corner_radius(CornerRadius::same(8)).inner_margin(Margin::same(10)).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        egui::ScrollArea::vertical().id_salt("bank_export_preview").max_height((screen.height() - 260.0).max(240.0)).auto_shrink([false, false]).show(ui, |ui| {
+                            ui.vertical_centered(|ui| {
+                                for t in &c.pages {
+                                    let sz = t.size_vec2();
+                                    let k = ((ui.available_width() - 8.0) / sz.x).min(1.0);
+                                    ui.add(egui::Image::new(t).fit_to_exact_size(sz * k));
+                                    ui.add_space(8.0);
+                                }
+                            });
+                        });
+                    });
+                    ui.add_space(4.0);
+                    ui.label(theme::muted(format!(
+                        "{} · {} question{} · the bank's data rides along inside the PDF, so it imports back as it is",
+                        plural_pages(c.pages.len()),
+                        bank.questions.len(),
+                        if bank.questions.len() == 1 { "" } else { "s" }
+                    )).size(11.5));
+                }
+            }
+        });
+        ui.add_space(8.0);
+        ui.separator();
+        ui.horizontal(|ui| {
+            if kit::ghost_button(ui, "Save JSON file…").on_hover_text("The bank as a question-bank JSON file (for other apps and backups)").clicked() {
+                save_json = true;
+            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let ok = BANK_EXPORT.with(|c| c.borrow().as_ref().is_some_and(|c| c.pdf.is_ok()));
+                if ui.add_enabled_ui(ok, |ui| kit::primary_button(ui, "Download PDF")).inner.clicked() {
+                    save_pdf = true;
+                }
+                if kit::ghost_button(ui, "Cancel").clicked() {
+                    close = true;
+                }
+            });
+        });
+    });
+    if save_json {
+        export_bank(app, &bank_id);
+    }
+    if save_pdf {
+        let path = rfd::FileDialog::new()
+            .set_file_name(format!("{}.pdf", crate::bankexport::file_stem(&bank.name)))
+            .add_filter("PDF", &["pdf"])
+            .save_file();
+        if let Some(path) = path {
+            let bytes = BANK_EXPORT.with(|c| c.borrow().as_ref().and_then(|c| c.pdf.as_ref().ok().cloned()));
+            match bytes.map(|b| std::fs::write(&path, b)) {
+                Some(Ok(())) => {
+                    app.toast(format!("Saved {}", path.display()));
+                    close = true;
+                }
+                Some(Err(e)) => app.toast_err(format!("Couldn't save: {e}")),
+                None => {}
+            }
+        }
+    }
+    if close || modal.should_close() {
+        ctx.data_mut(|d| d.insert_temp::<Option<Id>>(bank_export_key(), None));
+        BANK_EXPORT.with(|c| *c.borrow_mut() = None);
+    }
+}
+
+fn plural_pages(n: usize) -> String {
+    format!("{n} page{}", if n == 1 { "" } else { "s" })
 }
 
 /// The exported bank document. Details travel only when the teacher entered some.
@@ -1789,20 +1950,6 @@ fn first_topic(q: &Question) -> String {
         .unwrap_or_else(|| "~unsorted".to_string())
 }
 
-fn stem_job(ui: &Ui, text: &str, size: f32, rows: usize, width: f32) -> egui::text::LayoutJob {
-    let mut job = egui::text::LayoutJob::simple(
-        crate::equation::stem_preview(text),
-        egui::FontId::new(size, theme::serif_family()),
-        theme::ink(),
-        width,
-    );
-    job.wrap.max_rows = rows;
-    job.wrap.break_anywhere = false;
-    job.wrap.overflow_character = Some('…');
-    let _ = ui;
-    job
-}
-
 fn paint_chevron(ui: &mut Ui, open: bool) {
     let (r, _) = ui.allocate_exact_size(Vec2::splat(15.0), Sense::hover());
     let s = Stroke::new(1.8, theme::muted_col());
@@ -1814,6 +1961,212 @@ fn paint_chevron(ui: &mut Ui, open: bool) {
 
 fn meta_chip(ui: &mut Ui, text: &str) {
     kit::pill(ui, text, theme::field(), theme::text_col());
+}
+
+/// A fill-in-the-blank key as one line: each blank's accepted answers joined by " / ",
+/// blanks separated by "; " (Test Parrot prints "14; 10").
+pub(crate) fn blank_answer_text(accept: &[Vec<String>]) -> String {
+    accept
+        .iter()
+        .map(|alts| alts.iter().map(|a| a.trim()).filter(|a| !a.is_empty()).collect::<Vec<_>>().join(" / "))
+        .map(|t| if t.is_empty() { "—".to_string() } else { t })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// Dashed "Picture needed" stand-in for a `[picture]` marker on a bank card.
+fn card_picture_box(ui: &mut Ui, alt: Option<&str>, size: f32) {
+    let w = ui.available_width().clamp(120.0, 520.0);
+    let h = size * 3.4;
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, h), Sense::hover());
+    let p = ui.painter();
+    let red = theme::red();
+    p.rect_filled(rect, CornerRadius::same(6), red.gamma_multiply(0.08));
+    p.extend(egui::Shape::dashed_line(
+        &[rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom(), rect.left_top()],
+        Stroke::new(1.0, red),
+        4.0,
+        3.0,
+    ));
+    let alt = alt.unwrap_or("").trim();
+    let cy = if alt.is_empty() { rect.center().y } else { rect.center().y - size * 0.55 };
+    p.text(Pos2::new(rect.center().x, cy), egui::Align2::CENTER_CENTER, "Picture needed", egui::FontId::new(size * 0.9, theme::bold_family()), red);
+    if !alt.is_empty() {
+        let max = ((w / (size * 0.42)) as usize).max(12);
+        p.text(
+            Pos2::new(rect.center().x, cy + size * 1.15),
+            egui::Align2::CENTER_CENTER,
+            truncate(alt, max),
+            egui::FontId::new(size * 0.75, theme::serif_family()),
+            theme::muted_col(),
+        );
+    }
+    ui.add_space(4.0);
+}
+
+/// Rich text with its `[picture]` markers drawn as "Picture needed" boxes; the question's
+/// attached picture stands in for the first marker (`picture` is taken once used).
+fn card_rich(ui: &mut Ui, app: &mut App, text: &str, rich: &crate::equation::Rich, picture: &mut Option<crate::model::ImageRef>) {
+    use crate::bankops::{split_pictures, StemPart};
+    for part in split_pictures(text) {
+        match part {
+            StemPart::Text(t) => {
+                crate::equation::rich_ui(ui, &t, rich);
+            }
+            StemPart::Picture(alt) => match picture.take() {
+                Some(img) => card_image(ui, app, &img),
+                None => card_picture_box(ui, alt.as_deref(), rich.size),
+            },
+        }
+    }
+}
+
+fn card_image(ui: &mut Ui, app: &mut App, img: &crate::model::ImageRef) {
+    let ctx = ui.ctx().clone();
+    if let Some(tex) = texture_for(app, &ctx, img) {
+        let max_w = ui.available_width().min(360.0);
+        let sz = tex.size_vec2();
+        let k = (max_w / sz.x.max(1.0)).min(1.0).min(220.0 / sz.y.max(1.0));
+        ui.add_space(3.0);
+        ui.add(egui::Image::new(&tex).fit_to_exact_size(sz * k));
+        ui.add_space(3.0);
+    } else {
+        card_picture_box(ui, Some("picture file missing"), 13.0);
+    }
+}
+
+/// "SUGGESTED ANSWER"-style block: small caps title, left rule, content.
+fn answer_block(ui: &mut Ui, title: &str, add: impl FnOnce(&mut Ui)) {
+    ui.add_space(5.0);
+    let out = Frame::new().inner_margin(Margin { left: 12, right: 0, top: 1, bottom: 2 }).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.label(kit::small_caps_text(title));
+        ui.add_space(2.0);
+        add(ui);
+    });
+    let r = out.response.rect;
+    ui.painter().vline(r.left() + 1.0, r.y_range(), Stroke::new(2.0, theme::border()));
+}
+
+/// Choices with the correct ones marked (green, bold letter, check mark), as Test Parrot's
+/// bank list shows them.
+fn card_choices(ui: &mut Ui, app: &mut App, answers: &[crate::model::Answer], size: f32, indent: f32) {
+    use crate::equation::Rich;
+    for (i, a) in answers.iter().enumerate() {
+        let letter = format!("{}. ", char::from(b'A' + (i % 26) as u8));
+        ui.horizontal_top(|ui| {
+            ui.add_space(indent);
+            ui.vertical(|ui| {
+                let col = if a.correct { theme::green() } else { theme::text_col() };
+                let mut rich = Rich::new(size, col).lead(letter.clone(), size, if a.correct { theme::green() } else { theme::ink() });
+                if a.correct {
+                    rich.family = rich.bold_family.clone();
+                }
+                // The check mark follows the choice's last line ("A. Ca ✓").
+                let text = if a.correct { format!("{} ✓", a.text.trim_end()) } else { a.text.clone() };
+                let mut none = None;
+                card_rich(ui, app, &text, &rich, &mut none);
+            });
+        });
+    }
+}
+
+/// The whole question on a collapsed bank card (Test Parrot's bank list): the stem as it
+/// prints (rich, pictures), choices with the correct ones marked, the fill-in answers, the
+/// suggested answer, matching pairs, every multipart part with its own answers, and the
+/// teacher's explanation.
+fn card_full_question(ui: &mut Ui, app: &mut App, q: &Question, size: f32) {
+    use crate::equation::Rich;
+    use crate::model::{Kind, PartKind};
+    let rich = Rich::new(size, theme::ink());
+    let mut picture = q.image.clone();
+    card_rich(ui, app, &q.stem, &rich, &mut picture);
+    if let Some(img) = picture.take() {
+        card_image(ui, app, &img);
+    }
+    let small = size - 1.0;
+    let tf = |ui: &mut Ui, correct: bool, indent: f32| {
+        ui.horizontal(|ui| {
+            ui.add_space(indent);
+            for (v, label) in [(true, "True"), (false, "False")] {
+                let on = v == correct;
+                let t = RichText::new(if on { format!("{label} ✓") } else { label.to_string() }).size(size);
+                ui.label(if on { t.color(theme::green()).family(theme::bold_family()) } else { t.color(theme::text_col()) });
+                ui.add_space(10.0);
+            }
+        });
+    };
+    match &q.kind {
+        Kind::Mc { answers } => {
+            ui.add_space(3.0);
+            card_choices(ui, app, answers, size, 2.0);
+        }
+        Kind::Tf { correct } => {
+            ui.add_space(3.0);
+            tf(ui, *correct, 2.0);
+        }
+        Kind::Matching { pairs, distractors } => {
+            answer_block(ui, "MATCHES", |ui| {
+                for (i, p) in pairs.iter().enumerate() {
+                    let left = crate::equation::stem_preview(&p.left);
+                    let right = crate::equation::stem_preview(&p.right);
+                    ui.add(egui::Label::new(theme::text(format!("{}. {left}  →  {right}", i + 1)).size(small)).wrap());
+                }
+                if !distractors.is_empty() {
+                    let d: Vec<String> = distractors.iter().map(|d| crate::equation::stem_preview(d)).collect();
+                    ui.add(egui::Label::new(theme::muted(format!("Also listed: {}", d.join(", "))).size(small - 1.0)).wrap());
+                }
+            });
+        }
+        Kind::Blank { accept } => {
+            if !accept.is_empty() {
+                answer_block(ui, "ANSWERS", |ui| {
+                    ui.add(egui::Label::new(theme::text(blank_answer_text(accept)).size(small)).wrap());
+                });
+            }
+        }
+        Kind::Short { sample } => {
+            if !sample.trim().is_empty() {
+                answer_block(ui, "SUGGESTED ANSWER", |ui| {
+                    let mut none = None;
+                    card_rich(ui, app, sample, &Rich::new(small, theme::text_col()), &mut none);
+                });
+            }
+        }
+        Kind::Multipart { parts } => {
+            for (pi, p) in parts.iter().enumerate() {
+                ui.add_space(5.0);
+                let label = part_label(pi, &p.stem);
+                let r = Rich::new(size, theme::ink());
+                let r = if label.is_empty() { r } else { r.lead(label, size, theme::ink()) };
+                ui.horizontal_top(|ui| {
+                    ui.add_space(4.0);
+                    ui.vertical(|ui| {
+                        let mut none = None;
+                        card_rich(ui, app, &p.stem, &r, &mut none);
+                        match &p.kind {
+                            PartKind::Mc { answers } => card_choices(ui, app, answers, small, 14.0),
+                            PartKind::Tf { correct } => tf(ui, *correct, 14.0),
+                            PartKind::Short { sample } => {
+                                if !sample.trim().is_empty() {
+                                    answer_block(ui, "SUGGESTED ANSWER", |ui| {
+                                        let mut none = None;
+                                        card_rich(ui, app, sample, &Rich::new(small, theme::text_col()), &mut none);
+                                    });
+                                }
+                            }
+                        }
+                    });
+                });
+            }
+        }
+    }
+    if let Some(e) = q.explanation.as_deref().filter(|e| !e.trim().is_empty()) {
+        answer_block(ui, "EXPLANATION", |ui| {
+            let mut none = None;
+            card_rich(ui, app, e, &Rich::new(small, theme::text_col()), &mut none);
+        });
+    }
 }
 
 /// One question card. `q == None` is the unsaved new-question draft (always open).
@@ -1859,35 +2212,35 @@ fn draw_card(
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 10.0;
                     ui.allocate_ui(Vec2::new(54.0, 18.0), |ui| kit::type_pill(ui, qedit::type_tag(kind)));
-                    let sw = (ui.available_width() - 270.0).max(100.0);
-                    ui.allocate_ui(Vec2::new(sw, 20.0), |ui| {
-                        let job = stem_job(ui, &q.stem, 13.5, 1, sw);
-                        ui.add(egui::Label::new(job).truncate());
+                    ui.label(RichText::new(format!("Q{n}")).family(theme::bold_family()).size(11.5).color(theme::muted_col()));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        paint_chevron(ui, false);
+                        copy_rect = Some(copy_icon(ui));
+                        if let Some(p) = points_label(q.points) {
+                            ui.label(RichText::new(p).family(theme::bold_family()).size(12.0).color(theme::ink()));
+                        }
+                        if used > 0 {
+                            let r = ui.add(
+                                egui::Label::new(
+                                    RichText::new(format!("in {used} exam{}", if used == 1 { "" } else { "s" }))
+                                        .size(11.5)
+                                        .color(theme::accent_col())
+                                        .underline(),
+                                )
+                                .sense(Sense::hover()),
+                            );
+                            usage_rect = Some(r.rect);
+                        }
+                        if let Some(d) = q.difficulty {
+                            ui.label(theme::muted(diff_label(d)).size(11.5));
+                        }
+                        if let Some(t) = q.topics.iter().map(|t| t.trim()).find(|t| !t.is_empty()) {
+                            meta_chip(ui, &truncate(t, 16));
+                        }
                     });
-                    if let Some(t) = q.topics.iter().map(|t| t.trim()).find(|t| !t.is_empty()) {
-                        meta_chip(ui, &truncate(t, 16));
-                    }
-                    if let Some(d) = q.difficulty {
-                        ui.label(theme::muted(diff_label(d)).size(11.5));
-                    }
-                    if used > 0 {
-                        let r = ui.add(
-                            egui::Label::new(
-                                RichText::new(format!("in {used} exam{}", if used == 1 { "" } else { "s" }))
-                                    .size(11.5)
-                                    .color(theme::accent_col())
-                                    .underline(),
-                            )
-                            .sense(Sense::hover()),
-                        );
-                        usage_rect = Some(r.rect);
-                    }
-                    if let Some(p) = points_label(q.points) {
-                        ui.label(RichText::new(p).family(theme::bold_family()).size(12.0).color(theme::ink()));
-                    }
-                    copy_rect = Some(copy_icon(ui));
-                    paint_chevron(ui, false);
                 });
+                ui.add_space(4.0);
+                card_full_question(ui, app, q, 14.0);
             } else {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
@@ -1912,8 +2265,7 @@ fn draw_card(
                 });
                 if let (false, Some(q)) = (open, q) {
                     ui.add_space(5.0);
-                    let job = stem_job(ui, &q.stem, 14.0, 2, ui.available_width());
-                    ui.label(job);
+                    card_full_question(ui, app, q, 14.0);
                     ui.add_space(6.0);
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
@@ -2362,6 +2714,9 @@ struct PopoverState {
     /// Copy math as LaTeX `$…$` instead of plain Unicode text.
     latex: bool,
     settings: bool,
+    /// Answer columns chosen per multiple-choice question (1, 2 or 4; shown, copied, and
+    /// kept when it is added to an exam).
+    cols: std::collections::HashMap<String, u8>,
 }
 
 /// Answer-line choices on the Pop-over cards (as on the reference).
@@ -2432,6 +2787,28 @@ fn markup_lines(text: &str, latex: bool) -> Vec<String> {
 /// A question as text for the clipboard: stem, choices (A. B. ...), matching columns, parts,
 /// and `lines` answer lines under a short answer (or each short part).
 pub(crate) fn popover_copy_text(q: &Question, lines: u8, latex: bool) -> String {
+    popover_copy_text_cols(q, lines, latex, 1)
+}
+
+/// Choice texts laid out in `cols` columns (column-major, as the exam prints them): one line
+/// per row, each column padded to its widest entry.
+fn choice_rows(items: &[String], cols: u8) -> Vec<String> {
+    if cols <= 1 || items.len() < 2 {
+        return items.to_vec();
+    }
+    let grid = crate::layout::choice_grid(items.len(), cols);
+    let ncols = grid.iter().map(|r| r.len()).max().unwrap_or(1);
+    let width: Vec<usize> = (0..ncols).map(|c| grid.iter().filter_map(|r| r.get(c)).map(|&i| items[i].chars().count()).max().unwrap_or(0)).collect();
+    grid.iter()
+        .map(|r| {
+            let cells: Vec<String> = r.iter().enumerate().map(|(c, &i)| format!("{:<w$}", items[i], w = width[c])).collect();
+            cells.join("    ").trim_end().to_string()
+        })
+        .collect()
+}
+
+/// [`popover_copy_text`] with the multiple-choice answers in `cols` columns.
+pub(crate) fn popover_copy_text_cols(q: &Question, lines: u8, latex: bool, cols: u8) -> String {
     use crate::model::{Kind, PartKind};
     let one = |t: &str| markup_lines(t, latex).join(" ");
     let rule = "_".repeat(48);
@@ -2444,7 +2821,8 @@ pub(crate) fn popover_copy_text(q: &Question, lines: u8, latex: bool) -> String 
     let abc = |i: usize| char::from(b'A' + (i % 26) as u8);
     match &q.kind {
         Kind::Mc { answers } => {
-            out.extend(answers.iter().enumerate().map(|(i, a)| format!("{}. {}", abc(i), one(&a.text))));
+            let items: Vec<String> = answers.iter().enumerate().map(|(i, a)| format!("{}. {}", abc(i), one(&a.text))).collect();
+            out.extend(choice_rows(&items, cols));
         }
         Kind::Tf { .. } => out.push("True / False".to_string()),
         Kind::Matching { pairs, distractors } => {
@@ -2505,6 +2883,19 @@ fn popover_card(ui: &mut Ui, q: &Question, n: usize, ps: &mut PopoverState, exam
             if let Some(p) = points_label(q.points) {
                 ui.label(theme::muted(p).size(11.0));
             }
+            if let Kind::Mc { .. } = &q.kind {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let mut c = ps.cols.get(&q.id).copied().unwrap_or(1);
+                    let r = crate::examui::answer_columns_switch(ui, &mut c).on_hover_text("Answer columns: how the choices are laid out, copied and printed when added to an exam");
+                    if r.changed() || c != ps.cols.get(&q.id).copied().unwrap_or(1) {
+                        if c <= 1 {
+                            ps.cols.remove(&q.id);
+                        } else {
+                            ps.cols.insert(q.id.clone(), c);
+                        }
+                    }
+                });
+            }
             if takes_lines(q) {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ComboBox::from_id_salt(("pop_lines", &q.id)).width(84.0).selected_text(RichText::new(lines_label(lines)).size(11.5)).show_ui(ui, |ui| {
@@ -2535,8 +2926,27 @@ fn popover_card(ui: &mut Ui, q: &Question, n: usize, ps: &mut PopoverState, exam
         match &q.kind {
             Kind::Mc { answers } => {
                 sep(ui);
-                for (i, a) in answers.iter().enumerate() {
-                    rich_ui(ui, &a.text, &Rich::new(size, theme::text_col()).lead(abc(i), size, theme::ink()));
+                let cols = ps.cols.get(&q.id).copied().unwrap_or(1);
+                if cols <= 1 {
+                    for (i, a) in answers.iter().enumerate() {
+                        rich_ui(ui, &a.text, &Rich::new(size, theme::text_col()).lead(abc(i), size, theme::ink()));
+                    }
+                } else {
+                    // Column-major grid of equal-width columns (A B down the first column).
+                    let grid = crate::layout::choice_grid(answers.len(), cols);
+                    let ncols = grid.iter().map(|r| r.len()).max().unwrap_or(1).max(1);
+                    let cw = (ui.available_width() / ncols as f32).floor();
+                    for row in grid {
+                        ui.horizontal_top(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            for i in row {
+                                ui.allocate_ui_with_layout(Vec2::new(cw, 0.0), Layout::top_down(Align::Min), |ui| {
+                                    ui.set_width(cw - 6.0);
+                                    rich_ui(ui, &answers[i].text, &Rich::new(size, theme::text_col()).lead(abc(i), size, theme::ink()));
+                                });
+                            }
+                        });
+                    }
                 }
             }
             Kind::Tf { .. } => {
@@ -2581,7 +2991,7 @@ fn popover_card(ui: &mut Ui, q: &Question, n: usize, ps: &mut PopoverState, exam
                 }
             }
             if ui.add(Button::new(theme::accent("Copy text").size(12.0)).frame(false)).on_hover_text("Copy the question (with its answer lines) to paste anywhere").clicked() {
-                ui.ctx().copy_text(popover_copy_text(q, lines, ps.latex));
+                ui.ctx().copy_text(popover_copy_text_cols(q, lines, ps.latex, ps.cols.get(&q.id).copied().unwrap_or(1)));
             }
             if ui.add(Button::new(theme::accent("Edit").size(12.0)).frame(false)).clicked() {
                 *edit = Some(q.id.clone());
@@ -2826,8 +3236,10 @@ pub fn draw_popover(app: &mut App, ctx: &egui::Context) {
             app.redo.clear();
             let lines = ps.lines.get(&qid).copied().unwrap_or(0);
             if let Some(ex) = app.store.exam_mut(eid) {
+                let cols = ps.cols.get(&qid).copied().unwrap_or(1);
                 let mut item = crate::model::ExamItem::new(bank_id.clone(), qid);
                 item.work_lines = lines.min(23);
+                item.answer_columns = cols;
                 ex.items.push(item);
                 ex.modified = now_secs();
             }
@@ -3012,6 +3424,24 @@ mod tests {
                 assert_ne!(colors[i], colors[j], "kinds share chip colors");
             }
         }
+    }
+
+    #[test]
+    fn popover_copies_choices_in_the_chosen_columns() {
+        let q = q("Which is least electronegative?", mc(&["Ca", "O", "Ge", "C"]), 1);
+        assert_eq!(popover_copy_text_cols(&q, 0, false, 1), popover_copy_text(&q, 0, false));
+        assert_eq!(popover_copy_text_cols(&q, 0, false, 2), "Which is least electronegative?\nA. Ca    C. Ge\nB. O     D. C");
+        assert_eq!(popover_copy_text_cols(&q, 0, false, 4), "Which is least electronegative?\nA. Ca    B. O    C. Ge    D. C");
+        // three choices in two columns: A C / B
+        assert_eq!(choice_rows(&["A. x".into(), "B. yy".into(), "C. z".into()], 2), vec!["A. x     C. z".to_string(), "B. yy".to_string()]);
+    }
+
+    #[test]
+    fn blank_answer_text_reads_like_the_reference_key() {
+        let acc = |v: &[&[&str]]| v.iter().map(|a| a.iter().map(|s| s.to_string()).collect()).collect::<Vec<Vec<String>>>();
+        assert_eq!(blank_answer_text(&acc(&[&["14"], &["10"]])), "14; 10");
+        assert_eq!(blank_answer_text(&acc(&[&["linear", " Linear "], &[]])), "linear / Linear; —");
+        assert_eq!(blank_answer_text(&[]), "");
     }
 
     #[test]
