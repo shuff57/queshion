@@ -49,6 +49,14 @@ Angle and point rows only draw where the outline still has that corner, so chang
 never breaks the figure. Side, angle and point rows move with their piece and follow a dragged
 corner, as dims and right angles do.
 
+### Dragged labels
+
+A `dim`, `angle`, `point` or `text` row may carry one `@DX,DY` word (anywhere after the keyword),
+written when its label is dragged on the canvas: the label is drawn DX, DY model units from its
+own place, along the screen axes (x right, y down) of the unturned figure. The offset grows with
+the zoom and turns with the figure, so the label keeps its spot beside its side or corner. A row
+without it draws its label where it always did. Dragging back to the start removes the word.
+
 An interior right angle set from the angle popover becomes an `ra` row when the corner is square
 to the grid, or `angle X Y square` otherwise.
 
@@ -78,7 +86,10 @@ angle 0 4 arcs 2 red | x; angle 6 0 ext measure; point 0 0 A
   on corners and where pieces meet and diamonds on side midpoints.
 - **Label**: shows the figure as it will be exported, turned and without the grid. Click a side
   to set its label, ticks, arrows, line and thickness. Click inside a corner for its angle, or
-  just outside it for the exterior angle. Click the corner itself for its point. The Turn box and
-  **Straighten** sit at the bottom right.
+  just outside it for the exterior angle. Click the corner itself for its point. The Turn slider (drag, -180 to 180), its
+  number box and **Straighten** sit at the bottom right.
+- **Moving labels** (Select and Label tools): the pointer shows "Drag to move this label" over a
+  dimension, angle, point or text label; dragging it writes its `@DX,DY` offset as one undo step.
+  A click without a drag still selects the mark (Select) or opens its part's popover (Label).
 - QA hook: `QUESHION_COMP="tool:label,side:N|angle:N|ext:N|corner:N"` opens a popover for outline
   side or corner N, for screenshots.

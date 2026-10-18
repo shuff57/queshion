@@ -75,10 +75,21 @@ pub fn encode(id: &str, cur: &Params, base: &Params) -> String {
         .map(|(k, v)| (k.clone(), to_json(v)))
         .collect();
     if diff.is_empty() {
-        return format!("{SCHEME}{id}");
+        return format!("{SCHEME}{id}?v={VERSION}");
     }
     let json = serde_json::to_string(&serde_json::Value::Object(diff)).unwrap_or_default();
-    format!("{SCHEME}{id}?p={}", b64url_encode(json.as_bytes()))
+    format!("{SCHEME}{id}?p={}&v={VERSION}", b64url_encode(json.as_bytes()))
+}
+
+/// Link format version written by `encode` (`&v=2`). Links without it are v1: made before
+/// the opening states listed in `start::since_v1`, whose keys then read as plain defaults.
+pub const VERSION: u32 = 2;
+
+/// The format version a pasted link was written with: its `v=` value, 1 when it has none.
+pub fn version(text: &str) -> u32 {
+    let t: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    let q = t.split_once('?').map(|(_, q)| q).unwrap_or("");
+    q.split('&').find_map(|kv| kv.strip_prefix("v=")).and_then(|v| v.trim_end_matches(|c: char| !c.is_ascii_digit()).parse().ok()).unwrap_or(1)
 }
 
 /// Reads a pasted link back into (figure id, changed params as JSON). Lenient about what
@@ -141,10 +152,23 @@ mod tests {
     fn unchanged_figure_is_a_bare_link() {
         let d = registry().into_iter().find(|d| d.id == "waves").unwrap();
         let p = start_params(&d);
-        assert_eq!(encode(d.id, &p, &p), "queshion://figure/waves");
+        assert_eq!(encode(d.id, &p, &p), "queshion://figure/waves?v=2");
         let (id, m) = decode("queshion://figure/waves").unwrap();
         assert_eq!(id, "waves");
         assert!(m.is_empty());
+    }
+
+    #[test]
+    fn links_carry_their_version() {
+        let d = registry().into_iter().find(|d| d.id == "waves").unwrap();
+        let p = start_params(&d);
+        assert_eq!(version(&encode(d.id, &p, &p)), VERSION);
+        let mut q = p.clone();
+        q.set_s("title", "x");
+        assert_eq!(version(&encode(d.id, &q, &p)), VERSION);
+        assert_eq!(version("queshion://figure/waves"), 1);
+        assert_eq!(version("queshion://figure/waves?p=e30"), 1);
+        assert_eq!(version("<queshion://figure/waves?p=e30&v=2>"), 2);
     }
 
     #[test]

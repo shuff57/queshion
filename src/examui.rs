@@ -151,6 +151,8 @@ struct ExportUi {
     shuffle_q: bool,
     shuffle_a: bool,
     versions: u32,
+    /// Export although questions still have `[picture]` placeholders (reset when the dialog closes).
+    anyway: bool,
 }
 impl Default for ExportUi {
     fn default() -> Self {
@@ -161,6 +163,7 @@ impl Default for ExportUi {
             shuffle_q: false,
             shuffle_a: false,
             versions: 2,
+            anyway: false,
         }
     }
 }
@@ -3765,6 +3768,27 @@ struct Placed {
 
 /// The exam's printable questions in order; items whose question is missing from its bank
 /// are skipped (a skipped item's section heading moves to the next printed question).
+/// Numbers (as printed, 1-based) of the exam's questions that still have unresolved
+/// `[picture]` placeholders (no picture attached for them).
+pub(crate) fn picture_gaps(st: &store::Store, exam: &model::Exam) -> Vec<usize> {
+    resolve_items(st, exam)
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| crate::bankops::pictures_needed(&p.q) > 0)
+        .map(|(i, _)| i + 1)
+        .collect()
+}
+
+/// The export gate's message for `nums` (empty when nothing is missing).
+pub(crate) fn picture_gate_text(nums: &[usize]) -> String {
+    let list = match nums {
+        [] => return String::new(),
+        [a] => return format!("Question {a} still needs a picture. Attach it in the bank first, or export anyway with the placeholder."),
+        [rest @ .., last] => format!("{} and {last}", rest.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", ")),
+    };
+    format!("Questions {list} still need pictures. Attach them in the bank first, or export anyway with the placeholders.")
+}
+
 fn resolve_items(st: &store::Store, exam: &model::Exam) -> Vec<Placed> {
     let mut out: Vec<Placed> = Vec::new();
     let mut pending: Option<model::ExamSection> = None;
@@ -4449,10 +4473,18 @@ impl crate::App {
                             .to_string(),
                     ).size(11.5)),
                 );
+                // Gate: questions with unresolved [picture] placeholders block the download
+                // unless the teacher chooses to export anyway.
+                let gaps = self.store.exam(exam_id).map(|e| picture_gaps(&self.store, e)).unwrap_or_default();
+                if !gaps.is_empty() {
+                    ui.add_space(8.0);
+                    ui.add(egui::Label::new(RichText::new(picture_gate_text(&gaps)).size(12.5).color(theme::bad())).wrap());
+                    ui.checkbox(&mut exu.anyway, "Export anyway (the placeholders print as [picture])");
+                }
                 ui.add_space(10.0);
                 let label = if exu.docx { "Download DOCX" } else { "Download PDF" };
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let ready = n_items > 0 && (exu.student || exu.key);
+                    let ready = n_items > 0 && (exu.student || exu.key) && (gaps.is_empty() || exu.anyway);
                     let clicked = ui
                         .add_enabled_ui(ready, |ui| kit::primary_button(ui, label).clicked())
                         .inner;
@@ -4463,6 +4495,9 @@ impl crate::App {
             });
 
         self.export_open = open;
+        if !open {
+            exu.anyway = false;
+        }
         mem_store(ctx, export_id(), &exu);
     }
 }
@@ -5435,6 +5470,33 @@ mod examed_tests {
         let old = r#"{"title":"T","header_line":"","heading_pt":16,"body_pt":11,"margin_mm":18,"answers_inline":true,"is_key":false,"version_label":null,"ruled_blanks":0,"questions":[{"number":1,"text":["a"],"choices":[],"image":null,"key_text":"","rule_lines":0,"points":null}],"out_file":"o.pdf"}"#;
         let s: SnapDoc = serde_json::from_str(old).unwrap();
         assert_eq!(s.style, PaperStyle::Standard);
+    }
+
+    #[test]
+    fn export_gate_lists_questions_still_needing_pictures() {
+        let mut st = store::Store::default();
+        let mut q2 = mcq("q2", &[("x", true, false), ("y", false, false)]);
+        q2.stem = "Look at the graph. [picture: page 1]".into();
+        let mut q4 = mcq("q4", &[("x", true, false), ("y", false, false)]);
+        q4.stem = "Which arrow? [picture]".into();
+        let mut q3 = mcq("q3", &[("x", true, false), ("y", false, false)]);
+        q3.stem = "Attached already [picture]".into();
+        q3.image = Some(model::ImageRef { file: "media/a.png".into(), width: 10, height: 10 });
+        st.banks.push(model::QuestionBank {
+            id: "b".into(),
+            name: "B".into(),
+            questions: vec![mcq("q1", &[("a", true, false), ("b", false, false)]), q2, q3, q4],
+            created: 0,
+            modified: 0,
+            details: Default::default(),
+        });
+        let ex = model::Exam { items: vec![it("q1"), it("gone"), it("q2"), it("q3"), it("q4")], ..Default::default() };
+        // printed numbers: the missing question is skipped, an attached picture resolves its marker
+        assert_eq!(picture_gaps(&st, &ex), vec![2, 4]);
+        assert_eq!(picture_gate_text(&[2, 4]), "Questions 2 and 4 still need pictures. Attach them in the bank first, or export anyway with the placeholders.");
+        assert!(picture_gate_text(&[1, 3, 5]).starts_with("Questions 1, 3 and 5 still need"));
+        assert!(picture_gate_text(&[3]).starts_with("Question 3 still needs a picture."));
+        assert_eq!(picture_gate_text(&[]), "");
     }
 
     #[test]

@@ -4895,7 +4895,7 @@ fn composite_params() -> Vec<ParamDef> {
     vec![
         ParamDef::choice("preset", "Start from", &[COMPOSITE_CUSTOM, "L-shape", "House", "Arch", "T-shape", "Rectangle", "Triangle", "Semicircle", "Circle"], COMPOSITE_CUSTOM),
         ParamDef::long("spec",
-            "Pieces separated by ;  rect X Y W H | tri X1 Y1 X2 Y2 X3 Y3 | poly X Y X Y ... | circle CX CY R | semi CX CY R DIR(u/d/l/r bulge) | quarter CX CY R ne/nw/se/sw | dash X1 Y1 X2 Y2 | dim X1 Y1 X2 Y2 TEXT (label drawn to the right of travel, go counterclockwise) | ticks X1 Y1 X2 Y2 N | arrows X1 Y1 X2 Y2 N | text X Y WORDS | ra X Y NE/NW/SE/SW (right angle) | side X1 Y1 X2 Y2 dashed/dotted/hidden thin/thick | angle X Y [ext] [measure] [arcs N] [square] [shade] [| TEXT] | point X Y NAME; end a piece with blue/red/green/yellow to shade it and | TEXT to label it",
+            "Pieces separated by ;  rect X Y W H | tri X1 Y1 X2 Y2 X3 Y3 | poly X Y X Y ... | circle CX CY R | semi CX CY R DIR(u/d/l/r bulge) | quarter CX CY R ne/nw/se/sw | dash X1 Y1 X2 Y2 | dim X1 Y1 X2 Y2 TEXT (label drawn to the right of travel, go counterclockwise) | ticks X1 Y1 X2 Y2 N | arrows X1 Y1 X2 Y2 N | text X Y WORDS | ra X Y NE/NW/SE/SW (right angle) | side X1 Y1 X2 Y2 dashed/dotted/hidden thin/thick | angle X Y [ext] [measure] [arcs N] [square] [shade] [| TEXT] | point X Y NAME; end a piece with blue/red/green/yellow to shade it and | TEXT to label it; @DX,DY on a dim, angle, point or text is a dragged label's offset",
             "rect 0 0 6 4; semi 3 4 3 u; dash 3 4 6 4; text 4.5 4.6 r = 3; dim 0 0 6 0 6 cm; dim 6 0 6 4 4 cm; ra 0 0 NE; ra 6 0 NW"),
         ParamDef::bool("shade", "Shade the shape", true),
         ParamDef::color("fill_color", "Shade colour", &SWATCHES, "#e9f1fb"),
@@ -4940,46 +4940,61 @@ pub fn composite_spec(p: &Params) -> String {
     preset_spec(p.s("preset")).unwrap_or(p.s("spec")).to_string()
 }
 
+/// A label the canvas editor lets you drag: spec row `item`, centre and half size (canvas px).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LabelBox { pub item: usize, pub c: Pt, pub half: Pt }
+
+/// The labels of the composite shape drawn at the canvas editor's view, for hit tests.
+pub fn composite_label_boxes(p: &Params, v: CompositeView) -> Vec<LabelBox> {
+    composite_svg_boxes(p, Some(v)).1
+}
+
 fn composite_svg(p: &Params, view: Option<CompositeView>) -> String {
+    composite_svg_boxes(p, view).0
+}
+
+fn composite_svg_boxes(p: &Params, view: Option<CompositeView>) -> (String, Vec<LabelBox>) {
     use super::composite::{self as cs, Shape};
+    let mut boxes: Vec<LabelBox> = vec![];
     let spec = composite_spec(p);
     let items = cs::parse(&spec);
     let mut pieces: Vec<Piece> = vec![];
-    let mut labels: Vec<(Pt, String)> = vec![];
+    let mut labels: Vec<(Pt, String, Option<(usize, Pt)>)> = vec![];
     let mut dashes: Vec<(Pt, Pt)> = vec![];
-    let mut dims: Vec<(Pt, Pt, String)> = vec![];
-    let mut texts: Vec<(Pt, String)> = vec![];
+    let mut dims: Vec<(Pt, Pt, String, usize, Pt)> = vec![];
+    let mut texts: Vec<(Pt, String, Option<(usize, Pt)>)> = vec![];
     let mut rights: Vec<(Pt, String)> = vec![];
     let mut marks: Vec<(Pt, Pt, u8, bool)> = vec![];
     let mut styled = false;
-    let mut angles: Vec<(cs::AngleGeo, bool, u8, bool, Option<&'static str>, String)> = vec![];
-    let mut points: Vec<(Pt, String)> = vec![];
-    for it in &items {
+    let mut angles: Vec<(cs::AngleGeo, bool, u8, bool, Option<&'static str>, String, usize, Pt)> = vec![];
+    let mut points: Vec<(Pt, String, usize, Pt)> = vec![];
+    for (ix, it) in items.iter().enumerate() {
+        let off = it.off.unwrap_or((0.0, 0.0));
         let Some(sh) = &it.shape else { continue };
         match sh {
             Shape::Dash(a, b) => dashes.push((*a, *b)),
-            Shape::Dim(a, b, t) => dims.push((*a, *b, t.clone())),
+            Shape::Dim(a, b, t) => dims.push((*a, *b, t.clone(), ix, off)),
             Shape::Ticks(a, b, k) => marks.push((*a, *b, *k, false)),
             Shape::Arrows(a, b, k) => marks.push((*a, *b, *k, true)),
-            Shape::Text(a, t) => texts.push((*a, t.clone())),
+            Shape::Text(a, t) => texts.push((*a, t.clone(), Some((ix, off)))),
             Shape::Ra(a, d) => rights.push((*a, d.clone())),
             Shape::SideStyle(..) => styled = true,
             Shape::Angle { v, ext, measure, arcs, square } => {
                 // an angle whose corner is gone (the shape was changed) draws nothing
                 if let Some(g) = cs::angle_geo(&items, *v, *ext) {
                     let lab = if *measure { format!("{}\u{b0}", fmt(g.deg, p.i("angle_dec"))) } else { it.label.trim().to_string() };
-                    angles.push((g, *ext, *arcs, *square, it.shade.as_deref().and_then(cs::shade_hex), lab));
+                    angles.push((g, *ext, *arcs, *square, it.shade.as_deref().and_then(cs::shade_hex), lab, ix, off));
                 }
             }
-            Shape::Point(a, n) => points.push((*a, n.trim().to_string())),
+            Shape::Point(a, n) => points.push((*a, n.trim().to_string(), ix, off)),
             _ => {
                 let v = cs::outline(sh);
-                if !it.label.trim().is_empty() { labels.push((cs::centroid(&v), it.label.clone())); }
+                if !it.label.trim().is_empty() { labels.push((cs::centroid(&v), it.label.clone(), None)); }
                 pieces.push(Piece::Poly(v, it.shade.as_deref().and_then(cs::shade_hex)));
             }
         }
     }
-    if pieces.is_empty() && view.is_none() { return msg("No pieces: start the text with rect, tri, circle, semi or poly"); }
+    if pieces.is_empty() && view.is_none() { return (msg("No pieces: start the text with rect, tri, circle, semi or poly"), vec![]); }
     // the figure's Turn: every point turns about the middle of the pieces; labels stay upright
     let turn = p.f("rotate");
     let tc = cs::turn_centre(&items);
@@ -4987,7 +5002,7 @@ fn composite_svg(p: &Params, view: Option<CompositeView>) -> String {
     let mut all: Vec<Pt> = vec![];
     for Piece::Poly(v, _) in &pieces { all.extend(v.iter().map(|q| tr(*q))); }
     for (a, b) in &dashes { all.push(tr(*a)); all.push(tr(*b)); }
-    for (a, b, _) in &dims { all.push(tr(*a)); all.push(tr(*b)); }
+    for (a, b, ..) in &dims { all.push(tr(*a)); all.push(tr(*b)); }
     let (w, h, m) = match view {
         Some(v) => (v.w, v.h, Map { s: v.s, ox: v.ox, oy: v.oy }),
         None => (480.0, 360.0, Map::fit(&all, 480.0, 360.0, 70.0, 56.0)),
@@ -5010,7 +5025,7 @@ fn composite_svg(p: &Params, view: Option<CompositeView>) -> String {
         (0..=n).map(|i| { let t = f1 - (g.deg * i as f64 / n as f64).to_radians(); (c.0 + r * t.cos(), c.1 + r * t.sin()) }).collect()
     };
     // exterior wedges sit outside the shape: under its outline
-    for (g, ext, arcs, _, sh, _) in &angles {
+    for (g, ext, arcs, _, sh, ..) in &angles {
         if let (true, Some(f)) = (ext, sh) { let mut pts = vec![mp(g.v)]; pts.extend(wedge(g, shade_r(*arcs))); d.poly(&pts, f, "none", 0.0); }
     }
     // the outline: a thick stroke under the fills shows only on the outside, so sides shared
@@ -5029,7 +5044,7 @@ fn composite_svg(p: &Params, view: Option<CompositeView>) -> String {
         }
     }
     for Piece::Poly(v, sh) in &pieces { let f = sh.unwrap_or(fill); d.poly(&v.iter().map(|q| mp(*q)).collect::<Vec<_>>(), f, f, 1.2); }
-    for (g, ext, arcs, _, sh, _) in &angles {
+    for (g, ext, arcs, _, sh, ..) in &angles {
         if let (false, Some(f)) = (ext, sh) { let mut pts = vec![mp(g.v)]; pts.extend(wedge(g, shade_r(*arcs))); d.poly(&pts, f, "none", 0.0); }
     }
     // styled sides on top, centred on the side
@@ -5069,8 +5084,10 @@ fn composite_svg(p: &Params, view: Option<CompositeView>) -> String {
         }
     }
     let lsz = 15.0 * fscale(p);
+    // a dragged label sits `off` model units (screen axes) from its own place
+    let sh_off = |o: Pt| { let t = cs::turn_off(o, turn); (t.0 * m.s, t.1 * m.s) };
     // angle marks: the exterior angle's extended side, arcs or the right-angle square, the label
-    for (g, _, arcs, square, sh, lab) in &angles {
+    for (g, _, arcs, square, sh, lab, ix, off) in &angles {
         let c = mp(g.v);
         let reach = if sh.is_some() { shade_r(*arcs) } else if *arcs > 0 { arc_r(*arcs - 1) } else if *square { 12.0 } else { 14.0 };
         if let Some(t) = g.ext_ray {
@@ -5086,7 +5103,10 @@ fn composite_svg(p: &Params, view: Option<CompositeView>) -> String {
         if !lab.is_empty() {
             let mid = { let a1 = sdir(g.v, g.r1); let t = a1.1.atan2(a1.0) - (g.deg / 2.0).to_radians(); (t.cos(), t.sin()) };
             let o = reach + 8.0 + 0.5 * (tw(lab, lsz) * 0.8 * mid.0.abs() + lsz * mid.1.abs());
-            mlabel(&mut d, c.0 + mid.0 * o, c.1 + mid.1 * o, lsz, lab, "");
+            let so = sh_off(*off);
+            let q = (c.0 + mid.0 * o + so.0, c.1 + mid.1 * o + so.1);
+            mlabel(&mut d, q.0, q.1, lsz, lab, "");
+            boxes.push(LabelBox { item: *ix, c: q, half: (tw(lab, lsz) * 0.5 + 3.0, lsz * 0.6 + 2.0) });
         }
     }
     // units typed in a label stay upright: the trailing word after a number
@@ -5094,7 +5114,7 @@ fn composite_svg(p: &Params, view: Option<CompositeView>) -> String {
         let w: Vec<&str> = t.split_whitespace().collect();
         if w.len() >= 2 && w[w.len() - 2].chars().any(|c| c.is_ascii_digit()) { w[w.len() - 1].to_string() } else { p.s("unit").to_string() }
     };
-    for (a, b, t) in &dims {
+    for (a, b, t, ix, doff) in &dims {
         let (pa, pb) = (mp(*a), mp(*b));
         let u = unit_v(pa, pb);
         let right = (-u.1, u.0);
@@ -5106,21 +5126,34 @@ fn composite_svg(p: &Params, view: Option<CompositeView>) -> String {
         // a dim with no text shows its measured length
         let t = if t.trim().is_empty() { fmtu(dist(*a, *b), p.i("dec"), p.s("unit")) } else { t.clone() };
         let o = 10.0 + 0.5 * (tw(&t, lsz) * 0.85 * right.0.abs() + lsz * right.1.abs());
-        mlabel(&mut d, mid.0 + right.0 * o, mid.1 + right.1 * o, lsz, &t, &unit_of(&t));
+        let so = sh_off(*doff);
+        let q = (mid.0 + right.0 * o + so.0, mid.1 + right.1 * o + so.1);
+        mlabel(&mut d, q.0, q.1, lsz, &t, &unit_of(&t));
+        boxes.push(LabelBox { item: *ix, c: q, half: (tw(&t, lsz) * 0.5 + 3.0, lsz * 0.6 + 2.0) });
     }
-    for (a, t) in texts.iter().chain(&labels) { let q = mp(*a); mlabel(&mut d, q.0, q.1, lsz, t, &unit_of(t)); }
+    for (a, t, mv) in texts.iter().chain(&labels) {
+        let so = mv.map(|(_, o)| sh_off(o)).unwrap_or((0.0, 0.0));
+        let q = mp(*a);
+        let q = (q.0 + so.0, q.1 + so.1);
+        mlabel(&mut d, q.0, q.1, lsz, t, &unit_of(t));
+        if let Some((ix, _)) = mv { boxes.push(LabelBox { item: *ix, c: q, half: (tw(t, lsz) * 0.5 + 3.0, lsz * 0.6 + 2.0) }); }
+    }
     // corner points, named away from the shape
-    for (a, n) in &points {
+    for (a, n, ix, off) in &points {
         let c = mp(*a);
         d.circle(c.0, c.1, 4.5, INK, "none", 0.0);
         if !n.is_empty() {
             let u = sdir(*a, cs::outside_dir(&items, *a));
             let o = 12.0 + 0.5 * (tw(n, lsz * 1.2) * 0.8 * u.0.abs() + lsz * 1.2 * u.1.abs());
-            mlabel(&mut d, c.0 + u.0 * o, c.1 + u.1 * o, lsz * 1.2, n, "");
+            let so = sh_off(*off);
+            let q = (c.0 + u.0 * o + so.0, c.1 + u.1 * o + so.1);
+            mlabel(&mut d, q.0, q.1, lsz * 1.2, n, "");
+            boxes.push(LabelBox { item: *ix, c: q, half: (tw(n, lsz * 1.2) * 0.5 + 3.0, lsz * 0.72 + 2.0) });
         }
     }
     let svg = d.finish();
-    if view.is_some() { svg.replacen(r##"<rect width="100%" height="100%" fill="#fff"/>"##, "", 1) } else { svg }
+    let svg = if view.is_some() { svg.replacen(r##"<rect width="100%" height="100%" fill="#fff"/>"##, "", 1) } else { svg };
+    (svg, boxes)
 }
 
 /// "Start from an example" entries for math-a's flat-shape figures (mirrors mathfigures.com).

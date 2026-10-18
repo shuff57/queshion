@@ -56,6 +56,10 @@ impl Shape {
     pub fn is_piece(&self) -> bool {
         matches!(self, Shape::Rect { .. } | Shape::Tri(_) | Shape::Poly(_) | Shape::Circle { .. } | Shape::Semi { .. } | Shape::Quarter { .. })
     }
+    /// Marks whose label can be dragged on the canvas (the row then keeps an `@DX,DY` word).
+    pub fn has_movable_label(&self) -> bool {
+        matches!(self, Shape::Dim(..) | Shape::Angle { .. } | Shape::Point(..) | Shape::Text(..))
+    }
     pub fn name(&self) -> &'static str {
         match self {
             Shape::Rect { .. } => "Rectangle",
@@ -86,13 +90,17 @@ pub struct Item {
     pub shade: Option<String>,
     /// Text after ` | ` on a piece row.
     pub label: String,
+    /// Dragged label offset of a mark with a label (dim, angle, point, text), written as an
+    /// `@DX,DY` word: model units along the unturned screen axes (x right, y down); it scales
+    /// with the zoom and turns with the figure (`turn_off`).
+    pub off: Option<Pt>,
     raw: String,
     dirty: bool,
 }
 
 impl Item {
     pub fn new(shape: Shape) -> Item {
-        Item { shape: Some(shape), shade: None, label: String::new(), raw: String::new(), dirty: true }
+        Item { shape: Some(shape), shade: None, label: String::new(), off: None, raw: String::new(), dirty: true }
     }
     pub fn is_piece(&self) -> bool {
         self.shape.as_ref().is_some_and(|s| s.is_piece())
@@ -111,6 +119,11 @@ impl Item {
     }
     pub fn set_shade(&mut self, w: Option<&str>) {
         self.shade = w.map(|w| w.to_lowercase());
+        self.dirty = true;
+    }
+    /// Sets (or clears, for `None` or a zero offset) the dragged label offset.
+    pub fn set_off(&mut self, o: Option<Pt>) {
+        self.off = o.filter(|o| o.0.abs() > 1e-6 || o.1.abs() > 1e-6);
         self.dirty = true;
     }
     pub fn set_label(&mut self, l: &str) {
@@ -161,6 +174,9 @@ impl Item {
             }
             Shape::Point(a, n) => format!("point {} {}", p(*a), n.trim()).trim_end().to_string(),
         };
+        if let Some(o) = self.off.filter(|_| s.has_movable_label()) {
+            out.push_str(&format!(" @{},{}", n(o.0), n(o.1)));
+        }
         if self.decorated() {
             if let Some(w) = &self.shade {
                 out.push(' ');
@@ -195,14 +211,33 @@ pub fn parse_row(row: &str) -> Item {
         Some((h, l)) if PIECE_WORDS.contains(&kw.as_str()) || kw == "angle" => (h.to_string(), l.trim().to_string()),
         _ => (raw.clone(), String::new()),
     };
-    let tk: Vec<&str> = head.split_whitespace().collect();
+    // a dragged label's `@DX,DY` word may sit anywhere after the keyword
+    let mut off = None;
+    let tk: Vec<&str> = head
+        .split_whitespace()
+        .filter(|t| match parse_off(t) {
+            Some(o) if off.is_none() => {
+                off = Some(o);
+                false
+            }
+            _ => true,
+        })
+        .collect();
     let shape = shape_of(&kw, &tk);
+    let off = off.filter(|_| shape.as_ref().is_some_and(|s| s.has_movable_label()));
     let shade = if shape.as_ref().is_some_and(|s| s.is_piece() || matches!(s, Shape::Angle { .. })) {
         tk.iter().skip(1).find_map(|t| shade_hex(t).map(|_| t.to_lowercase()))
     } else {
         None
     };
-    Item { shape, shade, label, raw, dirty: false }
+    Item { shape, shade, label, off, raw, dirty: false }
+}
+
+/// `@DX,DY` (a dragged label's offset) -> (DX, DY).
+fn parse_off(t: &str) -> Option<Pt> {
+    let (a, b) = t.strip_prefix('@')?.split_once(',')?;
+    let f = |v: &str| v.replace('\u{2212}', "-").parse::<f64>().ok().filter(|v| v.is_finite());
+    Some((f(a)?, f(b)?))
 }
 
 fn shape_of(kw: &str, tk: &[&str]) -> Option<Shape> {
@@ -1201,6 +1236,13 @@ pub fn turn_centre(items: &[Item]) -> Pt {
 }
 
 /// `q` turned counter-clockwise by `deg` about `c` (model units, y up).
+/// A dragged label's offset (screen axes, y down) as drawn when the figure is turned `deg`:
+/// it turns with the figure, so the label keeps its place beside its side or corner.
+pub fn turn_off(o: Pt, deg: f64) -> Pt {
+    let m = rot((o.0, -o.1), (0.0, 0.0), deg);
+    (m.0, -m.1)
+}
+
 pub fn rot(q: Pt, c: Pt, deg: f64) -> Pt {
     if deg == 0.0 || !deg.is_finite() {
         return q;
@@ -1625,5 +1667,31 @@ mod tests {
         assert_eq!(runs.len(), 1);
         assert!(close(runs[0][0], (6.0, 4.0)) && close(*runs[0].last().unwrap(), (0.0, 4.0)));
         assert!(curved_edges(&Shape::Rect { x: 0.0, y: 0.0, w: 1.0, h: 1.0 }).is_empty());
+    }
+
+    /// A dragged label's `@DX,DY` word: parsed off any labelled mark, written back after the
+    /// mark (before an angle's ` | text`), dropped when zeroed, ignored on pieces.
+    #[test]
+    fn label_offsets_round_trip() {
+        let it = parse_row("dim 0 0 6 0 6 cm @0.5,-1.25");
+        assert_eq!(it.shape, Some(Shape::Dim((0.0, 0.0), (6.0, 0.0), "6 cm".into())));
+        assert_eq!(it.off, Some((0.5, -1.25)));
+        assert_eq!(it.row(), "dim 0 0 6 0 6 cm @0.5,-1.25", "untouched rows stay verbatim");
+        let mut a = parse_row("angle 3 4 measure arcs 2 | x");
+        a.set_off(Some((1.0, 2.0)));
+        assert_eq!(a.row(), "angle 3 4 measure arcs 2 @1,2 | x");
+        let back = parse_row(&a.row());
+        assert_eq!((back.off, back.label.as_str()), (Some((1.0, 2.0)), "x"));
+        a.set_off(Some((0.0, 0.0)));
+        assert_eq!(a.row(), "angle 3 4 measure arcs 2 | x");
+        let mut pt = Item::new(Shape::Point((1.0, 1.0), "P".into()));
+        pt.set_off(Some((-0.5, 0.25)));
+        assert_eq!(parse_row(&pt.row()).off, Some((-0.5, 0.25)));
+        assert_eq!(parse_row(&pt.row()).shape, Some(Shape::Point((1.0, 1.0), "P".into())));
+        assert_eq!(parse_row("rect 0 0 2 2 @1,1").off, None, "pieces have no movable label");
+        assert_eq!(parse_row("text 1 1 r = 3 @1,0").shape, Some(Shape::Text((1.0, 1.0), "r = 3".into())));
+        // the offset turns with the figure: a quarter turn takes "right" to "up"
+        let t = turn_off((1.0, 0.0), 90.0);
+        assert!((t.0).abs() < 1e-9 && (t.1 + 1.0).abs() < 1e-9, "{t:?}");
     }
 }

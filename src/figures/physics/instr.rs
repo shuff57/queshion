@@ -95,14 +95,17 @@ fn draw_inst(g: &mut G, c: &Inst, sw: f64, fs: f64, full: bool) {
     for (side, newtons) in sides {
         let (cap_u, mult) = if newtons { (c.cap, 1.0) } else { (c.cap * 100.0, 100.0) };
         let ls = lab_step(c.cap) * mult;
-        let minor = ls / 5.0;
+        // tenths between numbered marks with a longer half mark, as the reference's dial;
+        // fifths when tenths would crowd closer than 3 px
+        let per = if (c.y1 - c.y0).abs() * (ls / mult / 10.0) / c.cap >= 3.0 { 10 } else { 5 };
+        let minor = ls / per as f64;
         let steps = (cap_u / minor).round() as i64;
         for i in 0..=steps {
             let u = i as f64 * minor;
             let v = u / mult;
             let y = ypos(v);
-            let major = i % 5 == 0;
-            let mid = false;
+            let major = i % per == 0;
+            let mid = per == 10 && i % per == 5;
             let len = if major { 14.0 } else if mid { 10.0 } else { 6.0 };
             let x0 = ix + side * 10.0;
             g.line(x0, y, x0 + side * len, y, INK, if major { sw * 1.4 } else { sw });

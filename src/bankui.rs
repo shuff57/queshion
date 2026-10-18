@@ -1028,31 +1028,71 @@ fn paint_mix_bar(ui: &mut Ui, w: f32, mix: &[usize; 6]) {
     }
 }
 
-/// "..." menu with Rename / Delete; returns (clicked item, pointer over the button).
-fn bank_menu(ui: &mut Ui) -> (Option<bool>, bool) {
-    let mut act = None;
-    let r = ui.menu_button(RichText::new("…").size(14.0).color(theme::muted_col()), |ui| {
-        if ui.button("Rename").clicked() {
-            act = Some(false);
-            ui.close();
-        }
-        if ui.button("Delete…").clicked() {
-            act = Some(true);
-            ui.close();
-        }
-    });
-    (act, r.response.contains_pointer())
+/// What the bank "..." menu asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BankAct {
+    Open,
+    Popover,
+    Export,
+    Rename,
+    Delete,
 }
 
-fn apply_bank_menu(ctx: &egui::Context, key: UiId, r: &BankRow, act: Option<bool>) {
-    if let Some(del) = act {
-        with_state(ctx, key, |s: &mut BanksState| {
-            if del {
-                s.confirm_delete = Some(r.id.clone());
-            } else {
-                s.rename = Some((r.id.clone(), r.name.clone()));
+/// The bank "..." menu items in order (as on the reference: Open, Pop-over, Export, then Delete
+/// after a separator; Rename is ours). `None` marks the separator; the bool says enabled
+/// (Export needs at least one question).
+fn bank_menu_items(nq: usize) -> Vec<Option<(BankAct, &'static str, bool)>> {
+    vec![
+        Some((BankAct::Open, "Open", true)),
+        Some((BankAct::Popover, "Pop-over", true)),
+        Some((BankAct::Export, "Export…", nq > 0)),
+        Some((BankAct::Rename, "Rename", true)),
+        None,
+        Some((BankAct::Delete, "Delete…", true)),
+    ]
+}
+
+/// Room for the "..." button in a card header (the button itself is drawn by [`bank_menu`]
+/// after the card's click area, so it sits on top and gets its own clicks).
+const MENU_BTN: Vec2 = Vec2::new(30.0, 24.0);
+
+/// The "..." menu drawn into `rect`; returns (clicked item, pointer over the button or menu).
+fn bank_menu(ui: &mut Ui, rect: Rect, r: &BankRow) -> (Option<BankAct>, bool) {
+    let mut act = None;
+    let resp = ui.scope_builder(egui::UiBuilder::new().max_rect(rect).layout(Layout::right_to_left(Align::Center)), |ui| {
+        ui.spacing_mut().button_padding = Vec2::new(8.0, 3.0);
+        ui.menu_button(RichText::new("…").size(14.0).color(theme::muted_col()), |ui| {
+            ui.set_min_width(150.0);
+            for it in bank_menu_items(r.nq) {
+                match it {
+                    None => {
+                        ui.separator();
+                    }
+                    Some((a, label, enabled)) => {
+                        let text = if a == BankAct::Delete { RichText::new(label).color(theme::bad()) } else { RichText::new(label) };
+                        let b = ui.add_enabled(enabled, egui::Button::new(text));
+                        let b = if a == BankAct::Export && !enabled { b.on_disabled_hover_text("Add a question first") } else { b };
+                        if b.clicked() {
+                            act = Some(a);
+                            ui.close();
+                        }
+                    }
+                }
             }
-        });
+        })
+    });
+    let over = resp.inner.response.contains_pointer();
+    (act, over)
+}
+
+fn apply_bank_menu(app: &mut App, ctx: &egui::Context, key: UiId, r: &BankRow, act: Option<BankAct>) {
+    match act {
+        Some(BankAct::Open) => app.open_bank(&r.id),
+        Some(BankAct::Popover) => open_popover(ctx, &r.id),
+        Some(BankAct::Export) => export_bank(app, &r.id),
+        Some(BankAct::Rename) => with_state(ctx, key, |s: &mut BanksState| s.rename = Some((r.id.clone(), r.name.clone()))),
+        Some(BankAct::Delete) => with_state(ctx, key, |s: &mut BanksState| s.confirm_delete = Some(r.id.clone())),
+        None => {}
     }
 }
 
@@ -1069,16 +1109,13 @@ fn counts_line(r: &BankRow) -> String {
 /// One bank tile: serif name, counts, type-mix bar, edited time.
 fn bank_card(ui: &mut Ui, app: &mut App, ctx: &egui::Context, key: UiId, r: &BankRow) {
     let mut link: Option<Rect> = None;
-    let mut menu_act = None;
-    let mut over_menu = false;
+    let mut menu_rect = Rect::NOTHING;
     let resp = kit::card().inner_margin(Margin::same(14)).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
             ui.label(theme::serif(truncate(&r.name, 30)).size(18.0));
             ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                let (a, o) = bank_menu(ui);
-                menu_act = a;
-                over_menu = o;
+                menu_rect = ui.allocate_exact_size(MENU_BTN, Sense::hover()).0;
             });
         });
         ui.label(theme::muted(counts_line(r)).size(12.5));
@@ -1089,8 +1126,12 @@ fn bank_card(ui: &mut Ui, app: &mut App, ctx: &egui::Context, key: UiId, r: &Ban
         ui.add_space(2.0);
         ui.label(theme::muted(format!("Edited {}", rel_time(r.modified))).size(11.5));
     });
-    apply_bank_menu(ctx, key, r, menu_act);
     let click = ui.interact(resp.response.rect, ui.id().with(("bank_card", &r.id)), Sense::click());
+    let (menu_act, over_menu) = bank_menu(ui, menu_rect, r);
+    if menu_act.is_some() {
+        apply_bank_menu(app, ctx, key, r, menu_act);
+        return;
+    }
     if usage_clicked(&click, link, r) {
         open_usage(ctx, r.name.clone(), r.used_in.clone());
         return;
@@ -1115,8 +1156,7 @@ fn usage_clicked(click: &egui::Response, link: Option<Rect>, r: &BankRow) -> boo
 
 fn bank_list_row(ui: &mut Ui, app: &mut App, ctx: &egui::Context, key: UiId, r: &BankRow) {
     let mut link: Option<Rect> = None;
-    let mut menu_act = None;
-    let mut over_menu = false;
+    let mut menu_rect = Rect::NOTHING;
     let resp = kit::card().inner_margin(Margin::symmetric(14, 9)).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
@@ -1135,14 +1175,16 @@ fn bank_list_row(ui: &mut Ui, app: &mut App, ctx: &egui::Context, key: UiId, r: 
             });
             ui.label(theme::muted(format!("Edited {}", rel_time(r.modified))).size(12.0));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let (a, o) = bank_menu(ui);
-                menu_act = a;
-                over_menu = o;
+                menu_rect = ui.allocate_exact_size(MENU_BTN, Sense::hover()).0;
             });
         });
     });
-    apply_bank_menu(ctx, key, r, menu_act);
     let click = ui.interact(resp.response.rect, ui.id().with(("bank_row", &r.id)), Sense::click());
+    let (menu_act, over_menu) = bank_menu(ui, menu_rect, r);
+    if menu_act.is_some() {
+        apply_bank_menu(app, ctx, key, r, menu_act);
+        return;
+    }
     if usage_clicked(&click, link, r) {
         open_usage(ctx, r.name.clone(), r.used_in.clone());
         return;
@@ -2224,6 +2266,16 @@ mod tests {
         assert_eq!(b.details.author, "Ms. Rivera");
         assert_eq!(b.modified, 7);
         assert!(!apply_details(&mut b, &d, 9), "same details again is a no-op");
+    }
+
+    #[test]
+    fn bank_menu_matches_the_reference_order() {
+        let labels: Vec<&str> = bank_menu_items(3).iter().map(|i| i.map_or("---", |(_, l, _)| l)).collect();
+        assert_eq!(labels, vec!["Open", "Pop-over", "Export…", "Rename", "---", "Delete…"]);
+        assert!(bank_menu_items(3).iter().flatten().all(|(_, _, en)| *en));
+        // an empty bank cannot be exported (as on the reference)
+        let export = |n| bank_menu_items(n).into_iter().flatten().find(|(a, _, _)| *a == BankAct::Export).unwrap().2;
+        assert!(!export(0) && export(1));
     }
 
     #[test]

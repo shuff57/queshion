@@ -45,6 +45,9 @@ fn empty_answers(n: usize) -> Vec<Answer> {
     (0..n).map(|_| empty_answer()).collect()
 }
 
+/// How a blank is made; the stem hint and the "no blank yet" check both say it the same way.
+pub const BLANK_HOW: &str = "select a word in the question and press ___ Blank (or type ___)";
+
 /// Number of "___" blanks in a Fill-in-the-blank stem.
 fn blank_count(stem: &str) -> usize {
     stem.matches("___").count()
@@ -113,6 +116,7 @@ enum EqField {
     PartStem(usize),
     PartMc(usize, usize),
     PartShort(usize),
+    Explanation,
 }
 
 /// An equation edit in progress: where it goes and what it starts as.
@@ -304,7 +308,7 @@ impl Draft {
             }
             Kind::Blank { accept } => {
                 if blank_count(&self.stem) == 0 {
-                    errs.push("Write ___ in the stem where the blank goes.".to_string());
+                    errs.push(format!("Add a blank: {BLANK_HOW}."));
                 }
                 for (i, row) in accept.iter().enumerate().take(blank_count(&self.stem)) {
                     if row.iter().all(|a| a.trim().is_empty()) {
@@ -525,31 +529,6 @@ fn field_line(ui: &mut Ui, text: &mut String, w: f32, hint: &str) -> egui::Respo
             )
         })
         .inner
-}
-
-/// Multi-line field exactly `w` wide; `serif` uses the house serif at `size`.
-fn field_multi(
-    ui: &mut Ui,
-    text: &mut String,
-    w: f32,
-    rows: usize,
-    serif: Option<f32>,
-    pad_right: i8,
-    hint: &str,
-) -> (egui::Rect, egui::text_edit::TextEditOutput) {
-    let inner = (w - 12.0 - pad_right as f32 - 2.0).max(30.0);
-    let fr = field_frame(Margin { left: 12, right: pad_right, top: 8, bottom: 8 }).show(ui, |ui| {
-        let mut te = TextEdit::multiline(text)
-            .frame(Frame::new())
-            .hint_text(hint)
-            .desired_rows(rows)
-            .desired_width(inner);
-        if let Some(sz) = serif {
-            te = te.font(egui::FontId::new(sz, theme::serif_family()));
-        }
-        te.show(ui)
-    });
-    (fr.response.rect, fr.inner)
 }
 
 /// Painter-drawn sigma button (opens the equation modal).
@@ -843,7 +822,8 @@ fn left_col(ui: &mut Ui, ctx: &egui::Context, draft: &mut Draft, key: UiId, w: f
     label(ui, "Question");
     let is_blank = matches!(draft.kind, Kind::Blank { .. });
     let mut mirror = is_blank.then(|| blank_mirror(ctx, key, draft));
-    let hint = if is_blank { "Write the sentence, then select a word and make it a Blank..." } else { "Write the question..." };
+    let blank_hint = format!("Write the sentence, then {BLANK_HOW}...");
+    let hint = if is_blank { blank_hint.as_str() } else { "Write the question..." };
     let inner = (w - 26.0).max(60.0);
     let sid = field_editor_id(key, &EqField::Stem);
     let fr = field_frame(Margin::symmetric(12, 8)).show(ui, |ui| {
@@ -1012,7 +992,9 @@ fn right_col(
     // Explanation.
     label(ui, "Explanation (optional)");
     let mut explanation = draft.explanation.clone().unwrap_or_default();
-    field_multi(ui, &mut explanation, w, 2, None, 12, "Shown with the answer key");
+    // the WYSIWYG field (bold/italic/strike/scripts/math show as they print on the key)
+    let eq = EqCtx { ctx: ctx.clone(), key };
+    eq_multi(ui, &eq, EqField::Explanation, &mut explanation, w, 2, "Shown with the answer key");
     draft.explanation = match explanation.trim() {
         "" => None,
         _ => Some(explanation),
@@ -1486,6 +1468,12 @@ mod tests {
         d.stem = "Fill ___ and ___ here.".to_string();
         let errs = d.validate();
         assert!(errs.iter().any(|e| e.contains("Blank 2")));
+        // no blank yet: the error tells the same flow as the stem hint (select a word -> Blank)
+        d.stem = "Fill here.".to_string();
+        let errs = d.validate();
+        assert!(errs.iter().any(|e| e.contains(BLANK_HOW)), "{errs:?}");
+        assert!(BLANK_HOW.contains("select a word") && BLANK_HOW.contains("___ Blank"));
+        d.stem = "Fill ___ and ___ here.".to_string();
         d.kind = Kind::Blank {
             accept: vec![vec!["one".to_string()], vec!["two".to_string()]],
         };
@@ -1557,6 +1545,7 @@ fn field_text<'a>(draft: &'a mut Draft, f: &EqField) -> Option<&'a mut String> {
             },
             _ => None,
         },
+        EqField::Explanation => Some(draft.explanation.get_or_insert_with(String::new)),
         EqField::Blank(_) => None,
     }
 }

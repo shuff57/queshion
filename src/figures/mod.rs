@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 pub mod biology;
 pub mod chemistry;
 pub mod composite;
+pub mod faq;
 pub mod interact;
 pub mod labels;
 pub mod layout;
@@ -309,6 +310,16 @@ pub fn measures_for(id: &str) -> Option<MeasureCard> {
 /// params. The reference hides, e.g., the "Oblique" group of a right solid. Default: shown.
 pub fn card_visible(id: &str, group: &str, row: Option<&str>, p: &Params) -> bool {
     math::card_visible(id, group, row, p)
+}
+
+/// Whether parameter `key` of figure `id` applies to the current params: the reference shows
+/// only the controls of the chosen setup (a pulley's Atwood setup has no ramp angle). Hidden
+/// params keep their values, so switching back restores them. Default: shown.
+pub fn param_relevant(id: &str, key: &str, p: &Params) -> bool {
+    match id {
+        "pulley" => physics::pulley_relevant(key, p),
+        _ => true,
+    }
 }
 
 /// Values worked out from the typed ones, as (value_key, text) pairs shown grey in empty boxes

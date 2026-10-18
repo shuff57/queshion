@@ -13,7 +13,7 @@ use std::hash::{Hash, Hasher};
 use egui::{Align2, Button, Color32, CornerRadius, FontId, Frame, Id, Key, Modifiers, Pos2, Rect, RichText, Sense, Stroke, TextEdit, TextureHandle, Ui, pos2, vec2};
 
 use crate::figures::composite::{self as cs, Grip, Item, NewKind, Pt, Shape, Side};
-use crate::figures::math::{CompositeView, COMPOSITE_CUSTOM, COMPOSITE_STARTS, composite_spec, composite_view_svg, preset_spec};
+use crate::figures::math::{CompositeView, COMPOSITE_CUSTOM, COMPOSITE_STARTS, composite_label_boxes, composite_spec, composite_view_svg, preset_spec};
 use crate::figures::Params;
 use crate::theme;
 
@@ -110,6 +110,8 @@ enum Drag {
     Grip { i: usize, g: Grip, orig: Vec<Item> },
     Create { kind: NewKind, a: Pt },
     Line { a: Pt },
+    /// A label being dragged: its row, where the press began, its offset then, the spec then.
+    Label { i: usize, at: Pos2, from: Pt, orig: Vec<Item>, moved: bool },
 }
 
 pub struct Canvas {
@@ -197,6 +199,41 @@ impl Canvas {
     }
     fn scale(&self) -> f64 {
         self.view.map(|v| v.s).unwrap_or(UNIT_PX)
+    }
+
+    /// The canvas view as the renderer takes it (and the params it draws: the Turn shows only
+    /// in the Label tool).
+    fn render_view(&self, p: &Params) -> (CompositeView, Params) {
+        let r = self.rect;
+        let v = self.view.unwrap_or(View { s: UNIT_PX, c: (0.0, 0.0) });
+        let (w, h) = (r.width() as f64, r.height() as f64);
+        let cv = CompositeView { w, h, s: v.s, ox: w / 2.0 - v.c.0 * v.s, oy: h / 2.0 + v.c.1 * v.s };
+        let mut pr = p.clone();
+        if self.tool != Tool::Label {
+            pr.set_f("rotate", 0.0);
+        }
+        (cv, pr)
+    }
+
+    /// The draggable label (spec row) under screen point `pp`, if any: dimension, angle and
+    /// point labels and text marks, as the renderer placed them.
+    fn label_at(&self, p: &Params, pp: Pos2) -> Option<usize> {
+        if !matches!(self.tool, Tool::Select | Tool::Label) {
+            return None;
+        }
+        let (cv, pr) = self.render_view(p);
+        let r = self.rect;
+        composite_label_boxes(&pr, cv)
+            .into_iter()
+            .rev()
+            .find(|b| ((pp.x - r.min.x) as f64 - b.c.0).abs() <= b.half.0 && ((pp.y - r.min.y) as f64 - b.c.1).abs() <= b.half.1)
+            .map(|b| b.item)
+    }
+
+    /// Where each draggable label sits on screen, by spec row (tests aim pointer events at them).
+    pub fn label_centres(&self, p: &Params) -> Vec<(usize, Pos2)> {
+        let (cv, pr) = self.render_view(p);
+        composite_label_boxes(&pr, cv).into_iter().map(|b| (b.item, self.rect.min + vec2(b.c.0 as f32, b.c.1 as f32))).collect()
     }
 
     fn fit(&mut self, items: &[Item]) {
@@ -441,6 +478,24 @@ impl Canvas {
                         change = Change::Live;
                     }
                 }
+                Some(Drag::Label { i, at, from, orig, moved }) => {
+                    let d = pp - *at;
+                    let s = self.scale();
+                    if *moved || d.length() > 3.0 {
+                        let mut next = orig.clone();
+                        // the pointer moves on the turned figure: store the move unturned
+                        let u = cs::turn_off((d.x as f64 / s, d.y as f64 / s), -self.turn.0);
+                        if let Some(it) = next.get_mut(*i) {
+                            it.set_off(Some((from.0 + u.0, from.1 + u.1)));
+                        }
+                        if cs::to_spec(&next) != cs::to_spec(&items) {
+                            items = next;
+                            self.write(p, &items);
+                            change = Change::Live;
+                        }
+                        self.drag = Some(Drag::Label { i: *i, at: *at, from: *from, orig: orig.clone(), moved: true });
+                    }
+                }
                 Some(Drag::Grip { i, g, orig }) => {
                     let q = self.snap_q(orig, m, Some(*i));
                     let mut next = orig.clone();
@@ -453,7 +508,9 @@ impl Canvas {
                 }
                 _ => {}
             }
-            self.drag = drag;
+            if !matches!((&self.drag, &drag), (Some(Drag::Label { .. }), Some(Drag::Label { .. }))) {
+                self.drag = drag;
+            }
             if released || !down {
                 self.release(p, &mut items, m, &mut change);
             }
@@ -465,6 +522,16 @@ impl Canvas {
         // ---- keys (not while a text box has focus) ----
         if !ctx.egui_wants_keyboard_input() && (resp.hovered() || self.sel.is_some() || !self.poly.is_empty()) {
             self.keys(ui, p, &mut items, &mut change);
+        }
+
+        // a label under the pointer can be dragged: say so (the reference's "Drag to move")
+        if let Some(hp) = hover.filter(|_| self.drag.is_none() || matches!(self.drag, Some(Drag::Label { .. }))) {
+            if matches!(self.drag, Some(Drag::Label { moved: true, .. })) {
+                ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+            } else if self.label_at(p, hp).is_some() {
+                ctx.set_cursor_icon(egui::CursorIcon::Move);
+                resp.clone().on_hover_text_at_pointer("Drag to move this label");
+            }
         }
 
         // ---- draw ----
@@ -498,6 +565,18 @@ impl Canvas {
     fn press(&mut self, p: &mut Params, items: &mut Vec<Item>, pp: Pos2, change: &mut Change) {
         let m = self.to_model(pp);
         let tol = 6.0 / self.scale();
+        // a label under the pointer is dragged (Select and Label tools), unless a grip of the
+        // selection is there; a press that never moves acts as a plain click on release
+        let on_grip = self.sel.and_then(|i| items.get(i)).and_then(|it| it.shape.as_ref()).is_some_and(|sh| cs::grips(sh).into_iter().any(|(_, q)| self.to_screen(q).distance(pp) < 9.0));
+        if !on_grip && let Some(i) = self.label_at(p, pp) {
+            let from = items[i].off.unwrap_or((0.0, 0.0));
+            self.drag = Some(Drag::Label { i, at: pp, from, orig: items.clone(), moved: false });
+            return;
+        }
+        self.click(p, items, pp, m, tol, change);
+    }
+
+    fn click(&mut self, p: &mut Params, items: &mut Vec<Item>, pp: Pos2, m: Pt, tol: f64, change: &mut Change) {
         match self.tool {
             Tool::Select => {
                 // grips of the selection, then its "+" buttons, then whatever is under the pointer
@@ -555,6 +634,34 @@ impl Canvas {
 
     fn release(&mut self, p: &mut Params, items: &mut Vec<Item>, m: Pt, change: &mut Change) {
         match self.drag.take() {
+            Some(Drag::Label { moved: true, .. }) => *change = Change::Step,
+            Some(Drag::Label { at, i, .. }) => {
+                // a click on a label: select its mark (Select) or open its popover (Label)
+                if self.tool == Tool::Select {
+                    self.sel = Some(i);
+                } else {
+                    // the popover of the part the label belongs to
+                    let same = |u: Pt, v: Pt| cs::dist(u, v) < 1e-6;
+                    match items.get(i).and_then(|it| it.shape.clone()) {
+                        Some(Shape::Dim(a, b, _)) => {
+                            if let Some(sd) = cs::outer_sides(items).into_iter().find(|sd| (same(sd.a, a) && same(sd.b, b)) || (same(sd.a, b) && same(sd.b, a))) {
+                                self.side_text = cs::side_label(items, sd.a, sd.b).unwrap_or_default();
+                                self.side = Some(sd);
+                            }
+                        }
+                        Some(Shape::Angle { v, ext, .. }) => self.open_angle(items, v, ext),
+                        Some(Shape::Point(v, _)) => self.open_corner(items, v),
+                        _ => {
+                            let tol = 6.0 / self.scale();
+                            let mm = self.to_model(at);
+                            self.click(p, items, at, mm, tol, change);
+                            if matches!(self.drag, Some(Drag::Pan)) {
+                                self.drag = None;
+                            }
+                        }
+                    }
+                }
+            }
             Some(Drag::Create { kind, a }) => {
                 let b = self.snap_q(items, m, None);
                 let sh = cs::piece_from_drag(kind, a, b).unwrap_or_else(|| cs::default_piece(kind, a));
@@ -800,14 +907,8 @@ impl Canvas {
     /// rounding, unit and label size look exactly as exported).
     fn texture(&mut self, ctx: &egui::Context, p: &Params, painter: &egui::Painter) {
         let r = self.rect;
-        let v = self.view.unwrap_or(View { s: UNIT_PX, c: (0.0, 0.0) });
-        let (w, h) = (r.width() as f64, r.height() as f64);
-        let cv = CompositeView { w, h, s: v.s, ox: w / 2.0 - v.c.0 * v.s, oy: h / 2.0 + v.c.1 * v.s };
+        let (cv, pr) = self.render_view(p);
         let ppp = ctx.pixels_per_point();
-        let mut pr = p.clone();
-        if self.tool != Tool::Label {
-            pr.set_f("rotate", 0.0);
-        }
         let mut hs = std::collections::hash_map::DefaultHasher::new();
         format!("{:?}{:?}{}", pr.0, cv, ppp).hash(&mut hs);
         let key = hs.finish();
@@ -1461,9 +1562,14 @@ impl Canvas {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
                         ui.label(RichText::new("\u{21bb}").size(14.0)).on_hover_text("Turn the figure");
+                        // drag the slider to turn (-180 to 180), or type the angle in the box
                         let mut t = p.f("rotate");
+                        ui.spacing_mut().slider_width = 130.0;
+                        let sl = ui
+                            .add(egui::Slider::new(&mut t, -180.0..=180.0).show_value(false).step_by(1.0))
+                            .on_hover_text("Drag to change the figure's turn");
                         let resp = ui.add(egui::DragValue::new(&mut t).range(-180.0..=180.0).speed(1.0).max_decimals(1).suffix("\u{b0}"));
-                        if resp.changed() {
+                        if sl.changed() || resp.changed() {
                             p.set_f("rotate", t);
                             *change = Change::Live;
                         }

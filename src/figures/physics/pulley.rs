@@ -5,6 +5,26 @@ use crate::figures::{ParamDef, Params};
 
 const LM: [&str; 3] = ["Text", "Blank line", "None"];
 
+/// Which controls the chosen setup uses (as the reference shows them): Atwood has the two
+/// hanging masses, "hangs lower" and the third mass; table and ramp the cart/block choice, a
+/// second object, the surface, normal force and friction (the ramp also its angle); the block
+/// and tackle its strands and the load. Everything else stays put but out of sight.
+pub(crate) fn pulley_relevant(key: &str, p: &Params) -> bool {
+    let setup = p.s("setup");
+    let (atwood, tackle) = (setup == "Atwood", setup == "Block & tackle");
+    let flat = !atwood && !tackle; // table or ramp
+    match key {
+        "l_kind" | "second" | "surface" | "normal" | "norm_lab_mode" | "norm_lab" | "friction" | "fric_lab_mode" | "fric_lab" => flat,
+        "s_lab" => flat && p.b("second"),
+        "angle" | "ang_lab_mode" | "ang_lab" => setup == "Ramp",
+        "lower" | "third" => atwood,
+        "third_side" | "t_lab_mode" | "t_lab" | "t_size" => atwood && p.b("third"),
+        "r_lab_mode" | "r_lab" | "r_size" => !tackle,
+        "strands" => tackle,
+        _ => true,
+    }
+}
+
 pub(super) fn pulley_params() -> Vec<ParamDef> {
     vec![
         ParamDef::choice("setup", "Setup", &["Atwood", "Table", "Ramp", "Block & tackle"], "Atwood"),

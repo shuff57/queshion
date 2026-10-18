@@ -14,7 +14,7 @@ It all happens offline. The link holds the figure's settings, so no server or ac
 ## Format
 
 ```
-queshion://figure/<figure-id>?p=<payload>
+queshion://figure/<figure-id>?p=<payload>&v=2
 ```
 
 - `<figure-id>` is the figure's stable slug, e.g. `motion-graphs` or `punnett-square`. These are
@@ -22,8 +22,9 @@ queshion://figure/<figure-id>?p=<payload>
 - `<payload>` is base64url (RFC 4648 §5, `A–Z a–z 0–9 - _`, no `=` padding) of a compact JSON
   object holding **only the params that differ from the figure's opening state** (what it shows
   when you first open it from the browser). The reference generators work the same way: an
-  unchanged figure gets a bare link, `queshion://figure/waves`, and one change stays short, e.g.
-  `queshion://figure/motion-graphs?p=eyJsZXR0ZXJzIjp0cnVlfQ` for `{"letters":true}`.
+  unchanged figure gets a bare link, `queshion://figure/waves?v=2`, and one change stays short, e.g.
+  `queshion://figure/motion-graphs?p=eyJsZXR0ZXJzIjp0cnVlfQ&v=2` for `{"letters":true}`.
+- `v` is the link format version (2 since round 5). Links without it are version 1.
 - JSON values are the same types a saved spec uses: numbers for sliders/counts, `true`/`false`
   for switches, and strings for choices, text, lists, colours and dragged label offsets.
 
@@ -51,9 +52,11 @@ box. Nothing else changes.
 
 - Saved question figures, presets (`figure-presets.json`) and the **Copy spec** / **Apply pasted
   spec** JSON are unchanged. Share links are an extra format, not a replacement.
-- A link stores differences from the opening state at the time it was made. If a later version
-  changes a figure's opening state, a link that left that param untouched opens with the new
-  opening value. Every param the sender changed travels explicitly.
+- A link stores differences from the opening state at the time it was made. Every param the
+  sender changed travels explicitly. When an opening state changes, the link version goes up and
+  `figures::start::since_v1` lists the keys whose opening value is newer than v1 links: a link
+  without `v=` reads those keys as the plain defaults, so it opens exactly as it did when made
+  (e.g. a v1 vector diagram keeps its solid resultant; new ones open dashed, as the reference does).
 
 ## QA hooks
 

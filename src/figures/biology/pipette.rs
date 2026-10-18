@@ -55,14 +55,15 @@ pub fn render(p: &Params) -> String {
     let accent = if color { sp.accent } else { "#fff" };
 
     // plunger button + shaft
-    d.rect(cx - 12.0, 36.0, 24.0, 14.0, accent, INK, 2.0);
+    d.raw(&format!(r#"<rect x="{:.1}" y="36" width="24" height="15" rx="4" fill="{accent}" stroke="{INK}" stroke-width="2"/>"#, cx - 12.0));
     d.rect(cx - 9.0, 50.0, 18.0, 30.0, light, INK, 2.0);
-    // body with thumb hook
+    // body with thumb hook: the finger rest curls down to a rounded tip, and a rounded nub
+    // (the notch between the rest and the body) rather than a sharp V, as the reference draws it
     let b = format!(
-        "M{lb:.1},470 Q{l:.1},452 {l:.1},430 L{l:.1},92 Q{l:.1},80 {l2:.1},80 L{r1:.1},80 C{r2:.1},68 {r3:.1},74 {r3:.1},106 C{r3:.1},134 {r4:.1},148 {r5:.1},148 C{r6:.1},136 {r7:.1},118 {r:.1},112 L{r:.1},430 Q{r:.1},452 {rb:.1},470 Z",
+        "M{lb:.1},470 Q{l:.1},452 {l:.1},430 L{l:.1},92 Q{l:.1},80 {l2:.1},80 L{r1:.1},80 C{r2:.1},68 {r3:.1},74 {r3:.1},106 C{r3:.1},138 {r4:.1},158 {r5:.1},158 C{r6:.1},158 {r7:.1},150 {r7:.1},134 C{r7:.1},112 {r:.1},112 {r:.1},128 L{r:.1},430 Q{r:.1},452 {rb:.1},470 Z",
         lb = cx - 21.0, rb = cx + 21.0,
-        l = cx - 28.0, l2 = cx - 16.0, r1 = cx + 12.0, r2 = cx + 40.0, r3 = cx + 58.0, r4 = cx + 54.0, r5 = cx + 44.0,
-        r6 = cx + 36.0, r7 = cx + 31.0, r = cx + 28.0
+        l = cx - 28.0, l2 = cx - 16.0, r1 = cx + 12.0, r2 = cx + 40.0, r3 = cx + 58.0, r4 = cx + 56.0, r5 = cx + 48.0,
+        r6 = cx + 42.0, r7 = cx + 40.0, r = cx + 28.0
     );
     d.path(&b, body, INK, 2.2);
     // collar, neck, shaft
@@ -115,6 +116,16 @@ pub fn examples() -> Vec<Example> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The body outline has the reference's rounded finger-rest nub (a curve, no sharp V) and a
+    /// rounded plunger button.
+    #[test]
+    fn rounded_nub_and_button() {
+        let d = crate::figures::registry().into_iter().find(|d| d.id == "micropipette-reading").unwrap();
+        let svg = (d.render)(&Params::defaults(&(d.params)()));
+        assert!(svg.contains(r#"y="36" width="24" height="15" rx="4""#), "rounded button");
+        assert!(svg.contains("C190.0,112 178.0,112 178.0,128"), "rounded nub between rest and body");
+    }
 
     #[test]
     fn digit_values() {

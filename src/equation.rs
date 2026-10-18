@@ -424,11 +424,12 @@ pub fn stem_ui_with(ui: &mut Ui, text: &str, size: f32, color: Color32, family: 
     stem_ui_edit(ui, text, size, color, family, false).0
 }
 
-fn word_galley(ui: &Ui, w: &str, font: &FontId, color: Color32, italics: bool) -> Arc<Galley> {
-    if italics {
+fn word_galley(ui: &Ui, w: &str, font: &FontId, color: Color32, italics: bool, strike: bool) -> Arc<Galley> {
+    if italics || strike {
+        let strikethrough = if strike { egui::Stroke::new((font.size / 14.0).max(1.0), color) } else { egui::Stroke::NONE };
         let job = egui::text::LayoutJob::single_section(
             w.to_string(),
-            egui::TextFormat { font_id: font.clone(), color, italics, ..Default::default() },
+            egui::TextFormat { font_id: font.clone(), color, italics, strikethrough, ..Default::default() },
         );
         ui.painter().layout_job(job)
     } else {
@@ -436,8 +437,9 @@ fn word_galley(ui: &Ui, w: &str, font: &FontId, color: Color32, italics: bool) -
     }
 }
 
-fn push_word(elems: &mut Vec<Elem>, ui: &Ui, w: &str, font: &FontId, color: Color32, italics: bool, dy: f32) {
-    let g = word_galley(ui, w, font, color, italics);
+#[allow(clippy::too_many_arguments)]
+fn push_word(elems: &mut Vec<Elem>, ui: &Ui, w: &str, font: &FontId, color: Color32, italics: bool, strike: bool, dy: f32) {
+    let g = word_galley(ui, w, font, color, italics, strike);
     let (asc, _) = galley_asc_desc(&g);
     elems.push(Elem::Word { g, asc, breakable: w.ends_with(' '), color, dy });
 }
@@ -446,6 +448,12 @@ fn push_word(elems: &mut Vec<Elem>, ui: &Ui, w: &str, font: &FontId, color: Colo
 /// writing lines that wide.
 #[allow(clippy::too_many_arguments)]
 fn push_text(elems: &mut Vec<Elem>, ui: &Ui, t: &str, font: &FontId, color: Color32, italics: bool, dy: f32, blank_w: Option<f32>) {
+    push_text_s(elems, ui, t, font, color, italics, false, dy, blank_w);
+}
+
+/// [`push_text`] with strikethrough.
+#[allow(clippy::too_many_arguments)]
+fn push_text_s(elems: &mut Vec<Elem>, ui: &Ui, t: &str, font: &FontId, color: Color32, italics: bool, strike: bool, dy: f32, blank_w: Option<f32>) {
     for (li, line) in t.split('\n').enumerate() {
         if li > 0 {
             elems.push(Elem::Break);
@@ -457,11 +465,11 @@ fn push_text(elems: &mut Vec<Elem>, ui: &Ui, t: &str, font: &FontId, color: Colo
                         if is_blank {
                             elems.push(Elem::Blank { w: bw, breakable: piece.ends_with(' '), color });
                         } else {
-                            push_word(elems, ui, piece, font, color, italics, dy);
+                            push_word(elems, ui, piece, font, color, italics, strike, dy);
                         }
                     }
                 }
-                _ => push_word(elems, ui, w, font, color, italics, dy),
+                _ => push_word(elems, ui, w, font, color, italics, strike, dy),
             }
         }
     }
@@ -746,7 +754,7 @@ impl RichCtx<'_> {
                 (size, 0.0)
             };
             let font = FontId::new(fsize, fam);
-            push_text(elems, ui, &sp.text, &font, color, sp.italic, dy, bw);
+            push_text_s(elems, ui, &sp.text, &font, color, sp.italic, sp.strike, dy, bw);
         }
     }
 
@@ -773,7 +781,7 @@ impl RichCtx<'_> {
 
 /// Render a stem with its markup (`crate::richtext`): paragraphs with hard line breaks, bullet
 /// and numbered lists with a hanging indent, quotes, bordered tables (header row in bold),
-/// bold/italic, sub/superscripts, `___` blanks as writing lines and typeset `$math$`.
+/// bold/italic/strikethrough, sub/superscripts, `___` blanks as writing lines and typeset `$math$`.
 pub fn rich_ui(ui: &mut Ui, text: &str, o: &Rich) -> (Response, Option<EqHit>) {
     use crate::richtext::{Block, parse};
     let avail = ui.available_width().max(40.0);

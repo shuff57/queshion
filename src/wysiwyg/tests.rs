@@ -542,3 +542,86 @@ fn property_structure_ops_never_panic_and_stay_editable() {
         }
     }
 }
+
+#[test]
+fn typing_mode_styles_only_the_typed_text() {
+    let bold = Style { b: true, ..Style::default() };
+    // Ctrl+B with the caret after "hello": the word is left alone, the typed text is bold
+    let (t, c) = style_typed("hello world", "hellox world", 5, bold).unwrap();
+    assert_eq!(t, "hello**x** world");
+    assert_eq!(slice(&t, 0..c), "hello**x");
+    // continuing to type at that caret stays bold by inheritance
+    let t2 = splice(&t, c..c, "y");
+    assert_eq!(decode_line(&t2).0.iter().filter(|it| matches!(it, Item::Ch { b: true, .. })).count(), 2);
+    // a caret inside a word: still only the typed text
+    assert_eq!(style_typed("make it red", "make it rXed", 9, bold).unwrap().0, "make it r**X**ed");
+    // italic cannot open right after a letter: the typed text is left as typed (None)
+    assert_eq!(style_typed("make it red", "make it rXed", 9, Style { i: true, ..Style::default() }), None);
+    // turning bold off after a bold word: the typed text is plain
+    let (t, c) = style_typed("**ab**", "**abx**", 4, Style::default()).unwrap();
+    assert_eq!(t, "**ab**x");
+    assert_eq!(c, 7);
+    // subscript and strikethrough
+    assert_eq!(style_typed("H O", "H2 O", 1, Style { sub: true, ..Style::default() }).unwrap().0, "H_{2} O");
+    assert_eq!(style_typed("a b", "a old b", 2, Style { s: true, ..Style::default() }).unwrap().0, "a ~~old~~ b");
+    // spaces only, or not an insert at the caret: nothing to do
+    assert_eq!(style_typed("ab", "a b", 1, bold), None);
+    assert_eq!(style_typed("ab", "xab", 1, bold), None);
+    assert_eq!(style_typed("ab", "a", 1, bold), None);
+}
+
+#[test]
+fn style_toggles_like_the_buttons() {
+    let s = Style::default().toggled(IOp::Bold);
+    assert!(s.b && !s.i);
+    assert!(!s.toggled(IOp::Bold).b);
+    let s = Style { sup: true, ..Style::default() }.toggled(IOp::Sub);
+    assert!(s.sub && !s.sup);
+    assert_eq!(Style { b: true, s: true, ..Style::default() }.toggled(IOp::Clear), Style::default());
+}
+
+#[test]
+fn strikethrough_roundtrips_through_the_editor_model() {
+    assert_eq!(inline_op("the old one", 4, 7, IOp::Strike).unwrap().0, "the ~~old~~ one");
+    assert_eq!(inline_op("the ~~old~~ one", 6, 9, IOp::Strike).unwrap().0, "the old one");
+    // with bold and italic
+    let t = inline_op("**a b**", 2, 5, IOp::Strike).unwrap().0;
+    let (items, _) = decode_line(&t);
+    assert!(items.iter().filter(|it| !it.is_ws()).all(|it| matches!(it, Item::Ch { b: true, s: true, .. })), "{t:?}");
+    assert_eq!(inline_op("~~**x**~~ y", 0, 11, IOp::Clear).unwrap().0, "x y");
+    // random lines with strike markers decode/encode back to the same items
+    let mut r = Rng(5);
+    let tok = ["a", "b", " ", "~~", "~~x~~", "**", "*", "_{", "}", "2", "word"];
+    let mut ok = 0;
+    for _ in 0..10_000 {
+        let n = r.below(12);
+        let s: String = (0..n).map(|_| r.pick(&tok)).collect();
+        let (items, _) = decode_line(&s);
+        if let Some((e, _)) = encode_checked(&items) {
+            ok += 1;
+            assert!(same_items(&decode_line(&e).0, &items), "{s:?} -> {e:?}");
+        }
+    }
+    assert!(ok > 5_000, "{ok}");
+}
+
+#[test]
+fn floating_bar_never_covers_the_fixed_toolbar() {
+    let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(1440.0, 900.0));
+    let fixed = Rect::from_min_max(Pos2::new(380.0, 138.0), Pos2::new(820.0, 172.0));
+    let size = Some(Vec2::new(280.0, 34.0));
+    // selection on the first line, right under the fixed toolbar: the bar goes below it
+    let sel = Rect::from_min_max(Pos2::new(382.0, 186.0), Pos2::new(430.0, 204.0));
+    let (at, pivot) = float_place(sel, size, Some(fixed), screen);
+    assert_eq!(pivot, egui::Align2::LEFT_TOP);
+    let bar = Rect::from_min_size(at, size.unwrap());
+    assert!(!bar.intersects(fixed) && bar.top() > sel.bottom());
+    // further down there is room above
+    let sel = Rect::from_min_max(Pos2::new(382.0, 300.0), Pos2::new(430.0, 318.0));
+    let (at, pivot) = float_place(sel, size, Some(fixed), screen);
+    assert_eq!(pivot, egui::Align2::LEFT_BOTTOM);
+    assert!(at.y < sel.top());
+    // no fixed toolbar (answer fields): above unless that leaves the window
+    let sel = Rect::from_min_max(Pos2::new(10.0, 12.0), Pos2::new(40.0, 30.0));
+    assert_eq!(float_place(sel, size, None, screen).1, egui::Align2::LEFT_TOP);
+}

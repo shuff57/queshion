@@ -38,7 +38,18 @@ pub fn overrides(id: &str) -> Vec<(&'static str, Value)> {
         "box-plot" => vec![("data", st(""))],
         // Solids open black and white.
         "prism" | "cylinder" | "pyramid" | "cone" | "sphere" => vec![("fill", st("White"))],
+        // the reference draws the resultant dashed (added with share links v2)
+        "vector-diagram" => vec![("res_style", st("Dashed"))],
         _ => Vec::new(),
+    }
+}
+
+/// Opening-state keys added after share links v1: a v1 link (no `v=`) was made against an
+/// opening state without them, so they fall back to the plain default when it is opened.
+pub fn since_v1(id: &str) -> &'static [&'static str] {
+    match id {
+        "vector-diagram" => &["res_style"],
+        _ => &[],
     }
 }
 

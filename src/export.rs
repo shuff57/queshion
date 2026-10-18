@@ -336,6 +336,8 @@ struct Frag {
     text: String,
     face: Face,
     script: i8,
+    /// `~~struck through~~`.
+    strike: bool,
 }
 
 /// A run placed `dx` points from the start of its line.
@@ -345,6 +347,7 @@ struct Placed {
     text: String,
     face: Face,
     script: i8,
+    strike: bool,
 }
 
 const SCRIPT_SCALE: f64 = 0.7;
@@ -407,13 +410,13 @@ fn split_unicode_scripts(text: &str, face: Face, base: i8, out: &mut Vec<Frag>) 
             None => (c, base),
         };
         if sc != cur_sc && !cur.is_empty() {
-            out.push(Frag { text: std::mem::take(&mut cur), face, script: cur_sc });
+            out.push(Frag { text: std::mem::take(&mut cur), face, script: cur_sc, strike: false });
         }
         cur_sc = sc;
         cur.push(ch);
     }
     if !cur.is_empty() {
-        out.push(Frag { text: cur, face, script: cur_sc });
+        out.push(Frag { text: cur, face, script: cur_sc, strike: false });
     }
 }
 
@@ -430,7 +433,11 @@ fn line_frags(line: &richtext::Line, force_bold: bool) -> Vec<Frag> {
             let t = crate::equation::stem_to_plain(&format!("${}$", s.text));
             split_unicode_scripts(&t, face, 0, &mut out);
         } else {
+            let n0 = out.len();
             split_unicode_scripts(&s.text, face, base, &mut out);
+            for f in &mut out[n0..] {
+                f.strike = s.strike;
+            }
         }
     }
     out
@@ -497,14 +504,14 @@ fn wrap_frags(frags: &[Frag], first_w: f64, rest_w: f64, body: f64) -> Vec<Vec<P
                         lines.push(std::mem::take(&mut cur));
                         x = 0.0;
                     }
-                    cur.push(Placed { dx: x, text: s, face: f.face, script: f.script });
+                    cur.push(Placed { dx: x, text: s, face: f.face, script: f.script, strike: f.strike });
                     x += cw;
                 }
             }
         } else {
             for f in word {
                 let w = frag_w(&f, body);
-                cur.push(Placed { dx: x, text: f.text, face: f.face, script: f.script });
+                cur.push(Placed { dx: x, text: f.text, face: f.face, script: f.script, strike: f.strike });
                 x += w;
             }
         }
@@ -521,7 +528,7 @@ fn merge_runs(line: Vec<Placed>, body: f64) -> Vec<Placed> {
     let mut out: Vec<Placed> = Vec::with_capacity(line.len());
     for p in line {
         if let Some(last) = out.last_mut() {
-            if last.script == 0 && p.script == 0 && last.face == p.face {
+            if last.script == 0 && p.script == 0 && last.face == p.face && last.strike == p.strike {
                 let end = last.dx + text_w(&last.text, last.face, body);
                 let gap = p.dx - end;
                 let face_sp = char_w(32, p.face, body);
@@ -838,6 +845,12 @@ impl R {
                 _ => 0.0,
             };
             self.text(x + p.dx, by + dy, p.face, size, &p.text);
+            if p.strike {
+                // through the middle of the lower-case letters
+                let w = text_w(p.text.trim_end(), p.face, size);
+                let sy = by + dy + 0.3 * size;
+                self.stroke_line(x + p.dx, sy, x + p.dx + w, sy, (size / 16.0).max(0.5), "0 0 0");
+            }
         }
     }
     /// Draws layout items at `x`, breaking pages between items (never inside one); a table
@@ -1540,6 +1553,11 @@ fn xml_esc(s: &str) -> String {
 
 /// One run: text with bold/italic/sub/sup and size (half-points).
 fn wrun(xml: &mut String, text: &str, bold: bool, italic: bool, script: i8, sz: i64) {
+    wrun_s(xml, text, bold, italic, false, script, sz);
+}
+
+/// [`wrun`] with strikethrough.
+fn wrun_s(xml: &mut String, text: &str, bold: bool, italic: bool, strike: bool, script: i8, sz: i64) {
     if text.is_empty() {
         return;
     }
@@ -1549,6 +1567,9 @@ fn wrun(xml: &mut String, text: &str, bold: bool, italic: bool, script: i8, sz: 
     }
     if italic {
         xml.push_str("<w:i/>");
+    }
+    if strike {
+        xml.push_str("<w:strike/>");
     }
     match script {
         1 => xml.push_str("<w:vertAlign w:val=\"superscript\"/>"),
@@ -1570,7 +1591,7 @@ fn wfrags(xml: &mut String, frags: &[Frag], sz: i64) {
     for f in frags {
         let bold = matches!(f.face, Face::Bold | Face::BoldItal);
         let italic = matches!(f.face, Face::Ital | Face::BoldItal);
-        wrun(xml, &f.text, bold, italic, f.script, sz);
+        wrun_s(xml, &f.text, bold, italic, f.strike, f.script, sz);
     }
 }
 
@@ -2415,6 +2436,25 @@ mod tests {
         let pdf = render_pdf(&rich_doc("Which planet is closest to the Sun?")).unwrap();
         assert!(find_sub(&pdf, b"(Which planet is closest to the Sun?) Tj").is_some());
         assert!(find_sub(&pdf, b"(1.) Tj").is_some());
+    }
+
+    #[test]
+    fn strikethrough_prints_in_pdf_and_docx() {
+        let stem = "Cross out the ~~wrong~~ word.";
+        let pdf = render_pdf(&rich_doc(stem)).unwrap();
+        assert!(find_sub(&pdf, b"(wrong) Tj").is_some(), "struck run is its own text run");
+        assert!(find_sub(&pdf, b"0 0 0 RG").is_some(), "a strike line is drawn");
+        assert!(find_sub(&pdf, b"~~").is_none());
+        let bytes = render_docx(&rich_doc(stem)).unwrap();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut x = String::new();
+        z.by_name("word/document.xml").unwrap().read_to_string(&mut x).unwrap();
+        assert_eq!(x.matches("<w:strike/>").count(), 1);
+        assert!(x.contains("<w:strike/><w:sz"), "strike sits in the run properties");
+        assert!(!x.contains("~~"));
+        // a stem without strike markup prints no strike
+        let pdf = render_pdf(&rich_doc("a ~ b and ~~ alone")).unwrap();
+        assert!(find_sub(&pdf, b"0 0 0 RG").is_none());
     }
 
     #[test]

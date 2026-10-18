@@ -10,6 +10,11 @@ pub const SERIF: &str = "Liberation Serif, Noto Serif, DejaVu Serif, Times New R
 pub const SANS: &str = "Liberation Sans, Noto Sans, DejaVu Sans, Arial, sans-serif";
 pub const SW: f64 = 2.5;
 
+/// Arrowhead length for a shaft of width `sw`: bold heads, about 5.5 shaft widths long.
+pub fn head_len(sw: f64) -> f64 {
+    (sw * 5.5).max(12.0)
+}
+
 pub const PAL: [&str; 6] = ["#c0392b", "#1f5fbf", "#1e8449", "#b9770e", "#7d3c98", "#0e7c8b"];
 
 /// Label styles for `G::tex`.
@@ -187,23 +192,29 @@ impl G {
     }
     fn d_raw(&mut self) -> RawW<'_> { RawW(&mut self.d) }
 
+    /// Force / vector arrow: the shaft stops inside the head (`head_len`), as the reference
+    /// draws them with a bold, wide head.
     pub fn arrow(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, c: &str, sw: f64) {
-        let (a, b) = (self.x(x1), self.x(x2));
-        self.d.arrow(a, y1, b, y2, c, sw);
+        let (dx, dy) = (x2 - x1, y2 - y1);
+        let len = (dx * dx + dy * dy).sqrt().max(1e-6);
+        let hl = head_len(sw).min(len * 0.6);
+        let (bx, by) = (x2 - dx / len * hl * 0.8, y2 - dy / len * hl * 0.8);
+        self.line(x1, y1, bx, by, c, sw);
+        self.head(x1, y1, x2, y2, c, sw);
     }
     /// Arrowhead only, at (x2,y2) pointing away from (x1,y1).
     pub fn head(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, c: &str, sw: f64) {
         let (dx, dy) = (x2 - x1, y2 - y1);
         let len = (dx * dx + dy * dy).sqrt().max(1e-6);
         let (ux, uy) = (dx / len, dy / len);
-        let hl = (sw * 4.0).max(9.0);
+        let hl = head_len(sw).min(len * 0.6);
         let (bx, by) = (x2 - ux * hl, y2 - uy * hl);
-        self.poly(&[(x2, y2), (bx - uy * hl * 0.4, by + ux * hl * 0.4), (bx + uy * hl * 0.4, by - ux * hl * 0.4)], c, c, 0.5);
+        self.poly(&[(x2, y2), (bx - uy * hl * 0.45, by + ux * hl * 0.45), (bx + uy * hl * 0.45, by - ux * hl * 0.45)], c, c, 0.5);
     }
     pub fn dash_arrow(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, c: &str, sw: f64) {
         let (dx, dy) = (x2 - x1, y2 - y1);
         let len = (dx * dx + dy * dy).sqrt().max(1e-6);
-        let hl = (sw * 4.0).max(9.0);
+        let hl = head_len(sw).min(len * 0.6);
         let (bx, by) = (x2 - dx / len * hl * 0.8, y2 - dy / len * hl * 0.8);
         self.dash(x1, y1, bx, by, c, sw);
         self.head(x1, y1, x2, y2, c, sw);

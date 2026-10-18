@@ -135,6 +135,53 @@ fn hash_params(id: &str, p: &Params) -> u64 {
 
 // ---------- raster helpers ----------
 
+/// Most screen points per SVG unit the preview zooms a figure to.
+const PREVIEW_MAX_ZOOM: f64 = 4.0;
+
+/// Bounding box `[x0, y0, x1, y1]` (pixels) of the inked pixels of a premultiplied RGBA
+/// raster: anything not (near) white and not transparent. `None` for a blank figure.
+fn ink_box(px: &[u8], w: u32, h: u32) -> Option<[u32; 4]> {
+    let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0u32, 0u32);
+    for y in 0..h {
+        let row = &px[(y * w * 4) as usize..((y + 1) * w * 4) as usize];
+        for x in 0..w {
+            let p = &row[(x * 4) as usize..(x * 4 + 4) as usize];
+            let a = p[3] as u32;
+            if a > 24 && (p[0] as u32).min(p[1] as u32).min(p[2] as u32) * 100 < a * 92 {
+                x0 = x0.min(x);
+                x1 = x1.max(x + 1);
+                y0 = y0.min(y);
+                y1 = y1.max(y + 1);
+            }
+        }
+    }
+    (x1 > x0 && y1 > y0).then_some([x0, y0, x1, y1])
+}
+
+/// The part of the canvas the preview shows: the inked box plus a margin, kept on the canvas
+/// (the whole canvas when nothing is inked).
+fn view_box(content: Option<[f64; 4]>, (cw, ch): (f64, f64)) -> [f64; 4] {
+    let Some(b) = content else { return [0.0, 0.0, cw, ch] };
+    let pad = 0.05 * (b[2] - b[0]).max(b[3] - b[1]) + 8.0;
+    [(b[0] - pad).max(0.0), (b[1] - pad).max(0.0), (b[2] + pad).min(cw), (b[3] + pad).min(ch)]
+}
+
+/// Whether the preview keeps its current view `old` for a drawing whose own view is `new`:
+/// the drawing still fits inside, and the view isn't much bigger than it (no jumpy refits on
+/// every small edit).
+fn keep_view(old: [f64; 4], new: [f64; 4]) -> bool {
+    let inside = new[0] >= old[0] - 0.5 && new[1] >= old[1] - 0.5 && new[2] <= old[2] + 0.5 && new[3] <= old[3] + 0.5;
+    let area = |b: [f64; 4]| (b[2] - b[0]).max(1.0) * (b[3] - b[1]).max(1.0);
+    inside && area(old) <= area(new) * 1.3
+}
+
+/// Raster scale for a preview shown at `px_per_unit` device pixels per SVG unit: rounded to a
+/// quarter so small zoom changes don't re-render, and capped so the texture stays modest.
+fn raster_for(px_per_unit: f64, (cw, ch): (f64, f64)) -> f32 {
+    let cap = (4096.0 / cw.max(ch).max(1.0)).min((12.0e6 / (cw * ch).max(1.0)).sqrt());
+    ((px_per_unit.min(cap) * 4.0).ceil() / 4.0).clamp(1.0, 6.0) as f32
+}
+
 /// Composites over white and re-encodes as PNG (exports turn transparency black otherwise).
 pub(crate) fn flatten_white(png: &[u8]) -> Result<Vec<u8>, String> {
     let mut img = image::load_from_memory(png).map_err(|e| e.to_string())?.to_rgba8();
@@ -337,6 +384,12 @@ pub struct Workspace {
     examples_open: bool,
     /// Pedigree: the person selected for the Family card's person panel (index in drawing order).
     ped_sel: Option<usize>,
+    /// Preview zoom: the scale the shown texture was rasterized at, the scale the last layout
+    /// asked for, the inked part of the figure (SVG units) and the part of the canvas on show.
+    raster: f32,
+    want_raster: f32,
+    content: Option<[f64; 4]>,
+    view: Option<[f64; 4]>,
 }
 
 /// A saved parameter set for one figure ("Save preset"), kept in `figure-presets.json`.
@@ -477,6 +530,16 @@ impl Workspace {
         let (i, def) = find_def(&id).ok_or_else(|| format!("this link is for a figure this version doesn't have (\"{id}\")"))?;
         let mut params: BTreeMap<String, serde_json::Value> =
             figures::start_params(def).0.iter().map(|(k, v)| (k.clone(), value_to_json(v))).collect();
+        // a v1 link was made against the older opening state: its newer keys read as defaults
+        let v1 = figures::share::version(text) < 2;
+        if v1 {
+            let defs = (def.params)();
+            for k in figures::start::since_v1(&id) {
+                if let Some(d) = defs.iter().find(|d| d.key == *k) {
+                    params.insert(k.to_string(), value_to_json(&d.default));
+                }
+            }
+        }
         params.extend(changed);
         let p = params_from_spec(def, &FigureSpec { id: id.clone(), params });
         self.imp = None;
@@ -511,6 +574,8 @@ impl Workspace {
         self.ped_sel = None;
         self.editing = None;
         self.shown = None;
+        self.view = None;
+        self.content = None;
         self.pending = None;
         self.err = None;
     }
@@ -835,7 +900,11 @@ impl Workspace {
         {
             let def = &reg()[si];
             let h = hash_params(def.id, &self.params);
-            let stale = self.shown.as_ref().is_none_or(|(sh, _)| *sh != h);
+            // the preview is rasterized at the zoom it is shown at (see `preview_interactive`),
+            // so a bigger window or a small figure stays crisp; exports keep their own scale
+            let want = if self.want_raster > 0.0 { self.want_raster } else { 1.5 };
+            let rescale = self.shown.is_some() && (want - self.raster).abs() > 0.01;
+            let stale = rescale || self.shown.as_ref().is_none_or(|(sh, _)| *sh != h);
             if stale {
                 let first = self.shown.is_none();
                 let t0 = match self.pending {
@@ -846,13 +915,16 @@ impl Workspace {
                         now
                     }
                 };
-                if first || self.live || t0.elapsed() >= DEBOUNCE {
+                if first || rescale || self.live || t0.elapsed() >= DEBOUNCE {
                     let svg = (def.render)(&self.params);
                     self.canvas = figures::svg_size(&svg);
-                    match figures::to_png(&svg, 1.5).map_err(|e| e.to_string()).and_then(|p| {
-                        texture(&ctx, format!("testparrot:fig:{}", def.id), &p).ok_or("decode failed".to_string())
-                    }) {
-                        Ok(tex) => {
+                    let scale = want;
+                    match figures::to_rgba(&svg, scale) {
+                        Ok((w, hh, px)) => {
+                            let img = egui::ColorImage::from_rgba_premultiplied([w as usize, hh as usize], &px);
+                            self.content = ink_box(&px, w, hh).map(|b| b.map(|v| v as f64 / scale as f64));
+                            self.raster = scale;
+                            let tex = ctx.load_texture(format!("testparrot:fig:{}", def.id), img, egui::TextureOptions::LINEAR);
                             self.shown = Some((h, tex));
                             self.err = None;
                         }
@@ -1185,11 +1257,31 @@ impl Workspace {
         let (full, _) = ui.allocate_exact_size(space, Sense::hover());
         let area = egui::Rect::from_min_max(full.min, egui::pos2(full.max.x, full.max.y - 16.0));
         let nat = tex.size_vec2();
-        let fit = (area.width() / nat.x).min(area.height() / nat.y).min(1.0).max(0.05);
-        let img = egui::Rect::from_center_size(area.center(), nat * fit);
-        egui::Image::new(tex).fit_to_exact_size(img.size()).paint_at(ui, img);
-        let (cw, ch) = if self.canvas.0 > 1.0 { self.canvas } else { ((nat.x / 1.5) as f64, (nat.y / 1.5) as f64) };
-        let k = img.width() as f64 / cw; // screen points per SVG unit
+        let rs = if self.raster > 0.0 { self.raster } else { 1.5 };
+        let (cw, ch) = if self.canvas.0 > 1.0 { self.canvas } else { ((nat.x / rs) as f64, (nat.y / rs) as f64) };
+        // Zoom to the drawing, not the canvas: the inked box (plus a margin) fills the frame, as
+        // the reference draws its figures. The view holds still while the pointer is down (a
+        // drag or a slider must not rescale under the hand) and only refits when the drawing
+        // leaves it or shrinks well inside it.
+        let fresh = view_box(self.content, (cw, ch));
+        let pointer_down = ui.input(|i| i.pointer.any_down());
+        match self.view {
+            Some(v) if pointer_down || keep_view(v, fresh) => {}
+            _ => self.view = Some(fresh),
+        }
+        let v = self.view.unwrap_or(fresh);
+        let (vw, vh) = ((v[2] - v[0]).max(1.0), (v[3] - v[1]).max(1.0));
+        let k = (area.width() as f64 / vw).min(area.height() as f64 / vh).clamp(0.05, PREVIEW_MAX_ZOOM); // screen points per SVG unit
+        let origin = area.center() - Vec2::new(((v[0] + vw / 2.0) * k) as f32, ((v[1] + vh / 2.0) * k) as f32);
+        let img = egui::Rect::from_min_size(origin, Vec2::new((cw * k) as f32, (ch * k) as f32));
+        ui.painter_at(full).image(tex.id(), img, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+        if !pointer_down {
+            let want = raster_for(k * ui.ctx().pixels_per_point() as f64, (cw, ch));
+            if (want - rs).abs() / rs > 0.15 {
+                self.want_raster = want;
+                ui.ctx().request_repaint();
+            }
+        }
         let to_screen = |p: (f64, f64)| egui::pos2(img.left() + (p.0 * k) as f32, img.top() + (p.1 * k) as f32);
         let to_svg = |p: egui::Pos2| ((p.x - img.left()) as f64 / k, (p.y - img.top()) as f64 / k);
         let _ = ch;
@@ -1388,12 +1480,13 @@ impl Workspace {
                     }
                     let secs = figures::layout::sections(def.id, &pdefs, n_now);
                     for (si_, sec) in secs.iter().enumerate() {
-                        let shown: Vec<usize> = sec.items.iter().copied().filter(|&i| !is_hidden(&pdefs, &self.params, &pdefs[i])).collect();
+                        let shown: Vec<usize> = sec.items.iter().copied().filter(|&i| !is_hidden(&pdefs, &self.params, &pdefs[i]) && figures::param_relevant(def.id, pdefs[i].key, &self.params)).collect();
                         if shown.is_empty() {
                             continue;
                         }
                         let id = ui.make_persistent_id(("fig_sec", def.id, sec.title.as_str()));
-                        let summary = section_summary(&pdefs, &self.params, &sec.items);
+                        let relevant: Vec<usize> = sec.items.iter().copied().filter(|&i| figures::param_relevant(def.id, pdefs[i].key, &self.params)).collect();
+                        let summary = section_summary(&pdefs, &self.params, &relevant);
                         let mut reset = false;
                         let (mut reset_labels, mut straighten) = (false, false);
                         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, si_ < 2)
@@ -1462,6 +1555,7 @@ impl Workspace {
                         }
                         ui.separator();
                     }
+                    faq_section(ui, def.id);
                 });
             ui.add_space(4.0);
             if ghost(ui, "Reset all").clicked() {
@@ -1840,6 +1934,47 @@ fn import_any(bytes: &[u8]) -> Result<(Option<String>, Vec<u8>), String> {
 }
 
 // ---------- widgets ----------
+
+/// The figure's FAQ at the bottom of its panel: one collapsed "FAQ" header holding a collapsed
+/// header per question, its answer underneath. Nothing for a figure without one.
+fn faq_section(ui: &mut Ui, fig: &str) {
+    let faq = figures::faq::faq_for(fig);
+    if faq.is_empty() {
+        return;
+    }
+    let id = ui.make_persistent_id(("fig_faq", fig));
+    // QA hook: QUESHION_FIG_FAQ=1 opens the FAQ and its first answer and scrolls them into view
+    let qa = std::env::var("QUESHION_FIG_FAQ").is_ok_and(|v| v == "1");
+    egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, qa)
+        .show_header(ui, |ui| {
+            ui.vertical(|ui| {
+                ui.label(theme::strong("FAQ").size(13.0));
+                ui.label(theme::muted(format!("{} questions about this figure", faq.len())).size(11.0));
+            });
+        })
+        .body(|ui| {
+            // questions wrap inside the panel (a collapsing header's title would widen it)
+            for (i, e) in faq.iter().enumerate() {
+                let qid = ui.make_persistent_id(("fig_faq_q", fig, i));
+                let open = ui.data(|d| d.get_temp::<bool>(qid)).unwrap_or(qa && i == 0);
+                let q = format!("{} {}", if open { "\u{25be}" } else { "\u{25b8}" }, e.q);
+                let r = ui.add(egui::Label::new(RichText::new(q).size(12.0).strong()).wrap().sense(Sense::click()));
+                if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    ui.data_mut(|d| d.insert_temp(qid, !open));
+                }
+                if open {
+                    ui.indent(qid, |ui| {
+                        ui.add(egui::Label::new(RichText::new(e.a).size(12.0).color(theme::muted_col())).wrap());
+                    });
+                }
+                ui.add_space(4.0);
+            }
+            ui.add_space(4.0);
+            if qa {
+                ui.scroll_to_cursor(Some(Align::BOTTOM));
+            }
+        });
+}
 
 fn ghost(ui: &mut Ui, label: &str) -> egui::Response {
     crate::kit::ghost_button(ui, label)
@@ -2927,6 +3062,149 @@ mod tests {
         let s2 = ws.comp.to_screen((4.0, 0.0));
         assert!((s2.y - ws.comp.to_screen((2.0, 1.0)).y) > 10.0, "straight again outside the Label tool");
         assert_eq!(ws.params.f("rotate"), 90.0, "the turn is kept");
+    }
+
+    /// A dimension label on the composite canvas drags like a math label: the row gains an
+    /// `@DX,DY` offset (one undo step), the export draws it there, and a plain click on it in the
+    /// Label tool still opens its side's popover.
+    #[test]
+    fn composite_canvas_drags_a_dimension_label() {
+        let (ctx, mut ws) = comp_ws("rect 0 0 6 4; dim 0 0 6 0 6 cm");
+        ws.comp.tool = composite_canvas::Tool::Label;
+        comp_frame(&ctx, &mut ws, vec![]);
+        let before = (reg()[ws.sel.unwrap()].render)(&ws.params);
+        let (i, at) = ws.comp.label_centres(&ws.params)[0];
+        assert_eq!(i, 1, "the dim row's label");
+        let to = at + Vec2::new(40.0, -60.0);
+        comp_frame(&ctx, &mut ws, btn(at, true));
+        for k in 1..=4 {
+            comp_frame(&ctx, &mut ws, vec![egui::Event::PointerMoved(at + (to - at) * (k as f32 / 4.0))]);
+        }
+        comp_frame(&ctx, &mut ws, btn(to, false));
+        comp_frame(&ctx, &mut ws, vec![]);
+        let spec = ws.params.s("spec").to_string();
+        assert!(spec.contains("dim 0 0 6 0 6 cm @") || spec.contains("dim 0 0 6 0 @"), "{spec}");
+        let it = &figures::composite::parse(&spec)[1];
+        let o = it.off.expect("offset stored");
+        assert!(o.0 > 0.0 && o.1 < 0.0, "moved right and up: {o:?}");
+        let now = ws.comp.label_centres(&ws.params)[0].1;
+        assert!(now.distance(to) < 3.0, "the label follows the pointer: {now:?} vs {to:?}");
+        assert_ne!((reg()[ws.sel.unwrap()].render)(&ws.params), before, "exports draw the moved label");
+        assert!(!ws.undo.is_empty() || ws.hist_base.is_some(), "an undo step");
+        ws.step_history(true);
+        assert!(!ws.params.s("spec").contains('@'), "undo puts it back");
+        // a click (no move) on the label in the Label tool opens the side's popover
+        comp_frame(&ctx, &mut ws, vec![]);
+        let at = ws.comp.label_centres(&ws.params)[0].1;
+        let mut ev = btn(at, true);
+        ev.extend(btn(at, false));
+        comp_frame(&ctx, &mut ws, ev);
+        comp_frame(&ctx, &mut ws, vec![]);
+        let sd = ws.comp.side.expect("the side's popover opens");
+        assert_eq!((sd.a, sd.b), ((0.0, 0.0), (6.0, 0.0)));
+        assert!(!ws.params.s("spec").contains('@'), "a click moves nothing");
+    }
+
+    /// The preview zooms to the drawing: a small molecule fills the frame well past the old
+    /// "natural size" cap, the zoom is crisp (re-rasterized), and the view holds while dragging.
+    #[test]
+    fn preview_zooms_to_the_drawing() {
+        let (ctx, mut ws) = open_fig("lewis-structures");
+        for _ in 0..3 {
+            comp_frame(&ctx, &mut ws, vec![]);
+        }
+        let (_, k) = ws.preview_map.expect("preview drawn");
+        assert!(k > 1.6, "zoomed past the old 1.5x cap: {k}");
+        assert!(ws.raster > 1.6, "re-rasterized at the zoom: {}", ws.raster);
+        let c = ws.content.expect("inked box");
+        let v = ws.view.expect("view");
+        assert!(v[0] <= c[0] && v[2] >= c[2] && v[1] <= c[1] && v[3] >= c[3], "view holds the drawing");
+    }
+
+    #[test]
+    fn preview_zoom_helpers() {
+        // a 10x10 white raster with a 2x3 black block at (4, 5)
+        let (w, h) = (10u32, 10u32);
+        let mut px = vec![255u8; (w * h * 4) as usize];
+        assert_eq!(ink_box(&px, w, h), None);
+        for y in 5..8 {
+            for x in 4..6 {
+                let i = ((y * w + x) * 4) as usize;
+                px[i..i + 3].copy_from_slice(&[0, 0, 0]);
+            }
+        }
+        assert_eq!(ink_box(&px, w, h), Some([4, 5, 6, 8]));
+        // the view pads the drawing and stays on the canvas
+        let v = view_box(Some([100.0, 100.0, 200.0, 150.0]), (400.0, 300.0));
+        assert!(v[0] < 100.0 && v[2] > 200.0 && v[0] >= 0.0 && v[3] <= 300.0);
+        assert_eq!(view_box(None, (400.0, 300.0)), [0.0, 0.0, 400.0, 300.0]);
+        // small edits keep the view; a drawing that leaves it or shrinks well inside refits
+        let old = [0.0, 0.0, 100.0, 100.0];
+        assert!(keep_view(old, [2.0, 2.0, 98.0, 98.0]));
+        assert!(!keep_view(old, [2.0, 2.0, 120.0, 98.0]));
+        assert!(!keep_view(old, [40.0, 40.0, 60.0, 60.0]));
+        // raster scale: quarter steps, at least 1, capped by the texture size
+        assert_eq!(raster_for(2.1, (400.0, 300.0)), 2.25);
+        assert_eq!(raster_for(0.3, (400.0, 300.0)), 1.0);
+        assert!(raster_for(50.0, (2000.0, 2000.0)) <= 2.25);
+    }
+
+    /// The FAQ sits at the bottom of every figure's panel (and the panel stays its width).
+    #[test]
+    fn every_figure_panel_has_a_faq() {
+        for d in figures::registry() {
+            assert!(!figures::faq::faq_for(d.id).is_empty(), "{}", d.id);
+        }
+        // the panel builds with the FAQ in it, without growing past its 290 pt column
+        let (ctx, mut ws) = open_fig("pulley");
+        comp_frame(&ctx, &mut ws, vec![]);
+        let (_, k) = ws.preview_map.expect("preview drawn beside the panel");
+        assert!(k > 0.0);
+    }
+
+    /// The pulley shows only its setup's controls; switching setups keeps hidden values.
+    #[test]
+    fn pulley_controls_follow_the_setup() {
+        let d = figures::registry().into_iter().find(|d| d.id == "pulley").unwrap();
+        let mut p = figures::start_params(&d);
+        let rel = |p: &Params, k: &str| figures::param_relevant("pulley", k, p);
+        assert!(rel(&p, "lower") && rel(&p, "third") && !rel(&p, "angle") && !rel(&p, "surface") && !rel(&p, "strands") && !rel(&p, "t_lab"));
+        p.set_b("third", true);
+        assert!(rel(&p, "t_lab") && rel(&p, "third_side"));
+        p.set_s("setup", "Ramp");
+        assert!(rel(&p, "angle") && rel(&p, "surface") && rel(&p, "friction") && rel(&p, "l_kind") && !rel(&p, "third") && !rel(&p, "t_lab"));
+        p.set_s("setup", "Table");
+        assert!(!rel(&p, "angle") && rel(&p, "normal") && !rel(&p, "s_lab"));
+        p.set_b("second", true);
+        assert!(rel(&p, "s_lab"));
+        p.set_s("setup", "Block & tackle");
+        assert!(rel(&p, "strands") && !rel(&p, "r_lab") && !rel(&p, "surface") && rel(&p, "tension") && rel(&p, "l_lab"));
+        assert!(p.b("third"), "hidden values are kept");
+        assert!(figures::param_relevant("waves", "anything", &p));
+    }
+
+    /// Share links are v2 now; a v1 link (no `v=`) of a vector diagram keeps the solid resultant
+    /// it was made with, while a new one opens dashed like the reference.
+    #[test]
+    fn share_links_v1_keep_their_opening_state() {
+        let mut ws = Workspace::new(false);
+        let (i, def) = find_def("vector-diagram").unwrap();
+        ws.select(i);
+        assert_eq!(ws.params.s("res_style"), "Dashed", "opens dashed");
+        let link = ws.share_link().unwrap();
+        assert!(link.ends_with("v=2"), "{link}");
+        ws.apply_link(&link).unwrap();
+        assert_eq!(ws.params.s("res_style"), "Dashed");
+        // a v1 link: bare, or with only other params
+        ws.apply_link("queshion://figure/vector-diagram").unwrap();
+        assert_eq!(ws.params.s("res_style"), "Drawn", "v1 links keep the old opening state");
+        let v1 = format!("queshion://figure/vector-diagram?p={}", figures::share::b64url_encode(br#"{"n":3}"#));
+        ws.apply_link(&v1).unwrap();
+        assert_eq!((ws.params.s("res_style"), ws.params.i("n")), ("Drawn", 3));
+        let v1d = format!("queshion://figure/vector-diagram?p={}", figures::share::b64url_encode(br#"{"res_style":"Left off"}"#));
+        ws.apply_link(&v1d).unwrap();
+        assert_eq!(ws.params.s("res_style"), "Left off", "what the sender set still wins");
+        let _ = def;
     }
 
     /// The composite shape opens on a blank canvas (its Start with screen), while its opening

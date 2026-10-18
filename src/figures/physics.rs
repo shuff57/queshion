@@ -7,6 +7,7 @@ mod graphs;
 mod instr;
 mod mech;
 mod pulley;
+pub(crate) use pulley::pulley_relevant;
 mod examples;
 
 /// "Start from an example" entries for this subject's figures.
@@ -122,6 +123,24 @@ mod tests {
         if std::fs::create_dir_all(OUT).is_ok() {
             let _ = std::fs::write(format!("{OUT}/{}_{tag}.png", d.id), png);
         }
+    }
+
+    /// Round-5 cosmetics: bold arrowheads, tenths on the spring scale's dial, and the vector
+    /// diagram opening with a dashed resultant (its plain default, used by saved figures and
+    /// examples, stays drawn).
+    #[test]
+    fn cosmetics_match_the_reference() {
+        assert!(common::head_len(3.5) >= 19.0 && common::head_len(1.0) >= 12.0);
+        let get = |id: &str| defs().into_iter().find(|d| d.id == id).unwrap();
+        let sp = get("spring-scale");
+        let svg = (sp.render)(&Params::defaults(&(sp.params)()));
+        // 0..10 N in tenths (101 marks) where fifths gave 51
+        assert!(svg.matches("<line").count() >= 101, "tenths drawn: {}", svg.matches("<line").count());
+        let vd = get("vector-diagram");
+        assert_eq!(Params::defaults(&(vd.params)()).s("res_style"), "Drawn");
+        assert_eq!(start_params(&vd).s("res_style"), "Dashed");
+        let dashed = (vd.render)(&start_params(&vd));
+        assert!(dashed.contains("stroke-dasharray"), "the resultant opens dashed");
     }
 
     #[test]

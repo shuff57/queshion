@@ -8,7 +8,8 @@
 //! * Two or more consecutive lines with the same number of ` | `-separated cells are a table; a
 //!   `---|---` line right after the first row (or a first row without blanks above rows with `___`
 //!   blanks) marks the first row as a header.
-//! * Inline: `**bold**`, `*italic*`, `_{sub}`, `^{sup}`, `$math$` (left to `equation`), and `___`
+//! * Inline: `**bold**`, `*italic*`, `~~strikethrough~~`, `_{sub}`, `^{sup}`, `$math$` (left to
+//!   `equation`), and `___`
 //!   blanks stay plain text. Everything else is literal.
 //! A stem with none of this is one paragraph of one line, exactly as before.
 
@@ -19,6 +20,8 @@ pub struct Span {
     pub italic: bool,
     pub sub: bool,
     pub sup: bool,
+    /// `~~struck through~~`.
+    pub strike: bool,
     /// Raw `$...$` content (without the dollars); the renderer typesets it.
     pub math: bool,
 }
@@ -37,7 +40,7 @@ pub enum Block {
 
 /// True when the stem needs anything beyond one plain line.
 pub fn has_markup(stem: &str) -> bool {
-    stem.contains('\n') || stem.contains("**") || stem.contains("_{") || stem.contains("^{") || stem.contains('$')
+    stem.contains('\n') || stem.contains("**") || stem.contains("~~") || stem.contains("_{") || stem.contains("^{") || stem.contains('$')
 }
 
 /// One block of a stem and the source lines it came from (`start..end`, indices into the stem's
@@ -262,7 +265,7 @@ fn quote(l: &str) -> Option<&str> {
 /// What a stretch of one line's source is (see [`inline_runs`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RunKind {
-    /// Markup that is not shown: `**`, `*`, `_{`, `^{`, `}`.
+    /// Markup that is not shown: `**`, `*`, `~~`, `_{`, `^{`, `}`.
     Marker,
     /// Shown text with the style of the run.
     Text,
@@ -280,6 +283,7 @@ pub struct Run {
     pub italic: bool,
     pub sub: bool,
     pub sup: bool,
+    pub strike: bool,
 }
 
 /// One line's source cut into runs that cover it exactly, in order: markers, styled text and math.
@@ -288,12 +292,12 @@ pub struct Run {
 pub fn inline_runs(s: &str) -> Vec<Run> {
     let ch: Vec<char> = s.chars().collect();
     let mut out: Vec<Run> = Vec::new();
-    let (mut bold, mut italic) = (false, false);
+    let (mut bold, mut italic, mut strike) = (false, false, false);
     let mut text_start = 0usize;
-    let run = |start, end, kind, bold, italic, sub, sup| Run { start, end, kind, bold, italic, sub, sup };
-    let flush = |out: &mut Vec<Run>, from: usize, to: usize, bold: bool, italic: bool| {
+    let run = |start, end, kind, bold, italic, sub, sup, strike| Run { start, end, kind, bold, italic, sub, sup, strike };
+    let flush = |out: &mut Vec<Run>, from: usize, to: usize, bold: bool, italic: bool, strike: bool| {
         if to > from {
-            out.push(run(from, to, RunKind::Text, bold, italic, false, false));
+            out.push(run(from, to, RunKind::Text, bold, italic, false, false, strike));
         }
     };
     let mut i = 0;
@@ -304,8 +308,8 @@ pub fn inline_runs(s: &str) -> Vec<Run> {
             && let Some(end) = (i + 1..ch.len()).find(|&j| ch[j] == '$')
             && end > i + 1
         {
-            flush(&mut out, text_start, i, bold, italic);
-            out.push(run(i, end + 1, RunKind::Math, false, false, false, false));
+            flush(&mut out, text_start, i, bold, italic, strike);
+            out.push(run(i, end + 1, RunKind::Math, false, false, false, false, false));
             i = end + 1;
             text_start = i;
             continue;
@@ -315,10 +319,10 @@ pub fn inline_runs(s: &str) -> Vec<Run> {
             && ch.get(i + 1) == Some(&'{')
             && let Some(end) = (i + 2..ch.len()).find(|&j| ch[j] == '}')
         {
-            flush(&mut out, text_start, i, bold, italic);
-            out.push(run(i, i + 2, RunKind::Marker, bold, italic, false, false));
-            out.push(run(i + 2, end, RunKind::Text, bold, italic, c == '_', c == '^'));
-            out.push(run(end, end + 1, RunKind::Marker, bold, italic, false, false));
+            flush(&mut out, text_start, i, bold, italic, strike);
+            out.push(run(i, i + 2, RunKind::Marker, bold, italic, false, false, strike));
+            out.push(run(i + 2, end, RunKind::Text, bold, italic, c == '_', c == '^', strike));
+            out.push(run(end, end + 1, RunKind::Marker, bold, italic, false, false, strike));
             i = end + 1;
             text_start = i;
             continue;
@@ -327,9 +331,25 @@ pub fn inline_runs(s: &str) -> Vec<Run> {
         if c == '*' && ch.get(i + 1) == Some(&'*') {
             let closes = bold || (i + 2..ch.len().saturating_sub(1)).any(|j| ch[j] == '*' && ch[j + 1] == '*');
             if closes {
-                flush(&mut out, text_start, i, bold, italic);
-                out.push(run(i, i + 2, RunKind::Marker, bold, italic, false, false));
+                flush(&mut out, text_start, i, bold, italic, strike);
+                out.push(run(i, i + 2, RunKind::Marker, bold, italic, false, false, strike));
                 bold = !bold;
+                i += 2;
+                text_start = i;
+                continue;
+            }
+        }
+        // ~~strike~~: the opener hugs the next char and needs a closer that hugs the previous one
+        // (so a stray `~~` or `a ~~ b` stays literal)
+        if c == '~' && ch.get(i + 1) == Some(&'~') {
+            let closes = strike && i > 0 && !ch[i - 1].is_whitespace();
+            let opens = !strike
+                && ch.get(i + 2).is_some_and(|n| !n.is_whitespace() && *n != '~')
+                && (i + 3..ch.len().saturating_sub(1)).any(|j| ch[j] == '~' && ch[j + 1] == '~' && !ch[j - 1].is_whitespace());
+            if opens || closes {
+                flush(&mut out, text_start, i, bold, italic, strike);
+                out.push(run(i, i + 2, RunKind::Marker, bold, italic, false, false, strike));
+                strike = !strike;
                 i += 2;
                 text_start = i;
                 continue;
@@ -341,8 +361,8 @@ pub fn inline_runs(s: &str) -> Vec<Run> {
             let closes = italic && i > 0 && !ch[i - 1].is_whitespace();
             let has_close = opens && (i + 2..ch.len()).any(|j| ch[j] == '*' && !ch[j - 1].is_whitespace() && ch.get(j + 1) != Some(&'*'));
             if has_close || closes {
-                flush(&mut out, text_start, i, bold, italic);
-                out.push(run(i, i + 1, RunKind::Marker, bold, italic, false, false));
+                flush(&mut out, text_start, i, bold, italic, strike);
+                out.push(run(i, i + 1, RunKind::Marker, bold, italic, false, false, strike));
                 italic = !italic;
                 i += 1;
                 text_start = i;
@@ -351,11 +371,11 @@ pub fn inline_runs(s: &str) -> Vec<Run> {
         }
         i += 1;
     }
-    flush(&mut out, text_start, ch.len(), bold, italic);
+    flush(&mut out, text_start, ch.len(), bold, italic, strike);
     out
 }
 
-/// Inline spans of one line: `$math$`, `**bold**`, `*italic*`, `_{sub}`, `^{sup}`.
+/// Inline spans of one line: `$math$`, `**bold**`, `*italic*`, `~~strike~~`, `_{sub}`, `^{sup}`.
 pub fn inline(s: &str) -> Line {
     let ch: Vec<char> = s.chars().collect();
     inline_runs(s)
@@ -363,7 +383,7 @@ pub fn inline(s: &str) -> Line {
         .filter_map(|r| match r.kind {
             RunKind::Marker => None,
             RunKind::Math => Some(Span { text: ch[r.start + 1..r.end - 1].iter().collect(), math: true, ..Default::default() }),
-            RunKind::Text => Some(Span { text: ch[r.start..r.end].iter().collect(), bold: r.bold, italic: r.italic, sub: r.sub, sup: r.sup, math: false }),
+            RunKind::Text => Some(Span { text: ch[r.start..r.end].iter().collect(), bold: r.bold, italic: r.italic, sub: r.sub, sup: r.sup, strike: r.strike, math: false }),
         })
         .collect()
 }
@@ -731,6 +751,24 @@ mod tests {
                 assert_eq!(got, c, "{line:?}");
             }
         }
+    }
+
+    #[test]
+    fn strikethrough_markup() {
+        let l = inline("a ~~old~~ new **~~b~~** ~~x_{2}~~");
+        assert!(l.iter().any(|s| s.strike && s.text == "old" && !s.bold));
+        assert!(l.iter().any(|s| s.strike && s.bold && s.text == "b"));
+        assert!(l.iter().any(|s| s.strike && s.sub && s.text == "2"));
+        assert!(l.iter().any(|s| !s.strike && s.text.contains("new")));
+        assert_eq!(line_text(&l), "a old new b x₂");
+        // stray or spaced tildes stay literal
+        for lit in ["about ~~5 g", "a ~~ b ~~ c", "~~", "x~~", "~~ a~~"] {
+            let l = inline(lit);
+            assert!(l.iter().all(|s| !s.strike), "{lit:?}");
+            assert_eq!(line_text(&l), lit);
+        }
+        assert!(has_markup("~~a~~") && !has_markup("a ~ b"));
+        assert_eq!(plain("~~gone~~ kept"), "gone kept");
     }
 
     #[test]

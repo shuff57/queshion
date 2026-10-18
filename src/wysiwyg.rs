@@ -369,7 +369,7 @@ pub fn check(stem: &str) -> Result<(), String> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
-    Text { b: bool, i: bool, sub: bool, sup: bool },
+    Text { b: bool, i: bool, sub: bool, sup: bool, s: bool },
     /// Collapsed markup marker.
     Hidden,
     /// `$..$` that does not typeset: shown literally in the error colour.
@@ -405,7 +405,7 @@ pub struct Ana {
 /// Roles of `text`'s chars; `math_ok` says whether a `$..$` content typesets.
 pub fn analyze(text: &str, math_ok: &dyn Fn(&str) -> bool) -> Ana {
     let ch: Vec<char> = text.chars().collect();
-    let mut role = vec![Role::Text { b: false, i: false, sub: false, sup: false }; ch.len()];
+    let mut role = vec![Role::Text { b: false, i: false, sub: false, sup: false, s: false }; ch.len()];
     let mut atoms: Vec<Atom> = Vec::new();
     let mut base = 0;
     for line in text.split('\n') {
@@ -413,7 +413,7 @@ pub fn analyze(text: &str, math_ok: &dyn Fn(&str) -> bool) -> Ana {
             let (s, e) = (base + r.start, base + r.end);
             match r.kind {
                 RunKind::Marker => role[s..e].fill(Role::Hidden),
-                RunKind::Text => role[s..e].fill(Role::Text { b: r.bold, i: r.italic, sub: r.sub, sup: r.sup }),
+                RunKind::Text => role[s..e].fill(Role::Text { b: r.bold, i: r.italic, sub: r.sub, sup: r.sup, s: r.strike }),
                 RunKind::Math => {
                     let content: String = ch[s + 1..e - 1].iter().collect();
                     if math_ok(&content) {
@@ -504,9 +504,9 @@ impl Ana {
     }
 
     /// Style of the visible char before caret `p` (or after, at the start).
-    pub fn style_at(&self, p: usize) -> (bool, bool, bool, bool) {
+    pub fn style_at(&self, p: usize) -> Style {
         let pick = |r: &Role| match r {
-            Role::Text { b, i, sub, sup } => Some((*b, *i, *sub, *sup)),
+            Role::Text { b, i, sub, sup, s } => Some(Style { b: *b, i: *i, sub: *sub, sup: *sup, s: *s }),
             _ => None,
         };
         self.role[..p.min(self.len())].iter().rev().find_map(pick).or_else(|| self.role[p.min(self.len())..].iter().find_map(pick)).unwrap_or_default()
@@ -519,14 +519,14 @@ impl Ana {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Item {
-    Ch { c: char, b: bool, i: bool, sub: bool, sup: bool },
+    Ch { c: char, b: bool, i: bool, sub: bool, sup: bool, s: bool },
     /// A whole `$..$` kept raw.
     Atom(String),
 }
 
 impl Item {
     fn plain(c: char) -> Item {
-        Item::Ch { c, b: false, i: false, sub: false, sup: false }
+        Item::Ch { c, b: false, i: false, sub: false, sup: false, s: false }
     }
     fn raw_len(&self) -> usize {
         match self {
@@ -554,7 +554,7 @@ pub fn decode_line(line: &str) -> (Vec<Item>, Vec<usize>) {
             RunKind::Text => {
                 for (k, c) in ch[r.start..r.end].iter().enumerate() {
                     starts.push(r.start + k);
-                    items.push(Item::Ch { c: *c, b: r.bold, i: r.italic, sub: r.sub, sup: r.sup });
+                    items.push(Item::Ch { c: *c, b: r.bold, i: r.italic, sub: r.sub, sup: r.sup, s: r.strike });
                 }
             }
         }
@@ -563,16 +563,17 @@ pub fn decode_line(line: &str) -> (Vec<Item>, Vec<usize>) {
 }
 
 /// Markup for `items` and the raw char where each item starts. Markers hug the text (spaces stay
-/// outside), sub/superscripts become `_{..}` / `^{..}`.
+/// outside), sub/superscripts become `_{..}` / `^{..}`. Bold opens outermost, then italic, then
+/// strikethrough; they close in the reverse order.
 pub fn encode_line(items: &[Item]) -> (String, Vec<usize>) {
     let mut out: Vec<char> = Vec::new();
     let mut starts = vec![0; items.len()];
-    let (mut ob, mut oi) = (false, false);
+    let (mut ob, mut oi, mut os) = (false, false, false);
     // Style of the next non-space plain char after index k (atoms are neutral).
-    let next_style = |k: usize| -> Option<(bool, bool)> {
+    let next_style = |k: usize| -> Option<(bool, bool, bool)> {
         items[k + 1..].iter().find_map(|it| match it {
-            Item::Ch { c, b, i, .. } if !c.is_whitespace() => Some((*b, *i)),
-            Item::Ch { sub: true, b, i, .. } | Item::Ch { sup: true, b, i, .. } => Some((*b, *i)),
+            Item::Ch { c, b, i, s, .. } if !c.is_whitespace() => Some((*b, *i, *s)),
+            Item::Ch { sub: true, b, i, s, .. } | Item::Ch { sup: true, b, i, s, .. } => Some((*b, *i, *s)),
             _ => None,
         })
     };
@@ -584,9 +585,13 @@ pub fn encode_line(items: &[Item]) -> (String, Vec<usize>) {
                 out.extend(raw.chars());
                 k += 1;
             }
-            Item::Ch { c, b, i, sub, sup } => {
+            Item::Ch { c, b, i, sub, sup, s } => {
                 let script = *sub || *sup;
                 if !c.is_whitespace() || script {
+                    if os && !*s {
+                        out.extend(['~', '~']);
+                        os = false;
+                    }
                     if oi && !*i {
                         out.push('*');
                         oi = false;
@@ -603,13 +608,17 @@ pub fn encode_line(items: &[Item]) -> (String, Vec<usize>) {
                         out.push('*');
                         oi = true;
                     }
+                    if *s && !os {
+                        out.extend(['~', '~']);
+                        os = true;
+                    }
                 }
                 let last;
                 if script {
                     out.extend([if *sub { '_' } else { '^' }, '{']);
                     let mut j = k;
-                    while let Some(Item::Ch { c: cj, b: bj, i: ij, sub: sj, sup: pj }) = items.get(j) {
-                        if (*sj, *pj, *bj, *ij) != (*sub, *sup, *b, *i) {
+                    while let Some(Item::Ch { c: cj, b: bj, i: ij, sub: sj, sup: pj, s: xj }) = items.get(j) {
+                        if (*sj, *pj, *bj, *ij, *xj) != (*sub, *sup, *b, *i, *s) {
                             break;
                         }
                         starts[j] = out.len();
@@ -628,17 +637,24 @@ pub fn encode_line(items: &[Item]) -> (String, Vec<usize>) {
                 let closing = !c.is_whitespace() || script;
                 if closing {
                     let nx = next_style(last);
-                    if oi && !nx.is_some_and(|(_, ni)| ni) {
+                    if os && !nx.is_some_and(|(_, _, ns)| ns) {
+                        out.extend(['~', '~']);
+                        os = false;
+                    }
+                    if oi && !nx.is_some_and(|(_, ni, _)| ni) {
                         out.push('*');
                         oi = false;
                     }
-                    if ob && !nx.is_some_and(|(nb, _)| nb) {
+                    if ob && !nx.is_some_and(|(nb, _, _)| nb) {
                         out.extend(['*', '*']);
                         ob = false;
                     }
                 }
             }
         }
+    }
+    if os {
+        out.extend(['~', '~']);
     }
     if oi {
         out.push('*');
@@ -649,13 +665,13 @@ pub fn encode_line(items: &[Item]) -> (String, Vec<usize>) {
     (out.into_iter().collect(), starts)
 }
 
-/// Same text and styles (a space's bold/italic does not matter).
+/// Same text and styles (a space's bold/italic/strikethrough does not matter).
 fn same_items(a: &[Item], b: &[Item]) -> bool {
     a.len() == b.len()
         && a.iter().zip(b).all(|(x, y)| match (x, y) {
             (Item::Atom(p), Item::Atom(q)) => p == q,
-            (Item::Ch { c: c1, b: b1, i: i1, sub: s1, sup: p1 }, Item::Ch { c: c2, b: b2, i: i2, sub: s2, sup: p2 }) => {
-                c1 == c2 && s1 == s2 && p1 == p2 && (c1.is_whitespace() || (b1 == b2 && i1 == i2))
+            (Item::Ch { c: c1, b: b1, i: i1, sub: s1, sup: p1, s: x1 }, Item::Ch { c: c2, b: b2, i: i2, sub: s2, sup: p2, s: x2 }) => {
+                c1 == c2 && s1 == s2 && p1 == p2 && (c1.is_whitespace() || (b1 == b2 && i1 == i2 && x1 == x2))
             }
             _ => false,
         })
@@ -690,7 +706,34 @@ pub enum IOp {
     Italic,
     Sub,
     Sup,
+    Strike,
     Clear,
+}
+
+/// The inline style of a char (or the style typing will use).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Style {
+    pub b: bool,
+    pub i: bool,
+    pub sub: bool,
+    pub sup: bool,
+    pub s: bool,
+}
+
+impl Style {
+    /// The style after toggling `op` (sub and sup exclude each other; Clear drops everything).
+    pub fn toggled(self, op: IOp) -> Style {
+        let mut t = self;
+        match op {
+            IOp::Bold => t.b = !t.b,
+            IOp::Italic => t.i = !t.i,
+            IOp::Strike => t.s = !t.s,
+            IOp::Sub => (t.sub, t.sup) = (!t.sub, false),
+            IOp::Sup => (t.sup, t.sub) = (!t.sup, false),
+            IOp::Clear => t = Style::default(),
+        }
+        t
+    }
 }
 
 /// Apply `op` to the selection `a..b` (local chars) of a unit's text, which may span lines. With
@@ -730,6 +773,7 @@ pub fn inline_op(text: &str, a: usize, b: usize, op: IOp) -> Option<(String, usi
         let ph = match op {
             IOp::Bold => "bold text",
             IOp::Italic => "italic text",
+            IOp::Strike => "struck text",
             _ => "2",
         };
         let mut items = items;
@@ -747,13 +791,14 @@ pub fn inline_op(text: &str, a: usize, b: usize, op: IOp) -> Option<(String, usi
         let k0 = item_at(&st, a.max(starts[li]) - starts[li]);
         let k1 = item_at(&st, b.min(starts[li] + clen(lines[li])) - starts[li]);
         for it in &items[k0..k1.max(k0)] {
-            if let Item::Ch { c, b, i, sub, sup } = it
+            if let Item::Ch { c, b, i, sub, sup, s } = it
                 && !c.is_whitespace()
             {
                 any = true;
                 let has = match op {
                     IOp::Bold => *b,
                     IOp::Italic => *i,
+                    IOp::Strike => *s,
                     IOp::Sub => *sub,
                     IOp::Sup => *sup,
                     IOp::Clear => false,
@@ -782,10 +827,11 @@ pub fn inline_op(text: &str, a: usize, b: usize, op: IOp) -> Option<(String, usi
         }
         let mut items = items;
         for it in &mut items[k0..k1] {
-            if let Item::Ch { b, i, sub, sup, .. } = it {
+            if let Item::Ch { b, i, sub, sup, s, .. } = it {
                 match op {
                     IOp::Bold => *b = set,
                     IOp::Italic => *i = set,
+                    IOp::Strike => *s = set,
                     IOp::Sub => {
                         *sub = set;
                         if set {
@@ -798,7 +844,7 @@ pub fn inline_op(text: &str, a: usize, b: usize, op: IOp) -> Option<(String, usi
                             *sub = false;
                         }
                     }
-                    IOp::Clear => (*b, *i, *sub, *sup) = (false, false, false, false),
+                    IOp::Clear => (*b, *i, *sub, *sup, *s) = (false, false, false, false, false),
                 }
             }
         }
@@ -828,10 +874,11 @@ pub fn inline_op(text: &str, a: usize, b: usize, op: IOp) -> Option<(String, usi
 /// Apply `op` (set) to items `s..e` of line `li` and rebuild the text; the selection covers them.
 fn line_apply(lines: &[&str], starts: &[usize], li: usize, mut items: Vec<Item>, s: usize, e: usize, op: IOp) -> Option<(String, usize, usize)> {
     for it in &mut items[s..e] {
-        if let Item::Ch { b, i, sub, sup, .. } = it {
+        if let Item::Ch { b, i, sub, sup, s, .. } = it {
             match op {
                 IOp::Bold => *b = true,
                 IOp::Italic => *i = true,
+                IOp::Strike => *s = true,
                 IOp::Sub => (*sub, *sup) = (true, false),
                 IOp::Sup => (*sup, *sub) = (true, false),
                 IOp::Clear => {}
@@ -844,6 +891,57 @@ fn line_apply(lines: &[&str], starts: &[usize], li: usize, mut items: Vec<Item>,
     out[li] = enc;
     let base = starts[li];
     Some((out.join("\n"), base + ra, base + rb))
+}
+
+/// Typing mode (a format toggled with a collapsed caret): `new` is `old` with text typed at
+/// local caret `at`; give the typed text the style `want`. Returns the new text and the caret
+/// after the typed text, or None when nothing was inserted there (or it cannot be styled).
+pub fn style_typed(old: &str, new: &str, at: usize, want: Style) -> Option<(String, usize)> {
+    let o: Vec<char> = old.chars().collect();
+    let n: Vec<char> = new.chars().collect();
+    if n.len() <= o.len() || at > o.len() {
+        return None;
+    }
+    let k = n.len() - o.len();
+    if n[..at] != o[..at] || n[at + k..] != o[at..] || n[at..at + k].contains(&'\n') {
+        return None;
+    }
+    let (mut text, mut a, mut b) = (new.to_string(), at, at + k);
+    // styles of the typed visible chars
+    let styles = |t: &str, a: usize, b: usize| -> Vec<Style> {
+        let ana = analyze(t, &|_| false);
+        let ch: Vec<char> = t.chars().collect();
+        (a..b.min(ch.len()))
+            .filter_map(|q| match ana.role[q] {
+                Role::Text { b, i, sub, sup, s } if !ch[q].is_whitespace() => Some(Style { b, i, sub, sup, s }),
+                _ => None,
+            })
+            .collect()
+    };
+    if styles(&text, a, b).is_empty() {
+        return None;
+    }
+    let get = |st: &Style, op: IOp| match op {
+        IOp::Bold => st.b,
+        IOp::Italic => st.i,
+        IOp::Strike => st.s,
+        IOp::Sub => st.sub,
+        IOp::Sup => st.sup,
+        IOp::Clear => false,
+    };
+    for op in [IOp::Sub, IOp::Sup, IOp::Bold, IOp::Italic, IOp::Strike] {
+        // a toggle sets a mixed run first, so a wanted "off" can take two passes
+        for _ in 0..2 {
+            let cur = styles(&text, a, b);
+            if cur.iter().all(|st| get(st, op) == get(&want, op)) {
+                break;
+            }
+            let (t, x, y) = inline_op(&text, a, b, op)?;
+            (text, a, b) = (t, x, y);
+        }
+    }
+    let ok = styles(&text, a, b).iter().all(|st| *st == want);
+    ok.then_some((text, b))
 }
 
 /// Replace the selection `a..b` (one line) with a `___` blank. Returns the new text, the caret
@@ -1626,6 +1724,9 @@ struct Mem {
     active: bool,
     /// A focus request that did not land yet (a closing modal can block it for a frame).
     retry: Option<(Want, u8)>,
+    /// Typing mode: a format toggled with a collapsed caret at this global position; the next
+    /// text typed there takes this style (nothing is selected or changed until then).
+    pending: Option<(usize, Style)>,
 }
 
 /// Style the layouter needs.
@@ -1714,14 +1815,18 @@ fn build_job(ui: &Ui, text: &str, wrap: f32, st: &Sty, ana: &Ana, blank_label: &
         }
         let s: String = ch[i..j].iter().collect();
         let format = match r {
-            Role::Text { b, i: it, sub, sup } => {
+            Role::Text { b, i: it, sub, sup, s: strike } => {
                 let fam = if b { st.bold.clone() } else { st.family.clone() };
-                if sub || sup {
+                let mut f = if sub || sup {
                     let d = if sup { -0.33 * st.size } else { 0.16 * st.size };
                     fmt(FontId::new(small, fam), st.color, it, l + 2.0 * (asc_s - asc - d))
                 } else {
                     fmt(FontId::new(st.size, fam), st.color, it, l)
+                };
+                if strike {
+                    f.strikethrough = Stroke::new((st.size / 14.0).max(1.0), st.color);
                 }
+                f
             }
             Role::Newline => fmt(main.clone(), st.color, false, l),
             Role::Bad => fmt(main.clone(), theme::bad(), false, l),
@@ -1929,6 +2034,7 @@ struct Here {
     i: bool,
     sub: bool,
     sup: bool,
+    s: bool,
     list: Option<ListKind>,
     table: bool,
     sel: bool,
@@ -1948,6 +2054,7 @@ fn toolbar(ui: &mut Ui, here: Here, blanks: bool, markup: bool, structured: bool
     let mut act = None;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(3.0, 3.0);
+        ui.spacing_mut().button_padding.x = ui.spacing().button_padding.x.min(7.0);
         let mut b = |ui: &mut Ui, l: RichText, tip: &str, on: bool, en: bool, a: Act| {
             if tool_btn(ui, l, tip, on, en) {
                 act = Some(a);
@@ -1956,6 +2063,7 @@ fn toolbar(ui: &mut Ui, here: Here, blanks: bool, markup: bool, structured: bool
         let vis = !markup;
         b(ui, RichText::new("B").family(theme::bold_family()), "Bold (Ctrl+B)", here.b, vis, Act::Inline(IOp::Bold));
         b(ui, RichText::new("I").italics(), "Italic (Ctrl+I)", here.i, vis, Act::Inline(IOp::Italic));
+        b(ui, RichText::new("S").strikethrough(), "Strikethrough (Ctrl+Shift+S)", here.s, vis, Act::Inline(IOp::Strike));
         b(ui, RichText::new("x₂"), "Subscript (Ctrl+,)", here.sub, vis, Act::Inline(IOp::Sub));
         b(ui, RichText::new("x²"), "Superscript (Ctrl+.)", here.sup, vis, Act::Inline(IOp::Sup));
         if structured {
@@ -1979,13 +2087,27 @@ fn toolbar(ui: &mut Ui, here: Here, blanks: bool, markup: bool, structured: bool
     act
 }
 
+/// Where the floating toolbar goes for selection rect `sel`: above it, unless that would cover
+/// the fixed toolbar (`fixed`) or leave the window, then below it. `size`: the bar's size last
+/// frame (estimated before it was first drawn).
+fn float_place(sel: Rect, size: Option<Vec2>, fixed: Option<Rect>, screen: Rect) -> (Pos2, egui::Align2) {
+    let sz = size.unwrap_or(Vec2::new(300.0, 36.0));
+    let above = Rect::from_min_size(Pos2::new(sel.left(), sel.top() - 6.0 - sz.y), sz);
+    let blocked = fixed.is_some_and(|f| f.intersects(above)) || above.top() < screen.top();
+    if blocked {
+        (Pos2::new(sel.left(), sel.bottom() + 6.0), egui::Align2::LEFT_TOP)
+    } else {
+        (Pos2::new(sel.left(), sel.top() - 6.0), egui::Align2::LEFT_BOTTOM)
+    }
+}
+
 /// The floating toolbar over a selection.
-fn float_bar(ui: &Ui, id: UiId, at: Pos2, here: Here, blanks: bool) -> (Option<Act>, Rect) {
+fn float_bar(ui: &Ui, id: UiId, at: Pos2, pivot: egui::Align2, here: Here, blanks: bool) -> (Option<Act>, Rect) {
     let mut act = None;
     let r = egui::Area::new(id.with("wys_float"))
         .order(egui::Order::Foreground)
         .fixed_pos(at)
-        .pivot(egui::Align2::LEFT_BOTTOM)
+        .pivot(pivot)
         .show(ui.ctx(), |ui| {
             Frame::new()
                 .fill(theme::card())
@@ -2007,11 +2129,12 @@ fn float_bar(ui: &Ui, id: UiId, at: Pos2, here: Here, blanks: bool) -> (Option<A
                         }
                         b(ui, RichText::new("B").family(theme::bold_family()), "Bold", here.b, Act::Inline(IOp::Bold));
                         b(ui, RichText::new("I").italics(), "Italic", here.i, Act::Inline(IOp::Italic));
+                        b(ui, RichText::new("S").strikethrough(), "Strikethrough", here.s, Act::Inline(IOp::Strike));
                         b(ui, RichText::new("x₂"), "Subscript", here.sub, Act::Inline(IOp::Sub));
                         b(ui, RichText::new("x²"), "Superscript", here.sup, Act::Inline(IOp::Sup));
                         b(ui, RichText::new("Σ"), "Turn into an equation", false, Act::Equation);
                         if blanks {
-                            b(ui, RichText::new("___ Make blank"), "Make the selection a blank; it becomes the answer", false, Act::Blank);
+                            b(ui, RichText::new("___ Blank"), "Make the selected word a blank; it becomes the answer (Ctrl+Shift+K)", false, Act::Blank);
                         }
                         b(ui, RichText::new("Clear"), "Clear formatting (Ctrl+\\)", false, Act::Inline(IOp::Clear));
                     });
@@ -2144,7 +2267,7 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
         let text = slice(stem, u.start..u.end);
         let ana = analyze(&text, &math_ok_ui(&ctx, st.size));
         let lc = |g: usize| g.saturating_sub(u.start).min(text.chars().count());
-        let (b, i, sub, sup) = ana.style_at(lc(sel.1));
+        let Style { b, i, sub, sup, s } = ana.style_at(lc(sel.1));
         let (lo, hi) = (lc(sel.0.min(sel.1)), lc(sel.0.max(sel.1)));
         let on_blank = ana.atoms.iter().any(|a| matches!(a.kind, AtomKind::Blank(_)) && ((lo == a.start && hi == a.end) || (lo == hi && (lo == a.end || lo == a.start))));
         Here {
@@ -2152,6 +2275,7 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
             i,
             sub,
             sup,
+            s,
             list: match u.kind {
                 UKind::Item { list, .. } => Some(list),
                 _ => None,
@@ -2183,6 +2307,8 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
             act = Some(Act::Inline(IOp::Bold));
         } else if take_key(ui, cmd, Key::I) {
             act = Some(Act::Inline(IOp::Italic));
+        } else if take_key(ui, cs, Key::S) {
+            act = Some(Act::Inline(IOp::Strike));
         } else if take_key(ui, cmd, Key::Comma) {
             act = Some(Act::Inline(IOp::Sub));
         } else if take_key(ui, cmd, Key::Period) {
@@ -2381,6 +2507,19 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
         let lc = |g: usize| g.saturating_sub(u.start).min(clen(&text));
         let (la, lb) = (lc(sel.0), lc(sel.1));
         match a {
+            Act::Inline(op) if la == lb => {
+                // collapsed caret: toggle typing mode, never select or restyle the adjacent word
+                if u.virt.is_some() {
+                    return None;
+                }
+                let g = u.start + lb;
+                let base = match m.pending {
+                    Some((p, st)) if p == g => st,
+                    _ => analyze(&text, &|_| false).style_at(lb),
+                };
+                m.pending = Some((g, base.toggled(op)));
+                Some(Change::at(stem.clone(), g))
+            }
             Act::Inline(op) => {
                 let (t, x, y) = inline_op(&text, la, lb, op)?;
                 let s = apply_unit(stem, &u, &t);
@@ -2438,6 +2577,9 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
         let (la, lc) = local_sel(&ctx, ids[fi], if u.virt.is_some() { 0 } else { n });
         m.sel = Some((d.global(&u, la), d.global(&u, lc)));
         m.sel_unit = Some(fi);
+        if m.pending.is_some_and(|(p, _)| u.virt.is_some() || la != lc || d.global(&u, lc) != p) {
+            m.pending = None;
+        }
         m.cell = match u.kind {
             UKind::Cell { row, col, .. } => Some((d.flat()[fi].0, row, col)),
             _ => None,
@@ -2476,13 +2618,21 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
     }
 
     // ----- fixed toolbar -----
-    let here = match (focused.or(m.sel_unit.filter(|&k| k < ids.len())), m.sel) {
+    let mut here = match (focused.or(m.sel_unit.filter(|&k| k < ids.len())), m.sel) {
         (Some(fi), Some(sel)) => here_of(&d, stem, fi, sel),
         _ => Here::default(),
     };
+    if let (Some((p, st)), Some(sel)) = (m.pending, m.sel)
+        && sel == (p, p)
+    {
+        (here.b, here.i, here.sub, here.sup, here.s) = (st.b, st.i, st.sub, st.sup, st.s);
+    }
     let mut bar_act = None;
+    let mut fixed_bar: Option<Rect> = None;
     if o.toolbar {
+        let y0 = ui.cursor().top();
         bar_act = toolbar(ui, here, has_blanks, false, o.structured);
+        fixed_bar = Some(Rect::from_min_max(Pos2::new(top.x, y0), Pos2::new(top.x + o.width, ui.cursor().top())));
         ui.add_space(4.0);
     }
 
@@ -2676,7 +2826,8 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
     let mut float_act = None;
     let float_keep = m.float_rect.is_some_and(|r| ui.input(|i| i.pointer.interact_pos().or(i.pointer.hover_pos()).is_some_and(|p| r.expand(4.0).contains(p))));
     if let Some(sr) = sel_rect.filter(|_| focused.is_some() || float_keep) {
-        let (a, r) = float_bar(ui, id, Pos2::new(sr.left(), sr.top() - 6.0), here, has_blanks);
+        let (at, pivot) = float_place(sr, m.float_rect.map(|r| r.size()), fixed_bar, ui.ctx().content_rect());
+        let (a, r) = float_bar(ui, id, at, pivot, here, has_blanks);
         float_act = a;
         m.float_rect = Some(r);
     } else if !float_keep {
@@ -2712,9 +2863,26 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
                 }
             }
         }
-    } else if let Some((k, t)) = edit {
+    } else if let Some((k, mut t)) = edit {
         let at = flat[k];
         let u = d.unit(at).clone();
+        // typing mode: the typed text takes the pending style
+        let mut typed: Option<(usize, Style, Option<usize>)> = None;
+        if let Some((p, want)) = m.pending.take()
+            && u.virt.is_none()
+            && (u.start..=u.end).contains(&p)
+        {
+            let old = slice(stem, u.start..u.end);
+            let lp = p - u.start;
+            let grew = clen(&t).saturating_sub(clen(&old));
+            if let Some((t2, c)) = style_typed(&old, &t, lp, want) {
+                t = t2;
+                typed = Some((u.start + c, want, Some(c)));
+            } else if grew > 0 && slice(&t, 0..lp) == slice(&old, 0..lp) && slice(&t, lp + grew..clen(&t)) == slice(&old, lp..clen(&old)) {
+                // spaces (or text that cannot carry the style): the mode moves along with the caret
+                typed = Some((p + grew, want, None));
+            }
+        }
         let new_stem = match u.kind {
             UKind::Cell { .. } => cell_edit(stem, &d, at.0, at.1, &t),
             UKind::Flow => Some(apply_flow(stem, &d, &u, &t)),
@@ -2728,11 +2896,23 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
             let uid = ids[k];
             let c = Change { stem: s, anchor, caret, virt: None, blank: None, keep: None };
             commit(&mut m, stem, c, Some(uid), &mut blanks_rows, &mut out);
-            // stay put when the same unit still holds the caret (keeps IME composition intact)
-            let nd = doc(stem, o.structured);
-            let nids = unit_ids(id, &nd);
-            if nd.find(caret, None).map(|f| nids[f]) == Some(uid) && u.virt.is_none() {
-                m.want = None;
+            match typed {
+                Some((g, want, Some(_))) => {
+                    // the styled text has markers the TextEdit did not type: place the caret
+                    m.want = Some(Want { anchor: g, caret: g, virt: None });
+                    m.pending = Some((g, want));
+                }
+                _ => {
+                    if let Some((g, want, None)) = typed {
+                        m.pending = Some((g, want));
+                    }
+                    // stay put when the same unit still holds the caret (keeps IME composition intact)
+                    let nd = doc(stem, o.structured);
+                    let nids = unit_ids(id, &nd);
+                    if nd.find(caret, None).map(|f| nids[f]) == Some(uid) && u.virt.is_none() {
+                        m.want = None;
+                    }
+                }
             }
         } else {
             // the edit would break the table: put the old text back
