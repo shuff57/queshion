@@ -83,12 +83,8 @@ fn end_marker(d: &mut Doc, kind: &str, x: f64, y: f64, dx: f64, dy: f64) {
     }
 }
 
-/// Gridlines (major + optional minor), frame, tick numbers and axis titles.
-pub fn draw_axes(d: &mut Doc, a: &Axes, minor: i64, xt: &str, yt: &str) {
-    draw_axes_ex(d, a, minor, xt, yt, &AxOpts::default());
-}
-
-/// `draw_axes` with numbering frequency, end labels, end markers and blank-line titles.
+/// Gridlines (major + optional minor), frame, tick numbers and axis titles; numbering
+/// frequency, end labels, end markers and blank-line titles are in [`draw_axes_ex`].
 pub fn draw_axes_ex(d: &mut Doc, a: &Axes, minor: i64, xt: &str, yt: &str, o: &AxOpts) {
     let nx = ((a.x1 - a.x0) / a.xs).round().max(1.0) as i64;
     let ny = ((a.y1 - a.y0) / a.ys).round().max(1.0) as i64;

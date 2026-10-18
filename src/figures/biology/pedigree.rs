@@ -206,10 +206,6 @@ fn place(sim: &mut Sim, n: &Node, left: f64) {
 
 pub fn roman(i: usize) -> &'static str { ["I", "II", "III", "IV", "V"][i.min(4)] }
 
-fn symbol(d: &mut Doc, cx: f64, cy: f64, r: f64, male: bool, st: Status, carriers: bool) {
-    symbol_ex(d, cx, cy, r, if male { 0 } else { 1 }, st, if carriers { "Center dot" } else { "Hidden" });
-}
-
 /// `sex`: 0 male (square), 1 female (circle), 2 unknown (diamond). `car`: carrier style.
 fn symbol_ex(d: &mut Doc, cx: f64, cy: f64, r: f64, sex: u8, st: Status, car: &str) {
     let fill = if st == Status::Affected { INK } else { "#fff" };

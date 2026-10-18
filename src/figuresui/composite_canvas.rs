@@ -238,6 +238,7 @@ impl Canvas {
     }
 
     /// Where each draggable label sits on screen, by spec row (tests aim pointer events at them).
+    #[cfg(test)]
     pub fn label_centres(&self, p: &Params) -> Vec<(usize, Pos2)> {
         let (cv, pr) = self.render_view(p);
         composite_label_boxes(&pr, cv).into_iter().map(|b| (b.item, self.rect.min + vec2(b.c.0 as f32, b.c.1 as f32))).collect()

@@ -4329,6 +4329,7 @@ struct SnapImage {
 }
 
 impl SnapDoc {
+    #[cfg(test)]
     fn from_parts(
         exam: &model::Exam,
         mapped: &[Mapped],

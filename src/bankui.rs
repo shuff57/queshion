@@ -2787,7 +2787,9 @@ fn markup_lines(text: &str, latex: bool) -> Vec<String> {
 }
 
 /// A question as text for the clipboard: stem, choices (A. B. ...), matching columns, parts,
-/// and `lines` answer lines under a short answer (or each short part).
+/// and `lines` answer lines under a short answer (or each short part). Test-only convenience
+/// wrapper; the UI calls [`popover_copy_text_cols`] with the chosen column count.
+#[cfg(test)]
 pub(crate) fn popover_copy_text(q: &Question, lines: u8, latex: bool) -> String {
     popover_copy_text_cols(q, lines, latex, 1)
 }

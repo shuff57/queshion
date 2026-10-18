@@ -81,7 +81,7 @@ fn bank_q(q: &Question, number: u32, image: Option<DocImage>) -> DocQ {
     let mut text = q.stem.trim_end().to_string();
     let mut parts: Vec<String> = vec![meta_line(q)];
     let mut choices: Vec<String> = Vec::new();
-    let mut key = String::new();
+    let key;
     match &q.kind {
         Kind::Mc { answers } => {
             for (i, a) in answers.iter().enumerate() {
