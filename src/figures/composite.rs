@@ -4,7 +4,9 @@
 //! `tri X1 Y1 X2 Y2 X3 Y3`, `poly X Y X Y ...`, `circle CX CY R`, `semi CX CY R u/d/l/r`,
 //! `quarter CX CY R ne/nw/se/sw`, each optionally ending with a shading word (blue, red, green,
 //! yellow) and ` | LABEL` (text drawn at the piece's centre). Marks: `dash`, `dim`, `ticks`,
-//! `arrows`, `text`, `ra`. The renderer (`math::composite_render`) and the canvas editor
+//! `arrows`, `text`, `ra`, and the Label-mode rows `side X1 Y1 X2 Y2 dashed|dotted|hidden|solid
+//! [thin|regular|thick]` (an outline side's line), `angle X Y [ext] [measure] [arcs N] [square]
+//! [shade] [| TEXT]` (an angle mark at a corner) and `point X Y [NAME]` (a corner point). The renderer (`math::composite_render`) and the canvas editor
 //! (`figuresui::composite_canvas`) both read the spec through `parse`, so they always agree.
 //!
 //! Rows are kept verbatim unless edited (`Item::set`), so a typed row the editor never touched
@@ -39,6 +41,15 @@ pub enum Shape {
     Text(Pt, String),
     /// Right-angle mark at a corner, NE / NW / SE / SW.
     Ra(Pt, String),
+    /// Line of the outline side (a, b): style solid / dashed / dotted / hidden, thickness thin /
+    /// regular / thick (`side X1 Y1 X2 Y2 STYLE [THICKNESS]`).
+    SideStyle(Pt, Pt, String, String),
+    /// Angle mark at corner `v`: the interior angle, or the exterior one (`ext`); its label is the
+    /// measure (`measure`) or the row's ` | TEXT`; congruence arcs 0-3, a right-angle square, and
+    /// the row's shading word fills the wedge.
+    Angle { v: Pt, ext: bool, measure: bool, arcs: u8, square: bool },
+    /// A point marker on a corner, with an optional name (`point X Y [NAME]`).
+    Point(Pt, String),
 }
 
 impl Shape {
@@ -59,6 +70,9 @@ impl Shape {
             Shape::Arrows(..) => "Parallel arrows",
             Shape::Text(..) => "Text",
             Shape::Ra(..) => "Right angle",
+            Shape::SideStyle(..) => "Side line",
+            Shape::Angle { .. } => "Angle",
+            Shape::Point(..) => "Point",
         }
     }
 }
@@ -82,6 +96,10 @@ impl Item {
     }
     pub fn is_piece(&self) -> bool {
         self.shape.as_ref().is_some_and(|s| s.is_piece())
+    }
+    /// Whether the row carries a shading word and a ` | label` (pieces and angle marks).
+    fn decorated(&self) -> bool {
+        self.shape.as_ref().is_some_and(|s| s.is_piece() || matches!(s, Shape::Angle { .. }))
     }
     /// Marks the row as edited: it is written from its fields from now on.
     pub fn touch(&mut self) {
@@ -117,8 +135,33 @@ impl Item {
             Shape::Arrows(a, b, k) => format!("arrows {} {} {k}", p(*a), p(*b)),
             Shape::Text(a, t) => format!("text {} {}", p(*a), t.trim()),
             Shape::Ra(a, d) => format!("ra {} {d}", p(*a)),
+            Shape::SideStyle(a, b, st, th) => {
+                let mut r = format!("side {} {} {st}", p(*a), p(*b));
+                if th != "regular" {
+                    r.push(' ');
+                    r.push_str(th);
+                }
+                r
+            }
+            Shape::Angle { v, ext, measure, arcs, square } => {
+                let mut r = format!("angle {}", p(*v));
+                if *ext {
+                    r.push_str(" ext");
+                }
+                if *measure {
+                    r.push_str(" measure");
+                }
+                if *arcs > 0 {
+                    r.push_str(&format!(" arcs {arcs}"));
+                }
+                if *square {
+                    r.push_str(" square");
+                }
+                r
+            }
+            Shape::Point(a, n) => format!("point {} {}", p(*a), n.trim()).trim_end().to_string(),
         };
-        if s.is_piece() {
+        if self.decorated() {
             if let Some(w) = &self.shade {
                 out.push(' ');
                 out.push_str(w);
@@ -140,18 +183,21 @@ pub fn fmt_n(v: f64) -> String {
 }
 
 const PIECE_WORDS: [&str; 6] = ["rect", "tri", "poly", "circle", "semi", "quarter"];
+/// Line styles and thicknesses of `side` rows (the first of each is the plain outline).
+pub const LINE_STYLES: [&str; 4] = ["solid", "dashed", "dotted", "hidden"];
+pub const THICKNESSES: [&str; 3] = ["regular", "thin", "thick"];
 
 pub fn parse_row(row: &str) -> Item {
     let raw = row.trim().to_string();
     let kw = raw.split_whitespace().next().unwrap_or("").to_lowercase();
     // only piece rows carry a label: `text` rows may use | for absolute values
     let (head, label) = match raw.split_once('|') {
-        Some((h, l)) if PIECE_WORDS.contains(&kw.as_str()) => (h.to_string(), l.trim().to_string()),
+        Some((h, l)) if PIECE_WORDS.contains(&kw.as_str()) || kw == "angle" => (h.to_string(), l.trim().to_string()),
         _ => (raw.clone(), String::new()),
     };
     let tk: Vec<&str> = head.split_whitespace().collect();
     let shape = shape_of(&kw, &tk);
-    let shade = if shape.as_ref().is_some_and(|s| s.is_piece()) {
+    let shade = if shape.as_ref().is_some_and(|s| s.is_piece() || matches!(s, Shape::Angle { .. })) {
         tk.iter().skip(1).find_map(|t| shade_hex(t).map(|_| t.to_lowercase()))
     } else {
         None
@@ -191,6 +237,20 @@ fn shape_of(kw: &str, tk: &[&str]) -> Option<Shape> {
         }
         "text" => Shape::Text(pt(1)?, tk.get(3..).map(|t| t.join(" ")).unwrap_or_default()),
         "ra" => Shape::Ra(pt(1)?, tk.get(3).map(|s| s.to_uppercase()).unwrap_or_else(|| "NE".into())),
+        "side" => {
+            let words: Vec<String> = tk.iter().skip(5).map(|t| t.to_lowercase()).collect();
+            let st = LINE_STYLES.iter().find(|w| words.iter().any(|t| t == *w)).unwrap_or(&"solid");
+            let th = THICKNESSES.iter().find(|w| words.iter().any(|t| t == *w)).unwrap_or(&"regular");
+            Shape::SideStyle(pt(1)?, pt(3)?, st.to_string(), th.to_string())
+        }
+        "angle" => {
+            let v = pt(1)?;
+            let words: Vec<String> = tk.iter().skip(3).map(|t| t.to_lowercase()).collect();
+            let has = |w: &str| words.iter().any(|t| t == w);
+            let arcs = words.iter().position(|t| t == "arcs").and_then(|i| words.get(i + 1)).and_then(|n| n.parse::<f64>().ok()).map(|n| n.clamp(0.0, 3.0) as u8).unwrap_or(0);
+            Shape::Angle { v, ext: has("ext") || has("exterior"), measure: has("measure"), arcs, square: has("square") }
+        }
+        "point" => Shape::Point(pt(1)?, tk.get(3..).map(|t| t.join(" ")).unwrap_or_default()),
         _ => return None,
     })
 }
@@ -262,11 +322,30 @@ pub fn straight_sides(s: &Shape) -> Vec<(Pt, Pt)> {
     }
 }
 
+/// The curved runs of a piece's outline, as polylines: a circle all round, a semicircle's or a
+/// quarter circle's arc (their straight sides are `straight_sides`).
+pub fn curved_edges(s: &Shape) -> Vec<Vec<Pt>> {
+    let v = outline(s);
+    match s {
+        Shape::Circle { .. } => {
+            let mut c = v.clone();
+            if let Some(f) = v.first() {
+                c.push(*f);
+            }
+            vec![c]
+        }
+        Shape::Semi { .. } => vec![v],
+        Shape::Quarter { .. } => vec![v[1..].to_vec()],
+        _ => vec![],
+    }
+}
+
 /// The defining points of a mark (endpoints / position); empty for pieces.
 pub fn mark_points(s: &Shape) -> Vec<Pt> {
     match s {
         Shape::Dash(a, b) | Shape::Dim(a, b, _) | Shape::Ticks(a, b, _) | Shape::Arrows(a, b, _) => vec![*a, *b],
-        Shape::Text(a, _) | Shape::Ra(a, _) => vec![*a],
+        Shape::Text(a, _) | Shape::Ra(a, _) | Shape::Point(a, _) | Shape::Angle { v: a, .. } => vec![*a],
+        Shape::SideStyle(a, b, ..) => vec![*a, *b],
         _ => vec![],
     }
 }
@@ -392,7 +471,11 @@ pub fn translate(s: &mut Shape, d: Pt) {
             m(a);
             m(b);
         }
-        Shape::Text(a, _) | Shape::Ra(a, _) => m(a),
+        Shape::Text(a, _) | Shape::Ra(a, _) | Shape::Point(a, _) | Shape::Angle { v: a, .. } => m(a),
+        Shape::SideStyle(a, b, ..) => {
+            m(a);
+            m(b);
+        }
     }
 }
 
@@ -517,7 +600,7 @@ pub fn grips(s: &Shape) -> Vec<(Grip, Pt)> {
             vec![(Grip::Radius, (c.0 + r * a.to_radians().cos(), c.1 + r * a.to_radians().sin()))]
         }
         Shape::Dash(a, b) | Shape::Dim(a, b, _) | Shape::Ticks(a, b, _) | Shape::Arrows(a, b, _) => vec![(Grip::End(0), *a), (Grip::End(1), *b)],
-        Shape::Text(..) | Shape::Ra(..) => vec![],
+        Shape::Text(..) | Shape::Ra(..) | Shape::SideStyle(..) | Shape::Angle { .. } | Shape::Point(..) => vec![],
     }
 }
 
@@ -581,7 +664,11 @@ pub fn drag_grip_linked(items: &mut [Item], i: usize, g: Grip, q: Pt) {
                 f(a);
                 f(b);
             }
-            Shape::Ra(a, _) => f(a),
+            Shape::Ra(a, _) | Shape::Point(a, _) | Shape::Angle { v: a, .. } => f(a),
+            Shape::SideStyle(a, b, ..) => {
+                f(a);
+                f(b);
+            }
             _ => {}
         }
         if hit {
@@ -849,6 +936,10 @@ pub fn snap_targets(items: &[Item]) -> Vec<Pt> {
             v.push(*c);
         }
     }
+    // where pieces meet (an outline corner part way along a side) and the outline's midpoints
+    let (c, m) = line_targets(items);
+    v.extend(c);
+    v.extend(m);
     v
 }
 
@@ -884,6 +975,266 @@ pub fn piece_on_side(kind: NewKind, s: &Side) -> Option<Shape> {
             Shape::Semi { c: mid, r: l / 2.0, dir: dir.into() }
         }
     })
+}
+
+// ───────────────────────── side lines, angles, corner points, turn ─────────────────────────
+
+/// Line style and thickness of outline side (a, b): ("solid", "regular") unless a `side` row says
+/// otherwise.
+pub fn side_style(items: &[Item], a: Pt, b: Pt) -> (String, String) {
+    items
+        .iter()
+        .find_map(|it| match &it.shape {
+            Some(Shape::SideStyle(c, d, st, th)) if same_seg(a, b, *c, *d) => Some((st.clone(), th.clone())),
+            _ => None,
+        })
+        .unwrap_or_else(|| ("solid".into(), "regular".into()))
+}
+
+/// Sets the line of side (a, b); the plain solid regular line removes the row.
+pub fn set_side_style(items: &mut Vec<Item>, a: Pt, b: Pt, style: &str, thick: &str) {
+    let pos = items.iter().position(|it| matches!(&it.shape, Some(Shape::SideStyle(c, d, ..)) if same_seg(a, b, *c, *d)));
+    let style = if LINE_STYLES.contains(&style) { style } else { "solid" };
+    let thick = if THICKNESSES.contains(&thick) { thick } else { "regular" };
+    if style == "solid" && thick == "regular" {
+        if let Some(p) = pos {
+            items.remove(p);
+        }
+        return;
+    }
+    match pos {
+        // an existing row keeps its own direction
+        Some(i) => {
+            if let Some(Shape::SideStyle(c, d, ..)) = items[i].shape.clone() {
+                items[i].set(Shape::SideStyle(c, d, style.into(), thick.into()));
+            }
+        }
+        None => items.push(Item::new(Shape::SideStyle(a, b, style.into(), thick.into()))),
+    }
+}
+
+/// The two rays of an angle mark (unit vectors, model units, y up): the mark sweeps
+/// counter-clockwise from `r1` to `r2` through `deg` degrees. `ext_ray` is the extended side of an
+/// exterior angle (drawn as a short dashed line).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AngleGeo {
+    pub v: Pt,
+    pub r1: Pt,
+    pub r2: Pt,
+    pub deg: f64,
+    pub ext_ray: Option<Pt>,
+}
+
+fn unit(a: Pt, b: Pt) -> Pt {
+    let l = dist(a, b).max(1e-12);
+    ((b.0 - a.0) / l, (b.1 - a.1) / l)
+}
+fn ang_of(u: Pt) -> f64 {
+    u.1.atan2(u.0).to_degrees()
+}
+
+/// The interior angle of the outline at corner `v` (as its two rays, swept counter-clockwise),
+/// or the exterior angle (`ext`): between the side arriving at `v` (walking the outline clockwise)
+/// carried on past it, and the side leaving it. None when `v` is not a corner where exactly two
+/// outline sides meet, or the sides run straight on.
+pub fn angle_geo(items: &[Item], v: Pt, ext: bool) -> Option<AngleGeo> {
+    let sides: Vec<Side> = outer_sides(items).into_iter().filter(|s| dist(s.a, v) < 1e-6 || dist(s.b, v) < 1e-6).collect();
+    if sides.len() != 2 {
+        return None;
+    }
+    let far = |s: &Side| if dist(s.a, v) < 1e-6 { s.b } else { s.a };
+    // the incoming side has the shape on the right of the direction of travel
+    let incoming = |s: &Side| {
+        let e = unit(v, far(s));
+        let t = (-e.0, -e.1);
+        t.1 * s.out.0 - t.0 * s.out.1 < 0.0
+    };
+    let (sin, sout) = match (incoming(&sides[0]), incoming(&sides[1])) {
+        (true, false) => (sides[0], sides[1]),
+        (false, true) => (sides[1], sides[0]),
+        _ => return None,
+    };
+    let (e_in, e_out) = (unit(v, far(&sin)), unit(v, far(&sout)));
+    let interior = (ang_of(e_out) - ang_of(e_in)).rem_euclid(360.0);
+    if (interior - 180.0).abs() < 1e-6 || interior < 1e-6 {
+        return None;
+    }
+    if !ext {
+        return Some(AngleGeo { v, r1: e_in, r2: e_out, deg: interior, ext_ray: None });
+    }
+    let t = (-e_in.0, -e_in.1);
+    Some(if interior < 180.0 {
+        AngleGeo { v, r1: e_out, r2: t, deg: 180.0 - interior, ext_ray: Some(t) }
+    } else {
+        AngleGeo { v, r1: t, r2: e_out, deg: interior - 180.0, ext_ray: Some(t) }
+    })
+}
+
+/// Whether direction `u` lies inside the counter-clockwise sweep of `g`.
+pub fn in_sweep(g: &AngleGeo, u: Pt) -> bool {
+    (ang_of(u) - ang_of(g.r1)).rem_euclid(360.0) <= g.deg
+}
+
+/// The settings of the angle mark at corner `v` (interior or exterior).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AngleMark {
+    pub measure: bool,
+    /// Typed label (shown when not `measure`).
+    pub text: String,
+    pub arcs: u8,
+    pub square: bool,
+    pub shade: Option<String>,
+}
+
+impl AngleMark {
+    pub fn is_empty(&self) -> bool {
+        !self.measure && self.text.trim().is_empty() && self.arcs == 0 && !self.square && self.shade.is_none()
+    }
+}
+
+fn angle_pos(items: &[Item], v: Pt, ext: bool) -> Option<usize> {
+    items.iter().position(|it| matches!(&it.shape, Some(Shape::Angle { v: w, ext: e, .. }) if *e == ext && dist(*w, v) < 1e-4))
+}
+
+pub fn angle_mark(items: &[Item], v: Pt, ext: bool) -> AngleMark {
+    let Some(i) = angle_pos(items, v, ext) else { return AngleMark::default() };
+    let it = &items[i];
+    match &it.shape {
+        Some(Shape::Angle { measure, arcs, square, .. }) => AngleMark { measure: *measure, text: it.label.clone(), arcs: *arcs, square: *square, shade: it.shade.clone() },
+        _ => AngleMark::default(),
+    }
+}
+
+/// Writes the angle mark at corner `v`; an empty mark removes the row.
+pub fn set_angle_mark(items: &mut Vec<Item>, v: Pt, ext: bool, m: &AngleMark) {
+    let pos = angle_pos(items, v, ext);
+    if m.is_empty() {
+        if let Some(p) = pos {
+            items.remove(p);
+        }
+        return;
+    }
+    let s = Shape::Angle { v, ext, measure: m.measure, arcs: m.arcs.min(3), square: m.square };
+    let i = match pos {
+        Some(i) => i,
+        None => {
+            items.push(Item::new(s.clone()));
+            items.len() - 1
+        }
+    };
+    let it = &mut items[i];
+    it.set(s);
+    it.set_shade(m.shade.as_deref());
+    it.set_label(if m.measure { "" } else { &m.text });
+}
+
+/// Whether the interior corner at `v` carries a right-angle mark (an `ra` row or a squared angle).
+pub fn has_right_mark(items: &[Item], v: Pt) -> bool {
+    items.iter().any(|it| matches!(&it.shape, Some(Shape::Ra(a, _)) if dist(*a, v) < 1e-4)) || angle_mark(items, v, false).square
+}
+
+/// Puts the interior right-angle mark at `v` on or off: an `ra` row where the corner is square to
+/// the grid (as the presets have), else the angle row's `square`.
+pub fn set_right_mark(items: &mut Vec<Item>, v: Pt, on: bool) {
+    if has_right_mark(items, v) == on {
+        return;
+    }
+    let ra = items.iter().position(|it| matches!(&it.shape, Some(Shape::Ra(a, _)) if dist(*a, v) < 1e-4));
+    if !on {
+        if let Some(p) = ra {
+            items.remove(p);
+        }
+        let mut m = angle_mark(items, v, false);
+        if m.square {
+            m.square = false;
+            set_angle_mark(items, v, false, &m);
+        }
+        return;
+    }
+    if corner_dir(items, v).is_some() {
+        toggle_ra(items, v);
+    } else {
+        let mut m = angle_mark(items, v, false);
+        m.square = true;
+        set_angle_mark(items, v, false, &m);
+    }
+}
+
+/// The corner point at `v`: None = no point, Some(name) (possibly empty) = a point is shown.
+pub fn corner_point(items: &[Item], v: Pt) -> Option<String> {
+    items.iter().find_map(|it| match &it.shape {
+        Some(Shape::Point(a, n)) if dist(*a, v) < 1e-4 => Some(n.clone()),
+        _ => None,
+    })
+}
+
+pub fn set_corner_point(items: &mut Vec<Item>, v: Pt, name: Option<&str>) {
+    let pos = items.iter().position(|it| matches!(&it.shape, Some(Shape::Point(a, _)) if dist(*a, v) < 1e-4));
+    match (name, pos) {
+        (None, Some(p)) => {
+            items.remove(p);
+        }
+        (None, None) => {}
+        (Some(n), Some(p)) => items[p].set(Shape::Point(v, n.trim().to_string())),
+        (Some(n), None) => items.push(Item::new(Shape::Point(v, n.trim().to_string()))),
+    }
+}
+
+/// Where a corner's point name goes: the unit direction (model units) away from the shape,
+/// opposite the interior angle's bisector.
+pub fn outside_dir(items: &[Item], v: Pt) -> Pt {
+    if let Some(g) = angle_geo(items, v, false) {
+        let b = (ang_of(g.r1) + g.deg / 2.0 + 180.0).to_radians();
+        return (b.cos(), b.sin());
+    }
+    let n = outer_sides(items).into_iter().filter(|s| dist(s.a, v) < 1e-6 || dist(s.b, v) < 1e-6).fold((0.0, 0.0), |acc, s| (acc.0 + s.out.0, acc.1 + s.out.1));
+    let l = (n.0 * n.0 + n.1 * n.1).sqrt();
+    if l > 1e-9 { (n.0 / l, n.1 / l) } else { (-std::f64::consts::FRAC_1_SQRT_2, std::f64::consts::FRAC_1_SQRT_2) }
+}
+
+/// Centre the figure turns about: the middle of the pieces' bounding box (of every point when
+/// there are no pieces).
+pub fn turn_centre(items: &[Item]) -> Pt {
+    let pts: Vec<Pt> = items.iter().filter_map(|it| it.shape.as_ref()).filter(|s| s.is_piece()).flat_map(outline).collect();
+    let pts = if pts.is_empty() { all_points(items) } else { pts };
+    bbox(&pts).map(|(x0, y0, x1, y1)| ((x0 + x1) / 2.0, (y0 + y1) / 2.0)).unwrap_or((0.0, 0.0))
+}
+
+/// `q` turned counter-clockwise by `deg` about `c` (model units, y up).
+pub fn rot(q: Pt, c: Pt, deg: f64) -> Pt {
+    if deg == 0.0 || !deg.is_finite() {
+        return q;
+    }
+    let (s, k) = deg.to_radians().sin_cos();
+    let (x, y) = (q.0 - c.0, q.1 - c.1);
+    (c.0 + x * k - y * s, c.1 + x * s + y * k)
+}
+
+/// Lines mode snap markers: corners and meeting points (circles) and side midpoints (diamonds).
+pub fn line_targets(items: &[Item]) -> (Vec<Pt>, Vec<Pt>) {
+    let mut corners: Vec<Pt> = vec![];
+    let push = |v: &mut Vec<Pt>, q: Pt| {
+        if !v.iter().any(|w| dist(*w, q) < 1e-6) {
+            v.push(q);
+        }
+    };
+    for q in outer_corners(items) {
+        push(&mut corners, q);
+    }
+    for s in items.iter().filter_map(|it| it.shape.as_ref()).filter(|s| s.is_piece()) {
+        for (a, _) in straight_sides(s) {
+            push(&mut corners, a);
+        }
+        if let Shape::Circle { c, .. } | Shape::Semi { c, .. } | Shape::Quarter { c, .. } = s {
+            push(&mut corners, *c);
+        }
+    }
+    let mut mids: Vec<Pt> = vec![];
+    for s in outer_sides(items) {
+        push(&mut mids, s.mid());
+    }
+    mids.retain(|m| !corners.iter().any(|c| dist(*c, *m) < 1e-6));
+    (corners, mids)
 }
 
 // ───────────────────────── tests ─────────────────────────
@@ -1113,5 +1464,166 @@ mod tests {
         assert_eq!(snap(1.26, 0.0), 1.26);
         assert_eq!(fmt_n(-0.00001), "0");
         assert!(snap_targets(&parse("rect 0 0 2 2; circle 5 5 1")).contains(&(5.0, 5.0)));
+    }
+
+    const HOUSE: &str = "rect 0 0 6 4; tri 0 4 6 4 3 7";
+
+    #[test]
+    fn side_rows_parse_write_and_toggle() {
+        let it = parse("side 6 0 6 4 Dashed THICK; side 0 0 6 0 dotted; side 0 4 0 0 hidden thin; side 1 1 2 2 wobbly");
+        assert_eq!(it[0].shape, Some(Shape::SideStyle((6.0, 0.0), (6.0, 4.0), "dashed".into(), "thick".into())));
+        assert_eq!(it[1].shape, Some(Shape::SideStyle((0.0, 0.0), (6.0, 0.0), "dotted".into(), "regular".into())));
+        assert_eq!(it[2].shape, Some(Shape::SideStyle((0.0, 4.0), (0.0, 0.0), "hidden".into(), "thin".into())));
+        // unknown words fall back to the plain line
+        assert_eq!(it[3].shape, Some(Shape::SideStyle((1.0, 1.0), (2.0, 2.0), "solid".into(), "regular".into())));
+        assert!(parse("side 1 2 3").first().unwrap().shape.is_none());
+        let mut it = parse(HOUSE);
+        let right = *outer_sides(&it).iter().find(|s| s.out == (1.0, 0.0)).unwrap();
+        assert_eq!(side_style(&it, right.a, right.b), ("solid".to_string(), "regular".to_string()));
+        set_side_style(&mut it, right.b, right.a, "dashed", "thick");
+        assert_eq!(to_spec(&it), format!("{HOUSE}; side 6 4 6 0 dashed thick"));
+        assert_eq!(side_style(&it, right.a, right.b), ("dashed".to_string(), "thick".to_string()));
+        set_side_style(&mut it, right.a, right.b, "solid", "thin");
+        assert_eq!(to_spec(&it), format!("{HOUSE}; side 6 4 6 0 solid thin"));
+        let back = parse(&to_spec(&it));
+        assert_eq!(side_style(&back, right.a, right.b), ("solid".to_string(), "thin".to_string()));
+        set_side_style(&mut it, right.a, right.b, "solid", "regular");
+        assert_eq!(to_spec(&it), HOUSE, "the plain line drops the row");
+        // the row follows the corner it sits on and the piece it belongs to
+        let mut it = parse("rect 0 0 6 4; side 6 0 6 4 dotted");
+        drag_grip_linked(&mut it, 0, Grip::Side(1), (8.0, 2.0));
+        assert_eq!(to_spec(&it), "rect 0 0 8 4; side 8 0 8 4 dotted");
+        move_item(&mut it, 0, (1.0, 1.0));
+        assert_eq!(to_spec(&it), "rect 1 1 8 4; side 9 1 9 5 dotted");
+        // not selectable on the canvas (the Label tool edits it), gone with its piece
+        assert_eq!(hit(&it, (9.0, 3.0), 0.1), Some(0));
+        delete(&mut it, 0);
+        assert!(it.is_empty());
+    }
+
+    #[test]
+    fn angle_rows_parse_write_and_round_trip() {
+        let it = parse("angle 0 4 ext measure arcs 2 square red | x; angle 3 7; angle 1 1 Arcs 9 GREEN | 2x + 1");
+        assert_eq!(it[0].shape, Some(Shape::Angle { v: (0.0, 4.0), ext: true, measure: true, arcs: 2, square: true }));
+        assert_eq!((it[0].shade.as_deref(), it[0].label.as_str()), (Some("red"), "x"));
+        assert_eq!(it[1].shape, Some(Shape::Angle { v: (3.0, 7.0), ext: false, measure: false, arcs: 0, square: false }));
+        assert_eq!(it[2].shape, Some(Shape::Angle { v: (1.0, 1.0), ext: false, measure: false, arcs: 3, square: false }));
+        assert_eq!((it[2].shade.as_deref(), it[2].label.as_str()), (Some("green"), "2x + 1"));
+        // untouched rows round-trip byte for byte; edited ones are written canonically
+        let spec = "angle 0 4 ext measure arcs 2 square red | x; angle 3 7";
+        assert_eq!(to_spec(&parse(spec)), spec);
+        let mut it = parse(HOUSE);
+        let m = AngleMark { measure: false, text: "y".into(), arcs: 1, square: false, shade: Some("blue".into()) };
+        set_angle_mark(&mut it, (0.0, 4.0), false, &m);
+        assert_eq!(to_spec(&it), format!("{HOUSE}; angle 0 4 arcs 1 blue | y"));
+        assert_eq!(angle_mark(&parse(&to_spec(&it)), (0.0, 4.0), false), m);
+        let ext = AngleMark { measure: true, ..Default::default() };
+        set_angle_mark(&mut it, (0.0, 4.0), true, &ext);
+        assert!(to_spec(&it).ends_with("; angle 0 4 ext measure"), "{}", to_spec(&it));
+        // measure wins over a typed label; an empty mark removes the row
+        set_angle_mark(&mut it, (0.0, 4.0), false, &AngleMark { measure: true, text: "y".into(), ..Default::default() });
+        assert!(to_spec(&it).contains("angle 0 4 measure;") || to_spec(&it).contains("angle 0 4 measure"), "{}", to_spec(&it));
+        assert_eq!(angle_mark(&it, (0.0, 4.0), false).text, "");
+        set_angle_mark(&mut it, (0.0, 4.0), false, &AngleMark::default());
+        set_angle_mark(&mut it, (0.0, 4.0), true, &AngleMark::default());
+        assert_eq!(to_spec(&it), HOUSE);
+        // marks on the corner move with the piece
+        let mut it = parse("rect 0 0 6 4; angle 6 4 arcs 1; point 6 4 C");
+        move_item(&mut it, 0, (0.0, -1.0));
+        assert_eq!(to_spec(&it), "rect 0 -1 6 4; angle 6 3 arcs 1; point 6 3 C");
+    }
+
+    #[test]
+    fn angles_at_corners_inside_and_out() {
+        let it = parse(HOUSE);
+        let deg = |v: Pt, ext: bool| angle_geo(&it, v, ext).map(|g| (g.deg * 1e6).round() / 1e6);
+        assert_eq!(deg((0.0, 0.0), false), Some(90.0));
+        assert_eq!(deg((0.0, 4.0), false), Some(135.0));
+        assert_eq!(deg((0.0, 4.0), true), Some(45.0));
+        assert_eq!(deg((3.0, 7.0), false), Some(90.0));
+        assert_eq!(deg((6.0, 0.0), true), Some(90.0));
+        assert_eq!(deg((9.0, 9.0), false), None);
+        // the interior wedge holds the shape; the exterior one lies outside it, along the
+        // extended side
+        for v in outer_corners(&it) {
+            let g = angle_geo(&it, v, false).unwrap();
+            let b = ((g.r1.1.atan2(g.r1.0)).to_degrees() + g.deg / 2.0).to_radians();
+            assert!(in_any(&it, (v.0 + b.cos() * 0.05, v.1 + b.sin() * 0.05)), "{v:?}");
+            let e = angle_geo(&it, v, true).unwrap();
+            let b = ((e.r1.1.atan2(e.r1.0)).to_degrees() + e.deg / 2.0).to_radians();
+            assert!(!in_any(&it, (v.0 + b.cos() * 0.05, v.1 + b.sin() * 0.05)), "{v:?}");
+            assert!(e.ext_ray.is_some() && (e.deg + g.deg - 180.0).abs() < 1e-9);
+            assert!(in_sweep(&g, (b.cos(), b.sin())) == false);
+        }
+        // the L-shape's inside corner is reflex; where two sides run straight on there is no angle
+        let l = parse("rect 0 0 8 3; rect 0 3 3 5");
+        assert!((angle_geo(&l, (3.0, 3.0), false).unwrap().deg - 270.0).abs() < 1e-9);
+        assert!((angle_geo(&l, (3.0, 3.0), true).unwrap().deg - 90.0).abs() < 1e-9);
+        assert_eq!(angle_geo(&l, (0.0, 3.0), false), None);
+    }
+
+    #[test]
+    fn right_angle_marks_from_the_angle_popover() {
+        // a corner square to the grid uses the presets' ra row
+        let mut it = parse("rect 0 0 6 4");
+        assert!(!has_right_mark(&it, (6.0, 0.0)));
+        set_right_mark(&mut it, (6.0, 0.0), true);
+        assert_eq!(to_spec(&it), "rect 0 0 6 4; ra 6 0 NW");
+        assert!(has_right_mark(&it, (6.0, 0.0)));
+        set_right_mark(&mut it, (6.0, 0.0), false);
+        assert_eq!(to_spec(&it), "rect 0 0 6 4");
+        // a slanted square corner uses the angle row's square
+        let mut d = parse("poly 0 0 2 2 0 4 -2 2");
+        set_right_mark(&mut d, (2.0, 2.0), true);
+        assert_eq!(to_spec(&d), "poly 0 0 2 2 0 4 -2 2; angle 2 2 square");
+        assert!(has_right_mark(&d, (2.0, 2.0)));
+        set_right_mark(&mut d, (2.0, 2.0), false);
+        assert_eq!(to_spec(&d), "poly 0 0 2 2 0 4 -2 2");
+    }
+
+    #[test]
+    fn corner_points_and_their_names() {
+        let mut it = parse(HOUSE);
+        assert_eq!(corner_point(&it, (0.0, 0.0)), None);
+        set_corner_point(&mut it, (0.0, 0.0), Some(""));
+        assert_eq!(to_spec(&it), format!("{HOUSE}; point 0 0"));
+        set_corner_point(&mut it, (0.0, 0.0), Some(" A "));
+        assert_eq!(to_spec(&it), format!("{HOUSE}; point 0 0 A"));
+        assert_eq!(corner_point(&parse(&to_spec(&it)), (0.0, 0.0)).as_deref(), Some("A"));
+        assert_eq!(parse("point 1 2 P Q")[0].shape, Some(Shape::Point((1.0, 2.0), "P Q".into())));
+        set_corner_point(&mut it, (0.0, 0.0), None);
+        assert_eq!(to_spec(&it), HOUSE);
+        // names go away from the shape: down-left at the bottom-left corner, up at the apex
+        let d = outside_dir(&it, (0.0, 0.0));
+        assert!(d.0 < -0.5 && d.1 < -0.5, "{d:?}");
+        let d = outside_dir(&it, (3.0, 7.0));
+        assert!(d.1 > 0.9, "{d:?}");
+    }
+
+    #[test]
+    fn turning_about_the_middle_of_the_pieces() {
+        let it = parse("rect 0 0 4 2; dim 0 0 4 0");
+        assert_eq!(turn_centre(&it), (2.0, 1.0));
+        assert!(close(rot((4.0, 0.0), (2.0, 1.0), 90.0), (3.0, 3.0)));
+        assert!(close(rot(rot((1.3, -2.0), (2.0, 1.0), 37.0), (2.0, 1.0), -37.0), (1.3, -2.0)));
+        assert_eq!(rot((1.0, 1.0), (0.0, 0.0), 0.0), (1.0, 1.0));
+        assert_eq!(turn_centre(&[]), (0.0, 0.0));
+    }
+
+    #[test]
+    fn lines_mode_markers() {
+        let (c, m) = line_targets(&parse(HOUSE));
+        assert_eq!((c.len(), m.len()), (5, 5), "{c:?} {m:?}");
+        assert!(m.contains(&(1.5, 5.5)) && m.contains(&(3.0, 0.0)));
+        // the L-shape's meeting point, where the upright meets the base's top side
+        let (c, _) = line_targets(&parse("rect 0 0 8 3; rect 0 3 3 5"));
+        assert!(c.iter().any(|q| close(*q, (3.0, 3.0))));
+        assert!(snap_targets(&parse(HOUSE)).contains(&(1.5, 5.5)));
+        // curved runs: the semicircle's arc, not its diameter
+        let arch = parse("semi 3 4 3 u");
+        let runs = curved_edges(arch[0].shape.as_ref().unwrap());
+        assert_eq!(runs.len(), 1);
+        assert!(close(runs[0][0], (6.0, 4.0)) && close(*runs[0].last().unwrap(), (0.0, 4.0)));
+        assert!(curved_edges(&Shape::Rect { x: 0.0, y: 0.0, w: 1.0, h: 1.0 }).is_empty());
     }
 }

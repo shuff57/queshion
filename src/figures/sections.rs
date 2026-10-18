@@ -50,7 +50,7 @@ static FIG_3: [RefSection; 7] = [
 ];
 
 static FIG_4: [RefSection; 1] = [
-    s("Settings", &["preset", "unit", "dec", "label_size", "shade", "fill_color"], ""),
+    s("Settings", &["preset", "unit", "dec", "angle_dec", "label_size", "shade", "fill_color", "rotate"], ""),
 ];
 
 static FIG_5: [RefSection; 5] = [

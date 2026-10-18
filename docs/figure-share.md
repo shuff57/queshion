@@ -60,3 +60,12 @@ box. Nothing else changes.
 - `QUESHION_FIG_LINK=<link>` opens a link at startup, as **Open from link** does.
 - `QUESHION_FIG_OPENLINK=1` shows the browser's **Open link…** box.
 - `QUESHION_FIG_EXAMPLES=1` (with `QUESHION_FIG=<id>`) opens the example gallery.
+
+## Composite shape
+
+The composite-shape figure opens on a blank canvas with its **Start with** chips, but its
+opening state for links (and **Reset all**) is still the arch it always had. A link made before
+the blank start, or one that never touched the pieces, opens the same arch it did then. A blank
+canvas travels as `{"spec":""}`. The Label-mode rows (`side`, `angle`, `point`) live inside
+`spec`, and the figure's Turn and angle rounding are the params `rotate` and `angle_dec`. Both
+default to 0, so older links leave them out. See `docs/composite-shape.md`.

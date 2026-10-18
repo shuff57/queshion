@@ -13,7 +13,7 @@ use std::hash::{Hash, Hasher};
 use egui::{Align2, Button, Color32, CornerRadius, FontId, Frame, Id, Key, Modifiers, Pos2, Rect, RichText, Sense, Stroke, TextEdit, TextureHandle, Ui, pos2, vec2};
 
 use crate::figures::composite::{self as cs, Grip, Item, NewKind, Pt, Shape, Side};
-use crate::figures::math::{CompositeView, COMPOSITE_CUSTOM, composite_spec, composite_view_svg};
+use crate::figures::math::{CompositeView, COMPOSITE_CUSTOM, COMPOSITE_STARTS, composite_spec, composite_view_svg, preset_spec};
 use crate::figures::Params;
 use crate::theme;
 
@@ -62,8 +62,8 @@ impl Tool {
             Tool::Quarter => "Drag from the corner into the quarter it should fill",
             Tool::Circle => "Drag from the centre out to the radius",
             Tool::Poly => "Click corners; click the first corner, double-click or press Enter to close",
-            Tool::Line => "Drag a height or other dashed line; it snaps to corners and midpoints",
-            Tool::Label => "Click a side to label it or mark it; click a corner for a right angle",
+            Tool::Line => "Drag a height or other dashed line between the markers: corners and meeting points (circles), midpoints (diamonds)",
+            Tool::Label => "Click a side, an angle (inside or outside a corner) or a corner to label and mark it; Turn turns the figure",
         }
     }
     fn new_kind(self) -> Option<NewKind> {
@@ -85,6 +85,15 @@ pub enum Change {
     None,
     Live,
     Step,
+}
+
+/// What a Label-tool click lands on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum LabelHit {
+    Corner(Pt),
+    Side(Side),
+    /// Corner, exterior angle?
+    Angle(Pt, bool),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -111,10 +120,19 @@ pub struct Canvas {
     /// Corners of the polygon being drawn.
     pub poly: Vec<Pt>,
     /// Label tool: the side whose popover is open, and its text buffer.
-    side: Option<Side>,
+    pub side: Option<Side>,
     side_text: String,
     /// "+" menu: the side to add a piece on, and where the menu opens.
     add: Option<(Side, Pos2)>,
+    /// Label tool: the angle whose popover is open (corner, exterior?) and its text buffer.
+    pub angle: Option<(Pt, bool)>,
+    angle_text: String,
+    /// Label tool: the corner whose popover is open and its name buffer.
+    pub corner: Option<Pt>,
+    corner_text: String,
+    /// The figure's Turn as the canvas shows it (degrees, centre): only the Label tool shows the
+    /// figure turned, as the reference does; the drawing tools edit it straight.
+    turn: (f64, Pt),
     snap_i: usize,
     tex: Option<(u64, TextureHandle)>,
     /// The spec the canvas last saw or wrote (an outside change may refit the view).
@@ -135,6 +153,11 @@ impl Default for Canvas {
             side: None,
             side_text: String::new(),
             add: None,
+            angle: None,
+            angle_text: String::new(),
+            corner: None,
+            corner_text: String::new(),
+            turn: (0.0, (0.0, 0.0)),
             snap_i: 0,
             tex: None,
             last_spec: String::new(),
@@ -149,16 +172,28 @@ impl Canvas {
         SNAPS[self.snap_i % SNAPS.len()].0
     }
 
-    /// Screen position of model point `q` (last frame's view).
-    pub fn to_screen(&self, q: Pt) -> Pos2 {
+    /// Screen position of a point of the (turned) view space.
+    fn vmap(&self, q: Pt) -> Pos2 {
         let v = self.view.unwrap_or(View { s: UNIT_PX, c: (0.0, 0.0) });
         let c = self.rect.center();
         pos2(c.x + ((q.0 - v.c.0) * v.s) as f32, c.y - ((q.1 - v.c.1) * v.s) as f32)
     }
-    fn to_model(&self, p: Pos2) -> Pt {
+    fn vunmap(&self, p: Pos2) -> Pt {
         let v = self.view.unwrap_or(View { s: UNIT_PX, c: (0.0, 0.0) });
         let c = self.rect.center();
         (v.c.0 + (p.x - c.x) as f64 / v.s, v.c.1 - (p.y - c.y) as f64 / v.s)
+    }
+    /// Screen position of model point `q` (last frame's view, turned with the figure in the
+    /// Label tool).
+    pub fn to_screen(&self, q: Pt) -> Pos2 {
+        self.vmap(cs::rot(q, self.turn.1, self.turn.0))
+    }
+    fn to_model(&self, p: Pos2) -> Pt {
+        cs::rot(self.vunmap(p), self.turn.1, -self.turn.0)
+    }
+    /// Screen direction of model direction `u` at model point `q`.
+    fn sdir(&self, q: Pt, u: Pt) -> egui::Vec2 {
+        (self.to_screen((q.0 + u.0, q.1 + u.1)) - self.to_screen(q)).normalized()
     }
     fn scale(&self) -> f64 {
         self.view.map(|v| v.s).unwrap_or(UNIT_PX)
@@ -166,7 +201,8 @@ impl Canvas {
 
     fn fit(&mut self, items: &[Item]) {
         let r = self.rect;
-        let Some((x0, y0, x1, y1)) = cs::bbox(&cs::all_points(items)) else {
+        let pts: Vec<Pt> = cs::all_points(items).into_iter().map(|q| cs::rot(q, self.turn.1, self.turn.0)).collect();
+        let Some((x0, y0, x1, y1)) = cs::bbox(&pts) else {
             self.view = Some(View { s: UNIT_PX, c: (4.0, 3.0) });
             return;
         };
@@ -177,7 +213,7 @@ impl Canvas {
 
     fn zoom_about(&mut self, p: Pos2, f: f64) {
         let Some(v) = self.view else { return };
-        let m0 = self.to_model(p);
+        let m0 = self.vunmap(p);
         let s = (v.s * f).clamp(MIN_S, MAX_S);
         let c = self.rect.center();
         self.view = Some(View { s, c: (m0.0 - (p.x - c.x) as f64 / s, m0.1 + (p.y - c.y) as f64 / s) });
@@ -232,6 +268,18 @@ impl Canvas {
                     let n: Vec<f64> = v.split_whitespace().filter_map(|t| t.parse().ok()).collect();
                     self.poly = n.chunks(2).filter(|c| c.len() == 2).map(|c| (c[0], c[1])).collect();
                 }
+                "angle" | "ext" => {
+                    let corners = cs::outer_corners(items);
+                    if let Some(v) = v.parse::<usize>().ok().and_then(|i| corners.get(i).copied()) {
+                        self.open_angle(items, v, k.trim() == "ext");
+                    }
+                }
+                "corner" => {
+                    let corners = cs::outer_corners(items);
+                    if let Some(v) = v.parse::<usize>().ok().and_then(|i| corners.get(i).copied()) {
+                        self.open_corner(items, v);
+                    }
+                }
                 "zoom" => {
                     if let (Some(f), Some(vw)) = (v.parse::<f64>().ok(), self.view.as_mut()) {
                         vw.s = (UNIT_PX * f / 100.0).clamp(MIN_S, MAX_S);
@@ -243,8 +291,64 @@ impl Canvas {
     }
 
     fn plus_pos(&self, s: &Side) -> Pos2 {
-        let m = self.to_screen(s.mid());
-        m + vec2(s.out.0 as f32, -(s.out.1 as f32)) * 20.0
+        self.to_screen(s.mid()) + self.sdir(s.mid(), s.out) * 20.0
+    }
+
+    /// `pivot_for(d)`, flipped to the other side when a popover of `size` would not fit there
+    /// (so it does not get pushed back over the part it is for).
+    fn pivot_in(&self, at: Pos2, d: egui::Vec2, size: egui::Vec2) -> Align2 {
+        let r = self.rect;
+        match pivot_for(d) {
+            Align2::RIGHT_CENTER if at.x - size.x < r.left() => Align2::LEFT_CENTER,
+            Align2::LEFT_CENTER if at.x + size.x > r.right() => Align2::RIGHT_CENTER,
+            Align2::CENTER_TOP if at.y + size.y > r.bottom() => Align2::CENTER_BOTTOM,
+            Align2::CENTER_BOTTOM if at.y - size.y < r.top() => Align2::CENTER_TOP,
+            p => p,
+        }
+    }
+
+    fn open_angle(&mut self, items: &[Item], v: Pt, ext: bool) {
+        self.angle_text = cs::angle_mark(items, v, ext).text;
+        self.angle = Some((v, ext));
+    }
+
+    fn open_corner(&mut self, items: &[Item], v: Pt) {
+        self.corner_text = cs::corner_point(items, v).unwrap_or_default();
+        self.corner = Some(v);
+    }
+
+    fn close_popovers(&mut self) {
+        self.side = None;
+        self.add = None;
+        self.angle = None;
+        self.corner = None;
+    }
+
+    /// The Label tool's target under screen point `pp`: a corner, a side, or an angle.
+    fn label_target(&self, items: &[Item], pp: Pos2) -> Option<LabelHit> {
+        let m = self.to_model(pp);
+        let corners = cs::outer_corners(items);
+        if let Some(v) = corners.iter().copied().filter(|v| self.to_screen(*v).distance(pp) < 9.0).min_by(|a, b| self.to_screen(*a).distance(pp).total_cmp(&self.to_screen(*b).distance(pp))) {
+            return Some(LabelHit::Corner(v));
+        }
+        let side = cs::outer_sides(items).into_iter().map(|s| (cs::seg_dist(m, s.a, s.b), s)).filter(|(d, _)| *d < 7.0 / self.scale()).min_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some((_, s)) = side {
+            return Some(LabelHit::Side(s));
+        }
+        let mut near: Vec<Pt> = corners.into_iter().filter(|v| self.to_screen(*v).distance(pp) < 48.0).collect();
+        near.sort_by(|a, b| self.to_screen(*a).distance(pp).total_cmp(&self.to_screen(*b).distance(pp)));
+        for v in near {
+            let l = cs::dist(v, m).max(1e-12);
+            let u = ((m.0 - v.0) / l, (m.1 - v.1) / l);
+            for ext in [false, true] {
+                if let Some(g) = cs::angle_geo(items, v, ext)
+                    && cs::in_sweep(&g, u)
+                {
+                    return Some(LabelHit::Angle(v, ext));
+                }
+            }
+        }
+        None
     }
 
     /// The canvas: toolbar, then the drawing area. Edits go straight into `p`.
@@ -252,6 +356,8 @@ impl Canvas {
         let mut change = Change::None;
         let spec = composite_spec(p);
         let mut items = cs::parse(&spec);
+        let turn0 = self.turn;
+        self.turn = if self.tool == Tool::Label { (p.f("rotate"), cs::turn_centre(&items)) } else { (0.0, (0.0, 0.0)) };
 
         self.toolbar(ui, p, &mut items, &mut change);
         ui.add_space(4.0);
@@ -262,9 +368,10 @@ impl Canvas {
         // the shape left it
         if self.view.is_none() {
             self.fit(&items);
-        } else if spec != self.last_spec && self.drag.is_none() {
-            if let Some((x0, y0, x1, y1)) = cs::bbox(&cs::all_points(&items)) {
-                let (a, b) = (self.to_screen((x0, y1)), self.to_screen((x1, y0)));
+        } else if (spec != self.last_spec || self.turn != turn0) && self.drag.is_none() {
+            let pts: Vec<Pt> = cs::all_points(&items).into_iter().map(|q| cs::rot(q, self.turn.1, self.turn.0)).collect();
+            if let Some((x0, y0, x1, y1)) = cs::bbox(&pts) {
+                let (a, b) = (self.vmap((x0, y1)), self.vmap((x1, y0)));
                 let r = Rect::from_min_max(a, b);
                 if !rect.shrink(10.0).contains_rect(r) || r.width().max(r.height()) < rect.width().min(rect.height()) * 0.15 {
                     self.fit(&items);
@@ -305,8 +412,7 @@ impl Canvas {
         if pressed && resp.hovered()
             && let Some(pp) = ptr
         {
-            self.side = None;
-            self.add = None;
+            self.close_popovers();
             self.press(p, &mut items, pp, &mut change);
         }
         // pan follows the pointer delta (any button)
@@ -364,14 +470,23 @@ impl Canvas {
         // ---- draw ----
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, Color32::WHITE);
-        self.grid(&painter);
+        // the Label tool shows the figure as it will look: no grid, turned
+        if self.tool != Tool::Label {
+            self.grid(&painter);
+        }
         self.texture(&ctx, p, &painter);
         self.overlay(ui, &painter, &items, hover);
 
         // ---- popovers ----
+        if items.is_empty() && self.poly.is_empty() && self.drag.is_none() {
+            self.start_screen(ui, p, &mut items, &mut change);
+        }
         self.props(ui, p, &mut items, &mut change);
         self.add_menu(ui, p, &mut items, &mut change);
         self.side_popover(ui, p, &mut items, &mut change);
+        self.angle_popover(ui, p, &mut items, &mut change);
+        self.corner_popover(ui, p, &mut items, &mut change);
+        self.turn_bar(ui, p, &mut change);
         self.zoom_bar(ui, &items);
 
         if self.drag.is_some() || change != Change::None {
@@ -421,23 +536,15 @@ impl Canvas {
                 }
             }
             Tool::Line => self.drag = Some(Drag::Line { a: self.snap_q(items, m, None) }),
-            Tool::Label => {
-                if let Some(v) = cs::outer_corners(items).into_iter().find(|v| self.to_screen(*v).distance(pp) < 9.0) {
-                    if cs::corner_dir(items, v).is_some() || items.iter().any(|it| matches!(&it.shape, Some(Shape::Ra(a, _)) if cs::dist(*a, v) < 1e-4)) {
-                        cs::toggle_ra(items, v);
-                        self.write(p, items);
-                        *change = Change::Step;
-                    }
-                    return;
-                }
-                let best = cs::outer_sides(items).into_iter().map(|s| (cs::seg_dist(m, s.a, s.b), s)).filter(|(d, _)| *d < 8.0 / self.scale()).min_by(|a, b| a.0.total_cmp(&b.0));
-                if let Some((_, s)) = best {
+            Tool::Label => match self.label_target(items, pp) {
+                Some(LabelHit::Corner(v)) => self.open_corner(items, v),
+                Some(LabelHit::Side(s)) => {
                     self.side_text = cs::side_label(items, s.a, s.b).unwrap_or_default();
                     self.side = Some(s);
-                } else {
-                    self.drag = Some(Drag::Pan);
                 }
-            }
+                Some(LabelHit::Angle(v, ext)) => self.open_angle(items, v, ext),
+                None => self.drag = Some(Drag::Pan),
+            },
             t => {
                 if let Some(kind) = t.new_kind() {
                     self.drag = Some(Drag::Create { kind, a: self.snap_q(items, m, None) });
@@ -514,9 +621,8 @@ impl Canvas {
             return;
         }
         if esc {
-            if self.side.is_some() || self.add.is_some() {
-                self.side = None;
-                self.add = None;
+            if self.side.is_some() || self.add.is_some() || self.angle.is_some() || self.corner.is_some() {
+                self.close_popovers();
             } else if self.sel.is_some() {
                 self.sel = None;
             } else {
@@ -557,8 +663,7 @@ impl Canvas {
                 if ui.add(seg_btn(t.name(), on)).on_hover_text(t.tip()).clicked() {
                     self.tool = t;
                     self.poly.clear();
-                    self.side = None;
-                    self.add = None;
+                    self.close_popovers();
                 }
             }
         });
@@ -601,6 +706,16 @@ impl Canvas {
                     for (d, l) in [(0, "Whole"), (1, "Tenths"), (2, "Hundredths")] {
                         if ui.add(seg_btn(l, p.i("dec") == d)).clicked() {
                             p.set_i("dec", d);
+                            *change = Change::Step;
+                        }
+                    }
+                });
+                ui.add_space(4.0);
+                ui.label(theme::muted("Round angles to").size(11.0));
+                ui.horizontal(|ui| {
+                    for (d, l) in [(0, "Whole"), (1, "Tenths"), (2, "Hundredths")] {
+                        if ui.add(seg_btn(l, p.i("angle_dec") == d)).clicked() {
+                            p.set_i("angle_dec", d);
                             *change = Change::Step;
                         }
                     }
@@ -689,11 +804,15 @@ impl Canvas {
         let (w, h) = (r.width() as f64, r.height() as f64);
         let cv = CompositeView { w, h, s: v.s, ox: w / 2.0 - v.c.0 * v.s, oy: h / 2.0 + v.c.1 * v.s };
         let ppp = ctx.pixels_per_point();
+        let mut pr = p.clone();
+        if self.tool != Tool::Label {
+            pr.set_f("rotate", 0.0);
+        }
         let mut hs = std::collections::hash_map::DefaultHasher::new();
-        format!("{:?}{:?}{}", p.0, cv, ppp).hash(&mut hs);
+        format!("{:?}{:?}{}", pr.0, cv, ppp).hash(&mut hs);
         let key = hs.finish();
         if self.tex.as_ref().is_none_or(|(k, _)| *k != key) {
-            let svg = composite_view_svg(p, cv);
+            let svg = composite_view_svg(&pr, cv);
             if let Ok((iw, ih, px)) = crate::figures::to_rgba(&svg, ppp) {
                 let img = egui::ColorImage::from_rgba_premultiplied([iw as usize, ih as usize], &px);
                 match &mut self.tex {
@@ -707,7 +826,9 @@ impl Canvas {
         }
         if let Some((_, t)) = &self.tex {
             let sz = t.size_vec2() / ppp;
-            painter.image(t.id(), Rect::from_min_size(r.min, sz), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+            // Lines mode greys the figure so the snap markers stand out
+            let tint = if self.tool == Tool::Line { Color32::from_white_alpha(110) } else { Color32::WHITE };
+            painter.image(t.id(), Rect::from_min_size(r.min, sz), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), tint);
         }
     }
 
@@ -779,31 +900,56 @@ impl Canvas {
                 }
             }
             Tool::Line | Tool::Poly | Tool::Rect | Tool::Tri | Tool::Semi | Tool::Quarter | Tool::Circle => {
-                // snap targets as small diamonds, and the snapped pointer
-                for q in cs::snap_targets(items) {
+                // snap targets: circles on corners and where pieces meet, diamonds on midpoints
+                let snapped = hover.filter(|h| self.rect.contains(*h)).map(|h| self.snap_q(items, self.to_model(h), None));
+                let (corners, mids) = cs::line_targets(items);
+                let hot = |q: Pt| snapped.is_some_and(|s| cs::dist(s, q) < 1e-9);
+                for q in corners {
                     let c = self.to_screen(q);
-                    diamond(painter, c, 3.5, Stroke::new(1.2, blue.gamma_multiply(0.7)));
+                    painter.circle(c, if hot(q) { 6.5 } else { 4.5 }, if hot(q) { blue } else { Color32::WHITE }, Stroke::new(1.5, blue));
                 }
-                if let Some(h) = hover.filter(|h| self.rect.contains(*h)) {
-                    let c = self.to_screen(self.snap_q(items, self.to_model(h), None));
-                    painter.circle_stroke(c, 4.0, Stroke::new(1.5, blue));
+                for q in mids {
+                    let c = self.to_screen(q);
+                    diamond_filled(painter, c, if hot(q) { 7.0 } else { 5.0 }, if hot(q) { blue } else { Color32::WHITE }, Stroke::new(1.5, blue));
+                }
+                if let Some(q) = snapped {
+                    let c = self.to_screen(q);
+                    painter.circle_stroke(c, 3.0, Stroke::new(1.5, blue));
                     ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
                 }
             }
             Tool::Label => {
-                let near_side = hm.and_then(|m| cs::outer_sides(items).into_iter().map(|s| (cs::seg_dist(m, s.a, s.b), s)).filter(|(d, _)| *d < 8.0 / self.scale()).min_by(|a, b| a.0.total_cmp(&b.0)).map(|x| x.1));
-                for s in cs::outer_sides(items) {
-                    let hot = near_side == Some(s) || self.side == Some(s);
-                    let st = if hot { Stroke::new(6.0, blue.gamma_multiply(0.35)) } else { Stroke::new(3.0, Color32::from_rgb(0xc5, 0xcb, 0xd6)) };
-                    painter.line_segment([self.to_screen(s.a), self.to_screen(s.b)], st);
+                let target = hover.filter(|h| self.rect.contains(*h) && self.drag.is_none()).and_then(|h| self.label_target(items, h));
+                let soft = blue.gamma_multiply(0.3);
+                // the open popover's part stays lit
+                let lit_side = self.side.or(match target { Some(LabelHit::Side(s)) => Some(s), _ => None });
+                if let Some(s) = lit_side {
+                    painter.line_segment([self.to_screen(s.a), self.to_screen(s.b)], Stroke::new(8.0, soft));
+                }
+                for (v, ext) in self.angle.into_iter().chain(match target { Some(LabelHit::Angle(v, e)) => Some((v, e)), _ => None }) {
+                    if let Some(g) = cs::angle_geo(items, v, ext) {
+                        let c = self.to_screen(v);
+                        let a1 = self.sdir(v, g.r1);
+                        let f1 = a1.y.atan2(a1.x) as f64;
+                        let n = ((g.deg / 6.0).ceil() as usize).max(2);
+                        let mut pts = vec![c];
+                        pts.extend((0..=n).map(|i| {
+                            let t = f1 - (g.deg * i as f64 / n as f64).to_radians();
+                            c + vec2(t.cos() as f32, t.sin() as f32) * 36.0
+                        }));
+                        painter.add(egui::Shape::convex_polygon(pts, blue.gamma_multiply(0.18), Stroke::NONE));
+                    }
                 }
                 for v in cs::outer_corners(items) {
                     let c = self.to_screen(v);
-                    let hot = hover.is_some_and(|h| h.distance(c) < 9.0);
-                    let fill = if items.iter().any(|it| matches!(&it.shape, Some(Shape::Ra(a, _)) if cs::dist(*a, v) < 1e-4)) { blue } else { Color32::WHITE };
-                    painter.circle(c, if hot { 6.5 } else { 4.5 }, fill, Stroke::new(1.5, blue));
+                    let hot = self.corner.is_some_and(|w| cs::dist(w, v) < 1e-6) || matches!(target, Some(LabelHit::Corner(w)) if cs::dist(w, v) < 1e-6);
+                    if hot {
+                        painter.circle(c, 7.0, blue.gamma_multiply(0.25), Stroke::new(1.5, blue));
+                    } else {
+                        painter.circle_stroke(c, 4.0, Stroke::new(1.2, blue.gamma_multiply(0.45)));
+                    }
                 }
-                if near_side.is_some() {
+                if target.is_some() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                 }
             }
@@ -828,11 +974,7 @@ impl Canvas {
             }
         }
         // hint
-        let hint = if items.is_empty() && self.tool == Tool::Select {
-            "Pick a shape tool above and drag on the grid, or use Start with on the left"
-        } else {
-            self.tool.tip()
-        };
+        let hint = if items.is_empty() { "" } else { self.tool.tip() };
         painter.text(self.rect.left_bottom() + vec2(8.0, -8.0), Align2::LEFT_BOTTOM, hint, FontId::proportional(11.0), theme::muted_col());
         let _ = acc;
     }
@@ -1011,6 +1153,8 @@ impl Canvas {
         let (mut new_mode, mut text) = (mode, self.side_text.clone());
         let (ticks0, arrows0) = (cs::side_marks(items, side.a, side.b, false), cs::side_marks(items, side.a, side.b, true));
         let (mut ticks, mut arrows) = (ticks0, arrows0);
+        let style0 = cs::side_style(items, side.a, side.b);
+        let (mut style, mut thick) = style0.clone();
         let measured = {
             let dec = p.i("dec").clamp(0, 4) as usize;
             let n = format!("{:.*}", dec, side.len());
@@ -1018,13 +1162,9 @@ impl Canvas {
             if p.s("unit").trim().is_empty() { n } else { format!("{n} {}", p.s("unit").trim()) }
         };
         let mut close = false;
-        let anchor = self.plus_pos(&side) + vec2(side.out.0 as f32, -(side.out.1 as f32)) * 10.0;
-        let pivot = match (side.out.0 > 0.5, side.out.0 < -0.5, side.out.1 > 0.5) {
-            (true, _, _) => Align2::LEFT_CENTER,
-            (_, true, _) => Align2::RIGHT_CENTER,
-            (_, _, true) => Align2::CENTER_BOTTOM,
-            _ => Align2::CENTER_TOP,
-        };
+        let out = self.sdir(side.mid(), side.out);
+        let anchor = self.plus_pos(&side) + out * 10.0;
+        let pivot = self.pivot_in(anchor, out, vec2(250.0, 330.0));
         egui::Area::new(Id::new("comp_side"))
             .order(egui::Order::Foreground)
             .fixed_pos(anchor)
@@ -1070,6 +1210,22 @@ impl Canvas {
                             }
                         }
                     });
+                    ui.label(theme::muted("Line").size(11.0));
+                    ui.horizontal(|ui| {
+                        for w in cs::LINE_STYLES {
+                            if ui.add(seg_btn(&cap(w), style == w)).clicked() {
+                                style = w.to_string();
+                            }
+                        }
+                    });
+                    ui.label(theme::muted("Thickness").size(11.0));
+                    ui.horizontal(|ui| {
+                        for w in ["thin", "regular", "thick"] {
+                            if ui.add(seg_btn(&cap(w), thick == w)).clicked() {
+                                thick = w.to_string();
+                            }
+                        }
+                    });
                 });
             });
         if close {
@@ -1104,10 +1260,345 @@ impl Canvas {
             edited = true;
             *change = Change::Step;
         }
+        if (style.clone(), thick.clone()) != style0 {
+            cs::set_side_style(items, side.a, side.b, &style, &thick);
+            edited = true;
+            *change = Change::Step;
+        }
         if edited {
             self.write(p, items);
         }
     }
+
+    /// Label tool: an angle's label (None / Measure / Text), congruence arcs or the right-angle
+    /// mark, and shading.
+    fn angle_popover(&mut self, ui: &mut Ui, p: &mut Params, items: &mut Vec<Item>, change: &mut Change) {
+        if self.tool != Tool::Label {
+            self.angle = None;
+            return;
+        }
+        let Some((v, ext)) = self.angle else { return };
+        let Some(g) = cs::angle_geo(items, v, ext) else {
+            self.angle = None;
+            return;
+        };
+        let m0 = cs::angle_mark(items, v, ext);
+        let mut m = m0.clone();
+        let right = (g.deg - 90.0).abs() < 1e-6;
+        let ra0 = if ext { m0.square } else { cs::has_right_mark(items, v) };
+        let mut ra = ra0;
+        let mode0 = if m0.measure { "Measure" } else if m0.text.trim().is_empty() { "None" } else { "Text" };
+        let mut mode = mode0;
+        let mut text = self.angle_text.clone();
+        let measured = format!("{}\u{b0}", trim_num(g.deg, p.i("angle_dec")));
+        let mut close = false;
+        // the popover opens beyond the wedge, along its bisector
+        let a1 = self.sdir(v, g.r1);
+        let t = a1.y.atan2(a1.x) as f64 - (g.deg / 2.0).to_radians();
+        let dir = vec2(t.cos() as f32, t.sin() as f32);
+        let anchor = self.to_screen(v) + dir * 54.0;
+        egui::Area::new(Id::new("comp_angle"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(anchor)
+            .pivot(self.pivot_in(anchor, dir, vec2(250.0, 250.0)))
+            .constrain_to(self.rect)
+            .show(ui.ctx(), |ui| {
+                Frame::popup(ui.style()).inner_margin(10.0).show(ui, |ui| {
+                    ui.set_width(230.0);
+                    ui.horizontal(|ui| {
+                        ui.label(theme::strong(if ext { "Exterior angle" } else { "Angle" }).size(13.0));
+                        ui.label(theme::muted(&measured).size(12.0));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.add(Button::new("\u{d7}").frame(false)).clicked() {
+                                close = true;
+                            }
+                        });
+                    });
+                    ui.label(theme::muted("Label").size(11.0));
+                    ui.horizontal(|ui| {
+                        for l in ["None", "Measure", "Text"] {
+                            if ui.add(seg_btn(l, mode == l)).clicked() {
+                                mode = l;
+                            }
+                        }
+                    });
+                    if mode == "Text" {
+                        ui.add(TextEdit::singleline(&mut text).hint_text("x").desired_width(200.0));
+                    }
+                    ui.add_space(4.0);
+                    if right {
+                        ui.label(theme::muted("Right-angle mark").size(11.0));
+                        ui.horizontal(|ui| {
+                            if ui.add(seg_btn("None", !ra)).clicked() {
+                                ra = false;
+                            }
+                            if ui.add(seg_btn("\u{221f} Square", ra)).on_hover_text("Right-angle square").clicked() {
+                                ra = true;
+                            }
+                        });
+                    } else {
+                        ui.label(theme::muted("Congruence arcs").size(11.0));
+                        ui.horizontal(|ui| {
+                            for (k, l) in [(0u8, "None"), (1, "One arc"), (2, "Two"), (3, "Three")] {
+                                if ui.add(seg_btn(l, m.arcs == k)).clicked() {
+                                    m.arcs = k;
+                                }
+                            }
+                        });
+                    }
+                    ui.label(theme::muted("Shading").size(11.0));
+                    shade_row(ui, &mut m.shade);
+                });
+            });
+        if close {
+            self.angle = None;
+            return;
+        }
+        m.measure = mode == "Measure";
+        match mode {
+            "None" => m.text.clear(),
+            "Text" => {
+                // a fresh Text starts from x, as the reference's placeholder suggests
+                if mode0 != "Text" && text.trim().is_empty() {
+                    text = "x".into();
+                }
+                m.text = text.clone();
+            }
+            _ => {}
+        }
+        if ext {
+            m.square = ra && right;
+        }
+        if !right {
+            m.square = false;
+        }
+        let mut edited = false;
+        if m != m0 {
+            cs::set_angle_mark(items, v, ext, &m);
+            edited = true;
+            *change = if mode == mode0 && m.text != m0.text && m.arcs == m0.arcs && m.shade == m0.shade { Change::Live } else { Change::Step };
+        }
+        if !ext && right && ra != ra0 {
+            cs::set_right_mark(items, v, ra);
+            edited = true;
+            *change = Change::Step;
+        }
+        self.angle_text = text;
+        if edited {
+            self.write(p, items);
+        }
+    }
+
+    /// Label tool: a corner's point (No point / Show) and its name.
+    fn corner_popover(&mut self, ui: &mut Ui, p: &mut Params, items: &mut Vec<Item>, change: &mut Change) {
+        if self.tool != Tool::Label {
+            self.corner = None;
+            return;
+        }
+        let Some(v) = self.corner else { return };
+        let cur = cs::corner_point(items, v);
+        let mut show = cur.is_some();
+        let mut name = self.corner_text.clone();
+        let mut close = false;
+        let dir = self.sdir(v, cs::outside_dir(items, v));
+        let anchor = self.to_screen(v) + dir * 22.0;
+        egui::Area::new(Id::new("comp_corner"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(anchor)
+            .pivot(self.pivot_in(anchor, dir, vec2(220.0, 140.0)))
+            .constrain_to(self.rect)
+            .show(ui.ctx(), |ui| {
+                Frame::popup(ui.style()).inner_margin(10.0).show(ui, |ui| {
+                    ui.set_width(200.0);
+                    ui.horizontal(|ui| {
+                        ui.label(theme::strong("Corner").size(13.0));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.add(Button::new("\u{d7}").frame(false)).clicked() {
+                                close = true;
+                            }
+                        });
+                    });
+                    ui.label(theme::muted("Point").size(11.0));
+                    ui.horizontal(|ui| {
+                        if ui.add(seg_btn("No point", !show)).clicked() {
+                            show = false;
+                        }
+                        if ui.add(seg_btn("\u{25cf} Show", show)).clicked() {
+                            show = true;
+                        }
+                    });
+                    if show {
+                        ui.label(theme::muted("Label").size(11.0));
+                        ui.add(TextEdit::singleline(&mut name).hint_text("A").desired_width(170.0));
+                    }
+                });
+            });
+        if close {
+            self.corner = None;
+            return;
+        }
+        let want = show.then(|| name.trim().to_string());
+        if want != cur {
+            cs::set_corner_point(items, v, want.as_deref());
+            *change = if show == cur.is_some() { Change::Live } else { Change::Step };
+            self.write(p, items);
+        }
+        self.corner_text = name;
+    }
+
+    /// The figure's Turn (Label tool), with Straighten: bottom right, over the zoom bar.
+    fn turn_bar(&mut self, ui: &mut Ui, p: &mut Params, change: &mut Change) {
+        if self.tool != Tool::Label {
+            return;
+        }
+        let r = self.rect;
+        egui::Area::new(Id::new("comp_turn"))
+            .order(egui::Order::Middle)
+            .fixed_pos(pos2(r.right() - 8.0, r.bottom() - 48.0))
+            .pivot(Align2::RIGHT_BOTTOM)
+            .show(ui.ctx(), |ui| {
+                Frame::popup(ui.style()).inner_margin(6.0).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        ui.label(RichText::new("\u{21bb}").size(14.0)).on_hover_text("Turn the figure");
+                        let mut t = p.f("rotate");
+                        let resp = ui.add(egui::DragValue::new(&mut t).range(-180.0..=180.0).speed(1.0).max_decimals(1).suffix("\u{b0}"));
+                        if resp.changed() {
+                            p.set_f("rotate", t);
+                            *change = Change::Live;
+                        }
+                        if ui.add_enabled(p.f("rotate") != 0.0, seg_btn("Straighten", false)).on_hover_text("Turn the figure back to 0\u{b0}").clicked() {
+                            p.set_f("rotate", 0.0);
+                            *change = Change::Step;
+                        }
+                    });
+                });
+            });
+    }
+
+    /// The opening screen of an empty canvas (the reference's "Start with"): one piece, or a
+    /// shape already built from pieces.
+    fn start_screen(&mut self, ui: &mut Ui, p: &mut Params, items: &mut Vec<Item>, change: &mut Change) {
+        let mut pick: Option<&str> = None;
+        egui::Area::new(Id::new("comp_start"))
+            .order(egui::Order::Middle)
+            .fixed_pos(self.rect.center())
+            .pivot(Align2::CENTER_CENTER)
+            .show(ui.ctx(), |ui| {
+                Frame::popup(ui.style()).inner_margin(18.0).show(ui, |ui| {
+                    ui.set_max_width(460.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(theme::strong("Start with").size(18.0));
+                        ui.label(theme::muted("One piece, or a shape already built from pieces. Then add more pieces onto any straight side.").size(12.0));
+                    });
+                    ui.add_space(10.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+                        for name in COMPOSITE_STARTS {
+                            if start_chip(ui, name).clicked() {
+                                pick = Some(name);
+                            }
+                        }
+                    });
+                });
+            });
+        if let Some(name) = pick
+            && let Some(spec) = preset_spec(name)
+        {
+            *items = cs::parse(spec);
+            self.write(p, items);
+            self.sel = None;
+            self.tool = Tool::Select;
+            self.view = None;
+            *change = Change::Step;
+        }
+    }
+}
+
+/// Where a popover hangs off its anchor so it opens along screen direction `d`.
+fn pivot_for(d: egui::Vec2) -> Align2 {
+    if d.x.abs() >= d.y.abs() {
+        if d.x >= 0.0 { Align2::LEFT_CENTER } else { Align2::RIGHT_CENTER }
+    } else if d.y >= 0.0 {
+        Align2::CENTER_TOP
+    } else {
+        Align2::CENTER_BOTTOM
+    }
+}
+
+/// `v` to `dec` decimals without trailing zeros.
+fn trim_num(v: f64, dec: i64) -> String {
+    let n = format!("{:.*}", dec.clamp(0, 4) as usize, v);
+    if n.contains('.') { n.trim_end_matches('0').trim_end_matches('.').to_string() } else { n }
+}
+
+/// None / Blue / Red / Green / Yellow swatches.
+fn shade_row(ui: &mut Ui, shade: &mut Option<String>) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let none = shade.is_none();
+        let b = Button::new(RichText::new("\u{d7}").size(11.0).color(theme::muted_col()))
+            .fill(Color32::WHITE)
+            .stroke(Stroke::new(if none { 2.0 } else { 1.0 }, if none { theme::accent_col() } else { theme::border() }))
+            .min_size(vec2(26.0, 22.0));
+        if ui.add(b).on_hover_text("None").clicked() {
+            *shade = None;
+        }
+        for (w, hex) in cs::SHADES {
+            let on = shade.as_deref() == Some(w);
+            let b = Button::new("")
+                .fill(hex_col(hex))
+                .stroke(Stroke::new(if on { 2.0 } else { 1.0 }, if on { theme::accent_col() } else { theme::border() }))
+                .min_size(vec2(26.0, 22.0));
+            if ui.add(b).on_hover_text(cap(w)).clicked() {
+                *shade = Some(w.to_string());
+            }
+        }
+    });
+}
+
+/// A "Start with" chip: a small drawing of the shape over its name.
+fn start_chip(ui: &mut Ui, name: &str) -> egui::Response {
+    let (r, resp) = ui.allocate_exact_size(vec2(92.0, 74.0), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name));
+    let hot = resp.hovered();
+    let pt = ui.painter();
+    pt.rect(r, CornerRadius::same(10), if hot { theme::accent_faded() } else { Color32::WHITE }, Stroke::new(1.0, if hot { theme::accent_col() } else { theme::border() }), egui::StrokeKind::Inside);
+    let ink = Stroke::new(1.6, theme::text_col());
+    let fill = Color32::from_rgb(0xe9, 0xf1, 0xfb);
+    let c = r.center() - vec2(0.0, 9.0);
+    let poly = |pts: Vec<Pos2>| egui::Shape::convex_polygon(pts, fill, ink);
+    let arc = |cx: Pos2, rad: f32, a0: f32, a1: f32| -> Vec<Pos2> { (0..=16).map(|i| { let t = (a0 + (a1 - a0) * i as f32 / 16.0).to_radians(); cx + vec2(t.cos(), -t.sin()) * rad }).collect() };
+    match name {
+        "Rectangle" => { pt.rect(Rect::from_center_size(c, vec2(36.0, 24.0)), CornerRadius::ZERO, fill, ink, egui::StrokeKind::Middle); }
+        "Triangle" => { pt.add(poly(vec![c + vec2(-18.0, 12.0), c + vec2(18.0, 12.0), c + vec2(-4.0, -13.0)])); }
+        "Semicircle" => { let mut v = arc(c + vec2(0.0, 9.0), 18.0, 0.0, 180.0); v.push(v[0]); pt.add(poly(v)); }
+        "Circle" => { pt.circle(c, 14.0, fill, ink); }
+        "L-shape" => {
+            let v = [(-14.0, -14.0), (-4.0, -14.0), (-4.0, 4.0), (16.0, 4.0), (16.0, 14.0), (-14.0, 14.0)];
+            let pts: Vec<Pos2> = v.iter().map(|(x, y)| c + vec2(*x, *y)).collect();
+            pt.rect_filled(Rect::from_min_max(c + vec2(-14.0, -14.0), c + vec2(-4.0, 14.0)), CornerRadius::ZERO, fill);
+            pt.rect_filled(Rect::from_min_max(c + vec2(-14.0, 4.0), c + vec2(16.0, 14.0)), CornerRadius::ZERO, fill);
+            pt.add(egui::Shape::closed_line(pts, ink));
+        }
+        "House" => {
+            pt.rect(Rect::from_min_max(c + vec2(-14.0, -2.0), c + vec2(14.0, 15.0)), CornerRadius::ZERO, fill, ink, egui::StrokeKind::Middle);
+            pt.add(poly(vec![c + vec2(-14.0, -2.0), c + vec2(14.0, -2.0), c + vec2(0.0, -15.0)]));
+        }
+        _ => {
+            // arch: a rectangle under a semicircle
+            let mut v = arc(c + vec2(0.0, -1.0), 13.0, 0.0, 180.0);
+            v.extend([c + vec2(-13.0, 15.0), c + vec2(13.0, 15.0)]);
+            pt.rect_filled(Rect::from_min_max(c + vec2(-13.0, -1.0), c + vec2(13.0, 15.0)), CornerRadius::ZERO, fill);
+            pt.add(poly(arc(c + vec2(0.0, -1.0), 13.0, 0.0, 180.0)));
+            let mut o = arc(c + vec2(0.0, -1.0), 13.0, 0.0, 180.0);
+            o.extend([c + vec2(-13.0, 15.0), c + vec2(13.0, 15.0)]);
+            pt.add(egui::Shape::closed_line(o, ink));
+            let _ = v;
+        }
+    }
+    pt.text(pos2(r.center().x, r.bottom() - 10.0), Align2::CENTER_CENTER, name, FontId::proportional(12.0), theme::text_col());
+    resp.on_hover_text(format!("Start with {}", if name.contains('-') { name.to_string() } else { format!("a {}", name.to_lowercase()) }))
 }
 
 /// Size / position fields of the selected item.
@@ -1205,6 +1696,10 @@ fn shape_fields(ui: &mut Ui, sh: &mut Shape) {
             *d = lc.to_uppercase();
             pt(ui, "At", a);
         }
+        // set from the Label tool's popovers
+        Shape::SideStyle(..) | Shape::Angle { .. } | Shape::Point(..) => {
+            ui.label(theme::muted("Change it with the Label tool.").size(11.0));
+        }
     }
 }
 
@@ -1215,9 +1710,9 @@ fn seg_btn(label: &str, on: bool) -> Button<'static> {
         .corner_radius(CornerRadius::same(8))
 }
 
-fn diamond(painter: &egui::Painter, c: Pos2, r: f32, st: Stroke) {
+fn diamond_filled(painter: &egui::Painter, c: Pos2, r: f32, fill: Color32, st: Stroke) {
     let pts = vec![c + vec2(0.0, -r), c + vec2(r, 0.0), c + vec2(0.0, r), c + vec2(-r, 0.0)];
-    painter.add(egui::Shape::closed_line(pts, st));
+    painter.add(egui::Shape::convex_polygon(pts, fill, st));
 }
 
 fn hex_col(hex: &str) -> Color32 {

@@ -498,6 +498,12 @@ impl Workspace {
         self.examples_open = false;
         self.sel = Some(i);
         self.params = figures::start_params(&reg()[i]);
+        // the composite shape opens on a blank canvas with its "Start with" screen, as the
+        // reference does. Its opening state (share links, Reset all) keeps the arch, so links
+        // made before stay the same; links and saved figures set their own spec over this.
+        if reg()[i].id == "composite-shape" {
+            self.params.set_s("spec", "");
+        }
         self.comp = Default::default();
         self.editing = None;
         self.shown = None;
@@ -1339,7 +1345,9 @@ impl Workspace {
                     if let Some(card) = figures::measures_for(def.id) {
                         self.measures_card(ui, def.id, &pdefs, &card);
                     }
-                    if let Some(card) = figures::rows_for(def.id) {
+                    // the composite shape is built on its canvas: its typed rows sit behind Advanced
+                    let rows_advanced = def.id == "composite-shape";
+                    if let Some(card) = figures::rows_for(def.id).filter(|_| !rows_advanced) {
                         self.rows_card(ui, def.id, &pdefs, &card);
                     }
                     // the Classic setups dropdown goes in the figure's first card: an action-chips
@@ -1348,6 +1356,13 @@ impl Workspace {
                     let classic_in_chips = chips.as_ref().is_some_and(|c| c.count_key.is_empty());
                     if let Some(card) = chips {
                         self.chips_card(ui, def.id, &pdefs, &card);
+                    }
+                    if rows_advanced && let Some(card) = figures::rows_for(def.id) {
+                        egui::CollapsingHeader::new(RichText::new("Advanced: spec").size(12.0))
+                            .id_salt(("fig_rows_adv", def.id))
+                            .default_open(false)
+                            .show(ui, |ui| self.rows_card(ui, def.id, &pdefs, &card));
+                        ui.add_space(6.0);
                     }
                     let secs = figures::layout::sections(def.id, &pdefs, n_now);
                     for (si_, sec) in secs.iter().enumerate() {
@@ -2832,10 +2847,32 @@ mod tests {
     fn composite_canvas_deletes_and_labels_corners() {
         let (ctx, mut ws) = comp_ws("rect 0 0 4 3; rect 4 0 2 2");
         ws.comp.tool = composite_canvas::Tool::Label;
+        // a corner opens its Point popover, inside it the angle, outside it the exterior angle
         comp_click(&ctx, &mut ws, (0.0, 0.0));
-        assert_eq!(ws.params.s("spec"), "rect 0 0 4 3; rect 4 0 2 2; ra 0 0 NE");
-        comp_click(&ctx, &mut ws, (0.0, 0.0));
-        assert_eq!(ws.params.s("spec"), "rect 0 0 4 3; rect 4 0 2 2");
+        assert_eq!(ws.comp.corner, Some((0.0, 0.0)));
+        let at = |ws: &Workspace, dx: f32, dy: f32| ws.comp.to_screen((0.0, 0.0)) + Vec2::new(dx, dy);
+        let click_px = |ctx: &egui::Context, ws: &mut Workspace, p: egui::Pos2| {
+            let mut ev = btn(p, true);
+            ev.extend(btn(p, false));
+            comp_frame(ctx, ws, ev);
+            comp_frame(ctx, ws, vec![]);
+        };
+        ws.comp.corner = None; // closed (its popover may sit over the angle)
+        comp_frame(&ctx, &mut ws, vec![]);
+        let p = at(&ws, 22.0, -22.0);
+        click_px(&ctx, &mut ws, p);
+        assert_eq!((ws.comp.angle, ws.comp.corner), (Some(((0.0, 0.0), false)), None));
+        ws.comp.angle = None;
+        comp_frame(&ctx, &mut ws, vec![]);
+        let p = at(&ws, -22.0, -22.0);
+        click_px(&ctx, &mut ws, p);
+        assert_eq!(ws.comp.angle, Some(((0.0, 0.0), true)));
+        // a side opens the side popover
+        ws.comp.angle = None;
+        comp_frame(&ctx, &mut ws, vec![]);
+        comp_click(&ctx, &mut ws, (2.0, 3.0));
+        assert!(ws.comp.side.is_some_and(|s| (s.a.1 - 3.0).abs() < 1e-9 && (s.b.1 - 3.0).abs() < 1e-9), "{:?}", ws.comp.side);
+        assert_eq!(ws.params.s("spec"), "rect 0 0 4 3; rect 4 0 2 2", "opening popovers edits nothing");
         ws.comp.tool = composite_canvas::Tool::Select;
         comp_click(&ctx, &mut ws, (5.0, 1.0));
         assert_eq!(ws.comp.sel, Some(1));
@@ -2845,6 +2882,148 @@ mod tests {
         assert_eq!(ws.comp.sel, None);
     }
 
+    /// The Label tool shows the figure turned: clicks land on the turned corners, and the
+    /// drawing tools show it straight again.
+    #[test]
+    fn composite_canvas_label_tool_turns_with_the_figure() {
+        let (ctx, mut ws) = comp_ws("rect 0 0 4 2");
+        ws.params.set_f("rotate", 90.0);
+        ws.comp.tool = composite_canvas::Tool::Label;
+        comp_frame(&ctx, &mut ws, vec![]);
+        comp_frame(&ctx, &mut ws, vec![]);
+        // the rectangle turns a quarter about its middle (2, 1): (4, 0) goes to (3, 3)
+        let s = ws.comp.to_screen((4.0, 0.0));
+        let rect_mid = ws.comp.to_screen((2.0, 1.0));
+        assert!((s.x - rect_mid.x) > 0.0 && (s.y - rect_mid.y) < -10.0, "turned up: {s:?} vs {rect_mid:?}");
+        let mut ev = btn(s, true);
+        ev.extend(btn(s, false));
+        comp_frame(&ctx, &mut ws, ev);
+        comp_frame(&ctx, &mut ws, vec![]);
+        assert_eq!(ws.comp.corner, Some((4.0, 0.0)));
+        ws.comp.tool = composite_canvas::Tool::Select;
+        comp_frame(&ctx, &mut ws, vec![]);
+        let s2 = ws.comp.to_screen((4.0, 0.0));
+        assert!((s2.y - ws.comp.to_screen((2.0, 1.0)).y) > 10.0, "straight again outside the Label tool");
+        assert_eq!(ws.params.f("rotate"), 90.0, "the turn is kept");
+    }
+
+    /// The composite shape opens on a blank canvas (its Start with screen), while its opening
+    /// state, so every share link made before, keeps the arch.
+    #[test]
+    fn composite_opens_blank_but_old_links_keep_their_shape() {
+        let (i, def) = find_def("composite-shape").unwrap();
+        let mut ws = Workspace::new(false);
+        ws.select(i);
+        assert_eq!(ws.params.s("spec"), "");
+        let arch = figures::start_params(def).s("spec").to_string();
+        assert!(arch.starts_with("rect 0 0 6 4; semi 3 4 3 u"), "{arch}");
+        // a bare link (made from an untouched figure before) still opens the arch
+        ws.apply_link("queshion://figure/composite-shape").unwrap();
+        assert_eq!(ws.params.s("spec"), arch);
+        // a link that changed only the unit keeps the arch too, and the new settings default
+        let mut p = figures::start_params(def);
+        p.set_s("unit", "m");
+        let link = figures::share::encode("composite-shape", &p, &figures::start_params(def));
+        let mut ws2 = Workspace::new(false);
+        ws2.select(i);
+        ws2.apply_link(&link).unwrap();
+        assert_eq!((ws2.params.s("spec"), ws2.params.s("unit"), ws2.params.f("rotate"), ws2.params.i("angle_dec")), (arch.as_str(), "m", 0.0, 0));
+        // a blank canvas round-trips through its own link
+        let mut bp = figures::start_params(def);
+        bp.set_s("spec", "");
+        let blank = figures::share::encode("composite-shape", &bp, &figures::start_params(def));
+        let mut ws3 = Workspace::new(false);
+        ws3.apply_link(&blank).unwrap();
+        assert_eq!(ws3.params.s("spec"), "");
+    }
+
+    /// Runs a frame with AccessKit on and clicks the widget labelled `label` (the canvas'
+    /// popovers and Start with chips are found by their names, as a screen reader would).
+    fn click_named(ctx: &egui::Context, ws: &mut Workspace, label: &str) {
+        ctx.enable_accesskit();
+        let raw = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1400.0, 900.0))), ..Default::default() };
+        let mut out = ctx.run_ui(raw, |ui| {
+            let _ = ws.show(ui);
+        });
+        out.textures_delta.clear();
+        let tree = out.platform_output.accesskit_update.expect("accesskit tree");
+        // the canvas' own widget when the side panel has one of the same name (rightmost)
+        let b = tree
+            .nodes
+            .iter()
+            .filter(|(_, n)| n.label().is_some_and(|l| l == label))
+            .filter_map(|(_, n)| n.bounds())
+            .max_by(|a, b| a.x0.total_cmp(&b.x0))
+            .unwrap_or_else(|| panic!("no widget named {label:?}"));
+        let p = egui::pos2(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32);
+        comp_frame(ctx, ws, vec![egui::Event::PointerMoved(p)]);
+        let mut ev = btn(p, true);
+        ev.extend(btn(p, false));
+        comp_frame(ctx, ws, ev);
+        comp_frame(ctx, ws, vec![]);
+    }
+
+    /// The Label tool's popovers write their rows into the spec, each click one undo step.
+    #[test]
+    fn composite_canvas_popovers_write_the_spec_with_undo() {
+        let (ctx, mut ws) = comp_ws("rect 0 0 6 4");
+        ws.comp.tool = composite_canvas::Tool::Label;
+        comp_click(&ctx, &mut ws, (3.0, 0.0));
+        assert!(ws.comp.side.is_some());
+        click_named(&ctx, &mut ws, "Dashed");
+        assert_eq!(ws.params.s("spec"), "rect 0 0 6 4; side 0 0 6 0 dashed");
+        click_named(&ctx, &mut ws, "Thick");
+        assert_eq!(ws.params.s("spec"), "rect 0 0 6 4; side 0 0 6 0 dashed thick");
+        ws.step_history(true);
+        assert_eq!(ws.params.s("spec"), "rect 0 0 6 4; side 0 0 6 0 dashed");
+        ws.step_history(true);
+        assert_eq!(ws.params.s("spec"), "rect 0 0 6 4");
+        ws.step_history(false);
+        ws.step_history(false);
+        assert_eq!(ws.params.s("spec"), "rect 0 0 6 4; side 0 0 6 0 dashed thick");
+        // the angle inside the bottom-left corner: its measure, then its right-angle square
+        ws.comp.side = None;
+        comp_frame(&ctx, &mut ws, vec![]);
+        let p = ws.comp.to_screen((0.0, 0.0)) + Vec2::new(24.0, -24.0);
+        let mut ev = btn(p, true);
+        ev.extend(btn(p, false));
+        comp_frame(&ctx, &mut ws, ev);
+        comp_frame(&ctx, &mut ws, vec![]);
+        assert_eq!(ws.comp.angle, Some(((0.0, 0.0), false)));
+        click_named(&ctx, &mut ws, "Measure");
+        assert!(ws.params.s("spec").ends_with("; angle 0 0 measure"), "{}", ws.params.s("spec"));
+        click_named(&ctx, &mut ws, "\u{221f} Square");
+        assert!(ws.params.s("spec").ends_with("; angle 0 0 measure; ra 0 0 NE"), "{}", ws.params.s("spec"));
+        ws.step_history(true);
+        assert!(!ws.params.s("spec").contains("ra 0 0"));
+        ws.step_history(false);
+        // the corner's point
+        ws.comp.angle = None;
+        comp_frame(&ctx, &mut ws, vec![]);
+        comp_click(&ctx, &mut ws, (6.0, 4.0));
+        assert_eq!(ws.comp.corner, Some((6.0, 4.0)));
+        click_named(&ctx, &mut ws, "\u{25cf} Show");
+        assert!(ws.params.s("spec").ends_with("; point 6 4"), "{}", ws.params.s("spec"));
+        // the turn and Straighten
+        ws.params.set_f("rotate", 30.0);
+        comp_frame(&ctx, &mut ws, vec![]);
+        click_named(&ctx, &mut ws, "Straighten");
+        assert_eq!(ws.params.f("rotate"), 0.0);
+        ws.step_history(true);
+        assert_eq!(ws.params.f("rotate"), 30.0);
+    }
+
+    /// An empty canvas shows the Start with chips; a chip builds that shape as one undo step.
+    #[test]
+    fn composite_start_screen_chips_build_a_shape() {
+        let (ctx, mut ws) = comp_ws("");
+        click_named(&ctx, &mut ws, "House");
+        assert_eq!(ws.params.s("spec"), figures::math::preset_spec("House").unwrap());
+        ws.step_history(true);
+        assert_eq!(ws.params.s("spec"), "");
+        ws.step_history(false);
+        assert_eq!(ws.params.s("spec"), figures::math::preset_spec("House").unwrap());
+    }
 
     #[test]
     fn composite_canvas_pans_on_empty_space() {

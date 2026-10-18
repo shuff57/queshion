@@ -25,7 +25,7 @@ pub const FIGURES: [&str; 11] = [
 ];
 
 /// Figures with the reference's Turn slider (+ Straighten): the flat shapes.
-pub const TURNABLE: [&str; 6] = ["triangle", "rectangle", "parallelogram", "trapezoid", "kite", "regular-polygon"];
+pub const TURNABLE: [&str; 7] = ["triangle", "rectangle", "parallelogram", "trapezoid", "kite", "regular-polygon", "composite-shape"];
 
 pub fn draggable(id: &str) -> bool {
     FIGURES.contains(&id)
