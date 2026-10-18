@@ -110,6 +110,101 @@ fn line_rows(p: &Params) -> Vec<Strip> {
     rows
 }
 
+// ---------------------------------------------------------------- strip cards
+//
+// The side panel edits the strips as cards (element select, your own lines, mixtures, move up /
+// down, remove, "Edit lines"). The cards read and write the `strips` list the generator parses;
+// a figure saved before the strip list (per-element ticks + a custom row) is copied into it on
+// the first card edit.
+
+/// One strip card.
+#[derive(Clone, Debug, PartialEq)]
+pub enum StripCard {
+    /// A built-in element, by name ("Hydrogen").
+    Element(String),
+    /// Your own lines: a name and the typed wavelengths ("410.2, 434, 486:0.5").
+    Own { name: String, lines: String },
+    /// A mixture: a name and the strips it is made of (names of earlier strips or elements).
+    Mixture { name: String, parts: Vec<String> },
+}
+
+impl StripCard {
+    /// The name the strip is drawn with (and that mixtures refer to).
+    pub fn name(&self) -> &str {
+        match self { StripCard::Element(n) => n, StripCard::Own { name, .. } | StripCard::Mixture { name, .. } => name }
+    }
+}
+
+/// The elements a strip can show: (symbol, name).
+pub fn strip_elements() -> Vec<(&'static str, &'static str)> {
+    SPECTRA.iter().map(|e| (e.2, e.1)).collect()
+}
+
+/// An element's lines as the "Edit lines" text ("410.2, 434, 486.1, 656.3").
+pub fn element_lines_text(name: &str) -> String {
+    spectrum_of(name).map(|e| e.3.iter().map(|(nm, _)| format!("{nm:.1}")).collect::<Vec<_>>().join(", ")).unwrap_or_default()
+}
+
+/// The strips as cards (the strip list, or for older figures the ticked elements and custom row).
+pub fn strip_cards(p: &Params) -> Vec<StripCard> {
+    let spec = p.s("strips").trim();
+    if spec.is_empty() {
+        let mut v: Vec<StripCard> = OLD_KEYS.iter().filter(|k| p.b(k.0)).map(|k| StripCard::Element(k.1.to_string())).collect();
+        if !custom_lines(p.s("custom")).is_empty() {
+            v.push(StripCard::Own { name: "Custom".into(), lines: p.s("custom").trim().to_string() });
+        }
+        return v;
+    }
+    spec.split([';', '\n'])
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(|t| {
+            if let Some((name, rest)) = t.split_once('=') {
+                let parts = rest.split(['+', ',', '&']).flat_map(|c| c.split(" and ")).map(str::trim).filter(|c| !c.is_empty()).map(String::from).collect();
+                StripCard::Mixture { name: name.trim().into(), parts }
+            } else if let Some((name, rest)) = t.split_once(':') {
+                StripCard::Own { name: name.trim().into(), lines: rest.trim().into() }
+            } else if let Some(e) = spectrum_of(t) {
+                StripCard::Element(e.1.to_string())
+            } else {
+                StripCard::Own { name: t.into(), lines: String::new() }
+            }
+        })
+        .collect()
+}
+
+/// Writes the cards back as the strip list.
+pub fn set_strip_cards(p: &mut Params, cards: &[StripCard]) {
+    let clean = |s: &str, bad: &[char]| s.chars().map(|c| if c == ';' || c == '\n' || bad.contains(&c) { ' ' } else { c }).collect::<String>().trim().to_string();
+    let text = cards
+        .iter()
+        .map(|c| match c {
+            StripCard::Element(n) => n.clone(),
+            StripCard::Own { name, lines } => format!("{}: {}", clean(name, &[':', '=']), clean(lines, &['='])).trim_end().to_string(),
+            StripCard::Mixture { name, parts } => {
+                let parts: Vec<String> = parts.iter().map(|x| clean(x, &['+', ',', '&', '=', ':'])).filter(|x| !x.is_empty()).collect();
+                format!("{} = {}", clean(name, &[':', '=']), parts.join(" + ")).trim_end().to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    p.set_s("strips", &text);
+}
+
+/// How many of strip `i`'s lines fall outside the wavelength axis (and so aren't drawn).
+pub fn strip_outside(p: &Params, i: usize) -> usize {
+    let rows = line_rows(p);
+    let lay = line_lay(p, &rows);
+    rows.get(i).map(|r| r.lines.iter().filter(|(nm, _)| *nm < lay.lo || *nm > lay.hi).count()).unwrap_or(0)
+}
+
+/// The axis range strips are drawn over (nm).
+pub fn strip_axis(p: &Params) -> (f64, f64) {
+    let rows = line_rows(p);
+    let lay = line_lay(p, &rows);
+    (lay.lo, lay.hi)
+}
+
 /// "656.3, 486:0.5" (commas or spaces) -> [(nm, brightness)].
 fn custom_lines(s: &str) -> Vec<(f64, f64)> {
     s.split(|c: char| c == ',' || c == ';' || c.is_whitespace()).filter_map(|t| {

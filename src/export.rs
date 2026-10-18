@@ -1,32 +1,40 @@
 //! Pure PDF and DOCX writers for [`ExamDoc`] (signatures frozen in NOTES.md):
 //! `render_pdf(&layout::ExamDoc) -> Result<Vec<u8>, String>` and `render_docx(&layout::ExamDoc)`.
-//! No filesystem access; uses only the already-present `image` and `zip` crates.
+//! No filesystem access; uses the `image`, `zip`, `flate2` and `ttf-parser` crates (all already in
+//! the dependency tree) and the serif faces compiled in by `crate::fonts`.
 //!
 //! # PDF (1.4, hand-rolled)
-//! Letter 612x792pt, 72 pt/inch. Fonts F1=Helvetica, F2=Helvetica-Bold, F3=Helvetica-Oblique,
-//! F4=Helvetica-BoldOblique (standard 14; Times-Roman is intentionally unused — clean sans is
-//! the print look). Stems, choices and key text carry stem markup (`docs/stem-format.md`),
+//! Letter 612x792pt, 72 pt/inch. Fonts F1..F4 are the print serif, Source Serif 4 Regular,
+//! Bold, Italic and Bold Italic (real faces, `crate::fonts`), embedded as subset TrueType
+//! programs (FlateDecode `FontFile2`, WinAnsiEncoding). Stems, choices and key text carry stem markup (`docs/stem-format.md`),
 //! parsed by `richtext` and laid out into items (text lines, table rows): lists with hanging
 //! indents, quotes with a rule, bordered tables sized from their content with wrapped cells
 //! and a bold shaded header row (repeated after a page break; tables break only between
 //! rows), bold/italic runs, sub/superscripts (markup or Unicode ₂ ⁺) as smaller shifted text.
-//! Text widths come from embedded AFM width tables for ASCII 32..126 (other bytes: 0.5 em average);
-//! non-ASCII maps through a small WinAnsi table (Latin-1 passes 1:1, common Unicode
-//! punctuation is covered, the rest becomes '?'). Images decode via the `image` crate and
+//! Text widths come from the fonts' own advance widths (`fonts::metrics`), the very numbers
+//! written into each font's `/Widths`, so what the line breaker measures is what is drawn;
+//! non-ASCII maps through WinAnsi (Latin-1 passes 1:1, cp1252's
+//! punctuation is covered). Other characters print through each face's Identity-H CID font
+//! (F5..F8, Type0/CIDFontType2 sharing the face's program, with a ToUnicode CMap) or, when
+//! Source Serif 4 lacks them, the STIX Two Math fallback (F9, a Type 3 font of the drawn
+//! outlines with a ToUnicode CMap); only what neither has becomes '?' (see [`enc`] and
+//! `docs/fonts.md`). Images decode via the `image` crate and
 //! re-encode to JPEG quality 85, embedded as DCTDecode XObjects. Content streams are
 //! uncompressed; the xref table carries exact byte offsets, verified by a unit test that
 //! resolves every object entry to its `N obj` header.
 //!
 //! # DOCX (hand-rolled OOXML zipped with the `zip` crate)
 //! Minimal valid package: [Content_Types].xml, _rels/.rels, word/document.xml,
-//! word/_rels/document.xml.rels, a small styles.xml (Normal/Title/Heading1, Arial
-//! default) and numbering.xml (bullets; one restartable decimal list per numbered block).
+//! word/_rels/document.xml.rels, a small styles.xml (Normal/Title/Heading1, Times New
+//! Roman default), fontTable.xml (Times New Roman with "Liberation Serif" as its alternate,
+//! roman family) and numbering.xml (bullets; one restartable decimal list per numbered block).
 //! Word does its own wrapping; stem markup becomes real Word structure (bordered tables
 //! with a repeating shaded header row and content-sized columns, list paragraphs, quote
 //! border, bold/italic/sub/superscript runs). Matching
 //! questions print linearly (left items numbered, then the lettered right column
 //! indented); images become a centered italic `[picture]` paragraph.
 
+use crate::fonts;
 use crate::layout::{DocImage, DocQ, DocSection, ExamDoc};
 use crate::model::PaperStyle;
 use crate::richtext::{self, Block};
@@ -36,35 +44,12 @@ const PAGE_H: f64 = 792.0; // Letter, 72pt/inch (Exam Board prints A4; see Paper
 const MM_PT: f64 = 72.0 / 25.4;
 const IMG_MAX_PT: f64 = 130.0 * MM_PT; // images fit 130 mm square
 
-/// AFM widths /1000 em for Helvetica, ASCII 32..126. Any other byte measures 0.5 em.
-const AFM_HELV: [u16; 95] = [
-    278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278, // SP - /
-    556, 556, 556, 556, 556, 556, 556, 556, 556, 556, // 0-9
-    278, 278, 584, 584, 584, 556, 1015, // : ; < = > ? @
-    667, 667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, // A-Z
-    278, 278, 278, 469, 556, 333, // [ \ ] ^ _ `
-    556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500, 222, 833, 556, 556, 556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, // a-z
-    334, 260, 334, 584, // { | } ~
-];
-
-/// AFM widths /1000 em for Helvetica-Bold, ASCII 32..126.
-const AFM_HELV_B: [u16; 95] = [
-    278, 333, 474, 556, 556, 889, 722, 238, 333, 333, 389, 584, 278, 333, 278, 278,
-    556, 556, 556, 556, 556, 556, 556, 556, 556, 556,
-    333, 333, 584, 584, 584, 611, 975,
-    722, 722, 722, 722, 667, 611, 778, 722, 278, 556, 722, 611, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611,
-    333, 278, 333, 584, 556, 333,
-    556, 611, 556, 611, 556, 333, 611, 611, 278, 278, 556, 278, 889, 611, 611, 611, 611, 389, 556, 333, 611, 556, 778, 556, 556, 500,
-    389, 280, 389, 584,
-];
-
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Face {
     Reg,
     Bold,
-    /// Helvetica-Oblique (same advance widths as Helvetica).
+    /// The real italic face (its own outlines and advance widths).
     Ital,
-    /// Helvetica-BoldOblique (same advance widths as Helvetica-Bold).
     BoldItal,
 }
 
@@ -77,11 +62,20 @@ impl Face {
             Face::BoldItal => "F4",
         }
     }
-    fn afm(self) -> &'static [u16; 95] {
+    fn style(self) -> fonts::Style {
         match self {
-            Face::Reg | Face::Ital => &AFM_HELV,
-            Face::Bold | Face::BoldItal => &AFM_HELV_B,
+            Face::Reg => fonts::Style::Regular,
+            Face::Bold => fonts::Style::Bold,
+            Face::Ital => fonts::Style::Italic,
+            Face::BoldItal => fonts::Style::BoldItalic,
         }
+    }
+    fn idx(self) -> usize {
+        self as usize
+    }
+    /// Advance widths (1/1000 em) of every WinAnsi byte: the numbers the PDF's `/Widths` carries.
+    fn widths(self) -> &'static [u16; 256] {
+        &fonts::metrics(self.style()).widths
     }
     fn of(bold: bool, italic: bool) -> Face {
         match (bold, italic) {
@@ -102,16 +96,12 @@ impl Face {
 // ---------------------------------------------------------------- text measuring
 
 fn char_w(c: u8, face: Face, pt: f64) -> f64 {
-    if (32..=126).contains(&c) {
-        face.afm()[(c - 32) as usize] as f64 * pt / 1000.0
-    } else {
-        0.5 * pt // average em default for any WinAnsi byte outside pure ASCII
-    }
+    face.widths()[c as usize] as f64 * pt / 1000.0
 }
 
-/// Width of a string after the same non-ASCII -> WinAnsi mapping used to render it.
+/// Width of a string, each character measured in the font it prints in ([`enc`]).
 fn text_w(s: &str, face: Face, pt: f64) -> f64 {
-    winansi(s).iter().map(|&b| char_w(b, face, pt)).sum()
+    s.chars().map(|c| enc_units(enc(c, face), face) as f64 * pt / 1000.0).sum()
 }
 
 /// Greedy word wrap on spaces; words wider than the column hard-break per character.
@@ -174,9 +164,14 @@ fn wrap(s: &str, max_w: f64, face: Face, pt: f64) -> Vec<String> {
 /// Map a string to WinAnsi bytes: ASCII passes through (parens/backslash escape later in
 /// `esc_pdf`), Latin-1 >= 0xA0 maps 1:1, common Unicode punctuation maps to its WinAnsi
 /// byte, control bytes become plain space, everything else becomes '?'.
+#[cfg_attr(not(test), allow(dead_code))]
 fn winansi(s: &str) -> Vec<u8> {
-    let mut out = Vec::with_capacity(s.len());
-    for c in s.chars() {
+    s.chars().map(|c| ansi_byte(c).unwrap_or(b'?')).collect()
+}
+
+/// The WinAnsi byte of one character (see [`winansi`]), None when WinAnsi has none.
+fn ansi_byte(c: char) -> Option<u8> {
+    {
         let u = c as u32;
         let mapped: Option<u8> = match u {
             // WinAnsi punctuation zone bytes (0x80-0x9F) the fonts' WinAnsiEncoding carries.
@@ -216,22 +211,64 @@ fn winansi(s: &str) -> Vec<u8> {
             0x2026 => Some(0x85),
             0x2122 => Some(0x99),
             0xa0 => Some(0x20), // nbsp -> space
+            // The rest of cp1252's 0x80..0x9F zone (euro, per mille, S/Z caron, ...).
+            0x152..=0x2122 => fonts::winansi_byte_hi(c),
             0xa1..=0xff => Some(u as u8), // Latin-1 letters map 1:1 in WinAnsi
             0x09 | 0x0a | 0x0b | 0x0d => Some(0x20), // control whitespace -> space
             _ => None,
         };
         match mapped {
-            Some(b) => out.push(b),
-            None => {
-                if (0x20..=0x7e).contains(&u) {
-                    out.push(u as u8);
-                } else {
-                    out.push(b'?');
-                }
-            }
+            Some(b) => Some(b),
+            None if (0x20..=0x7e).contains(&u) => Some(u as u8),
+            None => None,
         }
     }
-    out
+}
+
+/// How one character prints in a face: a WinAnsi byte of the simple font F1..F4, a glyph of
+/// the same face through its Identity-H CID font F5..F8 (characters outside WinAnsi that
+/// Source Serif 4 has: π, −, √, ≤, Greek, arrows, ...), or a glyph of the fallback face F9
+/// (STIX Two Math, a Type 3 font) for what Source Serif lacks; '?' when neither has it.
+/// Glyph ids carry their advance (1/1000 em).
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Enc {
+    Ansi(u8),
+    Cid(u16, u16),
+    Fb(u16, u16),
+}
+
+impl Enc {
+    fn kind(self) -> u8 {
+        match self {
+            Enc::Ansi(_) => 0,
+            Enc::Cid(..) => 1,
+            Enc::Fb(..) => 2,
+        }
+    }
+}
+
+fn enc(c: char, face: Face) -> Enc {
+    if let Some(b) = ansi_byte(c) {
+        return Enc::Ansi(b);
+    }
+    if c.is_control() {
+        return Enc::Ansi(b'?');
+    }
+    if let Some((g, w)) = fonts::charmap(face.style()).get(c) {
+        return Enc::Cid(g, w);
+    }
+    if let Some((g, w)) = fonts::fallback_charmap().get(c) {
+        return Enc::Fb(g, w);
+    }
+    Enc::Ansi(b'?')
+}
+
+/// Advance (1/1000 em) of an encoded character.
+fn enc_units(e: Enc, face: Face) -> u16 {
+    match e {
+        Enc::Ansi(b) => face.widths()[b as usize],
+        Enc::Cid(_, w) | Enc::Fb(_, w) => w,
+    }
 }
 
 /// Escape bytes for a PDF literal string: the paren pair and backslash.
@@ -311,15 +348,15 @@ fn char_is_letter_dot(c: &str) -> bool {
 /// `___` blanks of a stem that are NOT inside a table cell (table blanks are answer cells
 /// and need no ruled line under the question).
 pub fn blanks_outside_tables(stem: &str) -> usize {
-    richtext::parse(stem)
-        .iter()
-        .map(|b| match b {
-            Block::Table { .. } => 0,
-            Block::Para(ls) | Block::Bullets(ls) | Block::Numbered(ls) | Block::Quote(ls) => {
-                ls.iter().map(|l| richtext::line_text(l).matches("___").count()).sum()
-            }
-        })
-        .sum()
+    let mut n = 0;
+    richtext::walk(&richtext::parse(stem), &mut |b| match b {
+        Block::Table { .. } | Block::Divider | Block::Side(_) => {}
+        Block::Heading(_, l) => n += richtext::line_text(l).matches("___").count(),
+        Block::Para(ls) | Block::Bullets(ls) | Block::Numbered(ls) | Block::Quote(ls) => {
+            n += ls.iter().map(|l| richtext::line_text(l).matches("___").count()).sum::<usize>();
+        }
+    });
+    n
 }
 
 // ---------------------------------------------------------------- rich stem layout
@@ -338,6 +375,8 @@ struct Frag {
     script: i8,
     /// `~~struck through~~`.
     strike: bool,
+    /// The URL of a `[text](url)` link.
+    link: Option<String>,
 }
 
 /// A run placed `dx` points from the start of its line.
@@ -348,9 +387,13 @@ struct Placed {
     face: Face,
     script: i8,
     strike: bool,
+    link: Option<String>,
 }
 
 const SCRIPT_SCALE: f64 = 0.7;
+/// Link colour (a print-safe dark blue): stroke and fill operators.
+const LINK_RGB: &str = "0.05 0.27 0.68";
+const LINK_RGB_FILL: &[u8] = b"0.05 0.27 0.68 rg ";
 const LIST_INDENT: f64 = 16.0;
 const NUM_INDENT: f64 = 20.0;
 const QUOTE_INDENT: f64 = 12.0;
@@ -410,13 +453,13 @@ fn split_unicode_scripts(text: &str, face: Face, base: i8, out: &mut Vec<Frag>) 
             None => (c, base),
         };
         if sc != cur_sc && !cur.is_empty() {
-            out.push(Frag { text: std::mem::take(&mut cur), face, script: cur_sc, strike: false });
+            out.push(Frag { text: std::mem::take(&mut cur), face, script: cur_sc, strike: false, link: None });
         }
         cur_sc = sc;
         cur.push(ch);
     }
     if !cur.is_empty() {
-        out.push(Frag { text: cur, face, script: cur_sc, strike: false });
+        out.push(Frag { text: cur, face, script: cur_sc, strike: false, link: None });
     }
 }
 
@@ -437,27 +480,41 @@ fn line_frags(line: &richtext::Line, force_bold: bool) -> Vec<Frag> {
             split_unicode_scripts(&s.text, face, base, &mut out);
             for f in &mut out[n0..] {
                 f.strike = s.strike;
+                f.link = s.link.clone();
             }
         }
     }
     out
 }
 
+/// One word of a run list and the face of the space in front of it (the space keeps the
+/// style of the run it was typed in, so it measures and draws in that face).
+struct Word {
+    frags: Vec<Frag>,
+    sp: Face,
+    script: i8,
+}
+
 /// Words of a run list (split on single spaces; consecutive spaces keep empty words so
 /// "a  b" and leading indentation keep their width, as the plain wrap did).
-fn words(frags: &[Frag]) -> Vec<Vec<Frag>> {
-    let mut ws: Vec<Vec<Frag>> = vec![vec![]];
+fn words(frags: &[Frag]) -> Vec<Word> {
+    let mut ws: Vec<Word> = vec![Word { frags: vec![], sp: Face::Reg, script: 0 }];
     for f in frags {
         for (i, piece) in f.text.split(' ').enumerate() {
             if i > 0 {
-                ws.push(vec![]);
+                ws.push(Word { frags: vec![], sp: f.face, script: f.script });
             }
             if !piece.is_empty() {
-                ws.last_mut().unwrap().push(Frag { text: piece.to_string(), ..f.clone() });
+                ws.last_mut().unwrap().frags.push(Frag { text: piece.to_string(), ..f.clone() });
             }
         }
     }
     ws
+}
+
+/// Width of the space in front of `w`.
+fn space_w(w: &Word, body: f64) -> f64 {
+    char_w(32, w.sp, frag_size(w.script, body))
 }
 
 fn word_w(w: &[Frag], body: f64) -> f64 {
@@ -467,25 +524,25 @@ fn word_w(w: &[Frag], body: f64) -> f64 {
 /// Width of a run list laid on one line.
 fn natural_w(frags: &[Frag], body: f64) -> f64 {
     let ws = words(frags);
-    let sp = char_w(32, Face::Reg, body);
-    ws.iter().map(|w| word_w(w, body)).sum::<f64>() + sp * ws.len().saturating_sub(1) as f64
+    ws.iter().map(|w| word_w(&w.frags, body)).sum::<f64>() + ws.iter().skip(1).map(|w| space_w(w, body)).sum::<f64>()
 }
 
 /// Widest single word (the narrowest a column can get without breaking words).
 fn min_word_w(frags: &[Frag], body: f64) -> f64 {
-    words(frags).iter().map(|w| word_w(w, body)).fold(0.0, f64::max)
+    words(frags).iter().map(|w| word_w(&w.frags, body)).fold(0.0, f64::max)
 }
 
 /// Greedy wrap of styled runs: the first line gets `first_w`, the rest `rest_w`; words
 /// wider than the line hard-break per character. Always returns at least one line.
 fn wrap_frags(frags: &[Frag], first_w: f64, rest_w: f64, body: f64) -> Vec<Vec<Placed>> {
-    let sp = char_w(32, Face::Reg, body);
     let mut lines: Vec<Vec<Placed>> = Vec::new();
     let mut cur: Vec<Placed> = Vec::new();
     let mut x = 0.0;
     let mut n = 0usize;
     let maxw = |lines: &Vec<Vec<Placed>>| if lines.is_empty() { first_w } else { rest_w };
-    for word in words(frags) {
+    for w in words(frags) {
+        let sp = space_w(&w, body);
+        let word = w.frags;
         let ww = word_w(&word, body);
         if n > 0 && ww > 0.0 && x + sp + ww > maxw(&lines) {
             lines.push(std::mem::take(&mut cur));
@@ -504,14 +561,14 @@ fn wrap_frags(frags: &[Frag], first_w: f64, rest_w: f64, body: f64) -> Vec<Vec<P
                         lines.push(std::mem::take(&mut cur));
                         x = 0.0;
                     }
-                    cur.push(Placed { dx: x, text: s, face: f.face, script: f.script, strike: f.strike });
+                    cur.push(Placed { dx: x, text: s, face: f.face, script: f.script, strike: f.strike, link: f.link.clone() });
                     x += cw;
                 }
             }
         } else {
             for f in word {
                 let w = frag_w(&f, body);
-                cur.push(Placed { dx: x, text: f.text, face: f.face, script: f.script, strike: f.strike });
+                cur.push(Placed { dx: x, text: f.text, face: f.face, script: f.script, strike: f.strike, link: f.link });
                 x += w;
             }
         }
@@ -524,18 +581,17 @@ fn wrap_frags(frags: &[Frag], first_w: f64, rest_w: f64, body: f64) -> Vec<Vec<P
 /// Joins neighbouring same-style normal runs separated only by spaces into one run, so a
 /// plain line prints as one string (as before the rich layout) and extracts cleanly.
 fn merge_runs(line: Vec<Placed>, body: f64) -> Vec<Placed> {
-    let sp = char_w(32, Face::Reg, body);
     let mut out: Vec<Placed> = Vec::with_capacity(line.len());
     for p in line {
         if let Some(last) = out.last_mut() {
-            if last.script == 0 && p.script == 0 && last.face == p.face && last.strike == p.strike {
+            if last.script == 0 && p.script == 0 && last.face == p.face && last.strike == p.strike && last.link == p.link {
                 let end = last.dx + text_w(&last.text, last.face, body);
                 let gap = p.dx - end;
-                let face_sp = char_w(32, p.face, body);
-                // Gap of whole spaces in this face (the layout uses the regular space width,
-                // which equals the bold one for Helvetica).
+                // Gap of whole spaces in this face (a space between two runs of one face was
+                // laid out in that face).
+                let sp = char_w(32, p.face, body);
                 let k = (gap / sp).round();
-                if gap >= -0.01 && k >= 0.0 && (gap - k * sp).abs() < 0.01 && (sp - face_sp).abs() < 0.01 {
+                if gap >= -0.01 && k >= 0.0 && (gap - k * sp).abs() < 0.01 {
                     last.text.push_str(&" ".repeat(k as usize));
                     last.text.push_str(&p.text);
                     continue;
@@ -562,18 +618,30 @@ fn text_lines(s: &str, first_w: f64, rest_w: f64, body: f64) -> Vec<Vec<Placed>>
 enum Item {
     /// One text line drawn `indent` points right of the block's x; `marker` (bullet or
     /// list number) ends just left of the indent; `bar` draws the quote rule.
-    Line { indent: f64, frags: Vec<Placed>, marker: Option<String>, bar: bool },
+    /// `scale` enlarges the line (headings; 1.0 for body text).
+    Line { indent: f64, frags: Vec<Placed>, marker: Option<String>, bar: bool, scale: f64 },
     Gap(f64),
+    /// A divider: a thin rule across `w` points, centred in its slot.
+    Rule { w: f64 },
+    /// Side-by-side panels: each column's x offset and its own items, `h` the tallest column.
+    /// Never split across pages.
+    Cols { cols: Vec<(f64, Vec<Item>)>, h: f64 },
     /// One table row: column (x offset, width), wrapped cell lines, row height; rows after
     /// a header point back at it so a page break can repeat it.
     Row { cols: Vec<(f64, f64)>, cells: Vec<Vec<Vec<Placed>>>, h: f64, header: bool, header_idx: Option<usize> },
+    /// A multipart part's work space: `lines` answer lines (lined styles) or blank room,
+    /// `h` points tall; it may run across a page break like the question's own work space.
+    Work { lines: u8, h: f64 },
 }
 
 fn item_h(it: &Item, lead: f64) -> f64 {
     match it {
-        Item::Line { .. } => lead,
+        Item::Line { scale, .. } => lead * scale,
         Item::Gap(h) => *h,
         Item::Row { h, .. } => *h,
+        Item::Rule { .. } => lead * 0.8,
+        Item::Cols { h, .. } => *h,
+        Item::Work { h, .. } => *h,
     }
 }
 
@@ -663,7 +731,7 @@ fn layout_blocks(blocks: &[Block], avail: f64, first_w: f64, body: f64, lead: f6
             Block::Para(lines) => {
                 for l in lines {
                     for pl in wrap_frags(&line_frags(l, false), fw(first, 0.0), avail, body) {
-                        items.push(Item::Line { indent: 0.0, frags: pl, marker: None, bar: false });
+                        items.push(Item::Line { indent: 0.0, frags: pl, marker: None, bar: false, scale: 1.0 });
                         first = false;
                     }
                 }
@@ -682,7 +750,7 @@ fn layout_blocks(blocks: &[Block], avail: f64, first_w: f64, body: f64, lead: f6
                             Block::Numbered(_) => Some(format!("{}.", k + 1)),
                             _ => None,
                         });
-                        items.push(Item::Line { indent, frags: pl, marker: marker.flatten(), bar });
+                        items.push(Item::Line { indent, frags: pl, marker: marker.flatten(), bar, scale: 1.0 });
                         first = false;
                     }
                 }
@@ -693,6 +761,27 @@ fn layout_blocks(blocks: &[Block], avail: f64, first_w: f64, body: f64, lead: f6
                 if bi + 1 == blocks.len() {
                     items.push(Item::Gap(body * 0.5)); // breathing room under a closing table
                 }
+                first = false;
+            }
+            Block::Heading(level, l) => {
+                let scale = crate::equation::heading_scale(*level) as f64;
+                let hb = body * scale;
+                for pl in wrap_frags(&line_frags(l, true), fw(first, 0.0), avail, hb) {
+                    items.push(Item::Line { indent: 0.0, frags: pl, marker: None, bar: false, scale });
+                    first = false;
+                }
+            }
+            Block::Divider => {
+                items.push(Item::Rule { w: avail });
+                first = false;
+            }
+            Block::Side(panels) => {
+                let n = panels.len().max(1) as f64;
+                let gap = body * 1.2;
+                let w = ((if first { first_w } else { avail } - gap * (n - 1.0)) / n).max(body * 3.0);
+                let cols: Vec<(f64, Vec<Item>)> = panels.iter().enumerate().map(|(k, p)| (k as f64 * (w + gap), layout_blocks(p, w, w, body, lead))).collect();
+                let h = cols.iter().map(|(_, it)| items_h(it, lead)).fold(lead, f64::max);
+                items.push(Item::Cols { cols, h });
                 first = false;
             }
         }
@@ -734,6 +823,15 @@ struct R {
     /// The printed "Name / Class / Date" line, repeated at the top of every page after
     /// the first (set once page 1's header area is drawn; `None` on the answer key).
     running: Option<String>,
+    /// WinAnsi bytes drawn in each face (index `Face::idx`): the glyphs the embedded font
+    /// subsets keep.
+    glyphs: [[bool; 256]; 4],
+    /// Glyphs drawn through each face's Identity-H CID font, with the character drawn.
+    cids: [std::collections::BTreeMap<u16, char>; 4],
+    /// Fallback (Type 3) glyphs in code order: (glyph id, character, advance).
+    fb: Vec<(u16, char, u16)>,
+    /// Link annotations: (page index, [x0 y0 x1 y1], URL).
+    annots: Vec<(usize, [f64; 4], String)>,
 }
 
 impl R {
@@ -787,8 +885,87 @@ impl R {
             self.y -= self.body * 0.6;
         }
     }
+    /// Draws `s` with its left end at `x` on baseline `y`. WinAnsi text is one literal string
+    /// in F1..F4; other characters split the string into runs in the CID font (F5..F8) or
+    /// the fallback font (F9), each placed where the measured runs before it end.
     fn text(&mut self, x: f64, y: f64, face: Face, size: f64, s: &str) {
-        let bytes = esc_pdf(&winansi(s));
+        let encs: Vec<(char, Enc)> = s.chars().map(|c| (c, enc(c, face))).collect();
+        if encs.iter().all(|(_, e)| e.kind() == 0) {
+            let raw: Vec<u8> = encs.iter().map(|(_, e)| if let Enc::Ansi(b) = e { *b } else { b'?' }).collect();
+            self.text_ansi(x, y, face, size, &raw);
+            return;
+        }
+        let mut cx = x;
+        let mut i = 0;
+        while i < encs.len() {
+            let kind = encs[i].1.kind();
+            let j = (i..encs.len()).find(|&k| encs[k].1.kind() != kind).unwrap_or(encs.len());
+            let run = &encs[i..j];
+            match kind {
+                0 => {
+                    let raw: Vec<u8> = run.iter().map(|(_, e)| if let Enc::Ansi(b) = e { *b } else { b'?' }).collect();
+                    self.text_ansi(cx, y, face, size, &raw);
+                }
+                1 => {
+                    let mut hex = String::with_capacity(run.len() * 4 + 2);
+                    hex.push('<');
+                    for (c, e) in run {
+                        if let Enc::Cid(g, _) = e {
+                            self.cids[face.idx()].entry(*g).or_insert(*c);
+                            hex.push_str(&format!("{g:04X}"));
+                        }
+                    }
+                    hex.push('>');
+                    self.text_op(cx, y, &format!("F{}", 5 + face.idx()), size, hex.as_bytes());
+                }
+                _ => {
+                    // One byte per glyph: at most 256 distinct fallback glyphs per document
+                    // (more leave a gap of the right width).
+                    let mut hex = String::from("<");
+                    for (c, e) in run {
+                        if let Enc::Fb(g, w) = e {
+                            let code = match self.fb.iter().position(|f| f.0 == *g) {
+                                Some(k) => Some(k),
+                                None if self.fb.len() < 256 => {
+                                    self.fb.push((*g, *c, *w));
+                                    Some(self.fb.len() - 1)
+                                }
+                                None => None,
+                            };
+                            if let Some(k) = code {
+                                hex.push_str(&format!("{k:02X}"));
+                            }
+                        }
+                    }
+                    hex.push('>');
+                    if hex.len() > 2 {
+                        self.text_op(cx, y, "F9", size, hex.as_bytes());
+                    }
+                }
+            }
+            cx += run.iter().map(|(_, e)| enc_units(*e, face) as f64 * size / 1000.0).sum::<f64>();
+            i = j;
+        }
+    }
+    /// One text-showing operation: `BT /font size Tf x y Td <string> Tj ET`.
+    fn text_op(&mut self, x: f64, y: f64, font: &str, size: f64, string: &[u8]) {
+        self.cur.extend_from_slice(b"BT /");
+        self.cur.extend_from_slice(font.as_bytes());
+        self.cur.extend_from_slice(b" ");
+        self.cur.extend_from_slice(fnum(size).as_bytes());
+        self.cur.extend_from_slice(b" Tf ");
+        self.cur.extend_from_slice(fnum(x).as_bytes());
+        self.cur.extend_from_slice(b" ");
+        self.cur.extend_from_slice(fnum(y).as_bytes());
+        self.cur.extend_from_slice(b" Td ");
+        self.cur.extend_from_slice(string);
+        self.cur.extend_from_slice(b" Tj ET\n");
+    }
+    fn text_ansi(&mut self, x: f64, y: f64, face: Face, size: f64, raw: &[u8]) {
+        for &b in raw {
+            self.glyphs[face.idx()][b as usize] = true;
+        }
+        let bytes = esc_pdf(raw);
         self.cur.extend_from_slice(b"BT /");
         self.cur.extend_from_slice(face.name().as_bytes());
         self.cur.extend_from_slice(b" ");
@@ -844,7 +1021,20 @@ impl R {
                 1 => 0.36 * self.body,
                 _ => 0.0,
             };
-            self.text(x + p.dx, by + dy, p.face, size, &p.text);
+            if let Some(url) = &p.link {
+                // Links print blue and underlined, with a URI link annotation over the run.
+                let w = text_w(p.text.trim_end(), p.face, size);
+                let (x0, y0) = (x + p.dx, by + dy);
+                self.cur.extend_from_slice(LINK_RGB_FILL);
+                self.text(x0, y0, p.face, size, &p.text);
+                self.cur.extend_from_slice(b"0 0 0 rg\n");
+                let uy = y0 - 0.12 * size;
+                self.stroke_line(x0, uy, x0 + w, uy, (size / 18.0).max(0.4), LINK_RGB);
+                let page = self.pages.len();
+                self.annots.push((page, [x0, y0 - 0.25 * size, x0 + w, y0 + 0.8 * size], url.clone()));
+            } else {
+                self.text(x + p.dx, by + dy, p.face, size, &p.text);
+            }
             if p.strike {
                 // through the middle of the lower-case letters
                 let w = text_w(p.text.trim_end(), p.face, size);
@@ -859,7 +1049,41 @@ impl R {
         for it in items {
             match it {
                 Item::Gap(h) => self.y -= h,
-                Item::Line { indent, frags, marker, bar } => {
+                Item::Work { lines, .. } => self.work_lines(x, *lines),
+                Item::Line { indent, frags, marker, bar, scale } if *scale != 1.0 => {
+                    let lead = self.lead * scale;
+                    if self.remaining() < lead {
+                        self.new_page();
+                    }
+                    let body = self.body;
+                    self.body = body * scale;
+                    let by = self.y - Self::ascent_of(self.body) - (lead - self.body * 1.2).max(0.0) * 0.5;
+                    self.placed(x + indent, by, frags);
+                    self.body = body;
+                    let _ = (marker, bar);
+                    self.y -= lead;
+                }
+                Item::Rule { w } => {
+                    let h = self.lead * 0.8;
+                    if self.remaining() < h {
+                        self.new_page();
+                    }
+                    let y = self.y - h * 0.5;
+                    self.stroke_line(x, y, x + w, y, 0.7, "0.55 0.55 0.55");
+                    self.y -= h;
+                }
+                Item::Cols { cols, h } => {
+                    if self.remaining() < *h {
+                        self.new_page();
+                    }
+                    let top = self.y;
+                    for (cx, its) in cols {
+                        self.y = top;
+                        self.items(x + cx, its);
+                    }
+                    self.y = top - h;
+                }
+                Item::Line { indent, frags, marker, bar, .. } => {
                     if self.remaining() < self.lead {
                         self.new_page();
                     }
@@ -890,6 +1114,26 @@ impl R {
                     self.row(x, it);
                     self.y -= h;
                 }
+            }
+        }
+    }
+    /// `n` lines of work space from `x` to the right margin: answer lines in the lined
+    /// styles, blank room otherwise (breaking pages as needed).
+    fn work_lines(&mut self, x: f64, n: u8) {
+        if self.style.work_space_lined() {
+            for _ in 0..n {
+                let xb = self.x1;
+                self.answer_line(x, xb);
+            }
+        } else {
+            let mut left = n as f64 * self.pitch();
+            while left > 0.0 {
+                if self.remaining() <= 1.0 {
+                    self.new_page();
+                }
+                let step = left.min(self.remaining());
+                self.y -= step;
+                left -= step;
             }
         }
     }
@@ -1000,6 +1244,8 @@ pub struct PdfPreview {
     pub page_h: f64,
     pub pages: Vec<Vec<u8>>,
     pub images: Vec<(u32, u32)>,
+    /// The character behind each code of the fallback font F9 (the `<..>` strings it shows).
+    pub fallback: Vec<char>,
 }
 
 /// Lays the PDF out without encoding images (fast enough to run while the dialog is open).
@@ -1010,6 +1256,7 @@ pub fn preview_pages(doc: &ExamDoc) -> Result<PdfPreview, String> {
         page_h: r.page_h,
         pages: r.pages.into_iter().map(|(ops, _)| ops).collect(),
         images: r.imgs.iter().map(|p| (p.w, p.h)).collect(),
+        fallback: r.fb.iter().map(|f| f.1).collect(),
     })
 }
 
@@ -1051,6 +1298,10 @@ fn layout_pdf(doc: &ExamDoc, encode: bool) -> Result<R, String> {
         lead: body * doc.style.lead() as f64,
         imgs,
         running: None,
+        glyphs: [[false; 256]; 4],
+        cids: Default::default(),
+        fb: Vec::new(),
+        annots: Vec::new(),
     };
 
     // Title area (also printed on the answer-key document).
@@ -1136,7 +1387,23 @@ fn stem_items(r: &R, q: &DocQ) -> (Vec<Item>, Option<String>) {
     let avail = r.x1 - q_stem_x(r, q);
     let pt_label = q.points.map(|p| r.style.points_label(p));
     let label_w = pt_label.as_deref().map(|l| text_w(l, Face::Reg, r.body) + 6.0).unwrap_or(0.0);
-    (layout_blocks(&stem_blocks(&q.text), avail, avail - label_w, r.body, r.lead), pt_label)
+    if q.space_after.iter().all(|&n| n == 0) {
+        return (layout_blocks(&stem_blocks(&q.text), avail, avail - label_w, r.body, r.lead), pt_label);
+    }
+    // Per-part work space: each text entry (one part) lays out on its own, its work space
+    // right under it.
+    let mut items: Vec<Item> = Vec::new();
+    for (k, t) in q.text.iter().enumerate() {
+        let first = items.is_empty();
+        if !first {
+            items.push(Item::Gap(r.body * 0.35));
+        }
+        items.extend(layout_blocks(&richtext::parse(t), avail, if first { avail - label_w } else { avail }, r.body, r.lead));
+        if let Some(&n) = q.space_after.get(k).filter(|&&n| n > 0) {
+            items.push(Item::Work { lines: n, h: n as f64 * r.pitch() });
+        }
+    }
+    (items, pt_label)
 }
 
 /// Matching row layout: wrapped left item and right choice for each row.
@@ -1281,25 +1548,7 @@ fn render_q(r: &mut R, q: &DocQ, img_idx: Option<usize>) {
 
 /// The question's extra work space: ruled / dotted lines (Classic, Exam Board) or blank room.
 fn work_space(r: &mut R, q: &DocQ, stem_x: f64) {
-    if q.work_lines == 0 {
-        return;
-    }
-    if r.style.work_space_lined() {
-        for _ in 0..q.work_lines {
-            let xb = r.x1;
-            r.answer_line(stem_x, xb);
-        }
-    } else {
-        let mut left = q.work_lines as f64 * r.pitch();
-        while left > 0.0 {
-            if r.remaining() <= 1.0 {
-                r.new_page();
-            }
-            let step = left.min(r.remaining());
-            r.y -= step;
-            left -= step;
-        }
-    }
+    r.work_lines(stem_x, q.work_lines);
 }
 
 /// Condensed: how many columns the choices print across in (None = one per line). Every
@@ -1392,11 +1641,153 @@ fn prepare_image(im: &DocImage) -> Result<Px, String> {
     Ok(Px { jpeg, w, h })
 }
 
+/// Subset tag ("ABCDEF+") naming which glyphs a face's embedded subset holds.
+fn subset_tag(face: Face, used: &[bool; 256], cids: &[u16]) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325 ^ face.idx() as u64;
+    for (b, u) in used.iter().enumerate() {
+        if *u {
+            h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    for g in cids {
+        h = (h ^ (0x1_0000 + *g as u64)).wrapping_mul(0x0100_0000_01b3);
+    }
+    (0..6).map(|k| (b'A' + ((h >> (k * 5)) % 26) as u8) as char).collect()
+}
+
+/// Font dictionary, font descriptor and FlateDecode `FontFile2` stream of one face, the
+/// descriptor being object `desc_obj` and the font program `desc_obj + 1`. `/Widths` are the
+/// same advance widths the layout measured with.
+fn font_objects(face: Face, used: &[bool; 256], cids: &[u16], desc_obj: usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let m = fonts::metrics(face.style());
+    let mut used = *used;
+    used[32] = true;
+    let name = font_name(face, &used, cids);
+    let widths: Vec<String> = (32..=255).map(|b| m.widths[b].to_string()).collect();
+    let dict = format!(
+        "<< /Type /Font /Subtype /TrueType /BaseFont /{name} /FirstChar 32 /LastChar 255 /Widths [{}] /Encoding /WinAnsiEncoding /FontDescriptor {desc_obj} 0 R >>\n",
+        widths.join(" ")
+    );
+    // Flags: Serif (2) + Nonsymbolic (32) [+ Italic (64)].
+    let flags = 2 + 32 + if face.style().italic() { 64 } else { 0 };
+    let stem_v = if face.style().bold() { 140 } else { 80 };
+    let [x0, y0, x1, y1] = m.bbox;
+    let desc = format!(
+        "<< /Type /FontDescriptor /FontName /{name} /Flags {flags} /FontBBox [{x0} {y0} {x1} {y1}] /ItalicAngle {} /Ascent {} /Descent {} /CapHeight {} /StemV {stem_v} /FontFile2 {} 0 R >>\n",
+        fnum(m.italic_angle as f64),
+        m.ascent,
+        m.descent,
+        m.cap_height,
+        desc_obj + 1
+    );
+    let program = fonts::subset_with(face.style(), &used, cids);
+    let z = fonts::deflate(&program);
+    let mut file = format!("<< /Length {} /Length1 {} /Filter /FlateDecode >>\nstream\n", z.len(), program.len()).into_bytes();
+    file.extend_from_slice(&z);
+    file.extend_from_slice(b"\nendstream\n");
+    (dict.into_bytes(), desc.into_bytes(), file)
+}
+
+/// Subset name of a face's embedded program ("ABCDEF+SourceSerif4-Regular"), shared by its
+/// simple font and its CID font.
+fn font_name(face: Face, used: &[bool; 256], cids: &[u16]) -> String {
+    format!("{}+{}", subset_tag(face, used, cids), fonts::metrics(face.style()).ps_name)
+}
+
+/// A URI as 7-bit ASCII for a PDF string (non-ASCII bytes percent-encoded).
+fn uri_ascii(url: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(url.len());
+    for &b in url.as_bytes() {
+        if b.is_ascii_graphic() {
+            out.push(b);
+        } else {
+            out.extend_from_slice(format!("%{b:02X}").as_bytes());
+        }
+    }
+    out
+}
+
+/// A FlateDecode stream object.
+fn flate_stream(data: &[u8]) -> Vec<u8> {
+    let z = fonts::deflate(data);
+    let mut b = format!("<< /Length {} /Filter /FlateDecode >>\nstream\n", z.len()).into_bytes();
+    b.extend_from_slice(&z);
+    b.extend_from_slice(b"\nendstream\n");
+    b
+}
+
+/// The fonts beyond F1..F4, numbered from object `first`: per face whose CID font is used a
+/// Type0 font, its CIDFontType2 (sharing the face's descriptor and program) and a ToUnicode
+/// CMap; then the fallback Type 3 font F9 with its ToUnicode CMap and glyph procedures.
+/// Returns the objects and the page resource entries naming them.
+fn extra_font_objects(r: &R, first: usize, desc_of: impl Fn(Face) -> usize) -> (Vec<Vec<u8>>, String) {
+    let mut objs: Vec<Vec<u8>> = Vec::new();
+    let mut res = String::new();
+    for face in [Face::Reg, Face::Bold, Face::Ital, Face::BoldItal] {
+        let cids = &r.cids[face.idx()];
+        if cids.is_empty() {
+            continue;
+        }
+        let at = first + objs.len();
+        let mut used = r.glyphs[face.idx()];
+        used[32] = true;
+        let gids: Vec<u16> = cids.keys().copied().collect();
+        let name = font_name(face, &used, &gids);
+        let cm = fonts::charmap(face.style());
+        let w: Vec<String> = cids.iter().map(|(g, c)| format!("{g} [{}]", cm.get(*c).map_or(0, |x| x.1))).collect();
+        objs.push(format!("<< /Type /Font /Subtype /Type0 /BaseFont /{name} /Encoding /Identity-H /DescendantFonts [{} 0 R] /ToUnicode {} 0 R >>\n", at + 1, at + 2).into_bytes());
+        objs.push(
+            format!(
+                "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /{name} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor {} 0 R /DW 1000 /W [{}] /CIDToGIDMap /Identity >>\n",
+                desc_of(face),
+                w.join(" ")
+            )
+            .into_bytes(),
+        );
+        let entries: Vec<(u16, char)> = cids.iter().map(|(g, c)| (*g, *c)).collect();
+        objs.push(flate_stream(fonts::to_unicode_cmap(&entries, 2).as_bytes()));
+        res.push_str(&format!(" /F{} {at} 0 R", 5 + face.idx()));
+    }
+    if !r.fb.is_empty() {
+        let at = first + objs.len();
+        let n = r.fb.len();
+        // Code n is an unused, empty glyph named /m, 0.6 em wide: text extractors (poppler)
+        // guess a Type 3 font's scale from the width of its 'm' (else from the first glyph,
+        // and a wide arrow would make them think the symbols are set larger, off the line).
+        let procs: String = (0..n).map(|k| format!("/g{k} {} 0 R ", at + 2 + k)).collect::<String>() + &format!("/m {} 0 R ", at + 2 + n);
+        let diffs: String = (0..n).map(|k| format!("/g{k}")).collect::<Vec<_>>().join(" ") + " /m";
+        let widths: String = r.fb.iter().map(|f| f.2.to_string()).collect::<Vec<_>>().join(" ") + " 600";
+        // The union of the drawn glyphs' boxes (text extractors size the line from it).
+        let procs_bb: Vec<(String, [i32; 4])> = r.fb.iter().map(|(g, _, w)| fonts::fallback_glyph_proc(*g, *w)).collect();
+        let [x0, y0, x1, y1] = procs_bb.iter().filter(|p| p.1 != [0; 4]).fold([i32::MAX, i32::MAX, i32::MIN, i32::MIN], |a, p| [a[0].min(p.1[0]), a[1].min(p.1[1]), a[2].max(p.1[2]), a[3].max(p.1[3])]);
+        let [x0, y0, x1, y1] = if x0 > x1 { [0; 4] } else { [x0, y0, x1, y1] };
+        objs.push(
+            format!(
+                "<< /Type /Font /Subtype /Type3 /Name /F9 /FontBBox [{x0} {y0} {x1} {y1}] /FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << {procs}>> /Encoding << /Type /Encoding /Differences [0 {diffs}] >> /FirstChar 0 /LastChar {} /Widths [{widths}] /ToUnicode {} 0 R /Resources << >> >>\n",
+                n,
+                at + 1
+            )
+            .into_bytes(),
+        );
+        let entries: Vec<(u16, char)> = r.fb.iter().enumerate().map(|(k, f)| (k as u16, f.1)).collect();
+        objs.push(flate_stream(fonts::to_unicode_cmap(&entries, 1).as_bytes()));
+        for p in procs_bb.iter().map(|p| p.0.as_str()).chain(std::iter::once("600 0 0 0 0 0 d1\n")) {
+            let mut b = format!("<< /Length {} >>\nstream\n", p.len()).into_bytes();
+            b.extend_from_slice(p.as_bytes());
+            b.extend_from_slice(b"endstream\n");
+            objs.push(b);
+        }
+        res.push_str(&format!(" /F9 {at} 0 R"));
+    }
+    (objs, res)
+}
+
 fn assemble_pdf(r: R) -> Result<Vec<u8>, String> {
     let media = format!("[0 0 {} {}]", fnum(r.page_w), fnum(r.page_h));
     let npage = r.pages.len();
     let n_imgs = r.imgs.len();
-    // Objects: 1 catalog, 2 page tree, 3..=6 fonts, then images, then 2 per page.
+    // Objects: 1 catalog, 2 page tree, 3..=6 fonts, then images, then 2 per page, then a
+    // descriptor and a font program per font.
     const FIRST_IMG: usize = 7;
     let kids: String = (0..npage).map(|p| format!("{} 0 R ", FIRST_IMG + n_imgs + p * 2 + 1)).collect();
 
@@ -1405,10 +1796,35 @@ fn assemble_pdf(r: R) -> Result<Vec<u8>, String> {
     bodies.push(b"<< /Type /Catalog /Pages 2 0 R >>\n".to_vec());
     // obj 2: page tree
     bodies.push(format!("<< /Type /Pages /Kids [{kids}] /Count {npage} >>\n").into_bytes());
-    // obj 3..=6: fonts F1..F4
-    for base in ["Helvetica", "Helvetica-Bold", "Helvetica-Oblique", "Helvetica-BoldOblique"] {
-        bodies.push(format!("<< /Type /Font /Subtype /Type1 /BaseFont /{base} /Encoding /WinAnsiEncoding >>\n").into_bytes());
+    // obj 3..=6: fonts F1..F4, embedded TrueType subsets of the print serif. Their
+    // descriptors and font programs follow the page objects (two objects per face).
+    let fonts_at = FIRST_IMG + n_imgs + npage * 2;
+    let mut font_tail: Vec<Vec<u8>> = Vec::with_capacity(8);
+    for face in [Face::Reg, Face::Bold, Face::Ital, Face::BoldItal] {
+        let cids: Vec<u16> = r.cids[face.idx()].keys().copied().collect();
+        let (dict, desc, file) = font_objects(face, &r.glyphs[face.idx()], &cids, fonts_at + face.idx() * 2);
+        bodies.push(dict);
+        font_tail.push(desc);
+        font_tail.push(file);
     }
+    // After the eight descriptor / program objects: the CID and fallback fonts, if used.
+    let (extra_objs, extra_res) = extra_font_objects(&r, fonts_at + 8, |f| fonts_at + f.idx() * 2);
+    // Then one Link annotation object per drawn link run.
+    let annots_at = fonts_at + 8 + extra_objs.len();
+    let annot_objs: Vec<Vec<u8>> = r
+        .annots
+        .iter()
+        .map(|(_, [x0, y0, x1, y1], url)| {
+            let mut b = format!("<< /Type /Annot /Subtype /Link /Rect [{} {} {} {}] /Border [0 0 0] /A << /S /URI /URI (", fnum(*x0), fnum(*y0), fnum(*x1), fnum(*y1)).into_bytes();
+            b.extend_from_slice(&esc_pdf(&uri_ascii(url)));
+            b.extend_from_slice(b") >> >>\n");
+            b
+        })
+        .collect();
+    let page_annots = |p: usize| -> String {
+        let refs: Vec<String> = r.annots.iter().enumerate().filter(|(_, a)| a.0 == p).map(|(k, _)| format!("{} 0 R", annots_at + k)).collect();
+        if refs.is_empty() { String::new() } else { format!(" /Annots [{}]", refs.join(" ")) }
+    };
     // obj 7..: image XObjects (JPEG bytes embedded raw, no deflate).
     let mut imgs = r.imgs;
     for Px { jpeg, w, h } in imgs.drain(..) {
@@ -1438,12 +1854,17 @@ fn assemble_pdf(r: R) -> Result<Vec<u8>, String> {
         }
         bodies.push(
             format!(
-                "<< /Type /Page /Parent 2 0 R /MediaBox {media} /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >>{xo} /ProcSet [/PDF /Text /ImageC] >> /Contents {} 0 R >>\n",
-                FIRST_IMG + n_imgs + p * 2
+                "<< /Type /Page /Parent 2 0 R /MediaBox {media} /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R{extra_res} >>{xo} /ProcSet [/PDF /Text /ImageC] >> /Contents {} 0 R{} >>\n",
+                FIRST_IMG + n_imgs + p * 2,
+                page_annots(p)
             )
             .into_bytes(),
         );
     }
+
+    bodies.extend(font_tail);
+    bodies.extend(extra_objs);
+    bodies.extend(annot_objs);
 
     // Serialize with exact byte offsets for the xref table.
     let n_obj = bodies.len();
@@ -1503,7 +1924,10 @@ fn wpara(xml: &mut String, p: &Par, body_sz: i64) {
     }
     if p.rule {
         let val = if p.dotted { "dotted" } else { "single" };
-        xml.push_str(&format!("<w:pBdr><w:bottom w:val=\"{val}\" w:sz=\"6\" w:space=\"1\" w:color=\"808080\"/></w:pBdr>"));
+        // Word and LibreOffice merge the borders of consecutive paragraphs that share them
+        // (only the group's bottom line would print); the matching `between` border keeps
+        // one line per rule paragraph.
+        xml.push_str(&format!("<w:pBdr><w:bottom w:val=\"{val}\" w:sz=\"6\" w:space=\"1\" w:color=\"808080\"/><w:between w:val=\"{val}\" w:sz=\"6\" w:space=\"1\" w:color=\"808080\"/></w:pBdr>"));
     }
     if p.sz > 0 && p.text.is_empty() {
         // An empty (rule / work-space) paragraph: its height follows `sz`.
@@ -1591,15 +2015,56 @@ fn wfrags(xml: &mut String, frags: &[Frag], sz: i64) {
     for f in frags {
         let bold = matches!(f.face, Face::Bold | Face::BoldItal);
         let italic = matches!(f.face, Face::Ital | Face::BoldItal);
-        wrun_s(xml, &f.text, bold, italic, f.strike, f.script, sz);
+        match &f.link {
+            Some(url) if !f.text.is_empty() => {
+                // A placeholder relationship id, numbered in `docx_link_rels` once the body is done.
+                xml.push_str(&format!("<w:hyperlink r:id=\"{LINK_RID}{}\" w:history=\"1\">", xml_esc(url)));
+                let at = xml.len();
+                wrun_s(xml, &f.text, bold, italic, f.strike, f.script, sz);
+                xml.insert_str(at + "<w:r><w:rPr>".len(), "<w:color w:val=\"0563C1\"/><w:u w:val=\"single\"/>");
+                xml.push_str("</w:hyperlink>");
+            }
+            _ => wrun_s(xml, &f.text, bold, italic, f.strike, f.script, sz),
+        }
     }
+}
+
+/// Prefix of a hyperlink's placeholder relationship id (followed by the escaped URL).
+const LINK_RID: &str = "qslink:";
+
+/// Replaces each hyperlink placeholder id in `body` with a real relationship id (`rIdL1`, ...,
+/// one per distinct URL) and returns the matching external relationships.
+fn docx_link_rels(body: &mut String) -> String {
+    let pat = format!("r:id=\"{LINK_RID}");
+    let mut urls: Vec<String> = Vec::new();
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body.as_str();
+    while let Some(i) = rest.find(&pat) {
+        out.push_str(&rest[..i]);
+        let tail = &rest[i + pat.len()..];
+        let end = tail.find('"').unwrap_or(tail.len());
+        let url = &tail[..end];
+        let k = urls.iter().position(|u| u == url).unwrap_or_else(|| {
+            urls.push(url.to_string());
+            urls.len() - 1
+        });
+        out.push_str(&format!("r:id=\"rIdL{}", k + 1));
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    *body = out;
+    urls.iter()
+        .enumerate()
+        .map(|(k, u)| format!("<Relationship Id=\"rIdL{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink\" Target=\"{u}\" TargetMode=\"External\"/>", k + 1))
+        .collect()
 }
 
 /// Stem body of an ordinary question: the number hangs in a 0.3" gutter on the first
 /// paragraph (points label at its end), later paragraphs and blocks indent to the same
 /// 0.3" column; bullets/numbered lists use the numbering part, tables are real Word
 /// tables. `num_lists` counts numbered lists so each restarts at 1.
-fn docx_stem(b: &mut String, q: &DocQ, pt_label: Option<&str>, body_sz: i64, text_w_tw: i64, num_lists: &mut usize, style: PaperStyle) {
+#[allow(clippy::too_many_arguments)]
+fn docx_stem(b: &mut String, q: &DocQ, pt_label: Option<&str>, body_sz: i64, text_w_tw: i64, num_lists: &mut usize, style: PaperStyle, work: &dyn Fn(&mut String, u8)) {
     // Classic objective questions hang an answer blank before the number.
     let blank = style.objective_blank() && is_objective(q);
     let ind_w: i64 = if blank { 1152 } else { 432 };
@@ -1616,7 +2081,8 @@ fn docx_stem(b: &mut String, q: &DocQ, pt_label: Option<&str>, body_sz: i64, tex
             b.push_str("</w:p>");
         }
     };
-    for block in stem_blocks(&q.text) {
+    for (k, entry) in q.text.iter().enumerate() {
+    for block in richtext::parse(entry) {
         match &block {
             Block::Para(lines) => {
                 for l in lines {
@@ -1669,13 +2135,100 @@ fn docx_stem(b: &mut String, q: &DocQ, pt_label: Option<&str>, body_sz: i64, tex
                 flush_prefix(b, &mut prefix);
                 docx_table(b, *header, rows, body_sz, text_w_tw - ind_w, ind_w);
             }
+            Block::Heading(..) | Block::Divider | Block::Side(_) => {
+                flush_prefix(b, &mut prefix);
+                docx_blocks(b, std::slice::from_ref(&block), ind_w, body_sz, text_w_tw - ind_w, num_lists);
+            }
         }
+    }
+    // A multipart part's own work space, right under it.
+    if let Some(&n) = q.space_after.get(k).filter(|&&n| n > 0) {
+        flush_prefix(b, &mut prefix);
+        work(b, n);
+    }
     }
     flush_prefix(b, &mut prefix);
 }
 
+/// Blocks with no question number in front (side-by-side panels, and the heading / divider /
+/// side-by-side blocks of a stem), indented `ind` twips within `max_tw`.
+fn docx_blocks(b: &mut String, blocks: &[Block], ind: i64, body_sz: i64, max_tw: i64, num_lists: &mut usize) {
+    for block in blocks {
+        match block {
+            Block::Para(lines) => {
+                for l in lines {
+                    b.push_str(&format!("<w:p><w:pPr><w:ind w:left=\"{ind}\"/></w:pPr>"));
+                    wline(b, l, body_sz, false);
+                    b.push_str("</w:p>");
+                }
+            }
+            Block::Bullets(lines) | Block::Numbered(lines) => {
+                let num_id = if matches!(block, Block::Bullets(_)) {
+                    1
+                } else {
+                    *num_lists += 1;
+                    1 + *num_lists
+                };
+                for l in lines {
+                    b.push_str(&format!("<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"{num_id}\"/></w:numPr></w:pPr>"));
+                    wline(b, l, body_sz, false);
+                    b.push_str("</w:p>");
+                }
+            }
+            Block::Quote(lines) => {
+                for l in lines {
+                    b.push_str(&format!(
+                        "<w:p><w:pPr><w:pBdr><w:left w:val=\"single\" w:sz=\"12\" w:space=\"6\" w:color=\"999999\"/></w:pBdr><w:ind w:left=\"{}\"/></w:pPr>",
+                        ind + 200
+                    ));
+                    wline(b, l, body_sz, false);
+                    b.push_str("</w:p>");
+                }
+            }
+            Block::Table { header, rows } => docx_table(b, *header, rows, body_sz, max_tw, ind),
+            Block::Heading(level, l) => {
+                let sz = (body_sz as f64 * crate::equation::heading_scale(*level) as f64).round() as i64;
+                b.push_str(&format!("<w:p><w:pPr><w:keepNext/><w:spacing w:before=\"80\" w:after=\"40\"/><w:ind w:left=\"{ind}\"/></w:pPr>"));
+                wline(b, l, sz, true);
+                b.push_str("</w:p>");
+            }
+            Block::Divider => {
+                b.push_str(&format!(
+                    "<w:p><w:pPr><w:pBdr><w:bottom w:val=\"single\" w:sz=\"6\" w:space=\"1\" w:color=\"8C8C8C\"/></w:pBdr><w:spacing w:after=\"120\"/><w:ind w:left=\"{ind}\"/></w:pPr></w:p>"
+                ));
+            }
+            Block::Side(panels) => {
+                // a borderless table, one cell per panel
+                let n = panels.len().max(1) as i64;
+                let w = (max_tw / n).max(400);
+                let none = |side: &str| format!("<w:{side} w:val=\"nil\"/>");
+                b.push_str(&format!(
+                    "<w:tbl><w:tblPr><w:tblW w:w=\"{}\" w:type=\"dxa\"/><w:tblInd w:w=\"{ind}\" w:type=\"dxa\"/><w:tblBorders>{}{}{}{}{}{}</w:tblBorders><w:tblLayout w:type=\"fixed\"/><w:tblCellMar><w:left w:w=\"0\" w:type=\"dxa\"/><w:right w:w=\"180\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr><w:tblGrid>",
+                    w * n,
+                    none("top"), none("left"), none("bottom"), none("right"), none("insideH"), none("insideV")
+                ));
+                for _ in 0..n {
+                    b.push_str(&format!("<w:gridCol w:w=\"{w}\"/>"));
+                }
+                b.push_str("</w:tblGrid><w:tr><w:trPr><w:cantSplit/></w:trPr>");
+                for p in panels {
+                    b.push_str(&format!("<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/></w:tcPr>"));
+                    let before = b.len();
+                    docx_blocks(b, p, 0, body_sz, w - 180, num_lists);
+                    // a cell must end with a paragraph
+                    if b.len() == before || b.ends_with("</w:tbl>") {
+                        b.push_str("<w:p/>");
+                    }
+                    b.push_str("</w:tc>");
+                }
+                b.push_str("</w:tr></w:tbl>");
+            }
+        }
+    }
+}
+
 /// A bordered Word table indented `ind` twips; column widths come from the same content
-/// measure as the PDF (Helvetica metrics, close to Arial), header row bold and shaded and
+/// measure as the PDF (Source Serif 4 metrics, a little wider than Times), header row bold and shaded and
 /// repeated on each page.
 fn docx_table(b: &mut String, header: bool, rows: &[Vec<richtext::Line>], body_sz: i64, max_tw: i64, ind: i64) {
     let body = body_sz as f64 / 2.0;
@@ -1684,7 +2237,7 @@ fn docx_table(b: &mut String, header: bool, rows: &[Vec<richtext::Line>], body_s
         .enumerate()
         .map(|(ri, r)| r.iter().map(|c| line_frags(c, header && ri == 0)).collect())
         .collect();
-    // A little slack: Word's Arial runs a hair wider than the Helvetica tables.
+    // A little slack, so a substituted serif wider than Times (DejaVu Serif) still fits.
     let widths: Vec<i64> = table_col_widths(&fr, max_tw as f64 / 20.0 / 1.06, body)
         .iter()
         .map(|w| (w * 1.06 * 20.0).round() as i64)
@@ -1757,13 +2310,13 @@ fn numbering_xml(num_lists: usize) -> String {
 }
 
 const CONTENT_TYPES: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>"#;
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/><Override PartName="/word/fontTable.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml"/></Types>"#;
 
 const ROOT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
 
 const DOC_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/></Relationships>"#;
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable" Target="fontTable.xml"/></Relationships>"#;
 
 /// Content-type overrides and document relationships for the repeating page header
 /// (header1 = pages 2+, header2 = the empty first-page header).
@@ -1772,8 +2325,14 @@ const HEADER_RELS: &str = r#"<Relationship Id="rId3" Type="http://schemas.openxm
 const EMPTY_HEADER: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p/></w:hdr>"#;
 
+/// The body face: Times New Roman, which every Word install has. The font table gives
+/// "Liberation Serif" (metric-compatible, what LibreOffice substitutes) as its alternate name
+/// and the roman family, so a missing Times falls back to another serif, never a sans.
+const FONT_TABLE: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:font w:name="Times New Roman"><w:altName w:val="Liberation Serif"/><w:panose1 w:val="02020603050405020304"/><w:charset w:val="00"/><w:family w:val="roman"/><w:pitch w:val="variable"/></w:font><w:font w:name="Liberation Serif"><w:altName w:val="Times New Roman"/><w:charset w:val="00"/><w:family w:val="roman"/><w:pitch w:val="variable"/></w:font></w:fonts>"#;
+
 const STYLES: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="120"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="120" w:after="60"/></w:pPr><w:rPr><w:b/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style></w:styles>"#;
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman" w:eastAsia="Times New Roman"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="120"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="120" w:after="60"/></w:pPr><w:rPr><w:b/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style></w:styles>"#;
 
 pub fn render_docx(doc: &ExamDoc) -> Result<Vec<u8>, String> {
     let tw = |mm: f64| (mm * 1440.0 / 25.4).round() as i64; // mm -> twips
@@ -1877,7 +2436,17 @@ pub fn render_docx(doc: &ExamDoc) -> Result<Vec<u8>, String> {
                 }
             }
         } else {
-            docx_stem(&mut b, q, pt_label.as_deref(), body_sz, text_w_tw, &mut num_lists, style);
+            let ind_w: i64 = if style.objective_blank() && is_objective(q) { 1152 } else { 432 };
+            let part_work = |b: &mut String, n: u8| {
+                for _ in 0..n {
+                    if style.work_space_lined() {
+                        rule_par(b, ind_w);
+                    } else {
+                        wpara(b, &Par { sz: rule_sz, ..Par::body("") }, body_sz);
+                    }
+                }
+            };
+            docx_stem(&mut b, q, pt_label.as_deref(), body_sz, text_w_tw, &mut num_lists, style, &part_work);
 
             if q.image.is_some() {
                 wpara(
@@ -1955,6 +2524,7 @@ pub fn render_docx(doc: &ExamDoc) -> Result<Vec<u8>, String> {
     ));
 
     let numbering = numbering_xml(num_lists);
+    let link_rels = docx_link_rels(&mut b);
     let mut z = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let opt = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
@@ -1965,12 +2535,14 @@ pub fn render_docx(doc: &ExamDoc) -> Result<Vec<u8>, String> {
         ),
         None => (CONTENT_TYPES.to_string(), DOC_RELS.to_string()),
     };
+    let rels = if link_rels.is_empty() { rels } else { rels.replace("</Relationships>", &format!("{link_rels}</Relationships>")) };
     let mut parts: Vec<(&str, &str)> = vec![
         ("[Content_Types].xml", types.as_str()),
         ("_rels/.rels", ROOT_RELS),
         ("word/_rels/document.xml.rels", rels.as_str()),
         ("word/styles.xml", STYLES),
         ("word/numbering.xml", numbering.as_str()),
+        ("word/fontTable.xml", FONT_TABLE),
         ("word/document.xml", b.as_str()),
     ];
     if let Some(h) = &running {
@@ -2057,11 +2629,29 @@ mod tests {
         n
     }
 
-    fn find_sub(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    pub(super) fn find_raw(hay: &[u8], needle: &[u8]) -> Option<usize> {
         if needle.is_empty() || hay.len() < needle.len() {
             return None;
         }
         (0..=hay.len() - needle.len()).find(|&i| &hay[i..i + needle.len()] == needle)
+    }
+
+    /// The PDF with the bodies of its compressed (font program) streams zeroed, same length:
+    /// text searches then only see dictionaries and content streams, and offsets still hold.
+    pub(super) fn masked(pdf: &[u8]) -> Vec<u8> {
+        let mut out = pdf.to_vec();
+        let mut at = 0;
+        while let Some(i) = find_raw(&out[at..], b"/FlateDecode >>\nstream\n") {
+            let start = at + i + b"/FlateDecode >>\nstream\n".len();
+            let end = start + find_raw(&out[start..], b"\nendstream").unwrap_or(0);
+            out[start..end].fill(0);
+            at = end.max(start);
+        }
+        out
+    }
+
+    fn find_sub(hay: &[u8], needle: &[u8]) -> Option<usize> {
+        find_raw(&masked(hay), needle)
     }
 
     fn verify_xref(pdf: &[u8]) {
@@ -2100,9 +2690,13 @@ mod tests {
 
     #[test]
     fn width_tables_have_all_positive_entries() {
-        for i in 0..95 {
-            assert!(AFM_HELV[i] > 0, "helv index {i}");
-            assert!(AFM_HELV_B[i] > 0, "helv bold index {i}");
+        for face in [Face::Reg, Face::Bold, Face::Ital, Face::BoldItal] {
+            for b in 32..=126u8 {
+                assert!(char_w(b, face, 1000.0) > 0.0, "{face:?} byte {b}");
+            }
+            for b in 0xa1..=0xffu8 {
+                assert!(char_w(b, face, 1000.0) > 0.0, "{face:?} byte {b:#x}");
+            }
         }
     }
 
@@ -2267,7 +2861,11 @@ mod tests {
         assert!(docxml.contains("w:ind w:left=\"432\""));
         assert!(docxml.contains("w:w=\"12240\""), "Letter page size in twips");
         assert!(ct.contains("document.main+xml"));
-        assert!(st.contains("Arial"));
+        assert!(st.contains("w:ascii=\"Times New Roman\"") && !st.contains("Arial"), "serif body face");
+        let mut ft = String::new();
+        z.by_name("word/fontTable.xml").unwrap().read_to_string(&mut ft).unwrap();
+        assert!(ft.contains("<w:altName w:val=\"Liberation Serif\"/>") && ft.contains("w:family w:val=\"roman\""));
+        assert!(ct.contains("/word/fontTable.xml"));
     }
 
     #[test]
@@ -2334,9 +2932,324 @@ mod tests {
         }
     }
 
+    /// The four faces are embedded TrueType subsets whose `/Widths` are exactly the advance
+    /// widths the line breaker measured with, and every drawn run starts where the layout
+    /// said the previous run (plus a space in its face) ends.
+    #[test]
+    fn embedded_serif_faces_match_the_layout_metrics() {
+        let stem = "Plain **bold words here** and *italic words* then ***bold italic*** end, H_{2}O x^{3}.";
+        let pdf = render_pdf(&rich_doc(stem)).unwrap();
+        let text = s_lossy(&masked(&pdf));
+        assert!(!text.contains("/Helvetica"), "no standard-14 sans left");
+        for (face, name) in [(Face::Reg, "SourceSerif4-Regular"), (Face::Bold, "SourceSerif4-Bold"), (Face::Ital, "SourceSerif4-It"), (Face::BoldItal, "SourceSerif4-BoldIt")] {
+            let at = text.find(&format!("+{name} /FirstChar 32 /LastChar 255 /Widths [")).unwrap_or_else(|| panic!("{name} font dict"));
+            let tail = &text[at..];
+            let list = &tail[tail.find('[').unwrap() + 1..tail.find(']').unwrap()];
+            let ws: Vec<f64> = list.split(' ').map(|v| v.parse().unwrap()).collect();
+            assert_eq!(ws.len(), 224);
+            for (k, w) in ws.iter().enumerate() {
+                assert_eq!(*w, char_w(32 + k as u8, face, 1000.0), "{name} byte {}", 32 + k);
+            }
+        }
+        assert_eq!(text.matches("/FontFile2 ").count(), 4);
+        assert_eq!(text.matches("/Subtype /TrueType").count(), 4);
+        // Decompress each font program: it parses, holds the drawn glyphs, drops the rest.
+        let mut at = 0;
+        let mut programs = 0;
+        while let Some(i) = find_raw(&pdf[at..], b"/Filter /FlateDecode >>\nstream\n") {
+            let start = at + i + b"/Filter /FlateDecode >>\nstream\n".len();
+            let end = start + find_raw(&pdf[start..], b"\nendstream").unwrap();
+            let mut prog = Vec::new();
+            flate2::read::ZlibDecoder::new(&pdf[start..end]).read_to_end(&mut prog).unwrap();
+            let f = ttf_parser::Face::parse(&prog, 0).expect("embedded font program parses");
+            let space = f.glyph_index(' ').unwrap();
+            assert!(f.glyph_hor_advance(space).is_some());
+            programs += 1;
+            at = end;
+        }
+        assert_eq!(programs, 4);
+        // Measure vs draw: on the stem's first line each run's x equals the previous run's
+        // x plus its measured width (plus one space, measured in the face it was typed in).
+        let r = layout_pdf(&rich_doc(stem), false).unwrap();
+        let (items, _) = stem_items(&r, &rich_doc(stem).questions[0]);
+        let Some(Item::Line { frags, .. }) = items.first() else { panic!("first stem line") };
+        assert!(frags.len() >= 4, "{frags:?}");
+        for w in frags.windows(2) {
+            let (a, b) = (&w[0], &w[1]);
+            let size = frag_size(a.script, r.body);
+            let end = a.dx + text_w(&a.text, a.face, size);
+            let gap = b.dx - end;
+            // The space belongs to the run it was typed in: either neighbour's face.
+            let sp = |f: &Placed| char_w(32, f.face, frag_size(f.script, r.body));
+            assert!(gap.abs() < 1e-6 || (gap - sp(a)).abs() < 1e-6 || (gap - sp(b)).abs() < 1e-6, "{a:?} -> {b:?}: gap {gap}");
+        }
+    }
+
+    /// Maths, Greek, arrows and scripts beyond WinAnsi (P2 printed these as '?').
+    const UNICODE_STEM: &str = "Evaluate \u{3c0}(49) \u{2212} \u{221a}x: a \u{2264} b \u{2265} c, \u{b1}2 \u{d7} 3 \u{f7} 4, 90\u{b0}, 5 \u{b5}m, \u{3b1}\u{3b2}\u{3b3} \u{394}\u{3a9}\u{3b8}\u{3bb}\u{3c3}, \u{2192} \u{2190} \u{2191} \u{2193} \u{21d2} \u{21d4} \u{2194}, x \u{2208} A, \u{2220}B \u{22a5} CD, \u{2248} \u{2260} \u{221e} \u{2211}, *\u{3c0}r\u{b2}* **\u{394}H \u{2192} \u{2264}** x\u{2074} 10\u{207b}\u{2079} CO\u{2082}";
+    const UNICODE_CHARS: &str = "\u{3c0}\u{2212}\u{221a}\u{2264}\u{2265}\u{b1}\u{d7}\u{f7}\u{b0}\u{b5}\u{3b1}\u{3b2}\u{3b3}\u{394}\u{3a9}\u{3b8}\u{3bb}\u{3c3}\u{2192}\u{2190}\u{2191}\u{2193}\u{21d2}\u{21d4}\u{2194}\u{2208}\u{2220}\u{22a5}\u{2248}\u{2260}\u{221e}\u{2211}";
+
+    /// The text of a laid-out document read back from its content streams the way a viewer
+    /// does: literal strings through WinAnsi, `<..>` strings through each font's glyph map.
+    fn shown(r: &R) -> String {
+        let mut out = String::new();
+        for (ops, _) in &r.pages {
+            let mut at = 0;
+            while let Some(i) = find_raw(&ops[at..], b"BT /") {
+                let op = &ops[at + i + 4..];
+                let end = find_raw(op, b" Tj ET\n").unwrap();
+                let op = &op[..end];
+                at += i + 4 + end;
+                let font = std::str::from_utf8(&op[..find_raw(op, b" ").unwrap()]).unwrap();
+                let arg = &op[find_raw(op, b" Td ").unwrap() + 4..];
+                if arg[0] == b'<' {
+                    let hex = std::str::from_utf8(&arg[1..arg.len() - 1]).unwrap();
+                    let bytes: Vec<u8> = (0..hex.len() / 2).map(|k| u8::from_str_radix(&hex[2 * k..2 * k + 2], 16).unwrap()).collect();
+                    if font == "F9" {
+                        out.extend(bytes.iter().map(|&k| r.fb[k as usize].1));
+                    } else {
+                        let k: usize = font[1..].parse::<usize>().unwrap() - 5;
+                        out.extend(bytes.chunks(2).map(|p| r.cids[k][&u16::from_be_bytes([p[0], p[1]])]));
+                    }
+                } else {
+                    let mut esc = false;
+                    for &b in &arg[1..arg.len() - 1] {
+                        if b == b'\\' && !esc {
+                            esc = true;
+                            continue;
+                        }
+                        esc = false;
+                        out.push(fonts::winansi_char(b).unwrap_or('?'));
+                    }
+                }
+                out.push(' ');
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn unicode_beyond_winansi_prints_in_cid_and_fallback_fonts() {
+        let doc = rich_doc(UNICODE_STEM);
+        let r = layout_pdf(&doc, false).unwrap();
+        let text = shown(&r);
+        for c in UNICODE_CHARS.chars() {
+            assert!(text.contains(c), "{c} ({:04X}) not drawn: {text}", c as u32);
+        }
+        assert!(!text.contains('?'), "nothing degrades to '?': {text}");
+        // Source Serif 4 prints most of it; STIX Two Math only what Source Serif lacks.
+        let fb: String = r.fb.iter().map(|f| f.1).collect();
+        for c in ['\u{21d2}', '\u{21d4}', '\u{2194}', '\u{2208}', '\u{2220}', '\u{22a5}'] {
+            assert!(fb.contains(c), "{c} from the fallback face: {fb}");
+        }
+        for c in ['\u{3c0}', '\u{2212}', '\u{221a}', '\u{2264}', '\u{3a9}', '\u{2192}'] {
+            assert!(!fb.contains(c), "{c} is Source Serif's own");
+            assert!(r.cids[0].values().any(|v| *v == c) || r.cids[1].values().any(|v| *v == c) || r.cids[2].values().any(|v| *v == c), "{c} via a CID font");
+        }
+        assert!(r.cids[2].values().any(|v| *v == '\u{3c0}'), "italic \u{3c0} uses the italic face's CID font");
+        assert!(r.cids[1].values().any(|v| *v == '\u{2264}'), "bold \u{2264} uses the bold face's CID font");
+
+        let pdf = render_pdf(&doc).unwrap();
+        verify_xref(&pdf);
+        let t = s_lossy(&masked(&pdf));
+        assert_eq!(t.matches("/Subtype /Type0").count(), 3, "regular, bold and italic CID fonts");
+        assert_eq!(t.matches("/Subtype /CIDFontType2").count(), 3);
+        assert_eq!(t.matches("/Encoding /Identity-H").count(), 3);
+        assert_eq!(t.matches("/Subtype /Type3").count(), 1);
+        assert_eq!(t.matches("/ToUnicode ").count(), 4);
+        assert!(t.contains("/F5 ") && t.contains("/F6 ") && t.contains("/F7 ") && t.contains("/F9 ") && !t.contains("/F8 "), "only the used fonts");
+        // /W carries exactly the advances the layout measured with.
+        let at = t.find("/CIDFontType2").unwrap();
+        let w = &t[at..];
+        let w = &w[w.find("/W [").unwrap() + 4..];
+        let mut it = w.split(' ');
+        let (g, adv): (u16, u16) = (it.next().unwrap().parse().unwrap(), it.next().unwrap().trim_start_matches('[').trim_end_matches(']').parse().unwrap());
+        let c = r.cids[0][&g];
+        assert_eq!(fonts::charmap(fonts::Style::Regular).get(c), Some((g, adv)));
+        assert_eq!(text_w(&c.to_string(), Face::Reg, 1000.0), adv as f64);
+        // The embedded regular program keeps the CID glyphs' outlines.
+        let mut at = 0;
+        let mut kept = false;
+        while let Some(i) = find_raw(&pdf[at..], b"/Length1 ") {
+            let st = at + i + find_raw(&pdf[at + i..], b"stream\n").unwrap() + 7;
+            let end = st + find_raw(&pdf[st..], b"\nendstream").unwrap();
+            let mut prog = Vec::new();
+            flate2::read::ZlibDecoder::new(&pdf[st..end]).read_to_end(&mut prog).unwrap();
+            let f = ttf_parser::Face::parse(&prog, 0).unwrap();
+            if f.glyph_index('\u{3c0}').is_some_and(|g| f.glyph_bounding_box(g).is_some()) {
+                kept = true;
+            }
+            at = end;
+        }
+        assert!(kept, "\u{3c0}'s outline is in a subset");
+    }
+
+    #[test]
+    fn winansi_only_documents_are_unchanged_by_the_cid_fonts() {
+        // No CID or Type 3 font, and every string is a literal: byte-for-byte the P2 writer.
+        let pdf = render_pdf(&sample_doc()).unwrap();
+        let t = s_lossy(&masked(&pdf));
+        assert!(!t.contains("/Type0") && !t.contains("/Type3") && !t.contains("/F5") && !t.contains("/F9"));
+        assert!(!t.contains("> Tj"), "no hex strings");
+        assert!(t.contains("/F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >>"));
+        // cp1252 letters are still WinAnsi bytes, not CIDs.
+        let r = layout_pdf(&rich_doc("caf\u{e9} \u{20ac}5 \u{2014} na\u{ef}ve"), false).unwrap();
+        assert!(r.cids.iter().all(|m| m.is_empty()) && r.fb.is_empty());
+    }
+
+    /// pdftotext (poppler) reads every symbol back through the ToUnicode CMaps. Skipped when
+    /// poppler is not installed.
+    #[test]
+    fn pdftotext_round_trips_unicode() {
+        let Ok(probe) = std::process::Command::new("pdftotext").arg("-v").output() else { return };
+        let _ = probe;
+        let pdf = render_pdf(&rich_doc(UNICODE_STEM)).unwrap();
+        let dir = std::env::temp_dir().join(format!("qs-pdftotext-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("u.pdf");
+        std::fs::write(&f, &pdf).unwrap();
+        let out = std::process::Command::new("pdftotext").arg("-enc").arg("UTF-8").arg(&f).arg("-").output().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let txt = String::from_utf8_lossy(&out.stdout);
+        for c in UNICODE_CHARS.chars() {
+            assert!(txt.contains(c), "pdftotext lost {c} ({:04X}): {txt}", c as u32);
+        }
+        assert!(txt.contains("Evaluate \u{3c0}(49) \u{2212} \u{221a}x"), "{txt}");
+        // Fallback (Type 3) symbols stay in reading order on their line.
+        assert!(txt.contains("\u{2193} \u{21d2} \u{21d4} \u{2194}, x \u{2208} A,") && txt.contains("\u{2220}B \u{22a5} CD"), "{txt}");
+        assert!(!txt.contains('?'), "{txt}");
+    }
+
+    /// Per-part work space prints right under its part in the PDF (lines in the lined styles,
+    /// room otherwise) and the DOCX, and counts toward keep-together.
+    #[test]
+    fn multipart_part_work_space_prints_under_each_part() {
+        let pieces = vec!["Answer the parts.\na. First part?".to_string(), "b. Second part?".to_string(), "c. Third part?".to_string()];
+        let mk = |style: PaperStyle, space: Vec<u8>| ExamDoc {
+            title: "W".into(),
+            body_pt: 11.0,
+            heading_pt: 16.0,
+            margin_mm: 18.0,
+            style,
+            questions: vec![DocQ { number: 1, text: if space.is_empty() { vec![pieces.join("\n")] } else { pieces.clone() }, rule_lines: 0, space_after: space, ..Default::default() }],
+            ..Default::default()
+        };
+        let ys = |pdf: &[u8], needle: &str| -> f64 {
+            let t = s_lossy(&masked(pdf));
+            let at = t.find(&format!("({needle}")).unwrap_or_else(|| panic!("{needle} in {t}"));
+            let head = &t[..at];
+            let td = head.rfind(" Td").unwrap();
+            head[..td].rsplit(' ').next().unwrap().parse().unwrap()
+        };
+        for style in [PaperStyle::Standard, PaperStyle::Classic] {
+            let base = render_pdf(&mk(style, vec![])).unwrap();
+            let spaced = render_pdf(&mk(style, vec![4, 0, 2])).unwrap();
+            let r = layout_pdf(&mk(style, vec![]), false).unwrap();
+            let pitch = r.pitch();
+            // Part a stays put; part b moves down by a's 4 lines plus one part gap, part c by
+            // the same 4 lines (b has none) plus two gaps.
+            assert!((ys(&base, "Answer") - ys(&spaced, "Answer")).abs() < 1e-6);
+            let db = ys(&base, "b. Second") - ys(&spaced, "b. Second");
+            let dc = ys(&base, "c. Third") - ys(&spaced, "c. Third");
+            assert!((db - (4.0 * pitch + r.body * 0.35)).abs() < 0.01, "{style:?} b moved {db}");
+            assert!((dc - (4.0 * pitch + 2.0 * r.body * 0.35)).abs() < 0.01, "{style:?} c moved {dc}");
+            // Lined styles draw the lines; the item's height includes the space.
+            let t = s_lossy(&masked(&spaced));
+            let lines = t.matches(" l S").count() - s_lossy(&masked(&base)).matches(" l S").count();
+            assert_eq!(lines, if style.work_space_lined() { 6 } else { 0 }, "{style:?}");
+            let q = &mk(style, vec![4, 0, 2]).questions[0];
+            let rs = layout_pdf(&mk(style, vec![4, 0, 2]), false).unwrap();
+            assert!((q_est_height(&rs, q, None, false) - q_est_height(&r, &mk(style, vec![]).questions[0], None, false) - 6.0 * pitch - 2.0 * r.body * 0.35).abs() < 0.01);
+        }
+        // DOCX: empty work paragraphs (rules in Classic) between the parts.
+        let x = |d: &ExamDoc| {
+            let bytes = render_docx(d).unwrap();
+            let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+            let mut s = String::new();
+            z.by_name("word/document.xml").unwrap().read_to_string(&mut s).unwrap();
+            s
+        };
+        let d = x(&mk(PaperStyle::Classic, vec![4, 0, 2]));
+        let a = d.find("First part?").unwrap();
+        let b = d.find("Second part?").unwrap();
+        let c = d.find("Third part?").unwrap();
+        assert_eq!(d[a..b].matches("<w:bottom w:val=\"single\" w:sz=\"6\"").count(), 4, "four ruled lines under part a");
+        assert_eq!(d[b..c].matches("<w:bottom w:val=\"single\" w:sz=\"6\"").count(), 0);
+        assert_eq!(d[c..].matches("<w:bottom w:val=\"single\" w:sz=\"6\"").count(), 2 + 3, "part c's two, then the question's three answer lines");
+        // Each rule paragraph repeats its line as the `between` border, so a run of them is
+        // not merged into one line by Word / LibreOffice.
+        assert_eq!(d.matches("<w:between w:val=\"single\"").count(), d.matches("<w:bottom w:val=\"single\" w:sz=\"6\"").count());
+        assert_eq!(x(&mk(PaperStyle::Standard, vec![])).matches("Second part?").count(), 1);
+    }
+
+    /// `[text](url)` prints blue and underlined with a URI link annotation (PDF) and becomes a
+    /// real hyperlink (DOCX); a stem without links is unchanged.
+    #[test]
+    fn links_print_as_annotations_and_hyperlinks() {
+        let stem = "Read [the **notes** here](https://ex.org/a?b=1&c=2) or [mail](mailto:t@s.org), not [x](ftp://a.org).";
+        let doc = rich_doc(stem);
+        let pdf = render_pdf(&doc).unwrap();
+        verify_xref(&pdf);
+        let t = s_lossy(&masked(&pdf));
+        assert_eq!(t.matches("/Subtype /Link").count(), 4, "the / notes / here runs and the mailto: {t}");
+        assert!(t.contains("/URI (https://ex.org/a?b=1&c=2)") && t.contains("/URI (mailto:t@s.org)"));
+        assert!(!t.contains("ftp://a.org)") || t.contains("(ftp://a.org)") || t.contains("[x](ftp://a.org)"), "ftp stays literal text");
+        assert!(t.contains("/Annots ["), "the page lists its annotations");
+        assert!(t.contains("0.05 0.27 0.68 rg"), "blue text");
+        // Each annotation covers its run: x0 < x1 and the rect sits on a text baseline.
+        let r = layout_pdf(&doc, false).unwrap();
+        assert_eq!(r.annots.len(), 4);
+        for (p, [x0, y0, x1, y1], _) in &r.annots {
+            assert_eq!(*p, 0);
+            assert!(x1 > x0 && y1 > y0 && *x0 >= r.x0 && *x1 <= r.x1 + 0.01);
+        }
+        // The link markup takes no room: the line breaks exactly as the same text without it.
+        let plain = rich_doc("Read the **notes** here or mail, not [x](ftp://a.org).");
+        let rows = |pdf: &[u8]| {
+            let mut b = baselines(pdf);
+            b.dedup();
+            b
+        };
+        assert_eq!(rows(&pdf), rows(&render_pdf(&plain).unwrap()));
+        // DOCX: hyperlinks with external relationships, one per distinct URL.
+        let bytes = render_docx(&doc).unwrap();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut d = String::new();
+        z.by_name("word/document.xml").unwrap().read_to_string(&mut d).unwrap();
+        let mut rels = String::new();
+        z.by_name("word/_rels/document.xml.rels").unwrap().read_to_string(&mut rels).unwrap();
+        assert_eq!(d.matches("<w:hyperlink r:id=\"rIdL1\"").count(), 3, "the three runs of the first link (the, notes, here)");
+        assert_eq!(d.matches("<w:hyperlink r:id=\"rIdL2\"").count(), 1);
+        assert!(!d.contains(LINK_RID), "no placeholder left");
+        assert!(d.contains("<w:color w:val=\"0563C1\"/><w:u w:val=\"single\"/>"));
+        assert!(rels.contains("Id=\"rIdL1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink\" Target=\"https://ex.org/a?b=1&amp;c=2\" TargetMode=\"External\""), "{rels}");
+        assert!(rels.contains("Target=\"mailto:t@s.org\""));
+        assert!(d.contains("[x](ftp://a.org)"), "other schemes stay literal");
+        // No links: no annotations, no hyperlink relationships.
+        let none = render_pdf(&sample_doc()).unwrap();
+        assert!(!s_lossy(&masked(&none)).contains("/Annot"));
+        let bytes = render_docx(&sample_doc()).unwrap();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut rels = String::new();
+        z.by_name("word/_rels/document.xml.rels").unwrap().read_to_string(&mut rels).unwrap();
+        assert!(!rels.contains("hyperlink"));
+    }
+
+    fn s_lossy(b: &[u8]) -> String {
+        String::from_utf8_lossy(b).into_owned()
+    }
+
+    #[test]
+    fn cp1252_punctuation_measures_and_prints() {
+        let pdf = render_pdf(&rich_doc("Cost \u{20ac}5 \u{2030} \u{0160}koda \u{2014} done")).unwrap();
+        assert!(find_sub(&pdf, b"(Cost \x805 \x89 \x8akoda \x97 done)").is_some(), "{}", s_lossy(&masked(&pdf)));
+        assert!(char_w(0x80, Face::Reg, 10.0) > 3.0, "euro has its real width");
+    }
+
     /// Every text baseline ("x y Td") of a page's content stream.
     fn baselines(pdf: &[u8]) -> Vec<f64> {
-        let s = String::from_utf8_lossy(pdf);
+        let s = String::from_utf8_lossy(&masked(pdf)).into_owned();
         s.split(" Td").filter_map(|chunk| chunk.rsplit(' ').next().and_then(|y| y.parse::<f64>().ok())).collect()
     }
 
@@ -2345,7 +3258,7 @@ mod tests {
         let pdf = render_pdf(&rich_doc("Use **bold** and *slant* in H_{2}O, x^{3} and SO\u{2083}.")).unwrap();
         assert!(find_sub(&pdf, b"/F2 11 Tf").is_some(), "bold run");
         assert!(find_sub(&pdf, b"/F3 11 Tf").is_some(), "italic run");
-        assert!(find_sub(&pdf, b"/BaseFont /Helvetica-Oblique").is_some());
+        assert!(find_sub(&pdf, b"+SourceSerif4-It /FirstChar").is_some(), "the real italic face is embedded");
         assert!(find_sub(&pdf, b"/F1 7.7 Tf").is_some(), "sub/superscripts print smaller");
         assert!(find_sub(&pdf, b"(**").is_none() && find_sub(&pdf, b"_{").is_none(), "markup must not leak");
         assert!(find_sub(&pdf, b"?").is_none() || find_sub(&pdf, b"SO?").is_none(), "Unicode subscript is not '?'");
@@ -2458,6 +3371,53 @@ mod tests {
     }
 
     #[test]
+    fn headings_dividers_and_side_by_side_in_pdf_and_docx() {
+        let stem = "# Part A\nRead both.\n---\n::: side\nLeft **text**\n• one\n::: next\nRight text\n:::\n## After";
+        let items = layout_blocks(&richtext::parse(stem), 400.0, 380.0, 11.0, 15.6);
+        assert!(matches!(&items[0], Item::Line { scale, frags, .. } if *scale > 1.3 && frags.iter().all(|f| matches!(f.face, Face::Bold | Face::BoldItal))));
+        assert!(items.iter().any(|i| matches!(i, Item::Rule { .. })));
+        let cols = items.iter().find_map(|i| if let Item::Cols { cols, h } = i { Some((cols.clone(), *h)) } else { None }).unwrap();
+        assert_eq!(cols.0.len(), 2);
+        assert!(cols.0[1].0 > 150.0, "second column starts right of the first");
+        assert!(cols.1 >= 2.0 * 15.6, "two lines in the left panel");
+        let pdf = render_pdf(&rich_doc(stem)).unwrap();
+        assert!(find_sub(&pdf, b"(Part A) Tj").is_some());
+        assert!(find_sub(&pdf, b"/F2 15.4 Tf").is_some(), "heading 1 prints bold at 1.4x");
+        assert!(find_sub(&pdf, b"(Left ) Tj").is_some() || find_sub(&pdf, b"(Left) Tj").is_some());
+        assert!(find_sub(&pdf, b"(Right text) Tj").is_some());
+        assert!(find_sub(&pdf, b":::").is_none() && find_sub(&pdf, b"(---)").is_none() && find_sub(&pdf, b"(# ").is_none());
+        // left and right panels share a baseline
+        let bl = baselines(&pdf);
+        let left_y = bl.iter().zip(String::from_utf8_lossy(&pdf).split(" Td").skip(1)).find(|(_, c)| c.contains("(Left")).map(|(y, _)| *y);
+        let right_y = bl.iter().zip(String::from_utf8_lossy(&pdf).split(" Td").skip(1)).find(|(_, c)| c.contains("(Right text)")).map(|(y, _)| *y);
+        assert_eq!(left_y, right_y);
+        let bytes = render_docx(&rich_doc(stem)).unwrap();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut x = String::new();
+        z.by_name("word/document.xml").unwrap().read_to_string(&mut x).unwrap();
+        assert!(x.contains("<w:keepNext/>") && x.contains(">Part A<"));
+        assert!(x.contains("w:val=\"31\""), "heading 1 at 1.4 x 22 half-points");
+        assert!(x.contains("<w:pBdr><w:bottom w:val=\"single\" w:sz=\"6\" w:space=\"1\" w:color=\"8C8C8C\"/>"), "divider");
+        assert!(x.contains("<w:insideV w:val=\"nil\"/>") && x.matches("<w:tc>").count() == 2, "side by side is a borderless 2-cell table");
+        assert!(!x.contains(":::") && !x.contains("># "));
+    }
+
+    #[test]
+    fn stems_without_extensions_render_byte_identically() {
+        // stems written before headings/dividers/side-by-side: the same bytes as a plain render of
+        // the same blocks through the pre-extension paths (lists, quotes, tables, inline runs)
+        for stem in ["Plain stem.", "Do **all**:\n• a\n• b\n1. x\n2. y\n> q\nA | B\n---|---\n1 | ___", "a # b\n#x\n----\n:: side", "# of protons: ___"] {
+            assert!(!richtext::uses_extensions(stem), "{stem:?}");
+            let items = layout_blocks(&richtext::parse(stem), 400.0, 380.0, 11.0, 15.6);
+            assert!(items.iter().all(|i| match i {
+                Item::Line { scale, .. } => *scale == 1.0,
+                Item::Rule { .. } | Item::Cols { .. } => false,
+                _ => true,
+            }), "{stem:?}");
+        }
+    }
+
+    #[test]
     fn docx_tables_lists_and_runs() {
         let stem = "Do **all**:\n• Draw it.\n• Count *them*.\n1. first\n2. second\nFormula | Name\nSO\u{2083} | ___\nH_{2}O | water";
         let bytes = render_docx(&rich_doc(stem)).unwrap();
@@ -2480,8 +3440,6 @@ mod tests {
         assert!(num.contains("w:numFmt w:val=\"bullet\"") && num.contains("w:numFmt w:val=\"decimal\""));
         assert!(ct.contains("numbering+xml") && rels.contains("numbering.xml"));
     }
-
-    #[test]
 
     #[test]
     fn empty_doc_still_renders_both() {
@@ -2529,7 +3487,7 @@ mod style_tests {
     }
 
     fn s(pdf: &[u8]) -> String {
-        String::from_utf8_lossy(pdf).into_owned()
+        String::from_utf8_lossy(&super::tests::masked(pdf)).into_owned()
     }
 
     /// (x, y) of every text draw.

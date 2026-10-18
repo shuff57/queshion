@@ -76,6 +76,7 @@ fn same_items(a: &[ExamItem], b: &[ExamItem]) -> bool {
                 && x.section == y.section
                 && x.work_lines == y.work_lines
                 && x.answer_order == y.answer_order
+                && x.part_work == y.part_work
         })
 }
 
@@ -141,6 +142,9 @@ struct EditUi {
     /// Work-space handle being dragged: (item index, live line count, pointer y and line
     /// count when the drag began).
     ws_drag: Option<(usize, u8, f32, u8)>,
+    /// A multipart part's work-space handle being dragged: (item index, part index, live
+    /// line count, pointer y and line count when the drag began).
+    pws_drag: Option<(usize, usize, u8, f32, u8)>,
 }
 
 #[derive(Clone)]
@@ -271,17 +275,12 @@ fn ruled_blanks(stem: &str) -> usize {
     if total == 0 {
         return 1;
     }
-    let in_tables: usize = crate::richtext::parse(stem)
-        .iter()
-        .map(|b| match b {
-            crate::richtext::Block::Table { rows, .. } => rows
-                .iter()
-                .flatten()
-                .map(|c| crate::richtext::line_text(c).matches("___").count())
-                .sum(),
-            _ => 0,
-        })
-        .sum();
+    let mut in_tables = 0usize;
+    crate::richtext::walk(&crate::richtext::parse(stem), &mut |b| {
+        if let crate::richtext::Block::Table { rows, .. } = b {
+            in_tables += rows.iter().flatten().map(|c| crate::richtext::line_text(c).matches("___").count()).sum::<usize>();
+        }
+    });
     total.saturating_sub(in_tables)
 }
 
@@ -644,12 +643,18 @@ fn exam_menu(ui: &mut egui::Ui, rect: Rect, row: &ExamRow, st: &mut ListUi) {
     });
 }
 
+/// The page thumbnail area of an exam card (points): the Exams screen and the Home screen's
+/// recent-exam cards draw the first page at this same size, so both show the same detail
+/// (and share one cached rasterisation).
+pub(crate) const CARD_THUMB: Vec2 = Vec2::new(112.0, 152.0);
+
 fn draw_exam_cards(app: &mut crate::App, ui: &mut egui::Ui, rows: &[ExamRow], st: &mut ListUi) {
     let gap = 14.0;
     let avail = ui.available_width();
     let n = (((avail + gap) / (300.0 + gap)).floor() as usize).max(1);
     let card_w = ((avail - gap * (n as f32 - 1.0)) / n as f32).floor();
-    let card_h = 142.0;
+    let card_h = CARD_THUMB.y + 24.0;
+    let thumb_w = CARD_THUMB.x;
     ui.spacing_mut().item_spacing = Vec2::splat(gap);
     for chunk in rows.chunks(n) {
     ui.horizontal_top(|ui| {
@@ -664,13 +669,13 @@ fn draw_exam_cards(app: &mut crate::App, ui: &mut egui::Ui, rows: &[ExamRow], st
                 Stroke::new(1.0, if resp.hovered() { theme::accent_col() } else { theme::border() }),
                 StrokeKind::Inside,
             );
-            let thumb_area = Rect::from_min_size(rect.left_top() + Vec2::new(14.0, 12.0), Vec2::new(78.0, card_h - 24.0));
+            let thumb_area = Rect::from_min_size(rect.left_top() + Vec2::new(14.0, 12.0), Vec2::new(thumb_w, card_h - 24.0));
             let ctx = ui.ctx().clone();
             let tp = ui.painter().clone();
             if paint_exam_thumb(app, &ctx, &tp, thumb_area, &row.id).is_none() {
-                paint_thumb(&tp, rect.left_top() + Vec2::new(14.0 + 36.0, 14.0 + 46.0), -0.05, row.q.max(2));
+                paint_thumb(&tp, rect.left_top() + Vec2::new(14.0 + thumb_w / 2.0, 14.0 + 60.0), -0.05, row.q.max(2));
             }
-            let tx = rect.left() + 14.0 + 78.0 + 12.0;
+            let tx = rect.left() + 14.0 + thumb_w + 12.0;
             let tw = rect.right() - 36.0 - tx;
             let g = clamped_galley(p, &row.name, FontId::new(16.0, theme::serif_family()), theme::ink(), tw, 2);
             let gh = g.size().y;
@@ -2244,7 +2249,7 @@ fn draw_item(
     style: model::PaperStyle,
 ) -> Rect {
     let wash = ui.painter().add(Shape::Noop);
-    let qrect = paper_question(app, ui, ctx, q, number, cw, bp, style);
+    let qrect = paper_question_ws(app, ui, ctx, q, number, cw, bp, style, Some((exam_id, i, &mut *st)));
     let work = app.store.exam(exam_id).and_then(|e| e.items.get(i)).map(|it| it.work_lines).unwrap_or(0);
     let wrect = work_space_area(app, ui, exam_id, st, i, work, qrect, cw, bp, style);
     let rect = qrect.union(wrect);
@@ -2276,7 +2281,7 @@ fn draw_item(
 
     // Margin gutters: grip and the actions menu on the left, remove / move on the right.
     let dragging_this = matches!(&st.drag, Some(DragState { src: DragSrc::Page(f), .. }) if *f == i);
-    let any_drag = st.drag.is_some() || st.ws_drag.is_some();
+    let any_drag = st.drag.is_some() || st.ws_drag.is_some() || st.pws_drag.is_some();
     let menu_id = ui.id().with(("it_menu", i));
     let menu_open = egui::Popup::is_id_open(ctx, menu_id.with("popup"));
     let hover = !any_drag && ui.rect_contains_pointer(rect.expand2(Vec2::new(ml.max(mr) - 2.0, 4.0)));
@@ -2348,6 +2353,25 @@ fn draw_item(
             } else if ui.button("Remove work space").clicked() {
                 act = Some(QAct::Work(0));
             }
+            if let Kind::Multipart { parts } = &q.kind {
+                if !parts.is_empty() {
+                    let pw = app.store.exam(exam_id).and_then(|e| e.items.get(i)).map(|it| it.part_work.clone()).unwrap_or_default();
+                    ui.menu_button("Work space per part", |ui| {
+                        ui.set_min_width(200.0);
+                        for (pi, part) in parts.iter().enumerate() {
+                            let label = split_part_label_styled(pi, &part.stem, style).0;
+                            let n = pw.get(pi).copied().unwrap_or(0);
+                            let text = if n == 0 { format!("{label}  Add work space") } else { format!("{label}  Remove work space ({n} lines)") };
+                            if ui.button(text).clicked() {
+                                act = Some(QAct::PartWork(pi, if n == 0 { 3 } else { 0 }));
+                                ui.close();
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text("Room to work under each part; drag the handle under a part to size it");
+                }
+            }
             ui.separator();
             ui.label(kit::small_caps_text("Vary"));
             if ui.button("Shuffle question order").on_hover_text("Shuffles the questions in this section").clicked() {
@@ -2383,6 +2407,8 @@ enum QAct {
     Duplicate,
     SectionBelow,
     Work(u8),
+    /// Work space under one part of a multipart question: (part index, lines).
+    PartWork(usize, u8),
     ShuffleQ,
     ShuffleA,
     Remove,
@@ -2409,6 +2435,7 @@ fn question_action(app: &mut crate::App, ctx: &egui::Context, exam_id: &Id, st: 
             }
             it
         }),
+        QAct::PartWork(pi, n) => apply_items_fn(app, exam_id, |it| with_part_work(it, i, pi, n)),
         QAct::ShuffleQ => {
             let mut rnd = editor_rng();
             apply_items_fn(app, exam_id, |it| with_section_shuffled(it, i, &mut rnd));
@@ -2522,6 +2549,84 @@ fn work_space_area(
     area
 }
 
+/// Items with part `pi` of item `i` given `n` lines of work space (trailing zeros dropped,
+/// so an exam with none stores none).
+fn with_part_work(mut items: Vec<ExamItem>, i: usize, pi: usize, n: u8) -> Vec<ExamItem> {
+    if let Some(x) = items.get_mut(i) {
+        if x.part_work.len() <= pi {
+            x.part_work.resize(pi + 1, 0);
+        }
+        x.part_work[pi] = n.min(23);
+        while x.part_work.last() == Some(&0) {
+            x.part_work.pop();
+        }
+    }
+    items
+}
+
+/// The work space under one part of a multipart question on the exam page: `lines` printed
+/// lines and a drag handle at its bottom edge (0..=23), like the question's own handle.
+#[allow(clippy::too_many_arguments)]
+fn part_space_area(app: &mut crate::App, ui: &mut egui::Ui, exam_id: &Id, st: &mut EditUi, i: usize, pi: usize, label: &str, x0: f32, w: f32, bp: f32, style: model::PaperStyle) {
+    let lines = app.store.exam(exam_id).and_then(|e| e.items.get(i)).and_then(|it| it.part_work.get(pi).copied()).unwrap_or(0);
+    let pitch = line_pitch_px(bp, style);
+    let live = match st.pws_drag {
+        Some((k, p, n, _, _)) if k == i && p == pi => n,
+        _ => lines,
+    };
+    let top = ui.cursor().top();
+    if live > 0 {
+        if style.work_space_lined() {
+            for _ in 0..live {
+                let (r, _) = ui.allocate_exact_size(Vec2::new(w, pitch), Sense::hover());
+                answer_rule(ui.painter(), Pos2::new(x0, r.bottom() - 2.0), x0 + w, style);
+            }
+        } else {
+            ui.allocate_exact_size(Vec2::new(w, live as f32 * pitch), Sense::hover());
+        }
+    }
+    let hy = ui.cursor().top().max(top) + 1.0;
+    let hrect = Rect::from_center_size(Pos2::new(x0 + w / 2.0, hy), Vec2::new(w, 6.0));
+    let hid = ui.id().with(("pws_handle", i, pi));
+    let resp = ui.interact(hrect, hid, Sense::drag());
+    let near = ui.rect_contains_pointer(hrect.expand2(Vec2::new(0.0, 2.0)));
+    let dragging = st.pws_drag.is_some_and(|(k, p, ..)| k == i && p == pi);
+    if (near && st.drag.is_none() && st.ws_drag.is_none()) || dragging {
+        let p = ui.painter();
+        if live > 0 || dragging {
+            p.rect_stroke(
+                Rect::from_min_max(Pos2::new(x0, top), Pos2::new(x0 + w, hy)),
+                CornerRadius::ZERO,
+                Stroke::new(1.0, Color32::from_rgb(0xb0, 0x3a, 0x2e).gamma_multiply(0.7)),
+                StrokeKind::Inside,
+            );
+        }
+        let c = Pos2::new(x0 + w / 2.0, hy);
+        p.rect_filled(Rect::from_center_size(c, Vec2::new(28.0, 4.0)), CornerRadius::same(2), theme::accent_col().gamma_multiply(0.85));
+        let txt = if live == 1 { format!("{label} 1 line of work space") } else { format!("{label} {live} lines of work space") };
+        p.text(c + Vec2::new(20.0, 0.0), Align2::LEFT_CENTER, txt, FontId::new(9.0, theme::bold_family()), theme::accent_col());
+        resp.clone().on_hover_cursor(egui::CursorIcon::ResizeVertical);
+    }
+    if resp.drag_started() {
+        let y0 = ui.ctx().pointer_interact_pos().map_or(hy, |p| p.y);
+        st.pws_drag = Some((i, pi, lines, y0, lines));
+    }
+    if dragging {
+        if let (Some(p), Some((_, _, _, y0, n0))) = (ui.ctx().pointer_latest_pos(), st.pws_drag) {
+            let n = (n0 as f32 + ((p.y - y0) / pitch).round()).clamp(0.0, 23.0) as u8;
+            st.pws_drag = Some((i, pi, n, y0, n0));
+        }
+        ui.ctx().request_repaint();
+    }
+    if resp.drag_stopped() || (dragging && !ui.ctx().input(|i| i.pointer.primary_down())) {
+        if let Some((k, p, n, _, _)) = st.pws_drag.take() {
+            if k == i && p == pi && n != lines {
+                apply_items_fn(app, exam_id, |it| with_part_work(it, i, pi, n));
+            }
+        }
+    }
+}
+
 /// One printed answer line from `a` to x `x1` (dotted on Exam Board).
 fn answer_rule(p: &egui::Painter, a: Pos2, x1: f32, style: model::PaperStyle) {
     let s = egui::Stroke::new(0.9, PAPER_RULE);
@@ -2544,6 +2649,23 @@ pub(crate) fn paper_question(
     cw: f32,
     bp: f32,
     style: model::PaperStyle,
+) -> Rect {
+    paper_question_ws(app, ui, ctx, q, number, cw, bp, style, None)
+}
+
+/// [`paper_question`] on the exam page: `pws` (exam, item index, editor state) adds each
+/// multipart part's work space with its drag handle.
+#[allow(clippy::too_many_arguments)]
+fn paper_question_ws(
+    app: &mut crate::App,
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    q: Option<&model::Question>,
+    number: u32,
+    cw: f32,
+    bp: f32,
+    style: model::PaperStyle,
+    mut pws: Option<(&Id, usize, &mut EditUi)>,
 ) -> Rect {
     let objective = q.is_some_and(|q| matches!(q.kind, Kind::Mc { .. } | Kind::Tf { .. }));
     let blank_w = if style.objective_blank() && objective { bp * 3.6 } else { 0.0 };
@@ -2571,7 +2693,7 @@ pub(crate) fn paper_question(
                 return;
             };
             render_stem(ui, &q.stem, if board_points { None } else { q.points }, bp, q.image.is_some());
-            draw_item_body(app, ui, ctx, q, number, body_w, bp, style);
+            draw_item_body(app, ui, ctx, q, number, body_w, bp, style, pws.as_mut().map(|(e, i, st)| (*e, *i, &mut **st)));
         });
     });
     let r = Rect::from_min_size(inner.response.rect.min, Vec2::new(cw, inner.response.rect.height().max(bp * 1.45)));
@@ -2627,6 +2749,7 @@ fn draw_item_body(
     body_w: f32,
     bp: f32,
     style: model::PaperStyle,
+    mut pws: Option<(&Id, usize, &mut EditUi)>,
 ) {
     match &q.kind {
         Kind::Mc { answers } => {
@@ -2704,7 +2827,7 @@ fn draw_item_body(
             for (pi, part) in parts.iter().enumerate() {
                 ui.add_space(bp * 0.35);
                 let (label, rest) = split_part_label_styled(pi, &part.stem, style);
-                ui.horizontal_top(|ui| {
+                let row = ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing = Vec2::ZERO;
                     let lw = bp * 1.9;
                     let (lr, _) = ui.allocate_exact_size(Vec2::new(lw, bp * 1.2), Sense::hover());
@@ -2723,6 +2846,10 @@ fn draw_item_body(
                         }
                     });
                 });
+                if let Some((exam_id, i, st)) = pws.as_mut() {
+                    let x0 = row.response.rect.left() + bp * 1.9;
+                    part_space_area(app, ui, exam_id, st, *i, pi, &label, x0, (body_w - bp * 1.9).max(40.0), bp, style);
+                }
                 if matches!(part.kind, PartKind::Short { .. }) {
                     rules += 2;
                 }
@@ -3531,6 +3658,9 @@ fn shelf_row(
 struct Mapped {
     dq: DocQ,
     img: Option<model::ImageRef>,
+    /// Multipart: the stem text cut at each part (piece 0 = stem + part a, piece k = part k),
+    /// joined with `\n` it is `dq.text[0]`. Used when the exam sets per-part work space.
+    pieces: Vec<String>,
 }
 
 /// Reads one attached image's bytes from the store media dir.
@@ -3566,6 +3696,7 @@ fn map_question_style(number: u32, q: &model::Question, style: model::PaperStyle
     // Exports have no typesetter yet: degrade `$latex$` to its Unicode approximation.
     let plain = |s: &mut String| *s = crate::equation::stem_to_plain(s);
     m.dq.text.iter_mut().for_each(plain);
+    m.pieces.iter_mut().for_each(plain);
     m.dq.choices.iter_mut().for_each(plain);
     plain(&mut m.dq.key_text);
     m
@@ -3583,6 +3714,7 @@ fn map_question_raw_style(number: u32, q: &model::Question, style: model::PaperS
     dq.image = q.image.as_ref().and_then(read_img);
     dq.rule_lines = 0;
     let mut ktext: String;
+    let mut pieces: Vec<String> = Vec::new();
 
     match &q.kind {
         Kind::Mc { answers } => {
@@ -3656,7 +3788,9 @@ fn map_question_raw_style(number: u32, q: &model::Question, style: model::PaperS
             let mut s = q.stem.clone();
             let mut rules = 0u8;
             let mut kparts: Vec<String> = Vec::new();
+            let mut cuts: Vec<usize> = Vec::new();
             for (pi, part) in parts.iter().enumerate() {
+                cuts.push(s.len());
                 match &part.kind {
                     PartKind::Mc { answers } => {
                         s.push_str(&format!("\n{}", part_line_styled(pi, &part.stem, style)));
@@ -3695,6 +3829,14 @@ fn map_question_raw_style(number: u32, q: &model::Question, style: model::PaperS
                     }
                 }
             }
+            // Piece k runs from part k's line to part k+1's (the first piece keeps the stem).
+            cuts.push(s.len());
+            pieces = (0..parts.len())
+                .map(|k| {
+                    let from = if k == 0 { 0 } else { cuts[k] + 1 };
+                    s[from.min(cuts[k + 1])..cuts[k + 1]].to_string()
+                })
+                .collect();
             dq.text = vec![s];
             dq.rule_lines = rules;
             // Multi-line part answers each start on their own line; short ones stay on one line.
@@ -3710,7 +3852,7 @@ fn map_question_raw_style(number: u32, q: &model::Question, style: model::PaperS
         }
     }
     dq.key_text = ktext;
-    Mapped { dq, img: q.image.clone() }
+    Mapped { dq, img: q.image.clone(), pieces }
 }
 
 /// Headless export (QA hook QUESHION_EXPORT): writes `exam.pdf`, `exam.docx` and `key.pdf` for the
@@ -3816,9 +3958,20 @@ fn map_placed(placed: &[Placed], style: model::PaperStyle) -> Vec<Mapped> {
             let mut m = map_question_style(numbers[i], &p.q, style);
             m.dq.section = p.item.section.as_ref().map(|s| crate::layout::DocSection { title: s.title.clone(), directions: s.directions.clone() });
             m.dq.work_lines = p.item.work_lines;
+            apply_part_work(&mut m, &p.item.part_work);
             m
         })
         .collect()
+}
+
+/// Per-part work space: when any part of a multipart question has some, its text is split
+/// into one entry per part and `space_after` carries each part's lines.
+fn apply_part_work(m: &mut Mapped, part_work: &[u8]) {
+    if m.pieces.is_empty() || !part_work.iter().take(m.pieces.len()).any(|&n| n > 0) {
+        return;
+    }
+    m.dq.text = m.pieces.clone();
+    m.dq.space_after = (0..m.pieces.len()).map(|k| part_work.get(k).copied().unwrap_or(0).min(23)).collect();
 }
 
 /// Builds a printable exam doc: student test (`is_key` false) or answer key.
@@ -3855,6 +4008,7 @@ fn build_doc(
                     dq.rule_lines = 0;
                     dq.text = vec![];
                     dq.work_lines = 0;
+                    dq.space_after.clear();
                     dq.section = None;
                 }
                 dq
@@ -3986,6 +4140,8 @@ struct SnapQ {
     pub section: Option<model::ExamSection>,
     #[serde(default)]
     pub work_lines: u8,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub space_after: Vec<u8>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
@@ -4021,6 +4177,7 @@ impl SnapDoc {
                     points: doc.questions[i].points,
                     section: doc.questions[i].section.as_ref().map(|s| model::ExamSection { title: s.title.clone(), directions: s.directions.clone() }),
                     work_lines: doc.questions[i].work_lines,
+                    space_after: doc.questions[i].space_after.clone(),
                 })
                 .collect::<Vec<_>>();
         SnapDoc {
@@ -4073,6 +4230,7 @@ impl SnapDoc {
                     points: q.points,
                     section: q.section.as_ref().map(|s| crate::layout::DocSection { title: s.title.clone(), directions: s.directions.clone() }),
                     work_lines: q.work_lines,
+                    space_after: q.space_after.clone(),
                 })
                 .collect(),
         }
@@ -4089,6 +4247,8 @@ enum PdfTok {
     Num(f64),
     Name(String),
     Str(Vec<u8>),
+    /// A `<hex>` string (glyph codes of the CID fonts F5..F8 and the fallback font F9).
+    Hex(Vec<u8>),
     Arr(Vec<f64>),
     Op(String),
 }
@@ -4130,13 +4290,19 @@ fn pdf_tokens(ops: &[u8]) -> Vec<PdfTok> {
                 i += 1;
             }
             out.push(PdfTok::Str(s));
+        } else if c == b'<' {
+            let end = ops[i..].iter().position(|&b| b == b'>').map_or(ops.len(), |p| i + p);
+            let digits: Vec<u8> = ops[i + 1..end].iter().copied().filter(|b| b.is_ascii_hexdigit()).collect();
+            let v = |d: u8| (d as char).to_digit(16).unwrap_or(0) as u8;
+            out.push(PdfTok::Hex(digits.chunks(2).map(|p| v(p[0]) * 16 + p.get(1).map_or(0, |&d| v(d))).collect()));
+            i = end + 1;
         } else if c == b'[' {
             let end = ops[i..].iter().position(|&b| b == b']').map_or(ops.len(), |p| i + p);
             let nums = String::from_utf8_lossy(&ops[i + 1..end]).split_whitespace().filter_map(|t| t.parse().ok()).collect();
             out.push(PdfTok::Arr(nums));
             i = end + 1;
         } else {
-            let end = ops[i..].iter().position(|b| b.is_ascii_whitespace() || *b == b'(' || *b == b'[').map_or(ops.len(), |p| i + p).max(i + 1);
+            let end = ops[i..].iter().position(|b| b.is_ascii_whitespace() || *b == b'(' || *b == b'[' || *b == b'<').map_or(ops.len(), |p| i + p).max(i + 1);
             let t = String::from_utf8_lossy(&ops[i..end]).to_string();
             out.push(if let Some(n) = t.strip_prefix('/') {
                 PdfTok::Name(n.to_string())
@@ -4153,26 +4319,64 @@ fn pdf_tokens(ops: &[u8]) -> Vec<PdfTok> {
 
 /// WinAnsi bytes back to text (the inverse of the exporter's mapping, near enough to read).
 fn winansi_text(b: &[u8]) -> String {
-    b.iter()
-        .map(|&c| match c {
-            0x80 => '€',
-            0x85 => '…',
-            0x91 => '‘',
-            0x92 => '’',
-            0x93 => '“',
-            0x94 => '”',
-            0x95 => '•',
-            0x96 => '–',
-            0x97 => '—',
-            0x99 => '™',
-            c => c as char,
-        })
-        .collect()
+    b.iter().map(|&c| crate::fonts::winansi_char(c).unwrap_or(c as char)).collect()
+}
+
+/// The text a `Tj` operand shows in font resource `font`: WinAnsi bytes for F1..F4, glyph ids
+/// of the same faces for the CID fonts F5..F8, codes of `fallback` for F9.
+fn shown_text(tok: &PdfTok, font: &str, fallback: &[char]) -> Option<String> {
+    match tok {
+        PdfTok::Str(b) => Some(winansi_text(b)),
+        PdfTok::Hex(b) if font == "F9" => Some(b.iter().map(|&k| fallback.get(k as usize).copied().unwrap_or('?')).collect()),
+        PdfTok::Hex(b) => {
+            let style = match font {
+                "F6" => crate::fonts::Style::Bold,
+                "F7" => crate::fonts::Style::Italic,
+                "F8" => crate::fonts::Style::BoldItalic,
+                _ => crate::fonts::Style::Regular,
+            };
+            let cm = crate::fonts::charmap(style);
+            Some(b.chunks(2).map(|p| cm.char_of(u16::from_be_bytes([p[0], *p.get(1).unwrap_or(&0)])).unwrap_or('?')).collect())
+        }
+        _ => None,
+    }
+}
+
+/// The simple font (F1..F4) a font resource shares its face with (F5..F8 are their CID
+/// fonts; the fallback F9 previews in the regular face).
+fn base_font(name: &str) -> &str {
+    match name {
+        "F5" | "F9" => "F1",
+        "F6" => "F2",
+        "F7" => "F3",
+        "F8" => "F4",
+        n => n,
+    }
+}
+
+/// The preview family of a PDF font resource: F1..F4 are the print serif's regular, bold,
+/// italic and bold italic faces (real italics when the house fonts are loaded).
+fn pdf_font_family(ctx: &egui::Context, name: &str) -> egui::FontFamily {
+    let name = base_font(name);
+    let bold = name == "F2" || name == "F4";
+    let base = if bold { theme::serif_bold_family() } else { theme::serif_family() };
+    let base = if ctx.fonts(|f| f.definitions().families.contains_key(&base)) {
+        base
+    } else if bold {
+        theme::bold_family()
+    } else {
+        egui::FontFamily::Proportional
+    };
+    if name == "F3" || name == "F4" {
+        theme::italic_family(ctx, &base).unwrap_or(base)
+    } else {
+        base
+    }
 }
 
 /// Paints one PDF page (its content stream) into `rect`, scaled from `page_w` x `page_h` pt.
 /// `images[k]` is the texture for `/Im{k+1}` (None paints a grey box).
-fn paint_pdf_page(p: &egui::Painter, rect: Rect, page_w: f64, page_h: f64, ops: &[u8], images: &[Option<egui::TextureId>]) {
+fn paint_pdf_page(p: &egui::Painter, rect: Rect, page_w: f64, page_h: f64, ops: &[u8], images: &[Option<egui::TextureId>], fallback: &[char]) {
     let s = rect.width() / page_w as f32;
     let to = |x: f64, y: f64| Pos2::new(rect.left() + x as f32 * s, rect.top() + (page_h - y) as f32 * s);
     let gray = |v: f64| {
@@ -4245,21 +4449,21 @@ fn paint_pdf_page(p: &egui::Painter, rect: Rect, page_w: f64, page_h: f64, ops: 
             }
             "Td" => tpos = (num(&stack, 2), num(&stack, 1)),
             "Tj" => {
-                if let Some(PdfTok::Str(b)) = stack.last() {
+                if let Some(shown) = stack.last().and_then(|t| shown_text(t, &font.0, fallback)) {
                     let size = (font.1 as f32 * s).max(1.0);
-                    let fam = if font.0 == "F2" || font.0 == "F4" { theme::bold_family() } else { egui::FontFamily::Proportional };
+                    let fam = pdf_font_family(p.ctx(), &font.0);
                     let base = to(tpos.0, tpos.1);
                     if size < 3.5 {
                         // Card thumbnails: glyphs this small vanish, so text reads as a grey bar
                         // of the run's real width (measured at 10 px and scaled down).
-                        let t = winansi_text(b);
+                        let t = shown.clone();
                         if !t.trim().is_empty() {
                             let w = p.layout_no_wrap(t, FontId::new(10.0, fam), fill).size().x * size / 10.0;
                             let bar = Rect::from_min_size(Pos2::new(base.x, base.y - size * 0.62), Vec2::new(w, (size * 0.5).max(0.8)));
                             p.rect_filled(bar, CornerRadius::ZERO, fill.gamma_multiply(0.45));
                         }
                     } else {
-                        p.text(Pos2::new(base.x, base.y - size * 0.78), Align2::LEFT_TOP, winansi_text(b), FontId::new(size, fam), fill);
+                        p.text(Pos2::new(base.x, base.y - size * 0.78), Align2::LEFT_TOP, shown, FontId::new(size, fam), fill);
                     }
                 }
             }
@@ -4333,9 +4537,181 @@ pub(crate) fn paint_exam_thumb(app: &mut crate::App, ctx: &egui::Context, p: &eg
     let h = area.height().min(area.width() / aspect);
     let r = Rect::from_center_size(area.center(), Vec2::new(h * aspect, h));
     p.add(egui::Shadow { offset: [0, 4], blur: 10, spread: 0, color: Color32::from_black_alpha(45) }.as_shape(r, CornerRadius::same(1)));
-    paint_pdf_page(&p.with_clip_rect(r.intersect(p.clip_rect())), r, pv.page_w, pv.page_h, ops, &texs);
+    // A real rasterisation of the page (text glyphs, table rules, pictures downscaled) at the
+    // card's pixel size; the vector painter is the fallback.
+    let px_w = (r.width() * ctx.pixels_per_point()).round().max(8.0) as u32;
+    match page_thumb_texture(app, ctx, exam_id, &pv, ops, px_w) {
+        Some(tex) => {
+            p.image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+        }
+        None => paint_pdf_page(&p.with_clip_rect(r.intersect(p.clip_rect())), r, pv.page_w, pv.page_h, ops, &texs, &pv.fallback),
+    }
     p.rect_stroke(r, CornerRadius::same(1), Stroke::new(1.0, Color32::from_rgb(0xcf, 0xc9, 0xb6)), StrokeKind::Inside);
     Some(r)
+}
+
+/// The first page rasterised for a card thumbnail, cached per page content and pixel width.
+fn page_thumb_texture(app: &mut crate::App, ctx: &egui::Context, exam_id: &Id, pv: &crate::export::PdfPreview, ops: &[u8], px_w: u32) -> Option<egui::TextureHandle> {
+    let files: Vec<String> = ctx.data(|d| d.get_temp::<(u64, crate::export::PdfPreview, Vec<String>)>(egui::Id::new(("qs_export_preview", exam_id)))).map(|c| c.2).unwrap_or_default();
+    let mut sig = fnv1a(ops) ^ (px_w as u64).rotate_left(32);
+    for f in &files {
+        sig = sig.rotate_left(5) ^ fnv1a(f.as_bytes());
+    }
+    let key = egui::Id::new(("qs_thumb_tex", exam_id));
+    if let Some((s, tex)) = ctx.data(|d| d.get_temp::<(u64, Option<egui::TextureHandle>)>(key))
+        && s == sig
+    {
+        return tex;
+    }
+    let _ = app;
+    let (svg, placed) = page_svg(pv.page_w, pv.page_h, ops, &pv.fallback);
+    // QA hook: QUESHION_THUMB_SVG=<file> writes the thumbnail's SVG (and the page ops beside it).
+    if let Ok(path) = std::env::var("QUESHION_THUMB_SVG") {
+        let _ = std::fs::write(&path, &svg);
+        let _ = std::fs::write(format!("{path}.ops"), ops);
+    }
+    let scale = px_w as f32 / pv.page_w as f32;
+    let tex = crate::figures::to_rgba(&svg, scale).ok().map(|(w, h, mut px)| {
+        // pictures: decoded and downscaled into their boxes (smooth, not nearest-pixel)
+        for (k, [x, y, bw, bh]) in placed {
+            let Some(file) = files.get(k).filter(|f| !f.is_empty()) else { continue };
+            let Some(img) = std::fs::read(crate::store::store_dir().join(file)).ok().and_then(|b| image::load_from_memory(&b).ok()) else { continue };
+            let (pw, ph) = (((bw as f32) * scale).round().max(1.0) as u32, ((bh as f32) * scale).round().max(1.0) as u32);
+            let small = image::imageops::resize(&img.to_rgba8(), pw, ph, image::imageops::FilterType::Triangle);
+            let (x0, y0) = ((x as f32 * scale).round() as i64, (y as f32 * scale).round() as i64);
+            blend_premul(&mut px, w, h, &small, x0, y0);
+        }
+        let img = egui::ColorImage::from_rgba_premultiplied([w as usize, h as usize], &px);
+        ctx.load_texture(format!("qs_thumb_{exam_id}"), img, egui::TextureOptions::LINEAR)
+    });
+    ctx.data_mut(|d| d.insert_temp(key, (sig, tex.clone())));
+    tex
+}
+
+/// Alpha-blend straight-alpha `src` onto premultiplied RGBA `dst` (`w` x `h`) at `x0`, `y0`.
+fn blend_premul(dst: &mut [u8], w: u32, h: u32, src: &image::RgbaImage, x0: i64, y0: i64) {
+    for (sx, sy, p) in src.enumerate_pixels() {
+        let (x, y) = (x0 + sx as i64, y0 + sy as i64);
+        if x < 0 || y < 0 || x >= w as i64 || y >= h as i64 {
+            continue;
+        }
+        let i = ((y as u32 * w + x as u32) * 4) as usize;
+        let a = p[3] as f32 / 255.0;
+        for c in 0..3 {
+            dst[i + c] = (p[c] as f32 * a + dst[i + c] as f32 * (1.0 - a)).round() as u8;
+        }
+        dst[i + 3] = (p[3] as f32 + dst[i + 3] as f32 * (1.0 - a)).round() as u8;
+    }
+}
+
+fn xml_text(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+/// One PDF page (the content stream the export writes) as an SVG document in points with y
+/// down: text runs in the print serif's four faces, filled / stroked rectangles and lines (dashed ones
+/// too). Pictures are left to the caller: their (image index, [x, y, w, h] in points) come back
+/// beside the SVG (which shows a pale box there).
+pub(crate) fn page_svg(page_w: f64, page_h: f64, ops: &[u8], fallback: &[char]) -> (String, Vec<(usize, [f64; 4])>) {
+    let mut placed = Vec::new();
+    let mut out = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{page_w}\" height=\"{page_h}\" viewBox=\"0 0 {page_w} {page_h}\"><rect width=\"{page_w}\" height=\"{page_h}\" fill=\"#fff\"/>"
+    );
+    let fy = |y: f64| page_h - y;
+    let col = |c: [f64; 3]| format!("#{:02x}{:02x}{:02x}", (c[0].clamp(0.0, 1.0) * 255.0) as u8, (c[1].clamp(0.0, 1.0) * 255.0) as u8, (c[2].clamp(0.0, 1.0) * 255.0) as u8);
+    let mut stack: Vec<PdfTok> = Vec::new();
+    let (mut fill, mut stroke) = ([0.0; 3], [0.0; 3]);
+    let mut lw = 1.0_f64;
+    let mut dash = false;
+    let mut font = (String::from("F1"), 11.0_f64);
+    let mut tpos = (0.0_f64, 0.0_f64);
+    let mut path: Vec<Vec<(f64, f64)>> = Vec::new();
+    let mut rects: Vec<(f64, f64, f64, f64)> = Vec::new();
+    let mut cm = [1.0_f64, 0.0, 0.0, 1.0, 0.0, 0.0];
+    let num = |st: &[PdfTok], k: usize| -> f64 {
+        match st.get(st.len().wrapping_sub(k)) {
+            Some(PdfTok::Num(v)) => *v,
+            _ => 0.0,
+        }
+    };
+    for t in pdf_tokens(ops) {
+        let PdfTok::Op(op) = &t else {
+            stack.push(t);
+            continue;
+        };
+        match op.as_str() {
+            "g" => fill = [num(&stack, 1); 3],
+            "G" => stroke = [num(&stack, 1); 3],
+            "rg" => fill = [num(&stack, 3), num(&stack, 2), num(&stack, 1)],
+            "RG" => stroke = [num(&stack, 3), num(&stack, 2), num(&stack, 1)],
+            "w" => lw = num(&stack, 1),
+            "d" => dash = matches!(stack.get(stack.len().wrapping_sub(2)), Some(PdfTok::Arr(a)) if !a.is_empty()),
+            "m" => path.push(vec![(num(&stack, 2), fy(num(&stack, 1)))]),
+            "l" => {
+                let pt = (num(&stack, 2), fy(num(&stack, 1)));
+                if let Some(last) = path.last_mut() {
+                    last.push(pt);
+                }
+            }
+            "re" => {
+                let (x, y, w, h) = (num(&stack, 4), num(&stack, 3), num(&stack, 2), num(&stack, 1));
+                rects.push((x, fy(y + h.max(0.0)).min(fy(y)), w.abs(), h.abs()));
+            }
+            "S" | "f" => {
+                for (x, y, w, h) in rects.drain(..) {
+                    if op == "f" {
+                        out.push_str(&format!("<rect x=\"{x:.2}\" y=\"{y:.2}\" width=\"{w:.2}\" height=\"{h:.2}\" fill=\"{}\"/>", col(fill)));
+                    } else {
+                        out.push_str(&format!("<rect x=\"{x:.2}\" y=\"{y:.2}\" width=\"{w:.2}\" height=\"{h:.2}\" fill=\"none\" stroke=\"{}\" stroke-width=\"{:.2}\"/>", col(stroke), lw.max(0.3)));
+                    }
+                }
+                for seg in path.drain(..) {
+                    let pts: Vec<String> = seg.iter().map(|(x, y)| format!("{x:.2},{y:.2}")).collect();
+                    let da = if dash { " stroke-dasharray=\"2.5 2\"" } else { "" };
+                    out.push_str(&format!("<polyline points=\"{}\" fill=\"none\" stroke=\"{}\" stroke-width=\"{:.2}\"{da}/>", pts.join(" "), col(stroke), lw.max(0.3)));
+                }
+            }
+            "Tf" => {
+                if let Some(PdfTok::Name(n)) = stack.get(stack.len().wrapping_sub(2)) {
+                    font = (n.clone(), num(&stack, 1));
+                }
+            }
+            "Td" => tpos = (num(&stack, 2), num(&stack, 1)),
+            "Tj" => {
+                if let Some(text) = stack.last().and_then(|t| shown_text(t, &font.0, fallback)) {
+                    if !text.trim().is_empty() {
+                        let f = base_font(&font.0);
+                        let bold = f == "F2" || f == "F4";
+                        let ital = f == "F3" || f == "F4";
+                        out.push_str(&format!(
+                            "<text x=\"{:.2}\" y=\"{:.2}\" font-family=\"'Source Serif 4', 'Liberation Serif', 'DejaVu Serif', serif\" font-size=\"{:.2}\"{}{} fill=\"{}\" xml:space=\"preserve\">{}</text>",
+                            tpos.0,
+                            fy(tpos.1),
+                            font.1,
+                            if bold { " font-weight=\"bold\"" } else { "" },
+                            if ital { " font-style=\"italic\"" } else { "" },
+                            col(fill),
+                            xml_text(&text)
+                        ));
+                    }
+                }
+            }
+            "cm" => cm = [num(&stack, 6), num(&stack, 5), num(&stack, 4), num(&stack, 3), num(&stack, 2), num(&stack, 1)],
+            "Do" => {
+                if let Some(PdfTok::Name(n)) = stack.last() {
+                    let k: usize = n.trim_start_matches("Im").parse().unwrap_or(1);
+                    let (x, y, w, h) = (cm[4], fy(cm[5] + cm[3]), cm[0], cm[3]);
+                    out.push_str(&format!("<rect x=\"{x:.2}\" y=\"{y:.2}\" width=\"{w:.2}\" height=\"{h:.2}\" fill=\"#efefef\"/>"));
+                    placed.push((k.saturating_sub(1), [x, y, w, h]));
+                }
+            }
+            "Q" => cm = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            _ => {}
+        }
+        stack.clear();
+    }
+    out.push_str("</svg>");
+    (out, placed)
 }
 
 /// The export dialog's preview strip: page thumbnails of the document that will export.
@@ -4365,14 +4741,14 @@ fn draw_export_preview(app: &mut crate::App, ui: &mut egui::Ui, exam_id: &Id, ke
                         let (r, resp) = ui.allocate_exact_size(Vec2::new(thumb_w, thumb_h), Sense::hover());
                         let p = ui.painter().with_clip_rect(r);
                         ui.painter().add(egui::Shadow { offset: [0, 4], blur: 10, spread: 0, color: Color32::from_black_alpha(40) }.as_shape(r, CornerRadius::same(1)));
-                        paint_pdf_page(&p, r, pv.page_w, pv.page_h, ops, &texs);
+                        paint_pdf_page(&p, r, pv.page_w, pv.page_h, ops, &texs, &pv.fallback);
                         ui.painter().rect_stroke(r, CornerRadius::same(1), Stroke::new(1.0, theme::border()), StrokeKind::Inside);
                         resp.on_hover_ui(|ui| {
                             // A larger look at the hovered page.
                             let w = 420.0_f32;
                             let h = w * (pv.page_h / pv.page_w) as f32;
                             let (big, _) = ui.allocate_exact_size(Vec2::new(w, h), Sense::hover());
-                            paint_pdf_page(&ui.painter().with_clip_rect(big), big, pv.page_w, pv.page_h, ops, &texs);
+                            paint_pdf_page(&ui.painter().with_clip_rect(big), big, pv.page_w, pv.page_h, ops, &texs, &pv.fallback);
                         });
                         ui.add(egui::Label::new(muted(RichText::new(format!("Page {}", k + 1)).size(10.5))));
                     });
@@ -4860,6 +5236,50 @@ fn regenerate(rec: &model::ExportRecord) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thumbnail_svg_keeps_text_tables_and_picture_boxes() {
+        use crate::layout::{DocImage, DocQ, ExamDoc};
+        let mut png = Vec::new();
+        image::RgbaImage::from_pixel(40, 30, image::Rgba([200, 0, 0, 255])).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        let doc = ExamDoc {
+            title: "Quiz & <Test>".into(),
+            heading_pt: 16.0,
+            body_pt: 11.0,
+            margin_mm: 18.0,
+            questions: vec![
+                DocQ { number: 1, text: vec!["Name **these**:\nFormula | Name\nKI | ___".into()], image: Some(DocImage { bytes: png, width_px: 40, height_px: 30 }), ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        let pv = crate::export::preview_pages(&doc).unwrap();
+        let (svg, placed) = page_svg(pv.page_w, pv.page_h, &pv.pages[0], &pv.fallback);
+        assert!(svg.starts_with("<svg") && svg.ends_with("</svg>"));
+        assert!(svg.contains("Quiz &amp; &lt;Test&gt;"), "title text, escaped");
+        assert!(svg.contains("font-weight=\"bold\""), "bold runs stay bold");
+        assert!(svg.contains(">Formula<") || svg.contains(">Formula "), "table text");
+        assert!(svg.matches("<rect").count() >= 3, "table cell borders");
+        assert_eq!(placed.len(), 1, "one picture box");
+        assert!(placed[0].1[2] > 10.0 && placed[0].1[3] > 10.0);
+        // it rasterises (the thumbnail path)
+        let (w, h, px) = crate::figures::to_rgba(&svg, 0.25).unwrap();
+        assert!(w > 100 && h > 100 && px.len() == (w * h * 4) as usize);
+        // Thumbnail text is drawn (in each of the four serif faces) -- a font list resvg cannot
+        // parse renders no text at all.
+        for f in ["F1", "F2", "F3", "F4"] {
+            let ops = format!("BT /{f} 20 Tf 10 30 Td (Hamburgefonstiv) Tj ET\n");
+            let (svg, _) = page_svg(220.0, 50.0, ops.as_bytes(), &[]);
+            assert!(svg.contains("'Source Serif 4'"), "{svg}");
+            let (_, _, px) = crate::figures::to_rgba(&svg, 1.0).unwrap();
+            let ink = px.chunks(4).filter(|p| p[0] < 110).count();
+            assert!(ink > 150, "{f}: only {ink} dark pixels");
+        }
+        // pictures blend into the raster
+        let mut buf = vec![255u8; 4 * 4 * 4];
+        blend_premul(&mut buf, 4, 4, &image::RgbaImage::from_pixel(2, 2, image::Rgba([0, 0, 0, 255])), 1, 1);
+        assert_eq!(&buf[(4 + 1) * 4..(4 + 1) * 4 + 4], &[0, 0, 0, 255]);
+        assert_eq!(&buf[0..4], &[255, 255, 255, 255]);
+    }
     use crate::model::{Answer, Difficulty, Exam, ExamItem, Pair, Part, PartKind, Question};
 
     fn mc(answers: &[(&str, bool, bool)]) -> Kind {
@@ -5426,6 +5846,67 @@ mod examed_tests {
         assert_eq!(answers[0].text, "A");
     }
 
+    fn multipart_q(id: &str) -> model::Question {
+        let mut q = mcq(id, &[("x", true, false)]);
+        q.stem = "Answer the parts about $f(x)=x^2$.".into();
+        q.kind = Kind::Multipart {
+            parts: vec![
+                model::Part { stem: "What is $f(3)$?".into(), kind: PartKind::Short { sample: "9".into() } },
+                model::Part { stem: "$f$ is even.".into(), kind: PartKind::Tf { correct: true } },
+                model::Part {
+                    stem: "Which is $f'(x)$?".into(),
+                    kind: PartKind::Mc { answers: vec![model::Answer { text: "$2x$".into(), correct: true, locked: false }, model::Answer { text: "$x$".into(), correct: false, locked: false }] },
+                },
+            ],
+        };
+        q
+    }
+
+    /// Per-part work space: stored on the exam item per part, printed under each part.
+    #[test]
+    fn multipart_parts_carry_their_own_work_space() {
+        let q = multipart_q("m");
+        let mut st = store::Store::default();
+        st.banks.push(model::QuestionBank { id: "b".into(), name: "B".into(), questions: vec![q.clone()], created: 0, modified: 0, details: Default::default() });
+        let mut ex = model::Exam { items: vec![it("m")], ..Default::default() };
+        // No per-part space: one text entry exactly as before.
+        let plain = map_placed(&resolve_items(&st, &ex), ex.paper_style);
+        assert_eq!(plain[0].dq.text.len(), 1);
+        assert!(plain[0].dq.space_after.is_empty());
+        assert_eq!(plain[0].pieces.join("\n"), plain[0].dq.text[0], "the pieces rebuild the stem");
+        // Space under parts a and c.
+        ex.items = with_part_work(ex.items, 0, 2, 5);
+        ex.items = with_part_work(ex.items, 0, 0, 2);
+        assert_eq!(ex.items[0].part_work, vec![2, 0, 5]);
+        let m = map_placed(&resolve_items(&st, &ex), ex.paper_style);
+        assert_eq!(m[0].dq.text.len(), 3, "{:?}", m[0].dq.text);
+        assert!(m[0].dq.text[0].starts_with("Answer the parts") && m[0].dq.text[0].ends_with("a. What is f(3)?"), "{:?}", m[0].dq.text[0]);
+        assert!(m[0].dq.text[1].starts_with("b. f is even.") && m[0].dq.text[2].starts_with("c. Which is f'(x)?"), "{:?}", m[0].dq.text);
+        assert_eq!(m[0].dq.space_after, vec![2, 0, 5]);
+        assert_eq!(m[0].dq.text.join("\n"), plain[0].dq.text[0], "same printed text, cut at the parts");
+        // Removing the space again leaves nothing stored.
+        ex.items = with_part_work(ex.items, 0, 2, 0);
+        ex.items = with_part_work(ex.items, 0, 0, 0);
+        assert!(ex.items[0].part_work.is_empty());
+        ex.items = with_part_work(ex.items, 0, 1, 30);
+        assert_eq!(ex.items[0].part_work, vec![0, 23], "clamped to 23 lines");
+        // The key drops it; the snapshot keeps it.
+        let m = map_placed(&resolve_items(&st, &ex), ex.paper_style);
+        let key = build_doc(&ex, &m, None, true);
+        assert!(key.questions[0].space_after.is_empty());
+        let snap = SnapDoc::from_parts(&ex, &m, None, false, "x.pdf".into());
+        let back: SnapDoc = serde_json::from_str(&serde_json::to_string(&snap).unwrap()).unwrap();
+        assert_eq!(back.to_doc().questions[0].space_after, vec![0, 23, 0]);
+        // Old snapshots load without it.
+        let old: SnapQ = serde_json::from_str(r#"{"number":1,"text":["x"],"choices":[],"image":null,"key_text":"","rule_lines":0,"points":null}"#).unwrap();
+        assert!(old.space_after.is_empty());
+        // Item equality sees it (so the working copy notices the change).
+        let mut a = vec![it("m")];
+        let b = a.clone();
+        a[0].part_work = vec![1];
+        assert!(!same_items(&a, &b));
+    }
+
     #[test]
     fn printed_doc_carries_sections_work_space_and_answer_order() {
         let mut st = store::Store::default();
@@ -5542,6 +6023,36 @@ mod examed_tests {
         assert!(strs.iter().any(|s| s == "Question 1 (with parens)"), "escaped parens decode: {strs:?}");
         assert!(toks.contains(&PdfTok::Op("Tj".into())) && toks.contains(&PdfTok::Name("F1".into())));
         assert_eq!(pdf_tokens(b"[0.8 2.2] 0 d"), vec![PdfTok::Arr(vec![0.8, 2.2]), PdfTok::Num(0.0), PdfTok::Op("d".into())]);
+    }
+
+    /// The export preview and the card thumbnails read the CID (F5..F8) and fallback (F9)
+    /// strings back to the characters they print.
+    #[test]
+    fn preview_reads_cid_and_fallback_text() {
+        let stem = "Find \u{3c0} \u{2212} \u{221a}2 \u{2264} *\u{3b8}* so x \u{2208} A \u{21d2} done";
+        let doc = ExamDoc { title: "T".into(), body_pt: 11.0, heading_pt: 16.0, margin_mm: 18.0, questions: vec![DocQ { number: 1, text: vec![stem.into()], ..Default::default() }], ..Default::default() };
+        let pv = crate::export::preview_pages(&doc).unwrap();
+        assert_eq!(pv.fallback, vec!['\u{2208}', '\u{21d2}']);
+        let mut font = String::new();
+        let mut text = String::new();
+        let toks = pdf_tokens(&pv.pages[0]);
+        for (k, t) in toks.iter().enumerate() {
+            match t {
+                PdfTok::Name(n) if matches!(toks.get(k + 2), Some(PdfTok::Op(o)) if o == "Tf") => font = n.clone(),
+                PdfTok::Op(o) if o == "Tj" => {
+                    text.push_str(&shown_text(&toks[k - 1], &font, &pv.fallback).unwrap());
+                }
+                _ => {}
+            }
+        }
+        for c in "\u{3c0}\u{2212}\u{221a}\u{2264}\u{3b8}\u{2208}\u{21d2}".chars() {
+            assert!(text.contains(c), "{c} in {text}");
+        }
+        assert!(!text.contains('?'), "{text}");
+        assert!(toks.iter().any(|t| matches!(t, PdfTok::Name(n) if n == "F7")), "italic theta via the italic CID font");
+        assert_eq!(base_font("F7"), "F3");
+        let (svg, _) = page_svg(pv.page_w, pv.page_h, &pv.pages[0], &pv.fallback);
+        assert!(svg.contains('\u{3c0}') && svg.contains('\u{21d2}') && svg.contains("font-style=\"italic\""));
     }
 
     #[test]

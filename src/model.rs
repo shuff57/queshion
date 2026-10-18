@@ -167,13 +167,16 @@ pub struct ExamItem {
     /// This exam's own answer order for a multiple-choice question: indices into the bank
     /// question's answers. Empty (or stale after a bank edit) = the bank's order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")] pub answer_order: Vec<usize>,
+    /// Multipart questions: extra work space under each part, in printed lines (index = part
+    /// index, 0..=23 each; missing entries mean 0). Exams saved before P3 have none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")] pub part_work: Vec<u8>,
 }
 
 fn is_zero_u8(v: &u8) -> bool { *v == 0 }
 
 impl ExamItem {
     pub fn new(bank_id: impl Into<Id>, question_id: impl Into<Id>) -> ExamItem {
-        ExamItem { bank_id: bank_id.into(), question_id: question_id.into(), section: None, work_lines: 0, answer_order: Vec::new() }
+        ExamItem { bank_id: bank_id.into(), question_id: question_id.into(), section: None, work_lines: 0, answer_order: Vec::new(), part_work: Vec::new() }
     }
 }
 
@@ -407,7 +410,7 @@ mod tests {
         assert!(e.margins.is_none());
         assert_eq!(e.page_margins(), Margins::all(18.0));
         let it = &e.items[0];
-        assert!(it.section.is_none() && it.work_lines == 0 && it.answer_order.is_empty());
+        assert!(it.section.is_none() && it.work_lines == 0 && it.answer_order.is_empty() && it.part_work.is_empty());
         // Default fields stay out of the file, so the JSON of an untouched exam is unchanged.
         let json = serde_json::to_string(&e.items[0]).unwrap();
         assert_eq!(json, r#"{"bank_id":"b","question_id":"q"}"#);
@@ -422,6 +425,7 @@ mod tests {
         it.section = Some(ExamSection { title: "Part I".into(), directions: "Circle one.".into() });
         it.work_lines = 7;
         it.answer_order = vec![2, 0, 1];
+        it.part_work = vec![0, 4, 2];
         e.items.push(it);
         let back: Exam = serde_json::from_str(&serde_json::to_string(&e).unwrap()).unwrap();
         assert_eq!(back.paper_style, PaperStyle::ExamBoard);
@@ -429,6 +433,7 @@ mod tests {
         assert_eq!(back.items[0].section.as_ref().unwrap().title, "Part I");
         assert_eq!(back.items[0].work_lines, 7);
         assert_eq!(back.items[0].answer_order, vec![2, 0, 1]);
+        assert_eq!(back.items[0].part_work, vec![0, 4, 2]);
     }
 
     #[test]

@@ -68,6 +68,93 @@ pub fn edit_band(p: &mut Params, lane: usize, band: usize, f: impl Fn(f64, f64) 
     p.set_s("setup", SETUPS[0]);
 }
 
+// ---------------------------------------------------------------- lane cards
+//
+// The side panel edits the lanes as cards (label, bands or ladder choice, reorder, delete, add
+// Sample / Ladder). The cards read and write the same `lanes` text the generator parses, so saved
+// figures keep rendering identically; a classic setup is copied into `lanes` on the first card
+// edit (and `setup` goes back to "Use the lanes text").
+
+/// The ladders a ladder lane can show, as named in its dropdown.
+pub const LADDERS: [&str; 3] = ["100 bp ladder", "1 kb ladder", "λ DNA / HindIII"];
+/// Most lanes the gel draws.
+pub const MAX_LANES: usize = 16;
+
+/// One lane card: its label and either sample bands (the typed text) or a ladder (index into `LADDERS`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum LaneKind { Sample(String), Ladder(usize) }
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LaneCard { pub label: String, pub kind: LaneKind }
+
+impl LaneCard {
+    pub fn sample() -> Self { LaneCard { label: String::new(), kind: LaneKind::Sample(String::new()) } }
+    pub fn ladder() -> Self { LaneCard { label: "Ladder".into(), kind: LaneKind::Ladder(1) } }
+}
+
+fn ladder_index(rest: &str) -> usize {
+    let (name, _) = ladder_bands(rest);
+    LADDERS.iter().position(|l| *l == name).unwrap_or(1)
+}
+
+/// The lanes as cards (from the classic setup when one is chosen, else the typed lanes text).
+pub fn lane_cards(p: &Params) -> Vec<LaneCard> {
+    active_text(p)
+        .split(['|', '\n'])
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            let (label, rest) = l.split_once(':').map(|(a, b)| (a.trim(), b.trim())).unwrap_or((l, ""));
+            let kind = if rest.to_lowercase().starts_with("ladder") { LaneKind::Ladder(ladder_index(rest)) } else { LaneKind::Sample(rest.to_string()) };
+            LaneCard { label: label.to_string(), kind }
+        })
+        .collect()
+}
+
+/// Writes the cards back as the lanes text (and leaves any classic setup).
+pub fn set_lane_cards(p: &mut Params, lanes: &[LaneCard]) {
+    let clean = |s: &str, extra: char| s.chars().map(|c| if c == '|' || c == '\n' || c == extra { ' ' } else { c }).collect::<String>().trim().to_string();
+    let text = lanes
+        .iter()
+        .take(MAX_LANES)
+        .map(|l| {
+            let label = clean(&l.label, ':');
+            match &l.kind {
+                LaneKind::Ladder(i) => format!("{label}: ladder {}", ["100bp", "1kb", "lambda"][(*i).min(2)]),
+                LaneKind::Sample(b) => format!("{label}: {}", clean(b, '|')).trim_end().to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" | ");
+    p.set_s("lanes", &text);
+    p.set_s("setup", SETUPS[0]);
+}
+
+/// The classic setups offered on the Lanes card (without the "use the lanes text" entry).
+pub fn setup_names() -> &'static [&'static str] { &SETUPS[1..] }
+
+/// The chosen classic setup, if any (also when the typed lanes are exactly a setup's, as the
+/// opening figure's are).
+pub fn current_setup(p: &Params) -> Option<&'static str> {
+    SETUPS[1..].iter().copied().find(|s| *s == p.s("setup") || (p.s("setup") == SETUPS[0] && setup_text(s) == Some(p.s("lanes").trim())))
+}
+
+/// One line under the Classic setups dropdown.
+pub fn setup_note(name: Option<&str>) -> &'static str {
+    match name {
+        Some("Crime scene") => "DNA from a crime scene beside three suspects’; Suspect 2’s bands match.",
+        Some("Paternity test") => "Every band in the child comes from the mother or the father; Father A’s bands fill the gaps.",
+        Some("Restriction digest") => "Lambda DNA uncut and cut by three restriction enzymes, beside a λ HindIII ladder.",
+        Some("PCR products") => "PCR products beside a 100 bp ladder, with a faint primer band in the negative control.",
+        _ => "Replaces the lanes with a ready-made experiment. Undo brings yours back.",
+    }
+}
+
+/// "Ladder, Crime scene, Suspect 1" for the Lanes section header.
+pub fn lanes_summary(p: &Params) -> String {
+    lane_cards(p).iter().map(|l| if l.label.is_empty() { "Sample".to_string() } else { l.label.clone() }).collect::<Vec<_>>().join(", ")
+}
+
 pub fn params() -> Vec<ParamDef> {
     vec![
         ParamDef::choice("setup", "Classic setup (overrides lanes text)", &SETUPS, SETUPS[0]),
@@ -469,6 +556,63 @@ mod tests {
         assert_eq!(l.len(), 2);
         assert!(l[0].ladder.is_some());
         assert_eq!(l[1].bands, vec![(450.0, 2.0), (1500.0, 1.0), (300.0, 0.5)]);
+    }
+
+    /// The lane cards read and write the lanes text: a round trip draws the same gel for every
+    /// setup and example, and card edits (reorder, delete, add, ladder choice) land in the text.
+    #[test]
+    fn lane_cards_round_trip_and_edit() {
+        let defs = params();
+        let mut cases: Vec<Params> = Vec::new();
+        for setup in SETUPS {
+            let mut p = Params::defaults(&defs);
+            p.set_s("setup", setup);
+            cases.push(p);
+        }
+        for ex in examples() {
+            let mut p = Params::defaults(&defs);
+            for (k, v) in &ex.params { p.0.insert(k.to_string(), v.clone()); }
+            cases.push(p);
+        }
+        let mut odd = Params::defaults(&defs);
+        odd.set_s("lanes", "A:500|B:  450 x2 , 1.5 kb\nL: ladder 100 bp\nNoColon");
+        cases.push(odd);
+        for p in &cases {
+            let before = render(p);
+            let cards = lane_cards(p);
+            let mut q = p.clone();
+            set_lane_cards(&mut q, &cards);
+            assert_eq!(q.s("setup"), SETUPS[0]);
+            assert_eq!(render(&q), before, "round trip changed the gel: {}", p.s("lanes"));
+            assert_eq!(lane_cards(&q), cards);
+        }
+        // a classic setup becomes editable cards (migrated into the lanes text on edit)
+        let mut p = Params::defaults(&defs);
+        p.set_s("setup", "Paternity test");
+        assert_eq!(current_setup(&p), Some("Paternity test"));
+        let mut c = lane_cards(&p);
+        assert_eq!(c.len(), 5);
+        assert_eq!(c[0], LaneCard { label: "Ladder".into(), kind: LaneKind::Ladder(0) });
+        assert_eq!(c[1].kind, LaneKind::Sample("800, 500, 300".into()));
+        c.swap(1, 2); // Child before Mother
+        c.remove(4); // drop Father B
+        c.push(LaneCard::sample());
+        c.push(LaneCard::ladder());
+        c[0].kind = LaneKind::Ladder(2);
+        set_lane_cards(&mut p, &c);
+        assert_eq!(current_setup(&p), None);
+        assert_eq!(p.s("lanes"), "Ladder: ladder lambda | Child: 800, 600, 300 | Mother: 800, 500, 300 | Father A: 700, 600, 200 | : | Ladder: ladder 1kb");
+        let l = layout_of(&p);
+        assert_eq!(l.lanes.len(), 6);
+        assert!(l.lanes[0].ladder && l.lanes[5].ladder && !l.lanes[4].ladder);
+        assert!(l.lanes[4].bands.is_empty());
+        assert_eq!(lanes_summary(&p), "Ladder, Child, Mother, Father A, Sample, Ladder");
+        // separators typed into a label or bands can't split a lane
+        set_lane_cards(&mut p, &[LaneCard { label: "a|b:c".into(), kind: LaneKind::Sample("500 | 300".into()) }]);
+        assert_eq!(lane_cards(&p), vec![LaneCard { label: "a b c".into(), kind: LaneKind::Sample("500   300".into()) }]);
+        // never more lanes than the gel draws
+        set_lane_cards(&mut p, &vec![LaneCard::ladder(); 20]);
+        assert_eq!(lane_cards(&p).len(), MAX_LANES);
     }
 
     #[test]

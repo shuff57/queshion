@@ -5,11 +5,11 @@ use super::svg::{esc, Doc};
 use super::*;
 
 mod handles;
-mod gel;
+pub mod gel;
 pub mod pedigree;
 mod pipette;
 mod plot;
-mod popdyn;
+pub mod popdyn;
 mod punnett;
 
 /// Direct-manipulation handles for this subject's figures (None = not one of ours).

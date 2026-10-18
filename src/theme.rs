@@ -177,6 +177,23 @@ pub fn serif_bold_family() -> FontFamily {
 pub fn serif_strong_family() -> FontFamily {
     serif_bold_family()
 }
+/// The real italic face of `family` (`serif` -> `serif-italic`, `serif-bold` ->
+/// `serif-bold-italic`, proportional -> `sans-italic`), or `None` when `ctx` does not have
+/// the house fonts (then callers fall back to egui's synthetic slant).
+pub fn italic_family(ctx: &Context, family: &FontFamily) -> Option<FontFamily> {
+    let name = match family {
+        FontFamily::Proportional => "sans-italic",
+        FontFamily::Name(n) => match n.as_ref() {
+            "serif" | "serif-italic" => "serif-italic",
+            "serif-bold" | "serif-bold-italic" => "serif-bold-italic",
+            "sans-italic" => "sans-italic",
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let fam = FontFamily::Name(name.into());
+    ctx.fonts(|f| f.definitions().families.contains_key(&fam)).then_some(fam)
+}
 /// Named family: real bold sans (used by [`strong`]).
 pub fn bold_family() -> FontFamily {
     FontFamily::Name("sans-bold".into())
@@ -303,6 +320,9 @@ pub fn fonts_dir() -> Option<PathBuf> {
     if up.is_dir() { Some(up) } else { None }
 }
 
+/// egui font-data key of the symbol fallback face (STIX Two Math).
+const FALLBACK_FACE: &str = "STIXTwoMath-Regular";
+
 /// Loads the house faces once. Returns `None` (and the app then quietly keeps
 /// egui's default fonts) when the font directory is missing or the sans regular
 /// face is absent — the app must start without it.
@@ -328,14 +348,19 @@ fn load_fonts() -> Option<FontDefinitions> {
     if let Ok(b) = read("SourceSans3-Bold.ttf") {
         put(&mut defs, "SourceSans3-Bold", b);
     }
-    if let Ok(b) = read("SourceSerif4-Regular.ttf") {
-        put(&mut defs, "SourceSerif4-Regular", b);
-    }
+    // The print serif comes from the binary (src/fonts.rs): the page preview, the card
+    // thumbnails and the PDF all use the very same four faces.
+    put(&mut defs, "SourceSerif4-Regular", crate::fonts::SERIF_REGULAR.to_vec());
+    put(&mut defs, "SourceSerif4-Bold", crate::fonts::SERIF_BOLD.to_vec());
+    put(&mut defs, "SourceSerif4-It", crate::fonts::SERIF_ITALIC.to_vec());
+    put(&mut defs, "SourceSerif4-BoldIt", crate::fonts::SERIF_BOLD_ITALIC.to_vec());
     if let Ok(b) = read("SourceSerif4-Semibold.ttf") {
         put(&mut defs, "SourceSerif4-Semibold", b);
     }
-    if let Ok(b) = read("SourceSerif4-Bold.ttf") {
-        put(&mut defs, "SourceSerif4-Bold", b);
+    // STIX Two Math (OFL; the bytes equaSHion already compiles in) right behind the house
+    // faces, for symbols they lack (⇒ ∈ ∠ ⊥ ...): the same fallback the PDF prints with.
+    if let Some(b) = crate::fonts::fallback_bytes() {
+        defs.font_data.insert(FALLBACK_FACE.to_string(), Arc::new(FontData::from_static(b)));
     }
 
     // egui's default fallback chain (emoji + icon font) kept behind our faces.
@@ -351,6 +376,7 @@ fn load_fonts() -> Option<FontDefinitions> {
             .filter(|f| defs.font_data.contains_key(f.as_str()))
             .cloned()
             .collect();
+        ours.push(FALLBACK_FACE);
         ours.retain(|f| defs.font_data.contains_key(*f));
         ours.into_iter()
             .map(str::to_string)
@@ -367,6 +393,7 @@ fn load_fonts() -> Option<FontDefinitions> {
         (
             FontFamily::Name(Arc::<str>::from(name)),
             list.iter()
+                .chain(std::iter::once(&FALLBACK_FACE))
                 .filter(|f| defs.font_data.contains_key(**f))
                 .map(|f| f.to_string())
                 .chain(fallback.iter().cloned())
@@ -378,6 +405,14 @@ fn load_fonts() -> Option<FontDefinitions> {
     let (fam, fonts) = named("serif", vec!["SourceSerif4-Regular", "SourceSerif4-Semibold", "SourceSans3-Regular"]);
     defs.families.insert(fam, fonts);
     let (fam, fonts) = named("serif-bold", vec!["SourceSerif4-Bold", "SourceSerif4-Semibold", "SourceSerif4-Regular"]);
+    defs.families.insert(fam, fonts);
+    // Real italic faces (egui has no style linking: an italic run picks one of these
+    // families instead of slanting the upright face, see `italic_family`).
+    let (fam, fonts) = named("serif-italic", vec!["SourceSerif4-It", "SourceSerif4-Regular"]);
+    defs.families.insert(fam, fonts);
+    let (fam, fonts) = named("serif-bold-italic", vec!["SourceSerif4-BoldIt", "SourceSerif4-Bold", "SourceSerif4-It"]);
+    defs.families.insert(fam, fonts);
+    let (fam, fonts) = named("sans-italic", vec!["SourceSans3-It", "SourceSans3-Regular"]);
     defs.families.insert(fam, fonts);
     Some(defs)
 }
@@ -487,10 +522,12 @@ mod tests {
             "SourceSerif4-Regular",
             "SourceSerif4-Semibold",
             "SourceSerif4-Bold",
+            "SourceSerif4-It",
+            "SourceSerif4-BoldIt",
         ] {
             assert!(defs.font_data.contains_key(key), "missing font {key}");
         }
-        for family in ["sans-bold", "serif", "serif-bold"] {
+        for family in ["sans-bold", "serif", "serif-bold", "serif-italic", "serif-bold-italic", "sans-italic"] {
             let list = defs
                 .families
                 .get(&FontFamily::Name(family.into()))

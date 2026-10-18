@@ -183,7 +183,7 @@ struct BanksState {
 
 /// Sort choices for the question card list.
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
-enum Sort {
+pub(crate) enum Sort {
     #[default]
     Newest,
     Oldest,
@@ -226,6 +226,31 @@ struct BankEditState {
     topic_edit: Option<TopicEdit>,
     /// "Question Bank details" dialog draft (None = closed).
     details: Option<crate::model::BankDetails>,
+    /// "Tidy stems" dialog (None = closed).
+    tidy: Option<TidyDialog>,
+    /// The last applied tidy, for its Undo strip.
+    last_tidy: Option<TidyUndo>,
+}
+
+/// The "Tidy stems" preview: every question tidying would change, and which are ticked.
+#[derive(Clone)]
+struct TidyDialog {
+    items: Vec<crate::tidy::QuestionTidy>,
+    picked: Vec<bool>,
+}
+
+/// Questions as they were before the last tidy, and where the backup went.
+#[derive(Clone)]
+struct TidyUndo {
+    before: Vec<Question>,
+    backup: String,
+}
+
+/// Opens the "Tidy stems" dialog on the bank's current questions.
+fn open_tidy(app: &App, ctx: &egui::Context, key: UiId, bank_id: &Id) {
+    let items = app.store.bank(bank_id).map(|b| crate::tidy::tidy_bank(&b.questions)).unwrap_or_default();
+    let picked = vec![true; items.len()];
+    with_state(ctx, key, |s: &mut BankEditState| s.tidy = Some(TidyDialog { items, picked }));
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -563,7 +588,25 @@ impl App {
         self.draw_figure_picker(&ctx);
         draw_topic_dialog(self, &ctx, key, &bank_id);
         draw_details_dialog(self, &ctx, key, &bank_id);
+        // Headless/QA hook: QUESHION_TIDY=1 opens the bank's "Tidy stems" dialog once.
+        if std::env::var("QUESHION_TIDY").is_ok() {
+            let hid = UiId::new("qs_tidy_hook");
+            if !ctx.data(|d| d.get_temp::<bool>(hid).unwrap_or(false)) {
+                ctx.data_mut(|d| d.insert_temp(hid, true));
+                open_tidy(self, &ctx, key, &bank_id);
+            }
+        }
+        draw_tidy_dialog(self, &ctx, key, &bank_id);
         draw_usage_dialog(self, &ctx);
+        // Headless/QA hook: QUESHION_IMPORT_MODAL=1 opens the bank's Import modal once.
+        if std::env::var("QUESHION_IMPORT_MODAL").is_ok() {
+            let hid = UiId::new("qs_import_modal_hook");
+            if !ctx.data(|d| d.get_temp::<bool>(hid).unwrap_or(false)) {
+                ctx.data_mut(|d| d.insert_temp(hid, true));
+                crate::importui::open_import_modal(&ctx, &bank_id);
+            }
+        }
+        self.draw_import_modal(&ctx);
     }
 
     fn bank_edit_body(&mut self, ui: &mut Ui, ctx: &egui::Context, key: UiId, bank_id: &Id) {
@@ -646,8 +689,8 @@ impl App {
                 if !questions.is_empty() && kit::ghost_button(ui, "Export").clicked() {
                     export_bank(self, bank_id);
                 }
-                if kit::ghost_button(ui, "Import").clicked() {
-                    self.screen = crate::Screen::Imports;
+                if kit::ghost_button(ui, "Import").on_hover_text("Import files or pasted questions into this bank").clicked() {
+                    crate::importui::open_import_modal(ctx, bank_id);
                 }
                 if kit::ghost_button(ui, "Pop-over").on_hover_text("Open this bank in its own window").clicked() {
                     open_popover(ctx, bank_id);
@@ -656,6 +699,23 @@ impl App {
                     let d = self.store.bank(bank_id).map(|b| b.details.clone()).unwrap_or_default();
                     with_state(ctx, key, |s: &mut BankEditState| s.details = Some(d));
                 }
+                ui.menu_button(RichText::new("…").size(16.0).color(theme::muted_col()), |ui| {
+                    ui.set_min_width(170.0);
+                    if ui.button("Details…").clicked() {
+                        let d = self.store.bank(bank_id).map(|b| b.details.clone()).unwrap_or_default();
+                        with_state(ctx, key, |s: &mut BankEditState| s.details = Some(d));
+                        ui.close();
+                    }
+                    let tidy = ui
+                        .add_enabled(!questions.is_empty(), Button::new("Tidy stems…"))
+                        .on_hover_text("Clean up stems from older imports: tables of blanks, line breaks, spacing. Shows a preview first.");
+                    if tidy.clicked() {
+                        open_tidy(self, ctx, key, bank_id);
+                        ui.close();
+                    }
+                })
+                .response
+                .on_hover_text("More bank actions");
             });
         });
         let desc = self.store.bank(bank_id).map(|b| b.details.description.trim().to_string()).unwrap_or_default();
@@ -863,6 +923,34 @@ impl App {
                             self.store.save_banks();
                             with_state(ctx, key, |s: &mut BankEditState| s.last_deleted = None);
                             self.toast("Question restored");
+                        }
+                    });
+                });
+            });
+            ui.add_space(10.0);
+        }
+
+        // Undo strip for the last "Tidy stems".
+        if let Some(u) = st.last_tidy.clone() {
+            kit::card().inner_margin(Margin::symmetric(14, 8)).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let file = std::path::Path::new(&u.backup).file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+                    let n = u.before.len();
+                    ui.label(theme::text(format!("Tidied {n} question{} · backup saved as {file}", if n == 1 { "" } else { "s" })).size(12.5))
+                        .on_hover_text(u.backup.clone());
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui.add(Button::new(RichText::new("Dismiss").color(theme::muted_col())).frame(false)).clicked() {
+                            with_state(ctx, key, |s: &mut BankEditState| s.last_tidy = None);
+                        }
+                        if kit::ghost_button(ui, "Undo").on_hover_text("Put these questions back as they were before tidying").clicked() {
+                            let t = now_secs();
+                            if let Some(b) = self.store.bank_mut(bank_id) {
+                                crate::tidy::undo(&mut b.questions, &u.before);
+                                b.modified = t;
+                            }
+                            self.store.save_banks();
+                            with_state(ctx, key, |s: &mut BankEditState| s.last_tidy = None);
+                            self.toast("Tidy undone");
                         }
                     });
                 });
@@ -2084,6 +2172,170 @@ fn draw_details_dialog(app: &mut App, ctx: &egui::Context, key: UiId, bank_id: &
     }
 }
 
+/// "Tidy stems": before / after of every question tidying would change, a tick per question,
+/// and Apply (after a backup of banks.json; the bank page then offers Undo).
+fn draw_tidy_dialog(app: &mut App, ctx: &egui::Context, key: UiId, bank_id: &Id) {
+    use crate::equation::{rich_ui, Rich};
+    use crate::model::Kind;
+    let Some(mut td) = with_state(ctx, key, |s: &mut BankEditState| s.tidy.clone()) else {
+        return;
+    };
+    let mut close = false;
+    let mut apply = false;
+    let screen = ctx.content_rect();
+    let w = (screen.width() - 120.0).clamp(420.0, 940.0);
+    let modal = egui::Modal::new(UiId::new("bank_tidy_dialog")).show(ctx, |ui| {
+        Frame::new().inner_margin(Margin::symmetric(14, 10)).show(ui, |ui| {
+            ui.set_width(w);
+            ui.label(theme::serif("Tidy stems").size(22.0));
+            ui.add_space(4.0);
+            let n = td.items.len();
+            if n == 0 {
+                ui.add(egui::Label::new(theme::text("Every stem in this bank is already tidy. Nothing to change.").size(12.5)).wrap());
+            } else {
+                ui.add(
+                    egui::Label::new(
+                        theme::text(format!(
+                            "{n} question{} from older imports can be cleaned up: tables of blanks, line breaks, wrapped lines and spacing. Nothing changes until you apply, and fill-in-the-blank answers stay with their blanks.",
+                            if n == 1 { "" } else { "s" }
+                        ))
+                        .size(12.5),
+                    )
+                    .wrap(),
+                );
+            }
+            ui.add_space(10.0);
+            egui::ScrollArea::vertical().max_height((screen.height() - 260.0).max(200.0)).auto_shrink([false, true]).show(ui, |ui| {
+                // Keep the cards clear of the scroll bar.
+                ui.set_max_width(ui.available_width() - 12.0);
+                for (i, t) in td.items.iter().enumerate() {
+                    kit::card().inner_margin(Margin::symmetric(12, 9)).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut td.picked[i], theme::strong(format!("Question {}", t.index + 1)).size(13.5));
+                            ui.label(kit::small_caps_text(&t.before.kind.qkind().label().to_uppercase()));
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                let fixes: Vec<&str> = t.fixes.iter().map(|f| f.label()).collect();
+                                ui.label(theme::muted(fixes.join(" · ")).size(11.5));
+                            });
+                        });
+                        for f in &t.fields {
+                            ui.add_space(6.0);
+                            if t.fields.len() > 1 || f.label != "Stem" {
+                                ui.label(kit::small_caps_text(&f.label.to_uppercase()));
+                                ui.add_space(2.0);
+                            }
+                            ui.columns(2, |cols| {
+                                for (c, (head, text)) in cols.iter_mut().zip([("Before", &f.before), ("After", &f.after)]) {
+                                    c.label(theme::muted(head).size(11.0));
+                                    Frame::new()
+                                        .fill(if head == "After" { theme::accent_col().gamma_multiply(0.06) } else { Color32::TRANSPARENT })
+                                        .stroke(Stroke::new(1.0, theme::border()))
+                                        .corner_radius(CornerRadius::same(6))
+                                        .inner_margin(Margin::symmetric(8, 6))
+                                        .show(c, |ui| {
+                                            ui.set_width(ui.available_width());
+                                            rich_ui(ui, text, &Rich::new(13.0, theme::text_col()));
+                                        });
+                                }
+                            });
+                        }
+                        if let (Kind::Blank { accept: a }, Kind::Blank { accept: b }) = (&t.before.kind, &t.after.kind)
+                            && a != b
+                        {
+                            ui.add_space(4.0);
+                            ui.label(
+                                theme::muted(format!(
+                                    "Answers: {} entries for {} blanks → {} for {} (the header row's stray blanks go; every answer stays with its blank)",
+                                    a.len(),
+                                    t.before.stem.matches("___").count(),
+                                    b.len(),
+                                    t.after.stem.matches("___").count(),
+                                ))
+                                .size(11.5),
+                            );
+                        }
+                        if let Some(note) = &t.note {
+                            ui.add_space(4.0);
+                            ui.add(egui::Label::new(RichText::new(note).size(11.5).color(theme::bad())).wrap());
+                        }
+                    });
+                    ui.add_space(8.0);
+                }
+            });
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(6.0);
+            let k = td.picked.iter().filter(|p| **p).count();
+            ui.horizontal(|ui| {
+                if n > 0 {
+                    ui.label(theme::muted(format!("{k} of {n} selected")).size(12.0));
+                    if ui.add(Button::new(RichText::new("All").size(12.0).color(theme::accent_col())).frame(false)).clicked() {
+                        td.picked.iter_mut().for_each(|p| *p = true);
+                    }
+                    if ui.add(Button::new(RichText::new("None").size(12.0).color(theme::accent_col())).frame(false)).clicked() {
+                        td.picked.iter_mut().for_each(|p| *p = false);
+                    }
+                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if n > 0 {
+                        let label = format!("Apply to {k} question{}", if k == 1 { "" } else { "s" });
+                        if ui.add_enabled_ui(k > 0, |ui| kit::primary_button(ui, &label)).inner.clicked() && k > 0 {
+                            apply = true;
+                        }
+                    }
+                    if kit::ghost_button(ui, if n == 0 { "Close" } else { "Cancel" }).clicked() {
+                        close = true;
+                    }
+                });
+            });
+            if n > 0 {
+                ui.add_space(4.0);
+                ui.add(
+                    egui::Label::new(
+                        theme::muted("Your banks are backed up first (backups folder in the store). Undo then appears on the bank page.").size(11.5),
+                    )
+                    .wrap(),
+                );
+            }
+        });
+    });
+    if apply {
+        let picked: Vec<&crate::tidy::QuestionTidy> = td.items.iter().zip(&td.picked).filter(|(_, p)| **p).map(|(t, _)| t).collect();
+        match crate::store::backup_banks(&app.store.banks) {
+            Err(e) => app.toast_err(format!("Couldn't back up the banks, so nothing was changed: {e}")),
+            Ok(path) => {
+                let t = now_secs();
+                let before = app
+                    .store
+                    .bank_mut(bank_id)
+                    .map(|b| {
+                        let u = crate::tidy::apply(&mut b.questions, &picked, t);
+                        if !u.is_empty() {
+                            b.modified = t;
+                        }
+                        u
+                    })
+                    .unwrap_or_default();
+                let n = before.len();
+                if n > 0 {
+                    app.store.save_banks();
+                    let backup = path.display().to_string();
+                    with_state(ctx, key, |s: &mut BankEditState| s.last_tidy = Some(TidyUndo { before, backup }));
+                    app.toast(format!("Tidied {n} question{}", if n == 1 { "" } else { "s" }));
+                } else {
+                    app.toast_err("Nothing was tidied: those questions changed since the preview");
+                }
+            }
+        }
+    }
+    if apply || close || modal.should_close() {
+        with_state(ctx, key, |s: &mut BankEditState| s.tidy = None);
+    } else {
+        with_state(ctx, key, |s: &mut BankEditState| s.tidy = Some(td));
+    }
+}
+
 fn popover_key() -> UiId {
     UiId::new("qs_bank_popover")
 }
@@ -2096,12 +2348,253 @@ pub fn open_popover(ctx: &egui::Context, bank_id: &Id) {
 #[derive(Clone, Default)]
 struct PopoverState {
     search: String,
+    /// Open banks (tabs), in order; the active one is the Pop-over key's bank.
+    tabs: Vec<Id>,
+    /// Filters row shown.
+    filters: bool,
+    /// Type filter (empty = every type).
+    kinds: Vec<QKind>,
+    diff: Option<Difficulty>,
+    topic: Option<String>,
+    sort: Sort,
+    /// Answer lines chosen per question (copied with it and used when it is added to an exam).
+    lines: std::collections::HashMap<String, u8>,
+    /// Copy math as LaTeX `$…$` instead of plain Unicode text.
+    latex: bool,
+    settings: bool,
 }
 
-/// The bank Pop-over: the bank's questions in a separate native window (an embedded egui
-/// window where the platform has no multi-viewport support) so a teacher can keep a bank
-/// in view while building an exam: search, copy a question's text, add it to the open
-/// exam, or jump back to edit it. Called every frame from the screen router.
+/// Answer-line choices on the Pop-over cards (as on the reference).
+pub(crate) const ANSWER_LINES: [u8; 5] = [0, 2, 4, 6, 10];
+
+fn lines_label(n: u8) -> String {
+    if n == 0 { "No lines".to_string() } else { format!("{n} lines") }
+}
+
+/// Indices of `qs` the Pop-over lists: search over the stem text, type / difficulty / topic
+/// filters, then the sort.
+pub(crate) fn popover_order(qs: &[Question], search: &str, kinds: &[QKind], diff: Option<Difficulty>, topic: Option<&str>, sort: Sort) -> Vec<usize> {
+    let query = search.trim().to_lowercase();
+    let mut order: Vec<usize> = qs
+        .iter()
+        .enumerate()
+        .filter(|(_, q)| {
+            (query.is_empty() || q.stem.to_lowercase().contains(&query) || crate::equation::stem_preview(&q.stem).to_lowercase().contains(&query))
+                && (kinds.is_empty() || kinds.contains(&q.kind.qkind()))
+                && diff.is_none_or(|d| Some(d) == q.difficulty)
+                && topic.is_none_or(|t| q.topics.iter().any(|x| x.trim() == t))
+        })
+        .map(|(i, _)| i)
+        .collect();
+    order.sort_by(|&a, &b| {
+        let (qa, qb) = (&qs[a], &qs[b]);
+        match sort {
+            Sort::Newest => qb.created.cmp(&qa.created),
+            Sort::Oldest => qa.created.cmp(&qb.created),
+            Sort::Kind => mix_index(qa.kind.qkind()).cmp(&mix_index(qb.kind.qkind())).then_with(|| qb.created.cmp(&qa.created)),
+            Sort::Difficulty => diff_rank(qa.difficulty).cmp(&diff_rank(qb.difficulty)).then_with(|| qb.created.cmp(&qa.created)),
+            Sort::Topic => first_topic(qa).cmp(&first_topic(qb)).then_with(|| qb.created.cmp(&qa.created)),
+        }
+    });
+    order
+}
+
+/// Lines of stem markup as plain text: lists keep their markers, tables their ` | ` cells,
+/// side-by-side panels follow each other; math as `$…$` (`latex`) or its Unicode text.
+fn markup_lines(text: &str, latex: bool) -> Vec<String> {
+    use crate::richtext::{line_text, parse, Block};
+    fn walk(blocks: &[Block], out: &mut Vec<String>) {
+        for (k, b) in blocks.iter().enumerate() {
+            if k > 0 && !out.last().is_some_and(|l| l.is_empty()) && matches!(b, Block::Heading(..) | Block::Table { .. }) {
+                out.push(String::new());
+            }
+            match b {
+                Block::Para(ls) => out.extend(ls.iter().map(line_text)),
+                Block::Bullets(ls) => out.extend(ls.iter().map(|l| format!("• {}", line_text(l)))),
+                Block::Numbered(ls) => out.extend(ls.iter().enumerate().map(|(i, l)| format!("{}. {}", i + 1, line_text(l)))),
+                Block::Quote(ls) => out.extend(ls.iter().map(|l| format!("> {}", line_text(l)))),
+                Block::Table { rows, .. } => out.extend(rows.iter().map(|r| r.iter().map(line_text).collect::<Vec<_>>().join(" | "))),
+                Block::Heading(_, l) => out.push(line_text(l)),
+                Block::Divider => out.push("———".to_string()),
+                Block::Side(panels) => {
+                    for p in panels {
+                        walk(p, out);
+                    }
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&parse(text), &mut out);
+    if latex { out } else { out.into_iter().map(|l| crate::equation::stem_to_plain(&l)).collect() }
+}
+
+/// A question as text for the clipboard: stem, choices (A. B. ...), matching columns, parts,
+/// and `lines` answer lines under a short answer (or each short part).
+pub(crate) fn popover_copy_text(q: &Question, lines: u8, latex: bool) -> String {
+    use crate::model::{Kind, PartKind};
+    let one = |t: &str| markup_lines(t, latex).join(" ");
+    let rule = "_".repeat(48);
+    let mut out = markup_lines(&q.stem, latex);
+    let push_lines = |out: &mut Vec<String>| {
+        for _ in 0..lines {
+            out.push(rule.clone());
+        }
+    };
+    let abc = |i: usize| char::from(b'A' + (i % 26) as u8);
+    match &q.kind {
+        Kind::Mc { answers } => {
+            out.extend(answers.iter().enumerate().map(|(i, a)| format!("{}. {}", abc(i), one(&a.text))));
+        }
+        Kind::Tf { .. } => out.push("True / False".to_string()),
+        Kind::Matching { pairs, distractors } => {
+            out.extend(pairs.iter().enumerate().map(|(i, p)| format!("{}. {}", i + 1, one(&p.left))));
+            let rights: Vec<&String> = pairs.iter().map(|p| &p.right).chain(distractors.iter()).collect();
+            out.extend(rights.iter().enumerate().map(|(i, r)| format!("{}. {}", abc(i), one(r))));
+        }
+        Kind::Blank { .. } => {}
+        Kind::Short { .. } => push_lines(&mut out),
+        Kind::Multipart { parts } => {
+            for (pi, p) in parts.iter().enumerate() {
+                let pl = markup_lines(&p.stem, latex);
+                out.push(format!("{}{}", part_label(pi, &p.stem), pl.first().cloned().unwrap_or_default()));
+                out.extend(pl.into_iter().skip(1));
+                match &p.kind {
+                    PartKind::Mc { answers } => out.extend(answers.iter().enumerate().map(|(i, a)| format!("   {}. {}", abc(i), one(&a.text)))),
+                    PartKind::Tf { .. } => out.push("   True / False".to_string()),
+                    PartKind::Short { .. } => push_lines(&mut out),
+                }
+            }
+        }
+    }
+    out.join("\n")
+}
+
+/// "a. " for part `pi`, or nothing when the part's text already starts with its own label
+/// ("a. NH₃", "b) ...").
+fn part_label(pi: usize, stem: &str) -> String {
+    let t = stem.trim_start();
+    let mut c = t.chars();
+    let own = matches!((c.next(), c.next()), (Some(l), Some('.' | ')')) if l.is_ascii_alphabetic());
+    if own { String::new() } else { format!("{}. ", char::from(b'a' + (pi % 26) as u8)) }
+}
+
+/// Does the question take answer lines (a short answer, or a multipart with a short part)?
+fn takes_lines(q: &Question) -> bool {
+    use crate::model::{Kind, PartKind};
+    match &q.kind {
+        Kind::Short { .. } => true,
+        Kind::Multipart { parts } => parts.iter().any(|p| matches!(p.kind, PartKind::Short { .. })),
+        _ => false,
+    }
+}
+
+/// One Pop-over card: type label, answer-lines choice, the stem as it prints (rich), choices
+/// or parts, and the actions.
+#[allow(clippy::too_many_arguments)]
+fn popover_card(ui: &mut Ui, q: &Question, n: usize, ps: &mut PopoverState, exam_id: Option<&Id>, in_exam: bool, add: &mut Option<Id>, edit: &mut Option<Id>) {
+    use crate::equation::{rich_ui, Rich};
+    use crate::model::{Kind, PartKind};
+    let size = 13.0;
+    kit::card().inner_margin(Margin::symmetric(12, 9)).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        let mut lines = ps.lines.get(&q.id).copied().unwrap_or(0);
+        ui.horizontal(|ui| {
+            ui.label(theme::muted(format!("{n}.")).size(11.5));
+            ui.label(kit::small_caps_text(&q.kind.qkind().label().to_uppercase()));
+            if let Some(p) = points_label(q.points) {
+                ui.label(theme::muted(p).size(11.0));
+            }
+            if takes_lines(q) {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ComboBox::from_id_salt(("pop_lines", &q.id)).width(84.0).selected_text(RichText::new(lines_label(lines)).size(11.5)).show_ui(ui, |ui| {
+                        for v in ANSWER_LINES {
+                            ui.selectable_value(&mut lines, v, lines_label(v));
+                        }
+                    })
+                    .response
+                    .on_hover_text("Answer lines: copied under the question, and the work space it gets when added to an exam");
+                });
+            }
+        });
+        if lines == 0 {
+            ps.lines.remove(&q.id);
+        } else {
+            ps.lines.insert(q.id.clone(), lines);
+        }
+        ui.add_space(2.0);
+        let rich = Rich::new(size, theme::text_col());
+        rich_ui(ui, &q.stem, &rich);
+        let abc = |i: usize| format!("{}. ", char::from(b'A' + (i % 26) as u8));
+        let sep = |ui: &mut Ui| {
+            ui.add_space(4.0);
+            let r = ui.available_rect_before_wrap();
+            ui.painter().extend(egui::Shape::dashed_line(&[Pos2::new(r.left(), r.top()), Pos2::new(r.right(), r.top())], Stroke::new(1.0, theme::border()), 3.0, 3.0));
+            ui.add_space(4.0);
+        };
+        match &q.kind {
+            Kind::Mc { answers } => {
+                sep(ui);
+                for (i, a) in answers.iter().enumerate() {
+                    rich_ui(ui, &a.text, &Rich::new(size, theme::text_col()).lead(abc(i), size, theme::ink()));
+                }
+            }
+            Kind::Tf { .. } => {
+                sep(ui);
+                ui.label(theme::text("True  /  False").size(size));
+            }
+            Kind::Matching { pairs, distractors } => {
+                sep(ui);
+                for (i, p) in pairs.iter().enumerate() {
+                    rich_ui(ui, &p.left, &Rich::new(size, theme::text_col()).lead(format!("{}. ", i + 1), size, theme::ink()));
+                }
+                ui.add_space(3.0);
+                for (i, r) in pairs.iter().map(|p| &p.right).chain(distractors.iter()).enumerate() {
+                    rich_ui(ui, r, &Rich::new(size, theme::text_col()).lead(abc(i), size, theme::ink()));
+                }
+            }
+            Kind::Blank { .. } | Kind::Short { .. } => {}
+            Kind::Multipart { parts } => {
+                sep(ui);
+                for (pi, p) in parts.iter().enumerate() {
+                    let label = part_label(pi, &p.stem);
+                    let r = Rich::new(size, theme::text_col());
+                    rich_ui(ui, &p.stem, &if label.is_empty() { r } else { r.lead(label, size, theme::ink()) });
+                    if let PartKind::Mc { answers } = &p.kind {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.add_space(16.0);
+                            for (i, a) in answers.iter().enumerate() {
+                                ui.label(theme::text(format!("{}{}", abc(i), crate::equation::stem_preview(&a.text))).size(size - 1.0));
+                            }
+                        });
+                    }
+                    ui.add_space(3.0);
+                }
+            }
+        }
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            if exam_id.is_some() {
+                let label = if in_exam { "Add again" } else { "Add to exam" };
+                if kit::ghost_button(ui, label).clicked() {
+                    *add = Some(q.id.clone());
+                }
+            }
+            if ui.add(Button::new(theme::accent("Copy text").size(12.0)).frame(false)).on_hover_text("Copy the question (with its answer lines) to paste anywhere").clicked() {
+                ui.ctx().copy_text(popover_copy_text(q, lines, ps.latex));
+            }
+            if ui.add(Button::new(theme::accent("Edit").size(12.0)).frame(false)).clicked() {
+                *edit = Some(q.id.clone());
+            }
+        });
+    });
+}
+
+/// The bank Pop-over: questions of one or more banks (tabs) in a separate native window (an
+/// embedded egui window where the platform has no multi-viewport support) so a teacher can
+/// keep banks in view while building an exam: search and filter, set answer lines, copy a
+/// question as text, add it to the open exam, or jump back to edit it. Called every frame from
+/// the screen router.
 pub fn draw_popover(app: &mut App, ctx: &egui::Context) {
     // Headless/QA hook: QUESHION_POPOVER=<n> opens the n-th bank's Pop-over once.
     if let Ok(v) = std::env::var("QUESHION_POPOVER") {
@@ -2115,51 +2608,171 @@ pub fn draw_popover(app: &mut App, ctx: &egui::Context) {
             if std::env::var("QUESHION_EMBED_VIEWPORTS").as_deref() == Ok("1") {
                 ctx.set_embed_viewports(true);
             }
+            // QUESHION_POPOVER_FILTERS=1 shows the filters row, =settings the copy settings
+            match std::env::var("QUESHION_POPOVER_FILTERS").as_deref() {
+                Ok("1") => ctx.data_mut(|d| d.get_temp_mut_or_default::<PopoverState>(UiId::new("qs_popover_state")).filters = true),
+                Ok("settings") => ctx.data_mut(|d| d.get_temp_mut_or_default::<PopoverState>(UiId::new("qs_popover_state")).settings = true),
+                _ => {}
+            }
         }
     }
     let Some(bank_id) = ctx.data(|d| d.get_temp::<Option<Id>>(popover_key())).flatten() else { return };
-    let Some(bank) = app.store.bank(&bank_id).cloned() else {
-        ctx.data_mut(|d| d.insert_temp::<Option<Id>>(popover_key(), None));
+    let sk = UiId::new("qs_popover_state");
+    let mut ps: PopoverState = ctx.data(|d| d.get_temp(sk)).unwrap_or_default();
+    ps.tabs.retain(|t| app.store.bank(t).is_some());
+    if app.store.bank(&bank_id).is_none() {
+        // the active bank went away: the next tab, or close
+        match ps.tabs.first().cloned() {
+            Some(t) => open_popover(ctx, &t),
+            None => {
+                ctx.data_mut(|d| d.insert_temp::<Option<Id>>(popover_key(), None));
+            }
+        }
+        ctx.data_mut(|d| d.insert_temp(sk, ps));
         return;
-    };
+    }
+    if !ps.tabs.contains(&bank_id) {
+        ps.tabs.push(bank_id.clone());
+    }
+    let bank = app.store.bank(&bank_id).cloned().unwrap();
+    let names: Vec<(Id, String)> = app.store.banks.iter().map(|b| (b.id.clone(), b.name.clone())).collect();
     let exam_id = match &app.screen {
         Screen::ExamEdit(id) => Some(id.clone()),
         _ => None,
     };
+    let exam_items: Vec<Id> = exam_id.as_ref().and_then(|id| app.store.exam(id)).map(|e| e.items.iter().map(|it| it.question_id.clone()).collect()).unwrap_or_default();
     let exam_name = exam_id.as_ref().and_then(|id| app.store.exam(id)).map(|e| e.name.clone());
     let vid = egui::ViewportId::from_hash_of("qs_bank_popover_window");
     let builder = egui::ViewportBuilder::default()
         .with_title(format!("{} · queShion", bank.name))
-        .with_inner_size([440.0, 680.0])
-        .with_min_inner_size([320.0, 360.0]);
+        .with_inner_size([460.0, 720.0])
+        .with_min_inner_size([340.0, 380.0]);
     let mut close = false;
     let mut add: Option<Id> = None;
     let mut edit: Option<Id> = None;
+    let mut switch: Option<Id> = None;
+    let mut close_tab: Option<Id> = None;
     ctx.show_viewport_immediate(vid, builder, |ui, class| {
         let pctx = ui.ctx().clone();
         if pctx.input(|i| i.viewport().close_requested()) {
             close = true;
         }
         let embedded = class == egui::ViewportClass::EmbeddedWindow;
-        let sk = UiId::new("qs_popover_state").with(&bank_id);
-        let mut ps: PopoverState = pctx.data(|d| d.get_temp(sk)).unwrap_or_default();
-        let body = |ui: &mut Ui, ps: &mut PopoverState, close: &mut bool, add: &mut Option<Id>, edit: &mut Option<Id>| {
+        let body = |ui: &mut Ui, ps: &mut PopoverState, close: &mut bool, add: &mut Option<Id>, edit: &mut Option<Id>, switch: &mut Option<Id>, close_tab: &mut Option<Id>| {
+            // tabs: open banks, + to open another, copy settings
             ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(theme::serif(&bank.name).size(20.0).color(theme::ink()));
-                    let n = bank.questions.len();
-                    ui.label(theme::muted(format!("{n} question{}", if n == 1 { "" } else { "s" })).size(12.0));
-                });
-                if embedded {
-                    ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                        if kit::ghost_button(ui, "Close").clicked() {
-                            *close = true;
+                ui.spacing_mut().item_spacing.x = 2.0;
+                for t in ps.tabs.clone() {
+                    let name = names.iter().find(|(id, _)| *id == t).map(|(_, n)| n.clone()).unwrap_or_default();
+                    let on = t == bank_id;
+                    Frame::new()
+                        .fill(if on { theme::card() } else { Color32::TRANSPARENT })
+                        .stroke(Stroke::new(1.0, if on { theme::border() } else { Color32::TRANSPARENT }))
+                        .corner_radius(CornerRadius { nw: 8, ne: 8, sw: 0, se: 0 })
+                        .inner_margin(Margin::symmetric(8, 4))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                let label = RichText::new(truncate(&name, 22)).size(12.5).color(if on { theme::ink() } else { theme::muted_col() });
+                                if ui.add(Button::new(if on { label.strong() } else { label }).frame(false)).on_hover_text(&name).clicked() && !on {
+                                    *switch = Some(t.clone());
+                                }
+                                if ui.add(Button::new(RichText::new("×").size(12.0).color(theme::muted_col())).frame(false)).on_hover_text(format!("Close {name}")).clicked() {
+                                    *close_tab = Some(t.clone());
+                                }
+                            });
+                        });
+                }
+                let others: Vec<&(Id, String)> = names.iter().filter(|(id, _)| !ps.tabs.contains(id)).collect();
+                if !others.is_empty() {
+                    ui.menu_button(RichText::new("+").size(15.0), |ui| {
+                        ui.label(theme::muted("Open a question bank").size(11.5));
+                        for (id, n) in others {
+                            if ui.button(n).clicked() {
+                                *switch = Some(id.clone());
+                                ui.close();
+                            }
                         }
-                    });
+                    })
+                    .response
+                    .on_hover_text("Open another question bank here");
+                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if embedded && kit::ghost_button(ui, "Close").clicked() {
+                        *close = true;
+                    }
+                    if ui.add(Button::new(RichText::new("⚙").size(15.0)).frame(false).selected(ps.settings)).on_hover_text("Copy settings").clicked() {
+                        ps.settings = !ps.settings;
+                    }
+                });
+            });
+            if ps.settings {
+                kit::card().inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(theme::strong("Copy settings").size(13.5));
+                    ui.label(kit::small_caps_text("MATHEMATICS"));
+                    ui.radio_value(&mut ps.latex, false, RichText::new("Plain text").strong()).on_hover_text("x² , ½ , √ … pastes anywhere (Google Docs, email)");
+                    ui.label(theme::muted("Equations as Unicode text. For Google Docs, and anywhere else.").size(11.0));
+                    ui.radio_value(&mut ps.latex, true, RichText::new("LaTeX").strong()).on_hover_text("$x^2$ … type it into Word's equation editor (Alt+=) or a LaTeX document");
+                    ui.label(theme::muted("Equations as $…$ source, for Word's equation editor (Alt+=) and LaTeX.").size(11.0));
+                });
+                ui.add_space(4.0);
+            }
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                let w = (ui.available_width() - 92.0).max(160.0);
+                search_pill(ui, &mut ps.search, w, "Search question stems");
+                let n_on = ps.kinds.len() + ps.diff.is_some() as usize + ps.topic.is_some() as usize;
+                let label = if n_on > 0 { format!("Filters · {n_on}") } else { "Filters".to_string() };
+                if ui.add(Button::new(RichText::new(label).size(12.5)).selected(ps.filters).corner_radius(CornerRadius::same(8))).clicked() {
+                    ps.filters = !ps.filters;
                 }
             });
-            ui.add_space(6.0);
-            search_pill(ui, &mut ps.search, ui.available_width().min(380.0), "Search questions");
+            if ps.filters {
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    let kinds_label = if ps.kinds.is_empty() { "Question type".to_string() } else { format!("Type · {}", ps.kinds.len()) };
+                    ui.menu_button(RichText::new(kinds_label).size(12.0), |ui| {
+                        for k in [QKind::Mc, QKind::Tf, QKind::Matching, QKind::Blank, QKind::Short, QKind::Multipart] {
+                            let mut on = ps.kinds.contains(&k);
+                            if ui.checkbox(&mut on, k.label()).changed() {
+                                if on {
+                                    ps.kinds.push(k);
+                                } else {
+                                    ps.kinds.retain(|x| *x != k);
+                                }
+                            }
+                        }
+                    });
+                    let dl = ps.diff.map(|d| format!("Difficulty · {}", diff_label(d))).unwrap_or_else(|| "Difficulty".to_string());
+                    ui.menu_button(RichText::new(dl).size(12.0), |ui| {
+                        ui.selectable_value(&mut ps.diff, None, "All");
+                        for d in [Difficulty::Low, Difficulty::Medium, Difficulty::High] {
+                            ui.selectable_value(&mut ps.diff, Some(d), diff_label(d));
+                        }
+                    });
+                    let topics = unique_topics(&bank.questions);
+                    if !topics.is_empty() || ps.topic.is_some() {
+                        let tl = ps.topic.as_deref().map(|t| format!("Topic · {}", truncate(t, 16))).unwrap_or_else(|| "Topic".to_string());
+                        ui.menu_button(RichText::new(tl).size(12.0), |ui| {
+                            ui.selectable_value(&mut ps.topic, None, "All topics");
+                            for t in topics {
+                                ui.selectable_value(&mut ps.topic, Some(t.clone()), t);
+                            }
+                        });
+                    }
+                    ui.menu_button(RichText::new(format!("Sort: {}", ps.sort.label())).size(12.0), |ui| {
+                        for so in Sort::all() {
+                            ui.selectable_value(&mut ps.sort, so, so.label());
+                        }
+                    });
+                    if (!ps.kinds.is_empty() || ps.diff.is_some() || ps.topic.is_some()) && ui.add(Button::new(theme::accent("Clear").size(12.0)).frame(false)).clicked() {
+                        ps.kinds.clear();
+                        ps.diff = None;
+                        ps.topic = None;
+                    }
+                });
+            }
             ui.add_space(4.0);
             ui.label(
                 theme::muted(match &exam_name {
@@ -2169,65 +2782,53 @@ pub fn draw_popover(app: &mut App, ctx: &egui::Context) {
                 .size(11.5),
             );
             ui.add_space(6.0);
-            let q = ps.search.trim().to_lowercase();
-            egui::ScrollArea::vertical().id_salt("popover_scroll").auto_shrink([false, false]).show(ui, |ui| {
-                let mut shown = 0;
-                for (i, question) in bank.questions.iter().enumerate() {
-                    let plain = crate::equation::stem_preview(&question.stem);
-                    if !q.is_empty() && !plain.to_lowercase().contains(&q) {
-                        continue;
-                    }
-                    shown += 1;
-                    kit::card().inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.horizontal(|ui| {
-                            ui.label(theme::muted(format!("{}.", i + 1)).size(12.0));
-                            kit::type_pill(ui, kind_chip_label(question.kind.qkind()));
-                            if let Some(p) = points_label(question.points) {
-                                ui.label(theme::muted(p).size(11.5));
-                            }
-                        });
-                        ui.add(egui::Label::new(theme::text(truncate(&plain, 180)).size(12.5)).wrap());
-                        ui.horizontal(|ui| {
-                            let in_exam = exam_id.as_ref().and_then(|e| app.store.exam(e)).is_some_and(|e| e.items.iter().any(|it| it.question_id == question.id));
-                            if exam_id.is_some() {
-                                let label = if in_exam { "Add again" } else { "Add to exam" };
-                                if kit::ghost_button(ui, label).clicked() {
-                                    *add = Some(question.id.clone());
-                                }
-                            }
-                            if ui.add(Button::new(theme::accent("Copy text").size(12.0)).frame(false)).clicked() {
-                                ui.ctx().copy_text(plain.clone());
-                            }
-                            if ui.add(Button::new(theme::accent("Edit").size(12.0)).frame(false)).clicked() {
-                                *edit = Some(question.id.clone());
-                            }
-                        });
-                    });
+            let order = popover_order(&bank.questions, &ps.search, &ps.kinds, ps.diff, ps.topic.as_deref(), ps.sort);
+            egui::ScrollArea::vertical().id_salt(("popover_scroll", &bank_id)).auto_shrink([false, false]).show(ui, |ui| {
+                for (k, &i) in order.iter().enumerate() {
+                    let q = &bank.questions[i];
+                    popover_card(ui, q, k + 1, ps, exam_id.as_ref(), exam_items.contains(&q.id), add, edit);
                     ui.add_space(6.0);
                 }
-                if shown == 0 {
-                    ui.label(theme::muted("No questions match.").size(12.5));
+                if order.is_empty() {
+                    ui.label(theme::muted(if bank.questions.is_empty() { "This bank has no questions yet." } else { "No questions match." }).size(12.5));
                 }
             });
         };
         if embedded {
             // Embedded fallback: the viewport is already an egui window; just pad it.
-            ui.set_min_size(Vec2::new(400.0, 520.0));
-            body(ui, &mut ps, &mut close, &mut add, &mut edit);
+            ui.set_min_size(Vec2::new(420.0, 540.0));
+            body(ui, &mut ps, &mut close, &mut add, &mut edit, &mut switch, &mut close_tab);
         } else {
             egui::CentralPanel::default()
-                .frame(Frame::new().fill(theme::cream()).inner_margin(Margin::same(14)))
-                .show(ui, |ui| body(ui, &mut ps, &mut close, &mut add, &mut edit));
+                .frame(Frame::new().fill(theme::cream()).inner_margin(Margin::same(12)))
+                .show(ui, |ui| body(ui, &mut ps, &mut close, &mut add, &mut edit, &mut switch, &mut close_tab));
         }
-        pctx.data_mut(|d| d.insert_temp(sk, ps));
     });
+    if let Some(t) = switch {
+        if !ps.tabs.contains(&t) {
+            ps.tabs.push(t.clone());
+        }
+        open_popover(ctx, &t);
+    }
+    if let Some(t) = close_tab {
+        let at = ps.tabs.iter().position(|x| *x == t).unwrap_or(0);
+        ps.tabs.retain(|x| *x != t);
+        if t == bank_id {
+            match ps.tabs.get(at.min(ps.tabs.len().saturating_sub(1))).cloned() {
+                Some(n) => open_popover(ctx, &n),
+                None => close = true,
+            }
+        }
+    }
     if let (Some(qid), Some(eid)) = (add, exam_id.as_ref()) {
         if let Some(before) = app.store.exam(eid).map(|e| e.items.clone()) {
             app.undo.push(before);
             app.redo.clear();
+            let lines = ps.lines.get(&qid).copied().unwrap_or(0);
             if let Some(ex) = app.store.exam_mut(eid) {
-                ex.items.push(crate::model::ExamItem::new(bank_id.clone(), qid));
+                let mut item = crate::model::ExamItem::new(bank_id.clone(), qid);
+                item.work_lines = lines.min(23);
+                ex.items.push(item);
                 ex.modified = now_secs();
             }
             app.store.save_exams();
@@ -2242,8 +2843,10 @@ pub fn draw_popover(app: &mut App, ctx: &egui::Context) {
         }
     }
     if close {
+        ps.tabs.clear();
         ctx.data_mut(|d| d.insert_temp::<Option<Id>>(popover_key(), None));
     }
+    ctx.data_mut(|d| d.insert_temp(sk, ps));
 }
 
 #[cfg(test)]
@@ -2252,6 +2855,59 @@ mod tests {
 
     fn empty_bank() -> crate::model::QuestionBank {
         crate::model::QuestionBank { id: "b".into(), name: "B".into(), questions: Vec::new(), created: 1, modified: 1, details: Default::default() }
+    }
+
+    fn q(stem: &str, kind: crate::model::Kind, created: i64) -> Question {
+        let mut q = crate::formats::make_question(stem.to_string(), kind);
+        q.created = created;
+        q
+    }
+
+    fn mc(texts: &[&str]) -> crate::model::Kind {
+        crate::model::Kind::Mc { answers: texts.iter().enumerate().map(|(i, t)| crate::model::Answer { text: t.to_string(), correct: i == 0, locked: false }).collect() }
+    }
+
+    #[test]
+    fn popover_filters_and_sorts() {
+        let mut a = q("Which gas is $CO_2$?", mc(&["carbon dioxide", "oxygen"]), 1);
+        a.difficulty = Some(Difficulty::Low);
+        a.topics = vec!["Gases".into()];
+        let b = q("Explain **why**.", crate::model::Kind::Short { sample: String::new() }, 2);
+        let mut c = q("The sky is blue.", crate::model::Kind::Tf { correct: true }, 3);
+        c.difficulty = Some(Difficulty::High);
+        let qs = vec![a, b, c];
+        assert_eq!(popover_order(&qs, "", &[], None, None, Sort::Newest), vec![2, 1, 0]);
+        assert_eq!(popover_order(&qs, "", &[], None, None, Sort::Oldest), vec![0, 1, 2]);
+        assert_eq!(popover_order(&qs, "", &[QKind::Mc, QKind::Tf], None, None, Sort::Oldest), vec![0, 2]);
+        assert_eq!(popover_order(&qs, "", &[], Some(Difficulty::High), None, Sort::Newest), vec![2]);
+        assert_eq!(popover_order(&qs, "", &[], None, Some("Gases"), Sort::Newest), vec![0]);
+        assert_eq!(popover_order(&qs, "why", &[], None, None, Sort::Newest), vec![1]);
+        assert_eq!(popover_order(&qs, "co₂", &[], None, None, Sort::Newest), vec![0], "search reads the shown text");
+    }
+
+    #[test]
+    fn popover_copy_text_carries_choices_lines_and_math_setting() {
+        let a = q("Which gas is $CO_2$?\n• gas", mc(&["carbon dioxide", "*oxygen*"]), 1);
+        assert_eq!(popover_copy_text(&a, 0, false), "Which gas is CO₂?\n• gas\nA. carbon dioxide\nB. oxygen");
+        assert_eq!(popover_copy_text(&a, 0, true), "Which gas is $CO_2$?\n• gas\nA. carbon dioxide\nB. oxygen");
+        let b = q("Explain.", crate::model::Kind::Short { sample: String::new() }, 2);
+        let t = popover_copy_text(&b, 2, false);
+        assert_eq!(t.lines().count(), 3);
+        assert!(t.lines().skip(1).all(|l| l.chars().all(|c| c == '_') && l.len() > 20));
+        let parts = crate::model::Kind::Multipart {
+            parts: vec![
+                crate::model::Part { stem: "a. NH_{3}".into(), kind: crate::model::PartKind::Short { sample: String::new() } },
+                crate::model::Part { stem: "Second".into(), kind: crate::model::PartKind::Tf { correct: true } },
+            ],
+        };
+        let m = q("Do all:", parts, 3);
+        let t = popover_copy_text(&m, 1, false);
+        assert_eq!(t.lines().next(), Some("Do all:"));
+        assert!(t.contains("\na. NH₃\n____") && t.contains("\nb. Second\n   True / False"), "{t}");
+        assert!(takes_lines(&m) && takes_lines(&b) && !takes_lines(&a));
+        // headings, dividers and side-by-side panels flatten to lines
+        let h = q("# Part A\n---\n::: side\nleft\n::: next\nright\n:::", crate::model::Kind::Short { sample: String::new() }, 4);
+        assert_eq!(popover_copy_text(&h, 0, false), "Part A\n———\nleft\nright");
     }
 
     #[test]

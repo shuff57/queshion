@@ -1,0 +1,364 @@
+{
+ "id": "00d1a146fac4d7",
+ "name": "Ch4 Quiz 5A and 5B (answer key)",
+ "questions": [
+  {
+   "id": "0031a146fa9f3b",
+   "stem": "Give the number of bonding and nonbonding electrons for the structure below: — BONDING ELECTRONS: ___  NONBONDING ELECTRONS: ___",
+   "kind": {
+    "Blank": {
+     "accept": [
+      [
+       "14"
+      ],
+      [
+       "10"
+      ]
+     ]
+    }
+   },
+   "points": 1.0,
+   "difficulty": null,
+   "topics": [],
+   "image": {
+    "file": "media/264a0035f71218291b3568d907f3e2523ca354186efa4ffb76bec62754d20cd5.png",
+    "width": 637,
+    "height": 512
+   },
+   "explanation": null,
+   "figure": {
+    "id": "lewis-structures",
+    "params": {
+     "expand": false,
+     "formal": false,
+     "formula": "CH3COCl",
+     "lone": true,
+     "preset": "CH₃COCl, acetyl chloride",
+     "title": "",
+     "tweak": ""
+    }
+   },
+   "created": 1792192192,
+   "modified": 1792192192
+  },
+  {
+   "id": "0041a146fa9f3c",
+   "stem": "Name the following compounds. Be sure to determine whether each is ionic or covalent so that you use the correct rules.\nFormula | Ionic or Covalent? ___ | Name ___\nMg(NO₂)₂ | ___ | ___\nSO₃ | ___ | ___\nNO | ___ | ___\nKI | ___ | ___\nP₂S₅ | ___ | ___",
+   "kind": {
+    "Blank": {
+     "accept": [
+      [
+       "Ionic"
+      ],
+      [
+       "magnesium nitrite"
+      ],
+      [
+       "Covalent"
+      ],
+      [
+       "sulfur trioxide"
+      ],
+      [
+       "Covalent"
+      ],
+      [
+       "nitrogen monoxide"
+      ],
+      [
+       "Ionic"
+      ],
+      [
+       "potassium iodide"
+      ],
+      [
+       "Covalent"
+      ],
+      [
+       "diphosphorus pentasulfide"
+      ],
+      [],
+      []
+     ]
+    }
+   },
+   "points": 1.0,
+   "difficulty": null,
+   "topics": [],
+   "image": null,
+   "explanation": null,
+   "figure": null,
+   "created": 1792192192,
+   "modified": 1792192192
+  },
+  {
+   "id": "0051a146fa9f3c",
+   "stem": "Which of the following elements is the most electronegative?",
+   "kind": {
+    "Mc": {
+     "answers": [
+      {
+       "text": "Ge",
+       "correct": false,
+       "locked": false
+      },
+      {
+       "text": "Ca",
+       "correct": false,
+       "locked": false
+      },
+      {
+       "text": "O",
+       "correct": true,
+       "locked": false
+      },
+      {
+       "text": "C",
+       "correct": false,
+       "locked": false
+      }
+     ]
+    }
+   },
+   "points": 1.0,
+   "difficulty": null,
+   "topics": [],
+   "image": null,
+   "explanation": null,
+   "figure": null,
+   "created": 1792192192,
+   "modified": 1792192192
+  },
+  {
+   "id": "00b1a146fab514",
+   "stem": "For the following compounds, do all to receive full credit: — • Draw a valid Lewis structure. — • Count the number of electron clouds. — • Name the shape of the molecule. — • Determine whether the molecule is polar or nonpolar.",
+   "kind": {
+    "Multipart": {
+     "parts": [
+      {
+       "stem": "a. NH₃ — Number of charge clouds: ___ — Molecule shape: ___ — Polarity of molecule (circle one): polar nonpolar",
+       "kind": {
+        "Short": {
+         "sample": "Number of charge clouds: 4\nMolecule shape: trigonal pyramidal\nPolarity: polar"
+        }
+       }
+      },
+      {
+       "stem": "b. CO₂ — Number of charge clouds: ___ — Molecule shape: ___ — Polarity of molecule (circle one): polar nonpolar",
+       "kind": {
+        "Short": {
+         "sample": "Number of charge clouds: 2\nMolecule shape: linear\nPolarity: nonpolar"
+        }
+       }
+      }
+     ]
+    }
+   },
+   "points": 1.0,
+   "difficulty": null,
+   "topics": [],
+   "image": null,
+   "explanation": null,
+   "figure": null,
+   "created": 1792192197,
+   "modified": 1792192197
+  },
+  {
+   "id": "00c1a146fab514",
+   "stem": "A milliliter of cow's milk contains 0.026 g of casein protein. How many grams of casein  \r\nprotein would be in an 8-ounce cup of cow's milk? (There are 29.57 mL in one ounce.)  \r\nShow each mathematical step explicitly, with units included.  \r\nAnswer with the correct units and to the correct number of significant digits.\n\n",
+   "kind": {
+    "Short": {
+     "sample": "8 ounces x (29.57 mL / 1 ounce) x (0.026 g / 1 mL) = 6.15056 g\nFinal answer: 6 grams"
+    }
+   },
+   "points": 1.0,
+   "difficulty": null,
+   "topics": [],
+   "image": null,
+   "explanation": null,
+   "figure": null,
+   "created": 1792192197,
+   "modified": 1792192197
+  },
+  {
+   "id": "0071a146faaab7",
+   "stem": "Give the number of bonding and nonbonding electrons for the structure below: — BONDING ELECTRONS: ___  NONBONDING ELECTRONS: ___",
+   "kind": {
+    "Blank": {
+     "accept": [
+      [
+       "14"
+      ],
+      [
+       "10"
+      ]
+     ]
+    }
+   },
+   "points": 1.0,
+   "difficulty": "Low",
+   "topics": [],
+   "image": {
+    "file": "media/264a0035f71218291b3568d907f3e2523ca354186efa4ffb76bec62754d20cd5.png",
+    "width": 637,
+    "height": 512
+   },
+   "explanation": null,
+   "figure": {
+    "id": "lewis-structures",
+    "params": {
+     "expand": false,
+     "formal": false,
+     "formula": "CH3COCl",
+     "lone": true,
+     "preset": "CH₃COCl, acetyl chloride",
+     "title": "",
+     "tweak": ""
+    }
+   },
+   "created": 1792192195,
+   "modified": 1792193289
+  },
+  {
+   "id": "0081a146faaab8",
+   "stem": "Name the following compounds. Be sure to determine whether each is ionic or covalent so that you use the correct rules.\nFormula | Ionic or Covalent? ___ | Name ___\nN₂O | Ionic or Covalent? ___ | Name ___\nKI | Ionic or Covalent? ___ | Name ___\nCa(NO₂)₂ | Ionic or Covalent? ___ | Name ___\nP₂S₅ | Ionic or Covalent? ___ | Name ___\nSO₂ | Ionic or Covalent? ___ | Name ___",
+   "kind": {
+    "Blank": {
+     "accept": [
+      [],
+      [],
+      [
+       "Covalent"
+      ],
+      [
+       "dinitrogen monoxide"
+      ],
+      [
+       "Ionic"
+      ],
+      [
+       "potassium iodide"
+      ],
+      [
+       "Ionic"
+      ],
+      [
+       "calcium nitrite"
+      ],
+      [
+       "Covalent"
+      ],
+      [
+       "dipotassium pentasulfide"
+      ],
+      [
+       "Covalent"
+      ],
+      [
+       "sulfur dioxide"
+      ]
+     ]
+    }
+   },
+   "points": 1.0,
+   "difficulty": null,
+   "topics": [],
+   "image": null,
+   "explanation": null,
+   "figure": null,
+   "created": 1792192195,
+   "modified": 1792192195
+  },
+  {
+   "id": "0091a146faaab8",
+   "stem": "Which of the following elements is the least electronegative?",
+   "kind": {
+    "Mc": {
+     "answers": [
+      {
+       "text": "Ca",
+       "correct": true,
+       "locked": false
+      },
+      {
+       "text": "O",
+       "correct": false,
+       "locked": false
+      },
+      {
+       "text": "Ge",
+       "correct": false,
+       "locked": false
+      },
+      {
+       "text": "C",
+       "correct": false,
+       "locked": false
+      }
+     ]
+    }
+   },
+   "points": 1.0,
+   "difficulty": null,
+   "topics": [],
+   "image": null,
+   "explanation": null,
+   "figure": null,
+   "created": 1792192195,
+   "modified": 1792192195
+  },
+  {
+   "id": "0011a146fa94c5",
+   "stem": "For the following compounds, do all to receive full credit:\n• Draw a valid Lewis structure.\n• Count the number of electron clouds.\n• Name the shape of the molecule.\n• Determine whether the molecule is polar or nonpolar.\n\n\n",
+   "kind": {
+    "Multipart": {
+     "parts": [
+      {
+       "stem": "a. CO₂\nNumber of charge clouds: ___\nMolecule shape: ___\nPolarity of molecule (circle one): polar nonpolar",
+       "kind": {
+        "Short": {
+         "sample": "Structure: $\\text{O}=\\text{C}=\\text{O}$\nNumber of charge clouds: 2\nMolecule shape: Linear\nPolarity: nonpolar"
+        }
+       }
+      },
+      {
+       "stem": "b. PF₃\nNumber of charge clouds: ___\nMolecule shape: ___\nPolarity of molecule (circle one): polar nonpolar",
+       "kind": {
+        "Short": {
+         "sample": "Structure: P center with 3 F atoms and 1 lone pair\nNumber of charge clouds: 4\nMolecule shape: trigonal pyramidal\nPolarity: polar"
+        }
+       }
+      }
+     ]
+    }
+   },
+   "points": 1.0,
+   "difficulty": null,
+   "topics": [],
+   "image": null,
+   "explanation": null,
+   "figure": null,
+   "created": 1792192189,
+   "modified": 1792192189
+  },
+  {
+   "id": "0021a146fa94c5",
+   "stem": "A milliliter of cow's milk contains 0.0065 g of whey protein. How many grams of whey protein would be in a 16-ounce pint of cow's milk? (There are 29.57 mL in one ounce.) — Show each mathematical step explicitly, with units included. — Answer with the correct units and to the correct number of significant digits.",
+   "kind": {
+    "Short": {
+     "sample": "16 ounces x 29.57 mL/ounce x 0.0065 g/mL = 3.07528 g $\\approx$ 3.1 g of whey protein"
+    }
+   },
+   "points": 1.0,
+   "difficulty": null,
+   "topics": [],
+   "image": null,
+   "explanation": null,
+   "figure": null,
+   "created": 1792192189,
+   "modified": 1792192189
+  }
+ ],
+ "created": 1792192201,
+ "modified": 1792193289
+}

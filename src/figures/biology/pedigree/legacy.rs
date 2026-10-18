@@ -215,7 +215,8 @@ pub fn legacy_render(p: &Params) -> String {
             let (x, y) = (kx + 36.0 + col as f64 * 230.0, ky + 30.0 + row as f64 * 40.0);
             symbol_ex(&mut d, x, y, 14.0, *sx, *stt, if car_style == "Hidden" { "Center dot" } else { &car_style });
             if *extra == 1 { deceased_mark(&mut d, x, y, 14.0); }
-            if *extra == 2 { proband_mark(&mut d, x, y, 14.0); }
+            // P4: the key's proband arrow got a shorter tail (in both renderers)
+            if *extra == 2 { key_proband_mark(&mut d, x, y, 14.0); }
             txt(&mut d, x + 28.0, y + 6.0, 16.0, "start", SANS, "", label);
         }
         ky_end = ky + 20.0 + key_rows as f64 * 40.0 + 4.0;

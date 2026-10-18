@@ -57,6 +57,10 @@ pub struct DocQ {
     /// Extra work space under the question in printed lines (blank room, or ruled /
     /// dotted lines in the Classic / Exam Board styles).
     pub work_lines: u8,
+    /// Multipart questions with per-part work space: printed lines of work space after
+    /// `text` entry k (the parts are then split into one entry each, entry 0 holding the
+    /// stem and part a). Empty (the default) for every other question.
+    pub space_after: Vec<u8>,
 }
 
 /// A section heading (title and directions; either may be empty).

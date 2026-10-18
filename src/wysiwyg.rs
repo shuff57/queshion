@@ -98,6 +98,8 @@ pub enum UKind {
     Flow,
     Item { list: ListKind, line: usize },
     Cell { row: usize, col: usize, line: usize },
+    /// The text of a `# ` heading line.
+    Head { level: u8, line: usize },
 }
 
 /// One editable piece: chars `start..end` of the stem.
@@ -114,6 +116,12 @@ pub enum BlockKind {
     Flow,
     List(ListKind),
     Table { header: bool, ncols: usize, sep: Option<usize> },
+    Heading(u8),
+    /// A `---` line (no units).
+    Divider,
+    /// A side-by-side group (no units of its own): its panels' line ranges (between the fence
+    /// lines). The panels' blocks follow it in [`Doc::blocks`], tagged with [`EBlock::panel`].
+    Side { panels: Vec<Range<usize>> },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -123,6 +131,8 @@ pub struct EBlock {
     pub lines: Range<usize>,
     /// Items in order; table cells row-major.
     pub units: Vec<Unit>,
+    /// (index of the side-by-side block, panel) for the blocks inside a panel.
+    pub panel: Option<(usize, usize)>,
 }
 
 /// The stem cut into editable blocks.
@@ -132,6 +142,8 @@ pub struct Doc {
     pub line_start: Vec<usize>,
     pub line_len: Vec<usize>,
     pub len: usize,
+    /// Fence lines of the side-by-side groups (structure, not text).
+    pub fences: Vec<usize>,
 }
 
 impl Doc {
@@ -205,22 +217,59 @@ pub fn doc(stem: &str, structured: bool) -> Doc {
         at += n + 1;
     }
     let len = clen(stem);
-    let flow = |a: usize, b: usize| EBlock {
+    if !structured {
+        let blocks = vec![flow_block(&line_start, &line_len, 0, lines.len(), None)];
+        return Doc { blocks, line_start, line_len, len, fences: Vec::new() };
+    }
+    let mut blocks = Vec::new();
+    let mut fences = Vec::new();
+    build_blocks(&lines, 0, lines.len(), &line_start, &line_len, None, &mut blocks, &mut fences);
+    let virt = |v: Virt, at: usize| EBlock {
+        kind: BlockKind::Flow,
+        lines: 0..0,
+        units: vec![Unit { start: at, end: at, kind: UKind::Flow, virt: Some(v) }],
+        panel: None,
+    };
+    if blocks.first().is_some_and(|b| b.kind != BlockKind::Flow) {
+        blocks.insert(0, virt(Virt::Before, 0));
+        for b in &mut blocks {
+            if let Some((si, _)) = &mut b.panel {
+                *si += 1;
+            }
+        }
+    }
+    if blocks.iter().rev().find(|b| b.panel.is_none()).is_some_and(|b| b.kind != BlockKind::Flow) {
+        blocks.push(virt(Virt::After, len));
+    }
+    Doc { blocks, line_start, line_len, len, fences }
+}
+
+fn flow_block(line_start: &[usize], line_len: &[usize], a: usize, b: usize, panel: Option<(usize, usize)>) -> EBlock {
+    EBlock {
         kind: BlockKind::Flow,
         lines: a..b,
         units: vec![Unit { start: line_start[a], end: line_start[b - 1] + line_len[b - 1], kind: UKind::Flow, virt: None }],
-    };
-    if !structured {
-        return Doc { blocks: vec![flow(0, lines.len())], line_start, line_len, len };
+        panel,
     }
-    let segs = richtext::segment(&lines);
-    let mut blocks = Vec::new();
+}
+
+/// The blocks of lines `from..to` (a whole stem, or one side-by-side panel).
+#[allow(clippy::too_many_arguments)]
+fn build_blocks(lines: &[&str], from: usize, to: usize, line_start: &[usize], line_len: &[usize], panel: Option<(usize, usize)>, blocks: &mut Vec<EBlock>, fences: &mut Vec<usize>) {
+    let segs: Vec<richtext::Seg> = richtext::segment(&lines[from..to])
+        .into_iter()
+        .map(|mut s| {
+            s.start += from;
+            s.end += from;
+            s
+        })
+        .collect();
     let mut flow_from: Option<usize> = None;
     let mut k = 0;
-    let mut i = 0;
-    while i < lines.len() {
+    let mut i = from;
+    while i < to {
         if k < segs.len() && segs[k].start == i {
-            let sg = &segs[k];
+            let sg = segs[k].clone();
             k += 1;
             if sg.kind == SegKind::Para {
                 flow_from.get_or_insert(i);
@@ -228,10 +277,34 @@ pub fn doc(stem: &str, structured: bool) -> Doc {
                 continue;
             }
             if let Some(f) = flow_from.take() {
-                blocks.push(flow(f, i));
+                blocks.push(flow_block(line_start, line_len, f, i, panel));
             }
             let mut units = Vec::new();
             let kind = match sg.kind {
+                SegKind::Side => {
+                    let rel = richtext::Seg { kind: SegKind::Side, start: sg.start, end: sg.end };
+                    let panels = richtext::side_panels(lines, &rel);
+                    fences.push(sg.start);
+                    for r in &panels {
+                        fences.push(r.end);
+                    }
+                    let si = blocks.len();
+                    blocks.push(EBlock { kind: BlockKind::Side { panels: panels.clone() }, lines: sg.start..sg.end, units: Vec::new(), panel });
+                    for (pi, r) in panels.iter().enumerate() {
+                        if r.start < r.end {
+                            build_blocks(lines, r.start, r.end, line_start, line_len, Some((si, pi)), blocks, fences);
+                        }
+                    }
+                    i = sg.end;
+                    continue;
+                }
+                SegKind::Divider => BlockKind::Divider,
+                SegKind::Heading(level) => {
+                    let l = sg.start;
+                    let p = richtext::heading_prefix_len(lines[l]);
+                    units.push(Unit { start: line_start[l] + p, end: line_start[l] + line_len[l], kind: UKind::Head { level, line: l }, virt: None });
+                    BlockKind::Heading(level)
+                }
                 SegKind::Table { header } => {
                     let mut row = 0;
                     let mut ncols = 0;
@@ -263,7 +336,7 @@ pub fn doc(stem: &str, structured: bool) -> Doc {
                     BlockKind::List(list)
                 }
             };
-            blocks.push(EBlock { kind, lines: sg.start..sg.end, units });
+            blocks.push(EBlock { kind, lines: sg.start..sg.end, units, panel });
             i = sg.end;
         } else {
             // a blank line: part of the surrounding flow
@@ -272,20 +345,8 @@ pub fn doc(stem: &str, structured: bool) -> Doc {
         }
     }
     if let Some(f) = flow_from.take() {
-        blocks.push(flow(f, lines.len()));
+        blocks.push(flow_block(line_start, line_len, f, to, panel));
     }
-    let virt = |v: Virt, at: usize| EBlock {
-        kind: BlockKind::Flow,
-        lines: 0..0,
-        units: vec![Unit { start: at, end: at, kind: UKind::Flow, virt: Some(v) }],
-    };
-    if blocks.first().is_some_and(|b| b.kind != BlockKind::Flow) {
-        blocks.insert(0, virt(Virt::Before, 0));
-    }
-    if blocks.last().is_some_and(|b| b.kind != BlockKind::Flow) {
-        blocks.push(virt(Virt::After, len));
-    }
-    Doc { blocks, line_start, line_len, len }
 }
 
 /// `stem` after unit `u`'s text became `text`.
@@ -328,10 +389,24 @@ pub fn check(stem: &str) -> Result<(), String> {
     // The units must read back exactly what the parser reads.
     let d = doc(stem, true);
     let lines: Vec<&str> = stem.split('\n').collect();
-    let mut rebuilt: Vec<richtext::Block> = Vec::new();
-    for sg in richtext::segment(&lines) {
+    let mut rebuilt = rebuild(stem, &lines, 0, lines.len(), &d)?;
+    if rebuilt.is_empty() {
+        rebuilt.push(richtext::Block::Para(vec![Vec::new()]));
+    }
+    if rebuilt != richtext::parse(stem) {
+        return Err("the editor could not read it back exactly".into());
+    }
+    Ok(())
+}
+
+/// The parser's blocks of lines `from..to`, read back from the editor's units.
+fn rebuild(stem: &str, lines: &[&str], from: usize, to: usize, d: &Doc) -> Result<Vec<richtext::Block>, String> {
+    let mut out: Vec<richtext::Block> = Vec::new();
+    for mut sg in richtext::segment(&lines[from..to]) {
+        sg.start += from;
+        sg.end += from;
         if sg.kind == SegKind::Para {
-            rebuilt.push(richtext::Block::Para(lines[sg.start..sg.end].iter().map(|l| richtext::inline(l.trim_end())).collect()));
+            out.push(richtext::Block::Para(lines[sg.start..sg.end].iter().map(|l| richtext::inline(l.trim_end())).collect()));
             continue;
         }
         let Some(b) = d.blocks.iter().find(|b| b.lines.start == sg.start && b.kind != BlockKind::Flow) else {
@@ -342,7 +417,7 @@ pub fn check(stem: &str) -> Result<(), String> {
             BlockKind::Flow => {}
             BlockKind::List(k) => {
                 let items = texts.iter().map(|t| richtext::inline(t)).collect();
-                rebuilt.push(match k {
+                out.push(match k {
                     ListKind::Bullets => richtext::Block::Bullets(items),
                     ListKind::Numbered => richtext::Block::Numbered(items),
                     ListKind::Quote => richtext::Block::Quote(items),
@@ -350,17 +425,27 @@ pub fn check(stem: &str) -> Result<(), String> {
             }
             BlockKind::Table { header, ncols, .. } => {
                 let rows = texts.chunks(*ncols.max(&1)).map(|r| r.iter().map(|t| richtext::inline(t)).collect()).collect();
-                rebuilt.push(richtext::Block::Table { header: *header, rows });
+                out.push(richtext::Block::Table { header: *header, rows });
+            }
+            BlockKind::Heading(level) => {
+                let t = texts.first().ok_or("a heading without text")?;
+                out.push(richtext::Block::Heading(*level, richtext::inline(t.trim_end())));
+            }
+            BlockKind::Divider => out.push(richtext::Block::Divider),
+            BlockKind::Side { panels } => {
+                let mut ps = Vec::new();
+                for r in panels {
+                    let mut p = rebuild(stem, lines, r.start, r.end, d)?;
+                    if p.is_empty() {
+                        p.push(richtext::Block::Para(vec![Vec::new()]));
+                    }
+                    ps.push(p);
+                }
+                out.push(richtext::Block::Side(ps));
             }
         }
     }
-    if rebuilt.is_empty() {
-        rebuilt.push(richtext::Block::Para(vec![Vec::new()]));
-    }
-    if rebuilt != richtext::parse(stem) {
-        return Err("the editor could not read it back exactly".into());
-    }
-    Ok(())
+    Ok(out)
 }
 
 // =====================================================================================
@@ -400,12 +485,15 @@ pub struct Atom {
 pub struct Ana {
     pub role: Vec<Role>,
     pub atoms: Vec<Atom>,
+    /// Chars of a `[text](url)` link's text (shown blue and underlined).
+    pub link: Vec<bool>,
 }
 
 /// Roles of `text`'s chars; `math_ok` says whether a `$..$` content typesets.
 pub fn analyze(text: &str, math_ok: &dyn Fn(&str) -> bool) -> Ana {
     let ch: Vec<char> = text.chars().collect();
     let mut role = vec![Role::Text { b: false, i: false, sub: false, sup: false, s: false }; ch.len()];
+    let mut link = vec![false; ch.len()];
     let mut atoms: Vec<Atom> = Vec::new();
     let mut base = 0;
     for line in text.split('\n') {
@@ -413,7 +501,10 @@ pub fn analyze(text: &str, math_ok: &dyn Fn(&str) -> bool) -> Ana {
             let (s, e) = (base + r.start, base + r.end);
             match r.kind {
                 RunKind::Marker => role[s..e].fill(Role::Hidden),
-                RunKind::Text => role[s..e].fill(Role::Text { b: r.bold, i: r.italic, sub: r.sub, sup: r.sup, s: r.strike }),
+                RunKind::Text => {
+                    role[s..e].fill(Role::Text { b: r.bold, i: r.italic, sub: r.sub, sup: r.sup, s: r.strike });
+                    link[s..e].fill(r.link);
+                }
                 RunKind::Math => {
                     let content: String = ch[s + 1..e - 1].iter().collect();
                     if math_ok(&content) {
@@ -443,7 +534,7 @@ pub fn analyze(text: &str, math_ok: &dyn Fn(&str) -> bool) -> Ana {
             *r = Role::Tail(k);
         }
     }
-    Ana { role, atoms }
+    Ana { role, atoms, link }
 }
 
 impl Ana {
@@ -545,6 +636,18 @@ pub fn decode_line(line: &str) -> (Vec<Item>, Vec<usize>) {
     let mut items = Vec::new();
     let mut starts = Vec::new();
     for r in richtext::inline_runs(line) {
+        if r.link {
+            // A `[text](url)` link is kept whole, raw (like `$math$`): formatting toggles and
+            // blanks never cut into it.
+            if r.kind == RunKind::Marker && ch[r.start] == '[' {
+                starts.push(r.start);
+                items.push(Item::Atom(String::new()));
+            }
+            if let Some(Item::Atom(raw)) = items.last_mut() {
+                raw.extend(&ch[r.start..r.end]);
+            }
+            continue;
+        }
         match r.kind {
             RunKind::Marker => {}
             RunKind::Math => {
@@ -741,6 +844,10 @@ impl Style {
 /// new text and selection, or None when the result would not read back as intended.
 pub fn inline_op(text: &str, a: usize, b: usize, op: IOp) -> Option<(String, usize, usize)> {
     let (a, b) = (a.min(b), a.max(b));
+    // Inside a link's text (or cutting through one) the link would be lost: not applied.
+    if link_spans(text).iter().any(|&(s, _, e)| (s < a && a <= e) || (s < b && b <= e)) {
+        return None;
+    }
     let lines: Vec<&str> = text.split('\n').collect();
     let mut starts = Vec::new();
     let mut at = 0;
@@ -984,6 +1091,64 @@ pub fn make_blank(text: &str, a: usize, b: usize) -> Option<(String, usize, usiz
         off += n + 1;
     }
     None
+}
+
+/// The `[text](url)` links of a unit's text (any line): local chars of each `[`, `]` and `)`.
+pub fn link_spans(text: &str) -> Vec<(usize, usize, usize)> {
+    let mut out = Vec::new();
+    let mut base = 0;
+    for line in text.split('\n') {
+        let ch: Vec<char> = line.chars().collect();
+        for r in richtext::inline_runs(line) {
+            if r.link && r.kind == RunKind::Marker && ch[r.start] == '['
+                && let Some((close, end)) = richtext::link_at(&ch, r.start)
+            {
+                out.push((base + r.start, base + close, base + end));
+            }
+        }
+        base += ch.len() + 1;
+    }
+    out
+}
+
+/// Link the selection `a..b` (local chars of a unit's text) to `url`, or change or remove the
+/// link the selection or caret is in (an empty `url` removes it, keeping its text). With a bare
+/// caret outside a link the address is inserted as its own text. The address goes through
+/// [`richtext::normalize_url`] (`example.org` becomes `https://example.org`). Returns the new
+/// text and the link text's range, or None when it does not apply (a selection across lines or
+/// through math, or an address that cannot be a link).
+pub fn link_op(text: &str, a: usize, b: usize, url: &str) -> Option<(String, usize, usize)> {
+    let (a, b) = (a.min(b), a.max(b));
+    let ch: Vec<char> = text.chars().collect();
+    if let Some(&(s, close, end)) = link_spans(text).iter().find(|&&(s, _, e)| s < b.max(a + 1) && a <= e) {
+        let label: String = ch[s + 1..close].iter().collect();
+        if url.trim().is_empty() {
+            return Some((splice(text, s..end + 1, &label), s, s + clen(&label)));
+        }
+        let u = richtext::normalize_url(url)?;
+        return Some((splice(text, close + 2..end, &u), s + 1, close));
+    }
+    let u = richtext::normalize_url(url)?;
+    let (new, x, y) = if a == b {
+        let label = u.strip_prefix("mailto:").unwrap_or(&u).to_string();
+        let n = clen(&label);
+        (splice(text, a..a, &format!("[{label}]({u})")), a + 1, a + 1 + n)
+    } else {
+        let (mut x, mut y) = (a, b.min(ch.len()));
+        while x < y && ch[x].is_whitespace() {
+            x += 1;
+        }
+        while y > x && ch[y - 1].is_whitespace() {
+            y -= 1;
+        }
+        if x == y || ch[x..y].contains(&'\n') {
+            return None;
+        }
+        let t = splice(text, y..y, &format!("]({u})"));
+        (splice(&t, x..x, "["), x + 1, y + 1)
+    };
+    // It must read back as a link to `u` over exactly that text.
+    link_spans(&new).iter().any(|&(s, close, end)| s + 1 == x && close == y && slice(&new, close + 2..end) == u).then_some((new, x, y))
 }
 
 /// Split one line at the selection `a..b` (removing it): the two halves, each with its own
@@ -1268,6 +1433,15 @@ fn toggle_list_raw(stem: &str, d: &Doc, fi: usize, sel: (usize, usize), kind: Li
             };
             Some(Change::at(s, caret))
         }
+        UKind::Head { line, .. } => {
+            // a heading becomes a list item with the same text
+            let p = richtext::heading_prefix_len(&lines[line]);
+            let np = prefix_for(kind, 1);
+            lines[line] = format!("{np}{}", lines[line].chars().skip(p).collect::<String>());
+            let delta = clen(&np) as i64 - p as i64;
+            let mv = |g: usize| (g as i64 + delta).max(d.line_start[line] as i64) as usize;
+            Some(Change { stem: lines.join("\n"), anchor: mv(a), caret: mv(c), virt: None, blank: None, keep: None })
+        }
         UKind::Cell { .. } => None,
     }
 }
@@ -1522,6 +1696,21 @@ pub fn enter_op(stem: &str, d: &Doc, fi: usize, a: usize, b: usize, newlines: bo
             Some(Change::at(s, ls[line + 1] + np))
         }
         UKind::Cell { .. } => None,
+        UKind::Head { line, .. } => {
+            let mut lines = lines_of(stem);
+            if visibly_empty(&text) {
+                // an empty heading turns back into a paragraph line
+                lines[line] = text.clone();
+                return Some(Change::at(lines.join("\n"), d.line_start[line]));
+            }
+            let p = richtext::heading_prefix_len(&lines[line]);
+            let (left, right) = split_line(&text, a, b);
+            let prefix: String = lines[line].chars().take(p).collect();
+            lines[line] = format!("{prefix}{left}");
+            lines.insert(line + 1, right);
+            let ls = line_starts(&lines);
+            Some(Change::at(lines.join("\n"), ls[line + 1]))
+        }
         UKind::Flow => {
             if !newlines {
                 return None;
@@ -1611,11 +1800,22 @@ pub fn backspace_op(stem: &str, d: &Doc, fi: usize) -> Option<Change> {
             let s = lines.join("\n");
             Some(Change::at(s, d.line_start[line]))
         }
+        UKind::Head { line, .. } => {
+            let mut lines = lines_of(stem);
+            let p = richtext::heading_prefix_len(&lines[line]);
+            lines[line] = lines[line].chars().skip(p).collect();
+            Some(Change::at(lines.join("\n"), d.line_start[line]))
+        }
         UKind::Flow if u.virt.is_none() && u.start > 0 => {
             let prev_line = d.line_of(u.start) - 1;
             let in_table = d.blocks.iter().any(|b| matches!(b.kind, BlockKind::Table { .. }) && b.lines.contains(&prev_line));
-            if in_table {
+            if in_table || d.fences.contains(&prev_line) {
                 return None;
+            }
+            if d.blocks.iter().any(|b| b.kind == BlockKind::Divider && b.lines.start == prev_line) {
+                // remove the divider above
+                let ls = d.line_start[prev_line];
+                return Some(Change::at(splice(stem, ls..u.start, ""), ls));
             }
             Some(Change::at(splice(stem, u.start - 1..u.start, ""), u.start - 1))
         }
@@ -1635,9 +1835,14 @@ pub fn delete_op(stem: &str, d: &Doc, fi: usize) -> Option<Change> {
     if next >= d.line_start.len() {
         return None;
     }
-    let next_block = d.blocks.iter().find(|b| b.lines.contains(&next) && b.units.iter().all(|x| x.virt.is_none()));
+    if d.fences.contains(&next) || d.fences.contains(&line) {
+        return None;
+    }
+    let next_block = d.blocks.iter().find(|b| b.lines.contains(&next) && b.units.iter().all(|x| x.virt.is_none()) && !matches!(b.kind, BlockKind::Side { .. }));
     let cut = match next_block.map(|b| &b.kind) {
-        Some(BlockKind::Table { .. }) => return None,
+        Some(BlockKind::Table { .. }) | Some(BlockKind::Side { .. }) => return None,
+        Some(BlockKind::Heading(_)) => 1 + richtext::heading_prefix_len(stem.split('\n').nth(next).unwrap_or("")),
+        Some(BlockKind::Divider) => 1 + d.line_len[next],
         Some(BlockKind::List(k)) => {
             let nl = stem.split('\n').nth(next).unwrap_or("");
             1 + richtext::item_prefix_len(k.seg(), nl)
@@ -1645,6 +1850,287 @@ pub fn delete_op(stem: &str, d: &Doc, fi: usize) -> Option<Change> {
         _ => 1,
     };
     Some(Change::at(splice(stem, u.end..u.end + cut, ""), u.end))
+}
+
+// =====================================================================================
+// Headings, dividers, side by side, and the slash menu
+// =====================================================================================
+
+/// Side-by-side structure edits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SOp {
+    /// Another (empty) panel at the right.
+    AddPanel,
+    /// Unwrap the group: the panels' contents one after another.
+    Stack,
+    /// Remove this panel (with two panels, the other one is unwrapped).
+    RemovePanel(usize),
+    /// Give an empty (zero-line) panel a line to write on.
+    Fill(usize),
+}
+
+/// Apply `op` to the side-by-side block `si` of `d`.
+pub fn side_op(stem: &str, d: &Doc, si: usize, op: SOp) -> Option<Change> {
+    let bl = d.blocks.get(si)?;
+    let BlockKind::Side { panels } = &bl.kind else { return None };
+    let mut lines = lines_of(stem);
+    let (open, close) = (bl.lines.start, bl.lines.end - 1);
+    let stack = |lines: &mut Vec<String>, keep: &[Range<usize>]| -> usize {
+        let mut out: Vec<String> = Vec::new();
+        for r in keep {
+            let content: Vec<String> = lines[r.clone()].to_vec();
+            if content.iter().all(|l| l.trim().is_empty()) {
+                continue;
+            }
+            if !out.is_empty() {
+                out.push(String::new());
+            }
+            out.extend(content);
+        }
+        if out.is_empty() {
+            out.push(String::new());
+        }
+        lines.splice(open..close + 1, out);
+        open
+    };
+    match op {
+        SOp::AddPanel => {
+            lines.insert(close, String::new());
+            lines.insert(close, richtext::FENCE_NEXT.to_string());
+            let ls = line_starts(&lines);
+            Some(Change::at(lines.join("\n"), ls[close + 1]))
+        }
+        SOp::Stack => {
+            let l = stack(&mut lines, panels);
+            let ls = line_starts(&lines);
+            Some(Change::at(lines.join("\n"), ls[l]))
+        }
+        SOp::Fill(k) => {
+            let at = panels.get(k)?.start;
+            lines.insert(at, String::new());
+            let ls = line_starts(&lines);
+            Some(Change::at(lines.join("\n"), ls[at]))
+        }
+        SOp::RemovePanel(k) => {
+            if k >= panels.len() {
+                return None;
+            }
+            if panels.len() <= 2 {
+                let keep: Vec<Range<usize>> = panels.iter().enumerate().filter(|(i, _)| *i != k).map(|(_, r)| r.clone()).collect();
+                let l = stack(&mut lines, &keep);
+                let ls = line_starts(&lines);
+                return Some(Change::at(lines.join("\n"), ls[l]));
+            }
+            let r = panels[k].clone();
+            // the panel's lines and one neighbouring fence (its own `::: next`, or the one before it)
+            let cut = if k == 0 { r.start..r.end + 1 } else { r.start - 1..r.end };
+            lines.drain(cut.clone());
+            let ls = line_starts(&lines);
+            let at = if k == 0 { cut.start } else { cut.start.saturating_sub(1).max(open + 1) };
+            Some(Change::at(lines.join("\n"), ls[at.min(ls.len() - 1)]))
+        }
+    }
+}
+
+/// Remove source line `line` (a divider) and its line break.
+pub fn delete_line(stem: &str, line: usize) -> Change {
+    let mut lines = lines_of(stem);
+    if line < lines.len() {
+        lines.remove(line);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    let ls = line_starts(&lines);
+    let at = ls[line.min(ls.len() - 1)];
+    Change::at(lines.join("\n"), at)
+}
+
+/// Commands of the slash menu.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Slash {
+    Text,
+    H1,
+    H2,
+    H3,
+    Quote,
+    Divider,
+    Bullets,
+    Numbered,
+    Image,
+    Table,
+    Math,
+    Side,
+}
+
+pub struct SlashItem {
+    pub cmd: Slash,
+    pub name: &'static str,
+    /// 0 text, 1 list, 2 advanced
+    pub group: u8,
+    /// Extra words the filter matches.
+    pub keys: &'static str,
+    pub icon: &'static str,
+}
+
+pub const SLASH_GROUPS: [&str; 3] = ["Text", "List", "Advanced"];
+
+pub const SLASH_ITEMS: &[SlashItem] = &[
+    SlashItem { cmd: Slash::Text, name: "Text", group: 0, keys: "paragraph plain normal", icon: "T" },
+    SlashItem { cmd: Slash::H1, name: "Heading 1", group: 0, keys: "title h1 big", icon: "H1" },
+    SlashItem { cmd: Slash::H2, name: "Heading 2", group: 0, keys: "subtitle h2", icon: "H2" },
+    SlashItem { cmd: Slash::H3, name: "Heading 3", group: 0, keys: "h3 small", icon: "H3" },
+    SlashItem { cmd: Slash::Quote, name: "Quote", group: 0, keys: "blockquote citation", icon: "❝" },
+    SlashItem { cmd: Slash::Divider, name: "Divider", group: 0, keys: "rule line separator hr", icon: "—" },
+    SlashItem { cmd: Slash::Bullets, name: "Bullet list", group: 1, keys: "unordered points", icon: "•≡" },
+    SlashItem { cmd: Slash::Numbered, name: "Numbered list", group: 1, keys: "ordered steps", icon: "1≡" },
+    SlashItem { cmd: Slash::Image, name: "Image placeholder", group: 2, keys: "picture photo figure diagram", icon: "▣" },
+    SlashItem { cmd: Slash::Table, name: "Table", group: 2, keys: "grid rows columns", icon: "▦" },
+    SlashItem { cmd: Slash::Math, name: "Math", group: 2, keys: "equation formula latex", icon: "Σ" },
+    SlashItem { cmd: Slash::Side, name: "Side by side", group: 2, keys: "columns two panels", icon: "◫" },
+];
+
+/// Where the slash was typed (decides what the menu offers).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlashWhere {
+    /// A paragraph, heading or list item outside any panel.
+    Top,
+    /// Inside a side-by-side panel (no nested side by side).
+    Panel,
+    /// A table cell (inline things only).
+    Cell,
+    /// A list or quote item (no side by side there).
+    Item,
+}
+
+/// The menu entries matching `query` (case-insensitive: a word of the name or of its keywords
+/// starts with it), in menu order.
+pub fn slash_matches(query: &str, at: SlashWhere) -> Vec<&'static SlashItem> {
+    let q = query.to_lowercase();
+    SLASH_ITEMS
+        .iter()
+        .filter(|it| match at {
+            SlashWhere::Cell => matches!(it.cmd, Slash::Math | Slash::Image),
+            SlashWhere::Panel | SlashWhere::Item => it.cmd != Slash::Side,
+            SlashWhere::Top => true,
+        })
+        .filter(|it| {
+            let name = it.name.to_lowercase();
+            q.is_empty() || name.starts_with(&q) || name.split(' ').chain(it.keys.split(' ')).any(|w| w.starts_with(&q))
+        })
+        .collect()
+}
+
+/// What choosing a slash command does: the edit, and for Math the caret where the equation
+/// dialog should insert.
+pub struct SlashDone {
+    pub change: Change,
+    pub eq_at: Option<usize>,
+}
+
+/// Run slash command `cmd` typed as `/query` at chars `slash..caret` (global): the `/query` text
+/// goes, then the command applies at that spot. None when it cannot apply there.
+pub fn slash_apply(stem: &str, slash: usize, caret: usize, cmd: Slash, blanks: bool) -> Option<SlashDone> {
+    let s = splice(stem, slash..caret.max(slash), "");
+    let g = slash;
+    let d = doc(&s, true);
+    let fi = d.find(g, None)?;
+    let u = d.unit(d.flat()[fi]).clone();
+    let in_panel = d.blocks[d.flat()[fi].0].panel.is_some();
+    let line = d.line_of(g);
+    let mut lines = lines_of(&s);
+    let done = |c: Change| Some(SlashDone { change: c, eq_at: None });
+    // the line's text without a list / heading prefix: (stripped line, chars removed)
+    let strip = |l: &str| -> (String, usize) {
+        let p = match u.kind {
+            UKind::Item { list, .. } => richtext::item_prefix_len(list.seg(), l),
+            UKind::Head { .. } => richtext::heading_prefix_len(l),
+            _ => 0,
+        };
+        (l.chars().skip(p).collect(), p)
+    };
+    match cmd {
+        Slash::Math => Some(SlashDone { change: Change::at(s, g), eq_at: Some(g) }),
+        Slash::Image => {
+            let ph = "[picture: describe the picture]";
+            let t = splice(&s, g..g, ph);
+            let a = g + "[picture: ".chars().count();
+            done(Change { stem: t, anchor: a, caret: a + "describe the picture".chars().count(), virt: None, blank: None, keep: None })
+        }
+        _ if matches!(u.kind, UKind::Cell { .. }) => None,
+        Slash::Table => done(insert_table(&s, &d, fi, g, blanks)),
+        Slash::Bullets | Slash::Numbered | Slash::Quote => {
+            let kind = match cmd {
+                Slash::Bullets => ListKind::Bullets,
+                Slash::Numbered => ListKind::Numbered,
+                _ => ListKind::Quote,
+            };
+            if matches!(u.kind, UKind::Item { list, .. } if list == kind) {
+                return done(Change::at(s, g));
+            }
+            done(toggle_list(&s, &d, fi, (g, g), kind)?)
+        }
+        Slash::Text => match u.kind {
+            UKind::Item { list, .. } => done(toggle_list(&s, &d, fi, (g, g), list)?),
+            UKind::Head { .. } => {
+                let (t, p) = strip(&lines[line]);
+                lines[line] = t;
+                done(Change::at(lines.join("\n"), g.saturating_sub(p).max(d.line_start[line])))
+            }
+            _ => done(Change::at(s, g)),
+        },
+        Slash::H1 | Slash::H2 | Slash::H3 => {
+            let n = match cmd {
+                Slash::H1 => 1,
+                Slash::H2 => 2,
+                _ => 3,
+            };
+            let (t, p) = strip(&lines[line]);
+            let t = if matches!(u.kind, UKind::Flow) { t.trim_start().to_string() } else { t };
+            let removed = clen(&lines[line]) - clen(&t);
+            let _ = p;
+            let pre = format!("{} ", "#".repeat(n));
+            lines[line] = format!("{pre}{t}");
+            let ls = d.line_start[line];
+            let at = (g.saturating_sub(removed)).max(ls) + n + 1;
+            done(Change::at(lines.join("\n"), at))
+        }
+        Slash::Divider => {
+            if lines[line].trim().is_empty() {
+                lines[line] = "---".to_string();
+                if line + 1 < lines.len() {
+                    // an empty line under the divider to keep writing on
+                    if !lines[line + 1].trim().is_empty() {
+                        lines.insert(line + 1, String::new());
+                    }
+                    let ls = line_starts(&lines);
+                    done(Change::at(lines.join("\n"), ls[line + 1]))
+                } else {
+                    let st = lines.join("\n");
+                    let n = clen(&st);
+                    done(Change { stem: st, anchor: n + 1, caret: n + 1, virt: Some(Virt::After), blank: None, keep: None })
+                }
+            } else {
+                lines.insert(line + 1, "---".to_string());
+                done(Change::at(lines.join("\n"), g))
+            }
+        }
+        Slash::Side => {
+            if in_panel || !matches!(u.kind, UKind::Flow | UKind::Head { .. }) {
+                return None;
+            }
+            let old = lines[line].clone();
+            let ins: Vec<String> = if old.trim().is_empty() {
+                vec![richtext::FENCE_OPEN.into(), String::new(), richtext::FENCE_NEXT.into(), String::new(), richtext::FENCE_CLOSE.into()]
+            } else {
+                vec![richtext::FENCE_OPEN.into(), old, richtext::FENCE_NEXT.into(), String::new(), richtext::FENCE_CLOSE.into()]
+            };
+            lines.splice(line..line + 1, ins);
+            let ls = line_starts(&lines);
+            let at = ls[line + 1] + (g - d.line_start[line]).min(clen(&lines[line + 1]));
+            done(Change::at(lines.join("\n"), at))
+        }
+    }
 }
 
 // =====================================================================================
@@ -1727,6 +2213,62 @@ struct Mem {
     /// Typing mode: a format toggled with a collapsed caret at this global position; the next
     /// text typed there takes this style (nothing is selected or changed until then).
     pending: Option<(usize, Style)>,
+    /// The slash menu: global char of its `/`, highlighted row, group filter.
+    slash: Option<SlashSt>,
+    slash_rect: Option<Rect>,
+    /// Screen rect of the caret in the focused unit (last drawn).
+    caret_rect: Option<Rect>,
+    /// The link popover, while open.
+    link: Option<LinkSt>,
+}
+
+/// The link popover: the selection it was opened on (global chars), its unit, the address
+/// being typed, whether the selection already is a link, and whether it has taken focus.
+#[derive(Clone, Debug, Default)]
+struct LinkSt {
+    sel: (usize, usize),
+    unit: usize,
+    url: String,
+    existing: bool,
+    focused: bool,
+    at: Option<Pos2>,
+    /// The last Apply could not link the selection.
+    err: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct SlashSt {
+    at: usize,
+    hi: usize,
+    tab: Option<u8>,
+}
+
+/// The open slash menu's query and context, when `/` at `st.at` still leads the text up to the
+/// caret `gc` in flat unit `fi` (no spaces, at most 24 chars).
+fn slash_query(stem: &str, d: &Doc, fi: usize, gc: usize, st: &SlashSt) -> Option<(String, SlashWhere)> {
+    let at = d.flat()[fi];
+    let u = d.unit(at);
+    if u.virt.is_some() || st.at < u.start || st.at >= u.end || gc <= st.at || gc > u.end {
+        return None;
+    }
+    if slice(stem, st.at..st.at + 1) != "/" {
+        return None;
+    }
+    let q = slice(stem, st.at + 1..gc);
+    if q.chars().count() > 24 || q.chars().any(|c| c.is_whitespace()) {
+        return None;
+    }
+    let wh = match u.kind {
+        UKind::Cell { .. } => SlashWhere::Cell,
+        _ if d.blocks[at.0].panel.is_some() => SlashWhere::Panel,
+        UKind::Item { .. } => SlashWhere::Item,
+        _ => SlashWhere::Top,
+    };
+    Some((q, wh))
+}
+
+fn slash_list(q: &str, wh: SlashWhere, tab: Option<u8>) -> Vec<&'static SlashItem> {
+    slash_matches(q, wh).into_iter().filter(|it| tab.is_none_or(|t| it.group == t)).collect()
 }
 
 /// Style the layouter needs.
@@ -1786,13 +2328,13 @@ fn build_job(ui: &Ui, text: &str, wrap: f32, st: &Sty, ana: &Ana, blank_label: &
     let small = st.size * 0.68;
     let (asc_s, _) = metrics(ui, &FontId::new(small, st.family.clone()));
     let tiny = FontId::new(0.1, st.family.clone());
-    let fmt = |font: FontId, color: Color32, italics: bool, lh: f32| TextFormat {
-        font_id: font,
-        color,
-        italics,
-        line_height: Some(lh.max(1.0)),
-        valign: Align::Center,
-        ..Default::default()
+    let fmt = |font: FontId, color: Color32, italics: bool, lh: f32| {
+        // The family's real italic face when the house fonts have one (egui's slant otherwise).
+        let (font, italics) = match italics.then(|| crate::theme::italic_family(ui.ctx(), &font.family)).flatten() {
+            Some(family) => (FontId::new(font.size, family), false),
+            None => (font, italics),
+        };
+        TextFormat { font_id: font, color, italics, line_height: Some(lh.max(1.0)), valign: Align::Center, ..Default::default() }
     };
     let boxes: Vec<(f32, f32, f32)> = ana.atoms.iter().map(|a| atom_box(ui, a, st, blank_label)).collect();
     let mut job = LayoutJob::default();
@@ -1808,12 +2350,13 @@ fn build_job(ui: &Ui, text: &str, wrap: f32, st: &Sty, ana: &Ana, blank_label: &
         match r {
             Role::Head(k) => j = ana.atoms[k].start + 2,
             _ => {
-                while j < ch.len() && ana.role[j] == r && !matches!(r, Role::Head(_)) {
+                while j < ch.len() && ana.role[j] == r && ana.link[j] == ana.link[i] && !matches!(r, Role::Head(_)) {
                     j += 1;
                 }
             }
         }
         let s: String = ch[i..j].iter().collect();
+        let is_link = ana.link[i];
         let format = match r {
             Role::Text { b, i: it, sub, sup, s: strike } => {
                 let fam = if b { st.bold.clone() } else { st.family.clone() };
@@ -1825,6 +2368,10 @@ fn build_job(ui: &Ui, text: &str, wrap: f32, st: &Sty, ana: &Ana, blank_label: &
                 };
                 if strike {
                     f.strikethrough = Stroke::new((st.size / 14.0).max(1.0), st.color);
+                }
+                if is_link {
+                    f.color = crate::equation::link_color(st.color);
+                    f.underline = Stroke::new((st.size / 14.0).max(1.0), f.color);
                 }
                 f
             }
@@ -2017,6 +2564,11 @@ fn unit_ids(id: UiId, d: &Doc) -> Vec<UiId> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Act {
     Inline(IOp),
+    /// Open the link popover for the selection (or the link at the caret).
+    Link,
+    /// The popover's Apply / Remove link.
+    LinkApply,
+    LinkRemove,
     List(ListKind),
     Table,
     Equation,
@@ -2039,6 +2591,8 @@ struct Here {
     table: bool,
     sel: bool,
     on_blank: bool,
+    /// The selection or caret is in a link.
+    link: bool,
 }
 
 fn tool_btn(ui: &mut Ui, label: RichText, tip: &str, on: bool, enabled: bool) -> bool {
@@ -2074,11 +2628,12 @@ fn toolbar(ui: &mut Ui, here: Here, blanks: bool, markup: bool, structured: bool
             b(ui, RichText::new("Table"), "Insert a table", here.table, vis && !here.table, Act::Table);
         }
         ui.add_space(4.0);
-        b(ui, RichText::new("Σ"), "Equation (Ctrl+M, or type / at the start of a word)", false, vis, Act::Equation);
+        b(ui, RichText::new("Σ"), if structured { "Equation (Ctrl+M; or type / for the slash menu)" } else { "Equation (Ctrl+M, or type / at the start of a word)" }, false, vis, Act::Equation);
         if blanks {
             let tip = if here.on_blank { "Put the answer back as text (Ctrl+Shift+K)" } else { "Make the selected word a blank; it becomes the answer (Ctrl+Shift+K)" };
             b(ui, RichText::new("___ Blank"), tip, here.on_blank, vis && (here.sel || here.on_blank), Act::Blank);
         }
+        b(ui, RichText::new("Link").underline(), "Link the selected text to a web or e-mail address (Ctrl+K)", here.link, vis, Act::Link);
         ui.add_space(4.0);
         if tool_btn(ui, RichText::new("</>"), if markup { "Back to the visual editor" } else { "Edit the markup text" }, markup, true) {
             act = Some(Act::Markup);
@@ -2133,6 +2688,7 @@ fn float_bar(ui: &Ui, id: UiId, at: Pos2, pivot: egui::Align2, here: Here, blank
                         b(ui, RichText::new("x₂"), "Subscript", here.sub, Act::Inline(IOp::Sub));
                         b(ui, RichText::new("x²"), "Superscript", here.sup, Act::Inline(IOp::Sup));
                         b(ui, RichText::new("Σ"), "Turn into an equation", false, Act::Equation);
+                        b(ui, RichText::new("Link").underline(), "Link to a web or e-mail address (Ctrl+K)", here.link, Act::Link);
                         if blanks {
                             b(ui, RichText::new("___ Blank"), "Make the selected word a blank; it becomes the answer (Ctrl+Shift+K)", false, Act::Blank);
                         }
@@ -2270,6 +2826,7 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
         let Style { b, i, sub, sup, s } = ana.style_at(lc(sel.1));
         let (lo, hi) = (lc(sel.0.min(sel.1)), lc(sel.0.max(sel.1)));
         let on_blank = ana.atoms.iter().any(|a| matches!(a.kind, AtomKind::Blank(_)) && ((lo == a.start && hi == a.end) || (lo == hi && (lo == a.end || lo == a.start))));
+        let link = link_spans(&text).iter().any(|&(s, _, e)| s < hi.max(lo + 1) && lo <= e);
         Here {
             b,
             i,
@@ -2283,6 +2840,7 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
             table: matches!(u.kind, UKind::Cell { .. }),
             sel: lo < hi,
             on_blank,
+            link,
         }
     };
 
@@ -2299,7 +2857,38 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
         let ana = analyze(&text, &math_ok_ui(&ctx, st.size));
         let cmd = Modifiers::COMMAND;
         let cs = Modifiers::COMMAND | Modifiers::SHIFT;
-        if take_key(ui, cmd, Key::Z) {
+        // slash menu keys
+        if let Some(sl) = m.slash {
+            let gc = d.global(&u, lc);
+            match slash_query(stem, &d, fi, gc, &sl) {
+                Some((q, wh)) if la == lc => {
+                    let list = slash_list(&q, wh, sl.tab);
+                    let n_items = list.len();
+                    if n_items == 0 {
+                        m.slash = None;
+                    } else if take_key(ui, Modifiers::NONE, Key::ArrowDown) {
+                        m.slash = Some(SlashSt { hi: (sl.hi + 1) % n_items, ..sl });
+                    } else if take_key(ui, Modifiers::NONE, Key::ArrowUp) {
+                        m.slash = Some(SlashSt { hi: (sl.hi + n_items - 1) % n_items, ..sl });
+                    } else if take_key(ui, Modifiers::NONE, Key::Escape) {
+                        m.slash = None;
+                    } else if take_key(ui, Modifiers::NONE, Key::Enter) || take_key(ui, Modifiers::NONE, Key::Tab) {
+                        let it = list[sl.hi.min(n_items - 1)];
+                        m.slash = None;
+                        if let Some(done) = slash_apply(stem, sl.at, gc, it.cmd, has_blanks) {
+                            if let Some(g) = done.eq_at {
+                                out.eq = Some(EqAsk { caret: g, span: None, initial: String::new() });
+                            }
+                            change = Some(done.change);
+                        }
+                    }
+                }
+                _ => m.slash = None,
+            }
+        }
+        if change.is_some() {
+            // a slash command ran: nothing else this frame
+        } else if take_key(ui, cmd, Key::Z) {
             act = Some(Act::Undo);
         } else if take_key(ui, cs, Key::Z) || take_key(ui, cmd, Key::Y) {
             act = Some(Act::Redo);
@@ -2328,6 +2917,8 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
             if has_blanks {
                 act = Some(Act::Blank);
             }
+        } else if take_key(ui, cmd, Key::K) {
+            act = Some(Act::Link);
         }
         // Backspace / Delete remove one visible thing (an atom whole); at the edge of a block
         // they join blocks or leave a list.
@@ -2459,17 +3050,24 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
                     _ => {}
                 }
             }
-            // '/' at the start of a word opens the equation editor
+            // '/' at the start of a word opens the slash menu (stems) or the equation editor
+            // (one-line fields); mid-word it stays a literal '/'
             if let Some(p) = i.events.iter().position(|e| matches!(e, Event::Text(s) if s == "/")) {
                 let chs: Vec<char> = text.chars().collect();
                 if single && (lc == 0 || chs.get(lc - 1).is_some_and(|c| c.is_whitespace())) {
-                    i.events.remove(p);
+                    if !structured {
+                        i.events.remove(p);
+                    }
                     slash = true;
                 }
             }
         });
-        if slash {
-            out.eq = Some(EqAsk { caret: d.global(&u, lc), span: None, initial: String::new() });
+        if slash && change.is_none() {
+            if o.structured {
+                m.slash = Some(SlashSt { at: d.global(&u, lc), hi: 0, tab: None });
+            } else {
+                out.eq = Some(EqAsk { caret: d.global(&u, lc), span: None, initial: String::new() });
+            }
         }
     }
 
@@ -2535,6 +3133,7 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
                     let words = slice(&text, lo..hi);
                     let plain: String = decode_line(&words.replace('\n', " ")).0.iter().map(|it| match it {
                         Item::Ch { c, .. } => c.to_string(),
+                        Item::Atom(r) if r.starts_with('[') => richtext::line_text(&richtext::inline(r)),
                         Item::Atom(r) => r.trim_matches('$').to_string(),
                     }).collect();
                     EqAsk { caret: g(lo), span: Some(g(lo)..g(hi)), initial: plain }
@@ -2554,6 +3153,16 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
                 let (bi, r, c) = m.cell?;
                 table_op(stem, d, bi, r, c, op)
             }
+            Act::Link => {
+                let (lo, hi) = (la.min(lb), la.max(lb));
+                let spans = link_spans(&text);
+                let cur = spans.iter().find(|&&(s, _, e)| s < hi.max(lo + 1) && lo <= e);
+                let ch: Vec<char> = text.chars().collect();
+                let url = cur.map(|&(_, close, e)| ch[close + 2..e].iter().collect()).unwrap_or_default();
+                m.link = Some(LinkSt { sel, unit: fi, url, existing: cur.is_some(), focused: false, at: m.caret_rect.map(|r| r.left_bottom()), err: false });
+                None
+            }
+            Act::LinkApply | Act::LinkRemove => None,
             Act::Undo | Act::Redo | Act::Markup => None,
         }
     };
@@ -2649,12 +3258,12 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
     let mut table_bar: Option<(usize, Act)> = None;
     let flat = d.flat();
     let rows_ro = blanks_rows.clone();
+    let mut div_act: Option<usize> = None;
+    let mut side_act: Option<(usize, SOp)> = None;
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(0.0, 0.0);
-        for (bi, bl) in d.blocks.iter().enumerate() {
-            if bi > 0 {
-                ui.add_space(st.size * 0.35);
-            }
+        let mut draw = |ui: &mut Ui, bi: usize, width: f32| {
+            let bl = &d.blocks[bi];
             let fidx = |k: usize| flat.iter().position(|&f| f == (bi, k)).unwrap_or(0);
             match &bl.kind {
                 BlockKind::Flow => {
@@ -2662,7 +3271,7 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
                     let k = fidx(0);
                     let uf = Some(k) == focused;
                     if u.virt.is_some() && !(active || uf) {
-                        continue;
+                        return;
                     }
                     let mut t = slice(stem, u.start..u.end);
                     let hint = match u.virt {
@@ -2815,11 +3424,230 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
                         p.vline(x, y0..=bottom, stroke);
                     }
                 }
+                BlockKind::Heading(level) => {
+                    let u = &bl.units[0];
+                    let k = fidx(0);
+                    let mut t = slice(stem, u.start..u.end);
+                    let hs = Sty { size: st.size * crate::equation::heading_scale(*level), family: st.bold.clone(), ..st.clone() };
+                    ui.add_space(st.size * 0.1);
+                    let sh = show_unit(ui, ids[k], &mut t, width, &hs, "Heading", blank_base(u.start), rows_ro.as_deref(), false);
+                    after_unit(&ctx, &mut m, k, ids[k], &sh, &t, stem, u, &mut edit, &mut clicked, &mut sel_rect);
+                }
+                BlockKind::Divider => {
+                    let (r, resp) = ui.allocate_exact_size(Vec2::new(width, st.size * 1.0), egui::Sense::hover());
+                    let y = r.center().y.round() + 0.5;
+                    let hot = resp.hovered() || (active && ui.rect_contains_pointer(r.expand(4.0)));
+                    ui.painter().hline(r.left()..=r.right() - if hot { st.size * 1.4 } else { 0.0 }, y, Stroke::new(1.0, st.color.gamma_multiply(if hot { 0.8 } else { 0.5 })));
+                    if hot {
+                        let br = Rect::from_center_size(Pos2::new(r.right() - st.size * 0.6, y), Vec2::splat(st.size * 1.0));
+                        let b = ui.put(br, egui::Button::new(RichText::new("×").size(st.size * 0.8)).frame(false)).on_hover_text("Remove this divider");
+                        if b.clicked() {
+                            div_act = Some(bl.lines.start);
+                        }
+                    }
+                }
+                BlockKind::Side { .. } => {}
             }
+        };
+        let mut first_top = true;
+        for (bi, bl) in d.blocks.iter().enumerate() {
+            if bl.panel.is_some() {
+                continue;
+            }
+            if !first_top {
+                ui.add_space(st.size * 0.35);
+            }
+            first_top = false;
+            let BlockKind::Side { panels } = &bl.kind else {
+                draw(ui, bi, width);
+                continue;
+            };
+            // side by side: one column per panel, the panels' own blocks inside
+            let n = panels.len().max(1);
+            let gap = st.size * 1.0;
+            let pad = 6.0;
+            let colw = ((width - gap * (n as f32 - 1.0)) / n as f32).max(st.size * 3.0);
+            let in_group = focused.is_some_and(|f| d.blocks[flat[f].0].panel.is_some_and(|(s, _)| s == bi));
+            // a slim control row (always there, so focusing a panel never shifts the layout)
+            ui.allocate_ui_with_layout(Vec2::new(width, 18.0), egui::Layout::right_to_left(Align::Center), |ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(8.0, 0.0);
+                let small = |t: &str| egui::Button::new(RichText::new(t).size(11.0).color(if in_group { theme::accent_col() } else { theme::muted_col() })).frame(false);
+                if ui.add(small("Stack")).on_hover_text("Put the panels under each other (ends side by side)").clicked() {
+                    side_act = Some((bi, SOp::Stack));
+                }
+                if n < 4 && ui.add(small("+ Panel")).on_hover_text("Add a panel at the right").clicked() {
+                    side_act = Some((bi, SOp::AddPanel));
+                }
+                ui.label(RichText::new("Side by side").size(11.0).color(theme::muted_col()));
+            });
+            let top_y = ui.cursor().top();
+            let x0 = ui.cursor().left();
+            let mut boxes: Vec<Rect> = Vec::new();
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::ZERO;
+                for pi in 0..n {
+                    if pi > 0 {
+                        ui.add_space(gap);
+                    }
+                    let r = ui.allocate_ui_with_layout(Vec2::new(colw, 0.0), egui::Layout::top_down(Align::Min), |ui| {
+                        ui.set_width(colw);
+                        ui.spacing_mut().item_spacing = Vec2::ZERO;
+                        ui.add_space(pad);
+                        let kids: Vec<usize> = d.blocks.iter().enumerate().filter(|(_, b)| b.panel == Some((bi, pi))).map(|(k, _)| k).collect();
+                        if kids.is_empty() {
+                            let b = ui.add(egui::Button::new(RichText::new("(empty: click to write)").size(st.size * 0.8).color(theme::muted_col())).frame(false));
+                            if b.clicked() {
+                                side_act = Some((bi, SOp::Fill(pi)));
+                            }
+                        }
+                        for (j, &k) in kids.iter().enumerate() {
+                            if j > 0 {
+                                ui.add_space(st.size * 0.35);
+                            }
+                            ui.horizontal_top(|ui| {
+                                ui.add_space(pad);
+                                ui.vertical(|ui| {
+                                    ui.spacing_mut().item_spacing = Vec2::ZERO;
+                                    draw(ui, k, colw - 2.0 * pad);
+                                });
+                            });
+                        }
+                        ui.add_space(pad);
+                    });
+                    boxes.push(r.response.rect);
+                }
+            });
+            let bottom = boxes.iter().map(|r| r.bottom()).fold(top_y, f32::max);
+            let p = ui.painter().clone();
+            for (pi, r) in boxes.iter().enumerate() {
+                let r = Rect::from_min_max(Pos2::new(r.left(), top_y), Pos2::new(r.right(), bottom));
+                let stroke = Stroke::new(1.0, theme::border().gamma_multiply(if in_group { 1.4 } else { 1.0 }));
+                let pts = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
+                for w in pts.windows(2) {
+                    p.extend(Shape::dashed_line(&[w[0], w[1]], stroke, 4.0, 3.0));
+                }
+                if in_group {
+                    let br = Rect::from_min_size(Pos2::new(r.right() - 20.0, r.top() + 2.0), Vec2::splat(18.0));
+                    if ui.put(br, egui::Button::new(RichText::new("×").size(12.0)).frame(false)).on_hover_text("Remove this panel").clicked() {
+                        side_act = Some((bi, SOp::RemovePanel(pi)));
+                    }
+                }
+            }
+            let _ = x0;
         }
     });
+    let structural = match (div_act, side_act) {
+        (Some(l), _) => Some(delete_line(stem, l)),
+        (None, Some((si, op))) => side_op(stem, &d, si, op),
+        _ => None,
+    };
+    if let Some(c) = structural {
+        // the structure changed under this frame's units: drop their edits
+        bar_act = None;
+        table_bar = None;
+        edit = None;
+        clicked = None;
+        sel_rect = None;
+        commit(&mut m, stem, c, None, &mut blanks_rows, &mut out);
+    }
     if let Some((_, a)) = table_bar {
         bar_act = Some(a);
+    }
+
+    // ----- slash menu -----
+    let over_slash = m.slash_rect.is_some_and(|r| ui.input(|i| i.pointer.interact_pos().or(i.pointer.hover_pos()).is_some_and(|p| r.expand(4.0).contains(p))));
+    if focused.is_none() && !over_slash {
+        m.slash = None;
+    }
+    let mut slash_pick: Option<Slash> = None;
+    m.slash_rect = None;
+    if let (Some(sl), Some(sel), Some(fi), Some(cr)) = (m.slash, m.sel, m.sel_unit.filter(|&k| k < d.flat().len()), m.caret_rect)
+        && let Some((q, wh)) = slash_query(stem, &d, fi, sel.1, &sl)
+    {
+        let all = slash_matches(&q, wh);
+        let list = slash_list(&q, wh, sl.tab);
+        let hi = sl.hi.min(list.len().saturating_sub(1));
+        let mut new_tab = sl.tab;
+        let mut new_hi = hi;
+        let screen = ui.ctx().content_rect();
+        let below = cr.bottom() + 4.0 + 300.0 < screen.bottom();
+        let (pos, pivot) = if below { (Pos2::new(cr.left(), cr.bottom() + 4.0), egui::Align2::LEFT_TOP) } else { (Pos2::new(cr.left(), cr.top() - 4.0), egui::Align2::LEFT_BOTTOM) };
+        let r = egui::Area::new(id.with("wys_slash"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(pos)
+            .pivot(pivot)
+            .constrain(true)
+            .show(ui.ctx(), |ui| {
+                Frame::new()
+                    .fill(theme::card())
+                    .stroke(Stroke::new(1.0, theme::border()))
+                    .corner_radius(CornerRadius::same(10))
+                    .shadow(egui::epaint::Shadow { offset: [0, 4], blur: 14, spread: 0, color: Color32::from_black_alpha(40) })
+                    .inner_margin(egui::Margin::same(6))
+                    .show(ui, |ui| {
+                        ui.set_width(230.0);
+                        ui.spacing_mut().item_spacing = Vec2::new(4.0, 2.0);
+                        // group tabs (only groups that have matches)
+                        ui.horizontal(|ui| {
+                            for (g, name) in SLASH_GROUPS.iter().enumerate() {
+                                let g = g as u8;
+                                if !all.iter().any(|it| it.group == g) {
+                                    continue;
+                                }
+                                let on = sl.tab == Some(g);
+                                if tool_btn(ui, RichText::new(*name).size(12.0), "Show only this group (click again for all)", on, true) {
+                                    new_tab = if on { None } else { Some(g) };
+                                    new_hi = 0;
+                                }
+                            }
+                        });
+                        ui.separator();
+                        if list.is_empty() {
+                            ui.label(RichText::new("No match").size(12.0).color(theme::muted_col()));
+                        }
+                        let mut last_group = None;
+                        egui::ScrollArea::vertical().max_height(260.0).auto_shrink([false, true]).show(ui, |ui| {
+                            for (k, it) in list.iter().enumerate() {
+                                if last_group != Some(it.group) {
+                                    last_group = Some(it.group);
+                                    ui.add_space(2.0);
+                                    ui.label(RichText::new(SLASH_GROUPS[it.group as usize].to_uppercase()).size(10.5).color(theme::muted_col()));
+                                }
+                                let on = k == hi;
+                                let (rr, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), egui::Sense::click());
+                                if on {
+                                    ui.painter().rect_filled(rr, CornerRadius::same(7), theme::accent_faded());
+                                    if ui.input(|i| i.key_pressed(Key::ArrowDown) || i.key_pressed(Key::ArrowUp)) {
+                                        ui.scroll_to_rect(rr, None);
+                                    }
+                                }
+                                ui.painter().text(Pos2::new(rr.left() + 16.0, rr.center().y), egui::Align2::CENTER_CENTER, it.icon, FontId::proportional(13.0), theme::text_col());
+                                ui.painter().text(Pos2::new(rr.left() + 34.0, rr.center().y), egui::Align2::LEFT_CENTER, it.name, FontId::new(13.5, theme::bold_family()), theme::text_col());
+                                if resp.hovered() {
+                                    new_hi = k;
+                                }
+                                if resp.clicked() {
+                                    slash_pick = Some(it.cmd);
+                                }
+                            }
+                        });
+                    });
+            });
+        m.slash_rect = Some(r.response.rect);
+        m.slash = Some(SlashSt { at: sl.at, hi: new_hi, tab: new_tab });
+        if let Some(cmd) = slash_pick {
+            m.slash = None;
+            if let Some(done) = slash_apply(stem, sl.at, sel.1, cmd, has_blanks) {
+                if let Some(g) = done.eq_at {
+                    out.eq = Some(EqAsk { caret: g, span: None, initial: String::new() });
+                }
+                commit(&mut m, stem, done.change, None, &mut blanks_rows, &mut out);
+            }
+            bar_act = None;
+            edit = None;
+            clicked = None;
+            sel_rect = None;
+        }
     }
 
     // ----- floating toolbar over a selection (or a blank) -----
@@ -2849,6 +3677,74 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
                 m.sel_unit = Some(k);
             }
         }
+    }
+
+    // ----- link popover -----
+    let mut link_act: Option<Act> = None;
+    if let Some(mut ls) = m.link.take() {
+        let at = ls.at.or(sel_rect.map(|r| r.left_bottom())).or(fixed_bar.map(|r| r.left_bottom())).unwrap_or(top);
+        let mut keep = true;
+        let pid = id.with("wys_link_pop");
+        egui::Area::new(pid).order(egui::Order::Foreground).fixed_pos(at + Vec2::new(0.0, 4.0)).show(&ctx, |ui| {
+            Frame::new()
+                .fill(theme::card())
+                .stroke(Stroke::new(1.0, theme::border()))
+                .corner_radius(CornerRadius::same(10))
+                .shadow(egui::epaint::Shadow { offset: [0, 3], blur: 10, spread: 0, color: Color32::from_black_alpha(40) })
+                .inner_margin(egui::Margin::same(8))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Link").size(12.0).color(theme::text_col()));
+                        let te = ui.add(TextEdit::singleline(&mut ls.url).hint_text("https://… or name@school.edu").desired_width(240.0).id(pid.with("url")));
+                        if !ls.focused {
+                            te.request_focus();
+                            ls.focused = true;
+                        }
+                        let ok = richtext::normalize_url(&ls.url).is_some();
+                        let enter = te.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                        if ui.add_enabled(ok, egui::Button::new("Apply")).clicked() || (enter && ok) {
+                            link_act = Some(Act::LinkApply);
+                        }
+                        if ls.existing && ui.button("Remove").on_hover_text("Keep the text, drop the link").clicked() {
+                            link_act = Some(Act::LinkRemove);
+                        }
+                        if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
+                            keep = false;
+                        }
+                    });
+                    if !ls.url.trim().is_empty() && richtext::normalize_url(&ls.url).is_none() {
+                        ui.label(RichText::new("Only web (http, https) and e-mail addresses can be links.").size(11.0).color(theme::bad()));
+                    } else if ls.err {
+                        ui.label(RichText::new("This selection can't be a link: select text on one line, without equations or [ ] brackets.").size(11.0).color(theme::bad()));
+                    }
+                });
+        });
+        if let Some(a) = link_act {
+            // the selection the popover was opened on, in its unit
+            if let Some(u) = d.flat().get(ls.unit).map(|&f| d.unit(f).clone()) {
+                let text = slice(stem, u.start..u.end);
+                let lc = |g: usize| g.saturating_sub(u.start).min(clen(&text));
+                let url = if a == Act::LinkApply { ls.url.clone() } else { String::new() };
+                match link_op(&text, lc(ls.sel.0), lc(ls.sel.1), &url) {
+                    Some((t, x, y)) => {
+                        let s = apply_unit(stem, &u, &t);
+                        let g0 = if u.virt.is_some() { d.global(&u, 0) } else { u.start };
+                        change = Some(Change { stem: s, anchor: g0 + x, caret: g0 + y, virt: u.virt, blank: None, keep: None });
+                        keep = false;
+                    }
+                    // say why instead of silently doing nothing
+                    None => ls.err = true,
+                }
+            } else {
+                keep = false;
+            }
+        }
+        if keep {
+            m.link = Some(ls);
+        }
+    }
+    if let Some(c) = change.take() {
+        commit(&mut m, stem, c, None, &mut blanks_rows, &mut out);
     }
 
     // ----- apply this frame's typing / toolbar action -----
@@ -2927,7 +3823,7 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
     // a click on the field's empty space puts the caret at the end of the text
     let body = Rect::from_min_max(top, Pos2::new(top.x + o.width, ui.min_rect().bottom()));
     let bg_click = ui.input(|i| i.pointer.primary_clicked() && i.pointer.interact_pos().is_some_and(|p| body.contains(p)));
-    let over_bar = m.float_rect.is_some_and(|r| ui.input(|i| i.pointer.interact_pos().is_some_and(|p| r.contains(p))));
+    let over_bar = m.float_rect.is_some_and(|r| ui.input(|i| i.pointer.interact_pos().is_some_and(|p| r.contains(p)))) || over_slash || slash_pick.is_some();
     if bg_click && !over_bar && m.want.is_none() && bar_act.is_none() && float_act.is_none() && !ids.iter().any(|u| ctx.memory(|mm| mm.has_focus(*u))) {
         let flat = d.flat();
         if let Some(&last) = flat.iter().rev().find(|f| d.unit(**f).virt.is_none()) {
@@ -2969,6 +3865,7 @@ fn after_unit(ctx: &egui::Context, m: &mut Mem, k: usize, uid: UiId, sh: &UnitSh
     let g = &sh.out.galley;
     let row = g.layout_from_cursor(cr.primary).row;
     m.rows = (row == 0, row + 1 >= g.rows.len());
+    m.caret_rect = Some(g.pos_from_cursor(CCursor::new(CharIndex::from(p))).translate(sh.origin.to_vec2()));
     if p != s {
         let (lo, hi) = (p.min(s), p.max(s));
         let r0 = g.pos_from_cursor(CCursor::new(CharIndex::from(lo))).translate(sh.origin.to_vec2());

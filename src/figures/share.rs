@@ -81,13 +81,22 @@ pub fn encode(id: &str, cur: &Params, base: &Params) -> String {
     format!("{SCHEME}{id}?p={}&v={VERSION}", b64url_encode(json.as_bytes()))
 }
 
-/// Link format version written by `encode` (`&v=2`). Links without it are v1: made before
-/// the opening states listed in `start::since_v1`, whose keys then read as plain defaults.
-pub const VERSION: u32 = 2;
+/// Link format version written by `encode` (`&v=3`). Links without it are v1. A link reads the
+/// opening-state keys newer than its version (`start::newer_than`) as plain defaults, so it
+/// opens as it did when made. v2: round 5 (vector resultant dashed); v3: P4 (orbital diagram
+/// without the configuration line, bare angles and parallel lines).
+pub const VERSION: u32 = 3;
+
+/// Pasted text with whitespace dropped and HTML-escaped ampersands (`&amp;`, from a link copied
+/// out of a mail or web page) turned back into `&`.
+fn clean(text: &str) -> String {
+    let t: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    t.replace("&amp;", "&").replace("&#38;", "&")
+}
 
 /// The format version a pasted link was written with: its `v=` value, 1 when it has none.
 pub fn version(text: &str) -> u32 {
-    let t: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    let t = clean(text);
     let q = t.split_once('?').map(|(_, q)| q).unwrap_or("");
     q.split('&').find_map(|kv| kv.strip_prefix("v=")).and_then(|v| v.trim_end_matches(|c: char| !c.is_ascii_digit()).parse().ok()).unwrap_or(1)
 }
@@ -96,12 +105,13 @@ pub fn version(text: &str) -> u32 {
 /// surrounds it: whitespace and line breaks (mail clients wrap long links), angle brackets,
 /// a missing scheme (`figure/<id>?p=...`) and extra `&key=value` pairs are all accepted.
 pub fn decode(text: &str) -> Result<(String, serde_json::Map<String, serde_json::Value>), String> {
-    let t: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    let t = clean(text);
     let t = t.trim_matches(|c| c == '<' || c == '>' || c == '"' || c == '\'');
     if t.is_empty() {
         return Err("paste a queshion://figure/... link first".into());
     }
-    let rest = if let Some(i) = t.find("figure/") { &t[i + "figure/".len()..] } else {
+    // the scheme and "figure/" in any case (some apps capitalise a pasted link's start)
+    let rest = if let Some(i) = t.to_ascii_lowercase().find("figure/") { &t[i + "figure/".len()..] } else {
         return Err("not a queShion figure link (it should start with queshion://figure/)".into());
     };
     let (id, query) = match rest.split_once('?') {
@@ -125,7 +135,7 @@ pub fn decode(text: &str) -> Result<(String, serde_json::Map<String, serde_json:
             }
         }
     }
-    Ok((id.to_string(), params))
+    Ok((id.to_ascii_lowercase(), params))
 }
 
 #[cfg(test)]
@@ -152,7 +162,7 @@ mod tests {
     fn unchanged_figure_is_a_bare_link() {
         let d = registry().into_iter().find(|d| d.id == "waves").unwrap();
         let p = start_params(&d);
-        assert_eq!(encode(d.id, &p, &p), "queshion://figure/waves?v=2");
+        assert_eq!(encode(d.id, &p, &p), format!("queshion://figure/waves?v={VERSION}"));
         let (id, m) = decode("queshion://figure/waves").unwrap();
         assert_eq!(id, "waves");
         assert!(m.is_empty());
@@ -200,6 +210,23 @@ mod tests {
         assert!(decode("queshion://figure/waves?p=!!!").is_err());
         assert!(decode("queshion://figure/waves?p=WzFd").is_err()); // "[1]" is not an object
         assert!(decode("queshion://figure/wa ves").is_ok()); // whitespace is dropped
+    }
+
+    /// Links copied out of HTML (`&amp;`) keep their version, and a capitalised scheme or id
+    /// still opens.
+    #[test]
+    fn escaped_and_capitalised_links() {
+        let link = format!("queshion://figure/motion-graphs?p={}&v=2", b64url_encode(br#"{"letters":true}"#));
+        let html = link.replace('&', "&amp;");
+        assert_eq!(version(&html), 2);
+        assert_eq!(version(&link.replace('&', "&#38;")), 2);
+        assert_eq!(decode(&html).unwrap(), decode(&link).unwrap());
+        let caps = link.replace("queshion://figure/motion-graphs", "Queshion://Figure/Motion-Graphs");
+        let (id, m) = decode(&caps).unwrap();
+        assert_eq!(id, "motion-graphs");
+        assert_eq!(m["letters"], serde_json::json!(true));
+        // the payload itself stays case-sensitive
+        assert!(decode(&link.to_ascii_uppercase()).map(|(_, m)| m != decode(&link).unwrap().1).unwrap_or(true));
     }
 
     /// Every example of every figure (and an edit of every param type) survives the link.

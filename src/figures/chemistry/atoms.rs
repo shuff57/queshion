@@ -503,6 +503,94 @@ fn particle_params() -> Vec<ParamDef> {
     v
 }
 
+// ---------------------------------------------------------------- per-kind cards
+//
+// The side panel shows one card per particle kind (How many / Before and After, Shape, Size,
+// Shade, Charge, and Center / Outer for molecules), as on the reference. The cards edit the same
+// fixed slots `a`..`d` the generator reads; removing a kind moves the later kinds up a slot.
+
+pub const PARTICLE_KINDS: [&str; 4] = KINDS;
+pub const PARTICLE_SHAPES: [&str; 6] = SHAPES;
+pub const PARTICLE_SIZES: [&str; 5] = SIZES;
+pub const PARTICLE_SHADES: [&str; 5] = SHADES;
+pub const PARTICLE_CHARGES: [&str; 7] = CHARGES;
+/// Per-kind keys after the slot letter (`a_count` ... ; the "after" count is `a2_count`).
+const KIND_FIELDS: [&str; 10] = ["count", "shape", "size", "shade", "charge", "osize", "oshade", "ocharge", "name", "oname"];
+
+fn kind_keys(k: &str) -> Vec<String> {
+    let mut v: Vec<String> = KIND_FIELDS.iter().map(|f| format!("{k}_{f}")).collect();
+    v.push(format!("{k}2_count"));
+    v
+}
+
+/// Whether a param belongs to a particle kind's card.
+pub fn is_kind_key(key: &str) -> bool {
+    KINDS.iter().any(|k| kind_keys(k).iter().any(|x| x == key))
+}
+
+/// Whether kind `i` (0..4) draws anything (as the generator and its key decide).
+pub fn kind_used(p: &Params, i: usize) -> bool {
+    let k = KINDS[i];
+    p.i(&format!("{k}_count")) > 0 || (p.s("boxes") == "Before and after" && p.i(&format!("{k}2_count")) > 0)
+}
+
+/// "Atom", "Ion" or "Molecule": what the reference calls a kind on its card.
+pub fn kind_noun(p: &Params, i: usize) -> &'static str {
+    let k = KINDS[i];
+    let charged = |f: &str| !matches!(p.s(&format!("{k}_{f}")), "None" | "");
+    if p.s(&format!("{k}_shape")) == "Alone" {
+        if charged("charge") { "Ion" } else { "Atom" }
+    } else if charged("charge") || charged("ocharge") {
+        "Ion"
+    } else {
+        "Molecule"
+    }
+}
+
+/// "4 large light gray − ions" / "4 molecules" for the Particles header.
+pub fn kind_summary(p: &Params, i: usize) -> String {
+    let k = KINDS[i];
+    let n = p.i(&format!("{k}_count"));
+    let noun = kind_noun(p, i).to_lowercase();
+    let plural = if n == 1 { noun.clone() } else { format!("{noun}s") };
+    if p.s(&format!("{k}_shape")) != "Alone" {
+        return format!("{n} {plural}");
+    }
+    let size = match p.s(&format!("{k}_size")) { "XS" => "tiny", "S" => "small", "M" => "medium", "L" => "large", _ => "extra large" };
+    let charge = match p.s(&format!("{k}_charge")) { "None" | "" => String::new(), c => format!("{c} ") };
+    format!("{n} {size} {} {charge}{plural}", p.s(&format!("{k}_shade")).to_lowercase())
+}
+
+/// Starts kind `i` as the reference's "Add a kind" does: 4 lone, medium, white, uncharged
+/// particles in each box.
+pub fn reset_kind(p: &mut Params, i: usize) {
+    let k = KINDS[i];
+    p.set_i(&format!("{k}_count"), 4);
+    p.set_i(&format!("{k}2_count"), 4);
+    for (f, v) in [("shape", "Alone"), ("size", "M"), ("shade", "White"), ("charge", "None"), ("osize", "S"), ("oshade", "White"), ("ocharge", "None"), ("name", ""), ("oname", "")] {
+        p.set_s(&format!("{k}_{f}"), v);
+    }
+}
+
+/// Removes kind `i`: kinds after it move up a slot and the last slot is emptied.
+pub fn remove_kind(p: &mut Params, defs: &[ParamDef], i: usize) {
+    for j in i..KINDS.len() - 1 {
+        for (a, b) in kind_keys(KINDS[j]).iter().zip(kind_keys(KINDS[j + 1]).iter()) {
+            if let Some(v) = p.0.get(b).cloned() {
+                p.0.insert(a.clone(), v);
+            }
+        }
+    }
+    let last = KINDS[KINDS.len() - 1];
+    for key in kind_keys(last) {
+        if let Some(d) = defs.iter().find(|d| d.key == key) {
+            p.0.insert(key, d.default.clone());
+        }
+    }
+    p.set_i(&format!("{last}_count"), 0);
+    p.set_i(&format!("{last}2_count"), 0);
+}
+
 fn atom_radius(sz: &str) -> f64 { match sz { "XS" => 5.0, "S" => 7.5, "M" => 10.0, "L" => 13.0, _ => 17.0 } }
 
 /// One particle kind: centre atom + outer atoms.

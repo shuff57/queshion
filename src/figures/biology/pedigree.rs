@@ -241,8 +241,19 @@ fn deceased_mark(d: &mut Doc, cx: f64, cy: f64, r: f64) {
 }
 
 fn proband_mark(d: &mut Doc, cx: f64, cy: f64, r: f64) {
+    proband_arrow(d, cx, cy, r, (1.3, 0.55));
+}
+
+/// The key's proband arrow: a shorter tail, so it stays inside the key's border (the full-length
+/// arrow of the first key column reached past the box's left edge).
+fn key_proband_mark(d: &mut Doc, cx: f64, cy: f64, r: f64) {
+    proband_arrow(d, cx, cy, r, (1.0, 0.423));
+}
+
+/// Arrow pointing at the person's lower left; its tail starts `tail`·r (x, y) from the tip.
+fn proband_arrow(d: &mut Doc, cx: f64, cy: f64, r: f64, tail: (f64, f64)) {
     let (tx, ty) = (cx - r * 1.15, cy + r * 0.85);
-    let (sx, sy) = (tx - r * 1.3, ty + r * 0.55);
+    let (sx, sy) = (tx - r * tail.0, ty + r * tail.1);
     d.line(sx, sy, tx - 6.0, ty + 2.5, INK, 2.0);
     let (dx, dy) = ((tx - sx), (ty - sy));
     let l = (dx * dx + dy * dy).sqrt();
@@ -774,7 +785,7 @@ pub fn render(p: &Params) -> String {
             let (x, y) = (kx + 36.0 + col as f64 * 230.0, ky + 30.0 + row as f64 * 40.0);
             symbol_ex(&mut d, x, y, 14.0, *sx, *stt, if car_style == "Hidden" { "Center dot" } else { &car_style });
             if *extra == 1 { deceased_mark(&mut d, x, y, 14.0); }
-            if *extra == 2 { proband_mark(&mut d, x, y, 14.0); }
+            if *extra == 2 { key_proband_mark(&mut d, x, y, 14.0); }
             txt(&mut d, x + 28.0, y + 6.0, 16.0, "start", SANS, "", label);
         }
         ky_end = ky + 20.0 + key_rows as f64 * 40.0 + 4.0;
@@ -873,6 +884,27 @@ mod tests {
     /// Every generated family (and its typed overrides) draws byte for byte as the renderer did
     /// before families became editable, so old figures, presets, share links and classic setups
     /// look the same.
+    /// The key's proband arrow stays inside the key box (it used to poke through the left
+    /// border when Proband landed in the first column); people keep the full-length arrow.
+    #[test]
+    fn key_proband_arrow_stays_inside_the_key() {
+        let num = |t: &str, attr: &str| -> f64 {
+            let i = t.find(&format!(" {attr}=\"")).unwrap() + attr.len() + 3;
+            t[i..].split('"').next().unwrap().parse().unwrap()
+        };
+        let mut checked = 0;
+        for changes in ["II-1=proband", "II-1=proband, II-2=deceased", "II-1=proband, II-2=deceased, I-1=unknown"] {
+            let svg = render(&params_with(&[("changes", s(changes))]));
+            let key = svg.split("<rect").filter(|t| t.contains("stroke-width=\"1.8\"")).last().expect("key box");
+            let (kx, ky) = (num(key, "x"), num(key, "y"));
+            for l in svg.split("<line").skip(1).filter(|l| num(l, "y1") > ky) {
+                assert!(num(l, "x1").min(num(l, "x2")) > kx + 3.0, "{changes}: key line at {} vs box {kx}", num(l, "x1"));
+                checked += 1;
+            }
+        }
+        assert!(checked > 0, "found the key's proband arrows");
+    }
+
     #[test]
     fn generated_families_draw_exactly_as_before() {
         let mut n = 0;

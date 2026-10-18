@@ -424,12 +424,33 @@ pub fn stem_ui_with(ui: &mut Ui, text: &str, size: f32, color: Color32, family: 
     stem_ui_edit(ui, text, size, color, family, false).0
 }
 
-fn word_galley(ui: &Ui, w: &str, font: &FontId, color: Color32, italics: bool, strike: bool) -> Arc<Galley> {
-    if italics || strike {
-        let strikethrough = if strike { egui::Stroke::new((font.size / 14.0).max(1.0), color) } else { egui::Stroke::NONE };
+/// Line decorations of a run: `~~strikethrough~~`, and the underline of a link.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Deco {
+    pub strike: bool,
+    pub under: bool,
+}
+
+/// The colour links show in on a background whose text is `ink` (dark blue on paper, light
+/// blue on a dark theme).
+pub(crate) fn link_color(ink: Color32) -> Color32 {
+    let lum = 0.3 * ink.r() as f32 + 0.59 * ink.g() as f32 + 0.11 * ink.b() as f32;
+    if lum < 128.0 { Color32::from_rgb(0x0d, 0x45, 0xad) } else { Color32::from_rgb(0x8a, 0xb4, 0xf8) }
+}
+
+fn word_galley(ui: &Ui, w: &str, font: &FontId, color: Color32, italics: bool, deco: Deco) -> Arc<Galley> {
+    // A real italic face where the family has one; egui's slant only as the fallback.
+    let (font, italics) = match italics.then(|| theme::italic_family(ui.ctx(), &font.family)).flatten() {
+        Some(family) => (&FontId::new(font.size, family), false),
+        None => (font, italics),
+    };
+    if italics || deco.strike || deco.under {
+        let line = egui::Stroke::new((font.size / 14.0).max(1.0), color);
+        let strikethrough = if deco.strike { line } else { egui::Stroke::NONE };
+        let underline = if deco.under { line } else { egui::Stroke::NONE };
         let job = egui::text::LayoutJob::single_section(
             w.to_string(),
-            egui::TextFormat { font_id: font.clone(), color, italics, strikethrough, ..Default::default() },
+            egui::TextFormat { font_id: font.clone(), color, italics, strikethrough, underline, ..Default::default() },
         );
         ui.painter().layout_job(job)
     } else {
@@ -438,8 +459,8 @@ fn word_galley(ui: &Ui, w: &str, font: &FontId, color: Color32, italics: bool, s
 }
 
 #[allow(clippy::too_many_arguments)]
-fn push_word(elems: &mut Vec<Elem>, ui: &Ui, w: &str, font: &FontId, color: Color32, italics: bool, strike: bool, dy: f32) {
-    let g = word_galley(ui, w, font, color, italics, strike);
+fn push_word(elems: &mut Vec<Elem>, ui: &Ui, w: &str, font: &FontId, color: Color32, italics: bool, deco: Deco, dy: f32) {
+    let g = word_galley(ui, w, font, color, italics, deco);
     let (asc, _) = galley_asc_desc(&g);
     elems.push(Elem::Word { g, asc, breakable: w.ends_with(' '), color, dy });
 }
@@ -448,12 +469,12 @@ fn push_word(elems: &mut Vec<Elem>, ui: &Ui, w: &str, font: &FontId, color: Colo
 /// writing lines that wide.
 #[allow(clippy::too_many_arguments)]
 fn push_text(elems: &mut Vec<Elem>, ui: &Ui, t: &str, font: &FontId, color: Color32, italics: bool, dy: f32, blank_w: Option<f32>) {
-    push_text_s(elems, ui, t, font, color, italics, false, dy, blank_w);
+    push_text_s(elems, ui, t, font, color, italics, Deco::default(), dy, blank_w);
 }
 
 /// [`push_text`] with strikethrough.
 #[allow(clippy::too_many_arguments)]
-fn push_text_s(elems: &mut Vec<Elem>, ui: &Ui, t: &str, font: &FontId, color: Color32, italics: bool, strike: bool, dy: f32, blank_w: Option<f32>) {
+fn push_text_s(elems: &mut Vec<Elem>, ui: &Ui, t: &str, font: &FontId, color: Color32, italics: bool, deco: Deco, dy: f32, blank_w: Option<f32>) {
     for (li, line) in t.split('\n').enumerate() {
         if li > 0 {
             elems.push(Elem::Break);
@@ -465,11 +486,11 @@ fn push_text_s(elems: &mut Vec<Elem>, ui: &Ui, t: &str, font: &FontId, color: Co
                         if is_blank {
                             elems.push(Elem::Blank { w: bw, breakable: piece.ends_with(' '), color });
                         } else {
-                            push_word(elems, ui, piece, font, color, italics, strike, dy);
+                            push_word(elems, ui, piece, font, color, italics, deco, dy);
                         }
                     }
                 }
-                _ => push_word(elems, ui, w, font, color, italics, strike, dy),
+                _ => push_word(elems, ui, w, font, color, italics, deco, dy),
             }
         }
     }
@@ -648,6 +669,138 @@ pub fn stem_ui_edit(ui: &mut Ui, text: &str, size: f32, color: Color32, family: 
     (resp, hit)
 }
 
+/// Draw parsed blocks at the cursor, `avail` wide. `top`: the stem's own blocks (the lead run
+/// goes before the first one); panels of a side-by-side group draw their blocks with `top` false.
+fn blocks_ui(ui: &mut Ui, rc: &mut RichCtx, blocks: &[crate::richtext::Block], avail: f32, top: bool) -> Option<EqHit> {
+    use crate::richtext::Block;
+    let o = rc.o;
+    let size = o.size;
+    let gap = size * 0.4;
+    let leading = size * o.leading;
+    let mut hit = None;
+    for (bi, block) in blocks.iter().enumerate() {
+        if bi > 0 {
+            ui.add_space(gap);
+        }
+        let first = bi == 0 && top;
+        if first && o.lead.is_some() && !matches!(block, Block::Para(_)) {
+            let mut e = Vec::new();
+            rc.lead_elems(ui, &mut e);
+            rc.place(ui, &e, 0.0, avail);
+            ui.add_space(gap * 0.5);
+        }
+        match block {
+            Block::Para(lines) => {
+                let mut e = Vec::new();
+                if first {
+                    rc.lead_elems(ui, &mut e);
+                }
+                for (li, l) in lines.iter().enumerate() {
+                    if li > 0 {
+                        e.push(Elem::Break);
+                    }
+                    rc.line_elems(ui, &mut e, l, avail, false, true);
+                }
+                hit = hit.take().or(rc.place(ui, &e, 0.0, avail).1);
+            }
+            Block::Bullets(items) | Block::Numbered(items) | Block::Quote(items) => {
+                let kind = match block {
+                    Block::Bullets(_) => 0,
+                    Block::Numbered(_) => 1,
+                    _ => 2,
+                };
+                let indent = match kind {
+                    0 => size * 1.25,
+                    1 => size * (1.0 + 0.55 * (items.len().to_string().len() as f32)),
+                    _ => size * 1.1,
+                };
+                let mut qtop = f32::NAN;
+                let mut qbot = 0.0;
+                for (k, l) in items.iter().enumerate() {
+                    if k > 0 {
+                        ui.add_space(leading);
+                    }
+                    let mut e = Vec::new();
+                    rc.line_elems(ui, &mut e, l, avail - indent, false, true);
+                    let (r, h) = rc.place(ui, &e, indent, avail - indent);
+                    hit = hit.take().or(h);
+                    let font = FontId::new(size, o.family.clone());
+                    let base_y = r.top() + size * 0.8;
+                    match kind {
+                        0 => {
+                            ui.painter().circle_filled(Pos2::new(r.left() + size * 0.45, base_y - size * 0.3), size * 0.13, o.color);
+                        }
+                        1 => {
+                            let g = ui.painter().layout_no_wrap(format!("{}.", k + 1), font, o.color);
+                            let (asc, _) = galley_asc_desc(&g);
+                            let x = r.left() + indent - size * 0.35 - g.size().x;
+                            ui.painter().galley(Pos2::new(x, base_y - asc), g, o.color);
+                        }
+                        _ => {
+                            if qtop.is_nan() {
+                                qtop = r.top();
+                            }
+                            qbot = r.bottom();
+                        }
+                    }
+                }
+                if kind == 2 && !qtop.is_nan() {
+                    let x = ui.min_rect().left() + size * 0.35;
+                    ui.painter().line_segment([Pos2::new(x, qtop), Pos2::new(x, qbot)], egui::Stroke::new(size * 0.16, o.color.gamma_multiply(0.35)));
+                }
+            }
+            Block::Table { header, rows } => {
+                hit = hit.take().or(table_ui(ui, rc, *header, rows, avail));
+            }
+            Block::Heading(level, line) => {
+                // bold, a step larger per level (1 is largest)
+                let scale = heading_scale(*level);
+                let ho = Rich { size: size * scale, family: o.bold_family.clone(), lead: None, ..o.clone() };
+                let mut hc = RichCtx { o: &ho, ctx: rc.ctx.clone(), spans: std::mem::take(&mut rc.spans), next_span: rc.next_span };
+                let mut e = Vec::new();
+                hc.line_elems(ui, &mut e, line, avail, true, true);
+                let h = hc.place(ui, &e, 0.0, avail).1;
+                rc.spans = std::mem::take(&mut hc.spans);
+                rc.next_span = hc.next_span;
+                hit = hit.take().or(h);
+            }
+            Block::Divider => {
+                let (r, _) = ui.allocate_exact_size(Vec2::new(avail, size * 0.9), Sense::hover());
+                let y = r.center().y.round() + 0.5;
+                ui.painter().hline(r.left()..=r.left() + avail, y, egui::Stroke::new(1.0, o.color.gamma_multiply(0.55)));
+            }
+            Block::Side(panels) => {
+                let n = panels.len().max(1) as f32;
+                let col_gap = size * 1.2;
+                let w = ((avail - col_gap * (n - 1.0)) / n).max(size * 2.0);
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::ZERO;
+                    for (pi, p) in panels.iter().enumerate() {
+                        if pi > 0 {
+                            ui.add_space(col_gap);
+                        }
+                        ui.allocate_ui_with_layout(Vec2::new(w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                            ui.set_width(w);
+                            ui.spacing_mut().item_spacing = Vec2::ZERO;
+                            hit = hit.take().or(blocks_ui(ui, rc, p, w, false));
+                        });
+                    }
+                });
+            }
+        }
+    }
+    hit
+}
+
+/// Heading size relative to the body: level 1 largest.
+pub fn heading_scale(level: u8) -> f32 {
+    match level {
+        1 => 1.4,
+        2 => 1.2,
+        _ => 1.07,
+    }
+}
+
 // ---------- structured stems (richtext blocks) ----------
 
 /// How [`rich_ui`] draws a stem.
@@ -754,7 +907,9 @@ impl RichCtx<'_> {
                 (size, 0.0)
             };
             let font = FontId::new(fsize, fam);
-            push_text_s(elems, ui, &sp.text, &font, color, sp.italic, sp.strike, dy, bw);
+            // Links show blue and underlined (as they print).
+            let (color, under) = if sp.link.is_some() { (link_color(color), true) } else { (color, false) };
+            push_text_s(elems, ui, &sp.text, &font, color, sp.italic, Deco { strike: sp.strike, under }, dy, bw);
         }
     }
 
@@ -783,93 +938,15 @@ impl RichCtx<'_> {
 /// and numbered lists with a hanging indent, quotes, bordered tables (header row in bold),
 /// bold/italic/strikethrough, sub/superscripts, `___` blanks as writing lines and typeset `$math$`.
 pub fn rich_ui(ui: &mut Ui, text: &str, o: &Rich) -> (Response, Option<EqHit>) {
-    use crate::richtext::{Block, parse};
+    use crate::richtext::parse;
     let avail = ui.available_width().max(40.0);
-    let size = o.size;
     let mut rc = RichCtx { o, ctx: ui.ctx().clone(), spans: math_spans(text), next_span: 0 };
     let mut hit = None;
     let blocks = parse(text);
-    let gap = size * 0.4;
-    let leading = size * o.leading;
     let resp = ui
         .scope(|ui| {
             ui.spacing_mut().item_spacing = Vec2::ZERO;
-            for (bi, block) in blocks.iter().enumerate() {
-                if bi > 0 {
-                    ui.add_space(gap);
-                }
-                let first = bi == 0;
-                if first && o.lead.is_some() && !matches!(block, Block::Para(_)) {
-                    let mut e = Vec::new();
-                    rc.lead_elems(ui, &mut e);
-                    rc.place(ui, &e, 0.0, avail);
-                    ui.add_space(gap * 0.5);
-                }
-                match block {
-                    Block::Para(lines) => {
-                        let mut e = Vec::new();
-                        if first {
-                            rc.lead_elems(ui, &mut e);
-                        }
-                        for (li, l) in lines.iter().enumerate() {
-                            if li > 0 {
-                                e.push(Elem::Break);
-                            }
-                            rc.line_elems(ui, &mut e, l, avail, false, true);
-                        }
-                        hit = hit.take().or(rc.place(ui, &e, 0.0, avail).1);
-                    }
-                    Block::Bullets(items) | Block::Numbered(items) | Block::Quote(items) => {
-                        let kind = match block {
-                            Block::Bullets(_) => 0,
-                            Block::Numbered(_) => 1,
-                            _ => 2,
-                        };
-                        let indent = match kind {
-                            0 => size * 1.25,
-                            1 => size * (1.0 + 0.55 * (items.len().to_string().len() as f32)),
-                            _ => size * 1.1,
-                        };
-                        let mut qtop = f32::NAN;
-                        let mut qbot = 0.0;
-                        for (k, l) in items.iter().enumerate() {
-                            if k > 0 {
-                                ui.add_space(leading);
-                            }
-                            let mut e = Vec::new();
-                            rc.line_elems(ui, &mut e, l, avail - indent, false, true);
-                            let (r, h) = rc.place(ui, &e, indent, avail - indent);
-                            hit = hit.take().or(h);
-                            let font = FontId::new(size, o.family.clone());
-                            let base_y = r.top() + size * 0.8;
-                            match kind {
-                                0 => {
-                                    ui.painter().circle_filled(Pos2::new(r.left() + size * 0.45, base_y - size * 0.3), size * 0.13, o.color);
-                                }
-                                1 => {
-                                    let g = ui.painter().layout_no_wrap(format!("{}.", k + 1), font, o.color);
-                                    let (asc, _) = galley_asc_desc(&g);
-                                    let x = r.left() + indent - size * 0.35 - g.size().x;
-                                    ui.painter().galley(Pos2::new(x, base_y - asc), g, o.color);
-                                }
-                                _ => {
-                                    if qtop.is_nan() {
-                                        qtop = r.top();
-                                    }
-                                    qbot = r.bottom();
-                                }
-                            }
-                        }
-                        if kind == 2 && !qtop.is_nan() {
-                            let x = ui.min_rect().left() + size * 0.35;
-                            ui.painter().line_segment([Pos2::new(x, qtop), Pos2::new(x, qbot)], egui::Stroke::new(size * 0.16, o.color.gamma_multiply(0.35)));
-                        }
-                    }
-                    Block::Table { header, rows } => {
-                        hit = hit.take().or(table_ui(ui, &mut rc, *header, rows, avail));
-                    }
-                }
-            }
+            hit = blocks_ui(ui, &mut rc, &blocks, avail, true);
         })
         .response;
     (resp, hit)
@@ -1103,6 +1180,51 @@ mod tests {
             out.drop_without_applying_deltas();
         }
         assert!(CACHE.with(|c| !c.borrow().is_empty()));
+    }
+
+    /// The page preview sets italic runs in the real Source Serif 4 italic (not a slanted
+    /// upright), and its serif advances are the PDF's: a word measured by egui equals the
+    /// same word measured with the PDF's width tables (`crate::fonts::metrics`). egui also
+    /// kerns and forms ligatures, so long preview lines can run a little narrower.
+    #[test]
+    fn preview_uses_real_italics_with_the_pdf_metrics() {
+        use crate::fonts::{metrics, Style};
+        let ctx = egui::Context::default();
+        crate::theme::setup(&ctx);
+        let pdf_w = |s: Style, t: &str, size: f32| t.bytes().map(|b| metrics(s).widths[b as usize] as f32).sum::<f32>() * size / 1000.0;
+        let mut checked = false;
+        for i in 0..2 {
+            let mut input = egui::RawInput::default();
+            input.screen_rect = Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(900.0, 600.0)));
+            input.time = Some(i as f64 * 0.1);
+            let out = ctx.run_ui(input, |ui| {
+                if i == 0 {
+                    return; // fonts set in setup() apply from the next pass
+                }
+                let size = 40.0;
+                // No ligature or kerning pair: egui shapes with kerning and ligatures, the PDF
+                // draws plain advances (it measures exactly what it draws, see export.rs).
+                let word = "minimum distance";
+                let it = theme::italic_family(ui.ctx(), &theme::serif_family()).expect("serif italic family registered");
+                let bit = theme::italic_family(ui.ctx(), &theme::serif_bold_family()).expect("serif bold italic family registered");
+                assert_eq!(it, FontFamily::Name("serif-italic".into()));
+                assert_eq!(bit, FontFamily::Name("serif-bold-italic".into()));
+                for (fam, style) in [(theme::serif_family(), Style::Regular), (theme::serif_bold_family(), Style::Bold), (it.clone(), Style::Italic), (bit.clone(), Style::BoldItalic)] {
+                    let g = ui.painter().layout_no_wrap(word.into(), FontId::new(size, fam.clone()), Color32::BLACK);
+                    let want = pdf_w(style, word, size);
+                    assert!((g.size().x - want).abs() < want * 0.01 + 1.0, "{fam:?}: egui {} vs pdf {want}", g.size().x);
+                }
+                // word_galley with italics=true picks the italic face: same width as the italic
+                // family, and no synthetic slant flag left on the glyph section.
+                let g = word_galley(ui, word, &FontId::new(size, theme::serif_family()), Color32::BLACK, true, Deco::default());
+                assert!((g.size().x - pdf_w(Style::Italic, word, size)).abs() < 1.5, "{}", g.size().x);
+                assert!(g.job.sections.iter().all(|s| !s.format.italics), "real italic face, not a slant");
+                assert_ne!(pdf_w(Style::Italic, word, size), pdf_w(Style::Regular, word, size));
+                checked = true;
+            });
+            out.drop_without_applying_deltas();
+        }
+        assert!(checked);
     }
 
     #[test]

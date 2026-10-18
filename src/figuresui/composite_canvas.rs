@@ -19,6 +19,13 @@ use crate::theme;
 
 /// Screen points per model unit at "100%".
 const UNIT_PX: f64 = 40.0;
+/// Turn slider length (points for the full -180..180 range: 2.25° a point; it was 130).
+const TURN_SLIDER_W: f32 = 160.0;
+/// Bottom band kept free of popovers: the zoom bar, and in the Label tool the Turn bar above it.
+const POPOVER_BAND: f32 = 54.0;
+const POPOVER_BAND_LABEL: f32 = 106.0;
+/// Degrees per point when scrubbing the Turn number box (the reference's knob: 0.5).
+const TURN_SCRUB: f64 = 0.5;
 const MIN_S: f64 = 3.0;
 const MAX_S: f64 = 600.0;
 /// Snap steps offered (model units); 0 = off.
@@ -334,7 +341,7 @@ impl Canvas {
     /// `pivot_for(d)`, flipped to the other side when a popover of `size` would not fit there
     /// (so it does not get pushed back over the part it is for).
     fn pivot_in(&self, at: Pos2, d: egui::Vec2, size: egui::Vec2) -> Align2 {
-        let r = self.rect;
+        let r = self.popover_room();
         match pivot_for(d) {
             Align2::RIGHT_CENTER if at.x - size.x < r.left() => Align2::LEFT_CENTER,
             Align2::LEFT_CENTER if at.x + size.x > r.right() => Align2::RIGHT_CENTER,
@@ -342,6 +349,14 @@ impl Canvas {
             Align2::CENTER_BOTTOM if at.y - size.y < r.top() => Align2::CENTER_TOP,
             p => p,
         }
+    }
+
+    /// Where popovers may sit: the canvas minus the bottom-right bars (zoom, and Turn in the
+    /// Label tool), so a popover near the bottom never covers them.
+    fn popover_room(&self) -> Rect {
+        let band = if self.tool == Tool::Label { POPOVER_BAND_LABEL } else { POPOVER_BAND };
+        let r = self.rect;
+        Rect::from_min_max(r.min, pos2(r.max.x, (r.max.y - band).max(r.min.y + 40.0)))
     }
 
     fn open_angle(&mut self, items: &[Item], v: Pt, ext: bool) {
@@ -1270,7 +1285,7 @@ impl Canvas {
             .order(egui::Order::Foreground)
             .fixed_pos(anchor)
             .pivot(pivot)
-            .constrain_to(self.rect)
+            .constrain_to(self.popover_room())
             .show(ui.ctx(), |ui| {
                 Frame::popup(ui.style()).inner_margin(10.0).show(ui, |ui| {
                     ui.set_width(230.0);
@@ -1393,16 +1408,18 @@ impl Canvas {
         let mut text = self.angle_text.clone();
         let measured = format!("{}\u{b0}", trim_num(g.deg, p.i("angle_dec")));
         let mut close = false;
-        // the popover opens beyond the wedge, along its bisector
+        // an exterior angle's popover opens beyond the wedge, along its bisector; an interior
+        // angle's opens just outside the corner (the other way), so it never covers the shape
         let a1 = self.sdir(v, g.r1);
         let t = a1.y.atan2(a1.x) as f64 - (g.deg / 2.0).to_radians();
-        let dir = vec2(t.cos() as f32, t.sin() as f32);
-        let anchor = self.to_screen(v) + dir * 54.0;
+        let bis = vec2(t.cos() as f32, t.sin() as f32);
+        let (dir, reach) = angle_popover_dir(bis, ext);
+        let anchor = self.to_screen(v) + dir * reach;
         egui::Area::new(Id::new("comp_angle"))
             .order(egui::Order::Foreground)
             .fixed_pos(anchor)
             .pivot(self.pivot_in(anchor, dir, vec2(250.0, 250.0)))
-            .constrain_to(self.rect)
+            .constrain_to(self.popover_room())
             .show(ui.ctx(), |ui| {
                 Frame::popup(ui.style()).inner_margin(10.0).show(ui, |ui| {
                     ui.set_width(230.0);
@@ -1507,7 +1524,7 @@ impl Canvas {
             .order(egui::Order::Foreground)
             .fixed_pos(anchor)
             .pivot(self.pivot_in(anchor, dir, vec2(220.0, 140.0)))
-            .constrain_to(self.rect)
+            .constrain_to(self.popover_room())
             .show(ui.ctx(), |ui| {
                 Frame::popup(ui.style()).inner_margin(10.0).show(ui, |ui| {
                     ui.set_width(200.0);
@@ -1547,7 +1564,8 @@ impl Canvas {
         self.corner_text = name;
     }
 
-    /// The figure's Turn (Label tool), with Straighten: bottom right, over the zoom bar.
+    /// The figure's Turn (Label tool), with Straighten: bottom right, over the zoom bar. The slider
+    /// is TURN_SLIDER_W points for 360°; the number box scrubs at TURN_SCRUB.
     fn turn_bar(&mut self, ui: &mut Ui, p: &mut Params, change: &mut Change) {
         if self.tool != Tool::Label {
             return;
@@ -1562,13 +1580,17 @@ impl Canvas {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
                         ui.label(RichText::new("\u{21bb}").size(14.0)).on_hover_text("Turn the figure");
-                        // drag the slider to turn (-180 to 180), or type the angle in the box
+                        // drag the slider to turn (-180 to 180), or type/scrub the angle in the box
                         let mut t = p.f("rotate");
-                        ui.spacing_mut().slider_width = 130.0;
+                        ui.spacing_mut().slider_width = TURN_SLIDER_W;
+                        // the popup is filled in the card colour the theme also gives slider
+                        // rails, which made the rail invisible here: draw it in the border colour
+                        ui.visuals_mut().widgets.inactive.bg_fill = theme::border();
                         let sl = ui
                             .add(egui::Slider::new(&mut t, -180.0..=180.0).show_value(false).step_by(1.0))
                             .on_hover_text("Drag to change the figure's turn");
-                        let resp = ui.add(egui::DragValue::new(&mut t).range(-180.0..=180.0).speed(1.0).max_decimals(1).suffix("\u{b0}"));
+                        // the box scrubs at the reference knob's half a degree per point
+                        let resp = ui.add(egui::DragValue::new(&mut t).range(-180.0..=180.0).speed(TURN_SCRUB).max_decimals(1).suffix("\u{b0}"));
                         if sl.changed() || resp.changed() {
                             p.set_f("rotate", t);
                             *change = Change::Live;
@@ -1622,6 +1644,13 @@ impl Canvas {
 }
 
 /// Where a popover hangs off its anchor so it opens along screen direction `d`.
+/// Direction and distance (points) from a corner to its angle popover's anchor: along the
+/// wedge's bisector `bis` past the wedge for an exterior angle, the opposite way (outside the
+/// shape) for an interior one.
+fn angle_popover_dir(bis: egui::Vec2, ext: bool) -> (egui::Vec2, f32) {
+    if ext { (bis, 54.0) } else { (-bis, 26.0) }
+}
+
 fn pivot_for(d: egui::Vec2) -> Align2 {
     if d.x.abs() >= d.y.abs() {
         if d.x >= 0.0 { Align2::LEFT_CENTER } else { Align2::RIGHT_CENTER }

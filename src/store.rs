@@ -12,7 +12,6 @@ pub fn store_dir() -> PathBuf {
     base.join("queshion")
 }
 
-#[allow(dead_code)] // kept for future store-layer timestamps (parsers use SystemTime directly)
 fn now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
@@ -47,6 +46,43 @@ pub fn put_image(bytes: &[u8]) -> Result<crate::model::ImageRef, String> {
     }
     let (w, h) = imagesize(bytes).ok_or("unreadable image")?;
     Ok(crate::model::ImageRef { file, width: w, height: h })
+}
+
+/// Where automatic backups go: `<store>/backups`.
+pub fn backup_dir() -> PathBuf {
+    store_dir().join("backups")
+}
+
+/// "20261017-235201" for a unix time (UTC), for backup file names.
+pub fn backup_stamp(secs: i64) -> String {
+    let (y, m, d) = crate::screens::civil_from_days(secs.div_euclid(86400));
+    let t = secs.rem_euclid(86400);
+    format!("{y:04}{m:02}{d:02}-{:02}{:02}{:02}", t / 3600, t % 3600 / 60, t % 60)
+}
+
+/// Saves a copy of the banks before a bulk change: `banks.json` from the store as it is on
+/// disk (or `banks` serialized, when there is no file yet) to `<backups>/banks-<stamp>.json`,
+/// never overwriting an earlier backup. Returns the backup's path.
+pub fn backup_banks_in(store: &std::path::Path, backups: &std::path::Path, banks: &[QuestionBank], secs: i64) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(backups).map_err(|e| e.to_string())?;
+    let stamp = backup_stamp(secs);
+    let mut path = backups.join(format!("banks-{stamp}.json"));
+    let mut n = 2;
+    while path.exists() {
+        path = backups.join(format!("banks-{stamp}-{n}.json"));
+        n += 1;
+    }
+    let bytes = match std::fs::read(store.join("banks.json")) {
+        Ok(b) => b,
+        Err(_) => serde_json::to_vec(banks).map_err(|e| e.to_string())?,
+    };
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
+/// [`backup_banks_in`] for the app's own store.
+pub fn backup_banks(banks: &[QuestionBank]) -> Result<PathBuf, String> {
+    backup_banks_in(&store_dir(), &backup_dir(), banks, now())
 }
 
 /// The store directory as text (headless hooks print it so tests can find media files).

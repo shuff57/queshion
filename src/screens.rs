@@ -1785,18 +1785,26 @@ fn paint_fact(p: &egui::Painter, pos: Pos2, w: f32, label: &str, value: &str) {
     paint_fit(p, pos + Vec2::new(0.0, 12.0), value, bold(13.0), theme::ink(), w);
 }
 
+/// Where a Home exam card's page thumbnail goes in its preview band `pv`: the Exams screen's
+/// thumbnail size, centred (smaller only when the card is too narrow).
+fn home_thumb_area(pv: Rect) -> Rect {
+    Rect::from_center_size(pv.center(), crate::examui::CARD_THUMB.min(pv.shrink2(Vec2::new(10.0, 9.0)).size()))
+}
+
 fn exam_card(ui: &mut egui::Ui, app: &mut crate::App, w: f32, e: &ExamRow, tilt_right: bool) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 236.0), egui::Sense::click());
+    // The preview band holds the first page at the Exams screen's thumbnail size.
+    let band_h = crate::examui::CARD_THUMB.y + 18.0;
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, band_h + 124.0), egui::Sense::click());
     if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     let p = ui.painter();
     p.rect(rect, CornerRadius::same(16), theme::card(), hover_border(&resp), StrokeKind::Inside);
-    let pv = Rect::from_min_size(rect.min + Vec2::splat(1.0), Vec2::new(w - 2.0, 112.0));
+    let pv = Rect::from_min_size(rect.min + Vec2::splat(1.0), Vec2::new(w - 2.0, band_h));
     paint_preview_bg(p, pv);
     // The exam's real first page; the generic sheet only while it has no questions.
     let ctx = ui.ctx().clone();
-    let page = crate::examui::paint_exam_thumb(app, &ctx, p, pv.shrink2(Vec2::new(10.0, 9.0)), &e.id);
+    let page = crate::examui::paint_exam_thumb(app, &ctx, p, home_thumb_area(pv), &e.id);
     let p = ui.painter();
     if page.is_none() {
         paper_thumb(p, pv.center(), Vec2::new(70.0, 90.0), if tilt_right { 3.0 } else { -3.0 }, e.id.len() % 2 == 0, true);
@@ -2105,6 +2113,18 @@ fn read_backup(path: &std::path::Path) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Home's recent-exam cards show the first page as large as the Exams screen does.
+    #[test]
+    fn home_exam_thumbnail_matches_the_exams_screen() {
+        let band = Rect::from_min_size(Pos2::new(10.0, 20.0), Vec2::new(300.0, crate::examui::CARD_THUMB.y + 18.0));
+        let a = home_thumb_area(band);
+        assert_eq!(a.size(), crate::examui::CARD_THUMB);
+        assert!((a.center() - band.center()).length() < 1e-3);
+        // a very narrow card shrinks it rather than overflowing
+        let narrow = Rect::from_min_size(Pos2::ZERO, Vec2::new(100.0, band.height()));
+        assert!(home_thumb_area(narrow).width() <= 80.0 + 1e-3);
+    }
 
     #[test]
     fn epoch_start_formats() {

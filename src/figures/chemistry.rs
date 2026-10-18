@@ -6,7 +6,7 @@ use super::svg::Doc;
 use super::{interact, FigureDef, Params};
 
 mod handles;
-mod atoms;
+pub mod atoms;
 pub mod frame;
 pub mod magnify;
 pub use frame::*;
@@ -14,7 +14,7 @@ mod curves;
 pub mod data;
 mod lewis;
 mod measure;
-mod spectra;
+pub mod spectra;
 
 pub const INK: &str = "#1b1b1b";
 pub const GLASS: &str = "#f3f8fb";
@@ -253,6 +253,96 @@ mod tests {
     fn f(x: f64) -> Value { Value::F(x) }
     fn i(x: i64) -> Value { Value::I(x) }
     fn b(x: bool) -> Value { Value::B(x) }
+
+    /// The strip cards read and write the strip list: a round trip draws the same spectrum for
+    /// the opening figure, every example and an old ticked-elements figure; card edits (element
+    /// select, Edit lines, reorder, remove, mixtures) land in the list.
+    #[test]
+    fn line_spectrum_strip_cards() {
+        use spectra::{set_strip_cards, strip_cards, strip_outside, StripCard as C};
+        let d = find("line-spectrum");
+        let defs = (d.params)();
+        let mut cases = vec![crate::figures::start_params(&d), Params::defaults(&defs)];
+        for ex in examples("line-spectrum").unwrap() {
+            let mut p = Params::defaults(&defs);
+            for (k, v) in &ex.params { p.0.insert(k.to_string(), v.clone()); }
+            cases.push(p);
+        }
+        let mut old = Params::defaults(&defs);
+        old.set_b("neon", true);
+        old.set_b("mercury", true);
+        cases.push(old.clone());
+        for p in &cases {
+            let cards = strip_cards(p);
+            let mut q = p.clone();
+            set_strip_cards(&mut q, &cards);
+            assert_eq!((d.render)(&q), (d.render)(p), "{:?}", p.s("strips"));
+            assert_eq!(strip_cards(&q), cards);
+        }
+        // an old figure (ticks, no strip list) becomes cards and moves into the list on edit
+        assert_eq!(strip_cards(&old), vec![C::Element("Hydrogen".into()), C::Element("Neon".into()), C::Element("Mercury".into())]);
+        let p0 = crate::figures::start_params(&d);
+        let mut c = strip_cards(&p0);
+        assert_eq!(c[3], C::Mixture { name: "Unknown".into(), parts: vec!["Hydrogen".into(), "Sodium".into()] });
+        c[1] = C::Element("Lithium".into());
+        c.swap(0, 2); // Sodium first
+        c[2] = C::Own { name: "Hydrogen".into(), lines: spectra::element_lines_text("Hydrogen") }; // "Edit lines"
+        let mut p = p0.clone();
+        set_strip_cards(&mut p, &c);
+        assert_eq!(p.s("strips"), "Sodium; Lithium; Hydrogen: 410.2, 434.0, 486.1, 656.3; Unknown = Hydrogen + Sodium");
+        // the edited copy of hydrogen draws the same lines as the element
+        assert_eq!(strip_cards(&p)[2], c[2]);
+        c.remove(1);
+        set_strip_cards(&mut p, &c);
+        assert_eq!(strip_cards(&p).len(), 3);
+        // separators typed into names can't split or re-type a strip
+        set_strip_cards(&mut p, &[C::Own { name: "X;=:".into(), lines: "450; 500".into() }, C::Mixture { name: "M".into(), parts: vec!["X".into(), "Helium".into()] }]);
+        assert_eq!(strip_cards(&p), vec![C::Own { name: "X".into(), lines: "450  500".into() }, C::Mixture { name: "M".into(), parts: vec!["X".into(), "Helium".into()] }]);
+        // lines outside the axis are counted per strip
+        let mut q = p0.clone();
+        assert_eq!(strip_outside(&q, 1), 0);
+        q.set_f("nm_to", 650.0);
+        assert_eq!(strip_outside(&q, 0), 1); // hydrogen 656.3
+        assert_eq!(strip_outside(&q, 1), 1); // helium 667.8
+    }
+
+    /// Particle kinds as cards: nouns and summaries as on the reference, removing a kind moves the
+    /// later ones up, a reset kind starts as 4 lone medium white particles.
+    #[test]
+    fn particle_kind_cards() {
+        use atoms::*;
+        let d = find("particle-diagram");
+        let defs = (d.params)();
+        let mut p = crate::figures::start_params(&d);
+        assert_eq!((0..4).filter(|&i| kind_used(&p, i)).count(), 2);
+        assert_eq!((kind_noun(&p, 0), kind_noun(&p, 1)), ("Ion", "Ion"));
+        p.set_s("a_charge", "None");
+        assert_eq!(kind_noun(&p, 0), "Atom");
+        p.set_s("a_shape", "Pair");
+        assert_eq!(kind_noun(&p, 0), "Molecule");
+        assert_eq!(kind_summary(&p, 0), "4 molecules");
+        reset_kind(&mut p, 2);
+        assert!(kind_used(&p, 2));
+        assert_eq!(kind_summary(&p, 2), "4 medium white atoms");
+        let before_b = (p.s("b_size").to_string(), p.s("b_charge").to_string());
+        remove_kind(&mut p, &defs, 0);
+        assert_eq!((p.s("a_size").to_string(), p.s("a_charge").to_string()), before_b);
+        assert_eq!(p.s("b_shade"), "White");
+        assert!(!kind_used(&p, 2) && !kind_used(&p, 3));
+        // what is left draws as the same two kinds set up by hand
+        let mut q = Params::defaults(&defs);
+        for k in ["a", "b", "c", "d"] { q.set_i(&format!("{k}_count"), 0); q.set_i(&format!("{k}2_count"), 0); }
+        for key in ["count", "shape", "size", "shade", "charge", "osize", "oshade", "ocharge", "name", "oname"] {
+            for (dst, src) in [("a", "a"), ("b", "b")] {
+                let v = p.0.get(&format!("{src}_{key}")).cloned().unwrap();
+                q.0.insert(format!("{dst}_{key}"), v);
+            }
+        }
+        for k in ["a", "b"] { q.set_i(&format!("{k}2_count"), p.i(&format!("{k}2_count"))); }
+        q.set_i("shuffle", p.i("shuffle"));
+        assert_eq!((d.render)(&q), (d.render)(&p));
+        assert!(is_kind_key("c2_count") && is_kind_key("d_oname") && !is_kind_key("shuffle") && !is_kind_key("key_show"));
+    }
 
     /// Applies an action chip the way the panel does (fresh-random values get a fixed number here).
     fn apply(p: &mut Params, chip: &crate::figures::Chip) {

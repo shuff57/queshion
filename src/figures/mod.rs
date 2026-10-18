@@ -8,10 +8,14 @@
 use std::collections::BTreeMap;
 
 pub mod biology;
+pub mod cards;
+#[cfg(test)]
+mod census;
 pub mod chemistry;
 pub mod composite;
 pub mod faq;
 pub mod interact;
+pub mod items;
 pub mod labels;
 pub mod layout;
 pub mod math;
@@ -318,7 +322,7 @@ pub fn card_visible(id: &str, group: &str, row: Option<&str>, p: &Params) -> boo
 pub fn param_relevant(id: &str, key: &str, p: &Params) -> bool {
     match id {
         "pulley" => physics::pulley_relevant(key, p),
-        _ => true,
+        _ => cards::relevant(id, key, p),
     }
 }
 
@@ -419,6 +423,10 @@ fn fontdb() -> std::sync::Arc<resvg::usvg::fontdb::Database> {
     DB.get_or_init(|| {
         let mut db = resvg::usvg::fontdb::Database::new();
         db.load_system_fonts();
+        // The print serif (page thumbnails draw the PDF's text in it).
+        for face in crate::fonts::Style::ALL {
+            db.load_font_data(face.bytes().to_vec());
+        }
         std::sync::Arc::new(db)
     })
     .clone()

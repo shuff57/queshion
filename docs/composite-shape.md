@@ -86,8 +86,10 @@ angle 0 4 arcs 2 red | x; angle 6 0 ext measure; point 0 0 A
   on corners and where pieces meet and diamonds on side midpoints.
 - **Label**: shows the figure as it will be exported, turned and without the grid. Click a side
   to set its label, ticks, arrows, line and thickness. Click inside a corner for its angle, or
-  just outside it for the exterior angle. Click the corner itself for its point. The Turn slider (drag, -180 to 180), its
-  number box and **Straighten** sit at the bottom right.
+  just outside it for the exterior angle. Click the corner itself for its point. The Turn slider (drag, -180 to 180 over 160 points), its
+  number box (type, or drag it to scrub half a degree per point) and **Straighten** sit at the
+  bottom right. Popovers stay clear of the Turn and zoom bars, and an inside angle's popover opens
+  just outside its corner so it does not cover the shape.
 - **Moving labels** (Select and Label tools): the pointer shows "Drag to move this label" over a
   dimension, angle, point or text label; dragging it writes its `@DX,DY` offset as one undo step.
   A click without a drag still selects the mark (Select) or opens its part's popover (Label).

@@ -19,6 +19,7 @@ pub mod export;
 pub mod figures;
 pub mod figuresui;
 pub mod kit;
+pub mod fonts;
 pub mod formats;
 pub mod importui;
 pub mod layout;
@@ -28,6 +29,7 @@ pub mod richtext;
 pub mod screens;
 pub mod store;
 pub mod theme;
+pub mod tidy;
 pub mod wysiwyg;
 
 use model::{ExamItem, Id};

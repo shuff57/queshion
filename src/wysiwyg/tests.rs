@@ -625,3 +625,300 @@ fn floating_bar_never_covers_the_fixed_toolbar() {
     let sel = Rect::from_min_max(Pos2::new(10.0, 12.0), Pos2::new(40.0, 30.0));
     assert_eq!(float_place(sel, size, None, screen).1, egui::Align2::LEFT_TOP);
 }
+
+// ----- round 6: headings, dividers, side by side, slash menu -----
+
+/// Stems that also use headings, dividers and side-by-side groups (sometimes unclosed).
+fn stem_ext(r: &mut Rng) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    for _ in 0..r.below(6) + 1 {
+        let inl = |r: &mut Rng| markup(r, 5).replace('\n', " ");
+        match r.below(6) {
+            0 => lines.push(format!("{} {}", "#".repeat(r.below(3) + 1), inl(r))),
+            1 => lines.push("---".to_string()),
+            2 | 3 => {
+                lines.push("::: side".to_string());
+                for p in 0..r.below(3) + 1 {
+                    if p > 0 {
+                        lines.push("::: next".to_string());
+                    }
+                    for _ in 0..r.below(3) {
+                        lines.extend(stem(r).split('\n').take(3).map(str::to_string));
+                    }
+                }
+                if r.below(6) > 0 {
+                    lines.push(":::".to_string());
+                }
+            }
+            _ => lines.extend(stem(r).split('\n').map(str::to_string)),
+        }
+    }
+    lines.join("\n")
+}
+
+#[test]
+fn property_ext_units_reassemble_and_self_check() {
+    let mut r = Rng(0x0dd_ba11_0006);
+    let mut sides = 0;
+    for _ in 0..12_000 {
+        let s = stem_ext(&mut r);
+        let d = doc(&s, true);
+        sides += d.blocks.iter().filter(|b| matches!(b.kind, BlockKind::Side { .. })).count();
+        let mut last = 0;
+        for f in d.flat() {
+            let u = d.unit(f);
+            if u.virt.is_some() {
+                continue;
+            }
+            assert!(u.start >= last && u.end >= u.start && u.end <= clen(&s), "{s:?} {u:?}");
+            last = u.end;
+            assert_eq!(apply_unit(&s, u, &slice(&s, u.start..u.end)), s, "{s:?}");
+        }
+        assert_eq!(reassemble(&s, &d), s);
+        assert_eq!(check(&s), Ok(()), "self-check failed on {s:?}");
+        // panel children point at a side block that holds their lines
+        for b in &d.blocks {
+            if let Some((si, pi)) = b.panel {
+                let BlockKind::Side { panels } = &d.blocks[si].kind else { panic!("{s:?}") };
+                assert!(panels[pi].start <= b.lines.start && b.lines.end <= panels[pi].end, "{s:?}");
+            }
+        }
+    }
+    assert!(sides > 3_000, "{sides}");
+}
+
+#[test]
+fn property_ext_editing_one_unit_changes_only_that_unit() {
+    let mut r = Rng(4242);
+    const ALPHA: &[&str] = &["a", "b", "z", " ", "**", "*", "x", "$x$", "_{2}", "^{3}", "é"];
+    for _ in 0..5_000 {
+        let s = stem_ext(&mut r);
+        let d = doc(&s, true);
+        let flat = d.flat();
+        let real: Vec<usize> = (0..flat.len()).filter(|&k| d.unit(flat[k]).virt.is_none()).collect();
+        if real.is_empty() {
+            continue;
+        }
+        let k = real[r.below(real.len())];
+        let u = d.unit(flat[k]).clone();
+        let mut t = String::from("q");
+        for _ in 0..r.below(6) {
+            t.push_str(r.pick(ALPHA));
+        }
+        let t = t.trim_end().to_string();
+        let new = match u.kind {
+            UKind::Cell { .. } => match cell_edit(&s, &d, flat[k].0, flat[k].1, &t) {
+                Some(n) => n,
+                None => continue,
+            },
+            UKind::Flow => apply_flow(&s, &d, &u, &t),
+            _ => apply_unit(&s, &u, &t),
+        };
+        let nd = doc(&new, true);
+        let nflat = nd.flat();
+        assert_eq!(nflat.len(), flat.len(), "structure changed: {s:?} -> {new:?}");
+        assert_eq!(check(&new), Ok(()), "{new:?}");
+        let got = slice(&new, nd.unit(nflat[k]).start..nd.unit(nflat[k]).end);
+        assert!(got == t || got == format!("{t}\n"), "{s:?} -> {new:?}: {got:?}");
+    }
+}
+
+fn unit_of(d: &Doc, pred: impl Fn(&Unit) -> bool) -> usize {
+    d.flat().iter().position(|f| pred(d.unit(*f))).expect("unit")
+}
+
+#[test]
+fn heading_enter_backspace_and_lists() {
+    let s = "# Title here\nBody";
+    let d = doc(s, true);
+    assert!(d.blocks.iter().any(|b| matches!(b.kind, BlockKind::Heading(1))));
+    let fi = unit_of(&d, |u| matches!(u.kind, UKind::Head { .. }));
+    assert_eq!(slice(s, d.unit(d.flat()[fi]).start..d.unit(d.flat()[fi]).end), "Title here");
+    // Enter in the middle splits: heading keeps the left part, a plain line gets the rest
+    let c = enter_op(s, &d, fi, 5, 5, true).unwrap();
+    assert_eq!(c.stem, "# Title\n here\nBody");
+    // Backspace at the start turns it back into text
+    let c = backspace_op(s, &d, fi).unwrap();
+    assert_eq!(c.stem, "Title here\nBody");
+    // a heading can become a list item
+    let c = toggle_list(s, &d, fi, (2, 2), ListKind::Bullets).unwrap();
+    assert_eq!(c.stem, "• Title here\nBody");
+    // Enter on an empty heading leaves a plain empty line
+    let s2 = "## \nx";
+    let d2 = doc(s2, true);
+    let fi2 = unit_of(&d2, |u| matches!(u.kind, UKind::Head { .. }));
+    assert_eq!(enter_op(s2, &d2, fi2, 0, 0, true).unwrap().stem, "\nx");
+}
+
+#[test]
+fn dividers_delete_and_join() {
+    let s = "above\n---\nbelow";
+    let d = doc(s, true);
+    assert!(d.blocks.iter().any(|b| b.kind == BlockKind::Divider));
+    assert_eq!(delete_line(s, 1).stem, "above\nbelow");
+    // Backspace at the start of the line under a divider removes the divider
+    let fi = unit_of(&d, |u| u.start == 10);
+    assert_eq!(backspace_op(s, &d, fi).unwrap().stem, "above\nbelow");
+    // Delete at the end of the line above removes it too
+    let fa = unit_of(&d, |u| u.start == 0);
+    assert_eq!(delete_op(s, &d, fa).unwrap().stem, "above\nbelow");
+}
+
+#[test]
+fn side_by_side_blocks_and_ops() {
+    let s = "Intro\n::: side\nleft **a**\n• l1\n::: next\nright\n:::\nafter";
+    let d = doc(s, true);
+    let si = d.blocks.iter().position(|b| matches!(b.kind, BlockKind::Side { .. })).unwrap();
+    let kids: Vec<_> = d.blocks.iter().filter(|b| b.panel.map(|p| p.0) == Some(si)).collect();
+    assert_eq!(kids.len(), 3); // left flow, left list, right flow
+    assert_eq!(d.fences, vec![1, 4, 6]);
+    // backspace at the start of a panel does not eat a fence
+    let fi = unit_of(&d, |u| slice(s, u.start..u.end) == "right");
+    assert!(backspace_op(s, &d, fi).is_none());
+    let fl = unit_of(&d, |u| slice(s, u.start..u.end) == "left **a**");
+    assert!(backspace_op(s, &d, fl).is_none());
+    let add = side_op(s, &d, si, SOp::AddPanel).unwrap();
+    assert_eq!(add.stem, "Intro\n::: side\nleft **a**\n• l1\n::: next\nright\n::: next\n\n:::\nafter");
+    assert!(matches!(&richtext::parse(&add.stem)[1], richtext::Block::Side(p) if p.len() == 3));
+    let stack = side_op(s, &d, si, SOp::Stack).unwrap();
+    assert_eq!(stack.stem, "Intro\nleft **a**\n• l1\n\nright\nafter");
+    let rm = side_op(s, &d, si, SOp::RemovePanel(0)).unwrap();
+    assert_eq!(rm.stem, "Intro\nright\nafter");
+    let d3 = doc(&add.stem, true);
+    let si3 = d3.blocks.iter().position(|b| matches!(b.kind, BlockKind::Side { .. })).unwrap();
+    let rm1 = side_op(&add.stem, &d3, si3, SOp::RemovePanel(1)).unwrap();
+    assert_eq!(rm1.stem, "Intro\n::: side\nleft **a**\n• l1\n::: next\n\n:::\nafter");
+    // an empty (zero-line) panel gets a line to write on
+    let e = "::: side\nx\n::: next\n:::";
+    let de = doc(e, true);
+    let sie = de.blocks.iter().position(|b| matches!(b.kind, BlockKind::Side { .. })).unwrap();
+    assert_eq!(side_op(e, &de, sie, SOp::Fill(1)).unwrap().stem, "::: side\nx\n::: next\n\n:::");
+    for st in [&add.stem, &stack.stem, &rm.stem, &rm1.stem] {
+        assert_eq!(check(st), Ok(()), "{st:?}");
+    }
+}
+
+#[test]
+fn slash_menu_filters_and_contexts() {
+    let names = |q: &str, w: SlashWhere| slash_matches(q, w).iter().map(|i| i.name).collect::<Vec<_>>();
+    assert_eq!(names("si", SlashWhere::Top), vec!["Side by side"]);
+    assert_eq!(names("head", SlashWhere::Top), vec!["Heading 1", "Heading 2", "Heading 3"]);
+    assert!(names("", SlashWhere::Top).len() == SLASH_ITEMS.len());
+    assert!(!names("", SlashWhere::Panel).contains(&"Side by side"));
+    assert_eq!(names("", SlashWhere::Cell), vec!["Image placeholder", "Math"]);
+    assert_eq!(names("eq", SlashWhere::Top), vec!["Math"]);
+    assert_eq!(names("di", SlashWhere::Top), vec!["Divider", "Image placeholder"]);
+    assert_eq!(names("li", SlashWhere::Top), vec!["Divider", "Bullet list", "Numbered list"]);
+    assert!(names("zzz", SlashWhere::Top).is_empty());
+}
+
+#[test]
+fn slash_commands_apply() {
+    // typed "/he" at the start of the second line
+    let s = "Intro\n/he";
+    let run = |cmd| slash_apply(s, 6, 9, cmd, false).unwrap();
+    assert_eq!(run(Slash::H1).change.stem, "Intro\n# ");
+    assert_eq!(run(Slash::H2).change.stem, "Intro\n## ");
+    assert_eq!(run(Slash::Text).change.stem, "Intro\n");
+    assert_eq!(run(Slash::Bullets).change.stem, "Intro\n• ");
+    assert_eq!(run(Slash::Quote).change.stem, "Intro\n> ");
+    assert_eq!(run(Slash::Divider).change.stem, "Intro\n---");
+    let dv = slash_apply("a\n/\n• b", 2, 3, Slash::Divider, false).unwrap().change;
+    assert_eq!((dv.stem.as_str(), dv.caret), ("a\n---\n\n• b", 6));
+    let m = run(Slash::Math);
+    assert_eq!((m.change.stem.as_str(), m.eq_at), ("Intro\n", Some(6)));
+    let side = run(Slash::Side).change;
+    assert_eq!(side.stem, "Intro\n::: side\n\n::: next\n\n:::");
+    assert_eq!(side.caret, 15);
+    let img = run(Slash::Image).change;
+    assert_eq!(img.stem, "Intro\n[picture: describe the picture]");
+    assert_eq!(slice(&img.stem, img.anchor..img.caret), "describe the picture");
+    let t = run(Slash::Table).change;
+    assert!(matches!(richtext::parse(&t.stem).last(), Some(richtext::Block::Table { .. })), "{:?}", t.stem);
+    // on a line with text: heading keeps the text, side by side puts it in the left panel
+    let s2 = "Some words /h1";
+    let h = slash_apply(s2, 11, 14, Slash::H1, false).unwrap().change;
+    assert_eq!(h.stem, "# Some words ");
+    let sb = slash_apply(s2, 11, 14, Slash::Side, false).unwrap().change;
+    assert_eq!(sb.stem, "::: side\nSome words \n::: next\n\n:::");
+    // in a list item, Text lifts it out; Heading replaces the bullet
+    let s3 = "• item /";
+    assert_eq!(slash_apply(s3, 7, 8, Slash::Text, false).unwrap().change.stem, "item ");
+    assert_eq!(slash_apply(s3, 7, 8, Slash::H3, false).unwrap().change.stem, "### item ");
+    // no side by side inside a panel, nothing structural in a table cell
+    let s4 = "::: side\n/\n::: next\nb\n:::";
+    assert!(slash_apply(s4, 9, 10, Slash::Side, false).is_none());
+    let s5 = "| a | / |\n| c | d |";
+    assert!(slash_apply(s5, 6, 7, Slash::H1, false).is_none());
+    assert_eq!(slash_apply(s5, 6, 7, Slash::Math, false).unwrap().change.stem, "| a |  |\n| c | d |");
+}
+
+#[test]
+fn property_slash_commands_keep_the_editor_consistent() {
+    let mut r = Rng(0xfeed_0606);
+    let cmds = [Slash::Text, Slash::H1, Slash::H2, Slash::H3, Slash::Quote, Slash::Divider, Slash::Bullets, Slash::Numbered, Slash::Image, Slash::Table, Slash::Math, Slash::Side];
+    for _ in 0..3_000 {
+        let base = stem_ext(&mut r);
+        let d = doc(&base, true);
+        let flat = d.flat();
+        let real: Vec<usize> = (0..flat.len()).filter(|&k| d.unit(flat[k]).virt.is_none()).collect();
+        if real.is_empty() {
+            continue;
+        }
+        let u = d.unit(flat[real[r.below(real.len())]]).clone();
+        // type "/x" at the start of the unit (a word start)
+        let s = splice(&base, u.start..u.start, "/x ");
+        let cmd = cmds[r.below(cmds.len())];
+        if let Some(done) = slash_apply(&s, u.start, u.start + 2, cmd, false) {
+            let ns = &done.change.stem;
+            assert_eq!(check(ns), Ok(()), "{s:?} {cmd:?} -> {ns:?}");
+            assert!(done.change.caret <= clen(ns) + 1, "{s:?} {cmd:?}");
+            assert!(!ns.contains("/x"), "{s:?} {cmd:?} -> {ns:?}");
+        }
+    }
+}
+
+#[test]
+fn links_are_made_changed_and_removed_in_place() {
+    // Wrap a selection (spaces trimmed out of the link), the address normalised.
+    let (t, x, y) = link_op("Read the notes now", 4, 15, "example.org/n").unwrap();
+    assert_eq!(t, "Read [the notes](https://example.org/n) now");
+    assert_eq!(slice(&t, x..y), "the notes");
+    // The caret in it: change the address, or remove the link and keep the text.
+    let (t2, x2, y2) = link_op(&t, 8, 8, "mailto:t@s.org").unwrap();
+    assert_eq!(t2, "Read [the notes](mailto:t@s.org) now");
+    assert_eq!(slice(&t2, x2..y2), "the notes");
+    let (t3, x3, y3) = link_op(&t2, 7, 7, "").unwrap();
+    assert_eq!(t3, "Read the notes now");
+    assert_eq!(slice(&t3, x3..y3), "the notes");
+    // A bare caret inserts the address as its text.
+    let (t4, x4, y4) = link_op("See ", 4, 4, "me@school.edu").unwrap();
+    assert_eq!(t4, "See [me@school.edu](mailto:me@school.edu)");
+    assert_eq!(slice(&t4, x4..y4), "me@school.edu");
+    // Styled text inside the selection is fine; math, line breaks and bad addresses are not.
+    assert_eq!(link_op("a **b** c", 2, 7, "https://x.org").unwrap().0, "a [**b**](https://x.org) c");
+    assert!(link_op("a $x$ c", 2, 5, "https://x.org").is_none());
+    assert!(link_op("one\ntwo", 0, 7, "https://x.org").is_none());
+    assert!(link_op("word", 0, 4, "ftp://x.org").is_none());
+    assert!(link_op("word", 0, 4, "not an address").is_none());
+    assert!(link_op("word", 2, 2, "").is_none(), "nothing to remove");
+}
+
+#[test]
+fn links_show_styled_and_survive_formatting() {
+    let text = "Go [to the **site**](https://s.org) today";
+    let ana = analyze(text, &|_| true);
+    let shown: String = text.chars().zip(&ana.link).filter(|(_, l)| **l).map(|(c, _)| c).collect();
+    assert_eq!(shown, "to the site", "only the link's text is drawn as a link");
+    assert!(ana.role[3] == Role::Hidden, "the [ is collapsed");
+    // The link is one raw item: re-encoding keeps it byte for byte.
+    let (items, _) = decode_line(text);
+    assert!(items.iter().any(|it| matches!(it, Item::Atom(r) if r == "[to the **site**](https://s.org)")));
+    assert_eq!(encode_checked(&items).unwrap().0, text);
+    // Bold over the whole line keeps the link; inside the link's text it does not apply.
+    let (b, _, _) = inline_op(text, 0, clen(text), IOp::Bold).unwrap();
+    assert!(b.contains("[to the **site**](https://s.org)"), "{b}");
+    assert_eq!(richtext::inline(&b).iter().filter(|s| s.link.is_some()).count(), 2);
+    assert!(inline_op(text, 5, 8, IOp::Italic).is_none());
+    assert_eq!(link_spans("x\n[a](https://a.org) [b](http://b.org)"), vec![(2, 4, 19), (21, 23, 37)]);
+}

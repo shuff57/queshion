@@ -9,7 +9,7 @@ question banks, printable exams, and one-shot AI conversion, all local-first.
 - **Exam editor**: page preview with header line, numbered questions and an answer section; open a
   bank in the side panel and click or drag questions onto the exam; undo/redo; heading/text size,
   margins and ruled blanks per exam.
-- **Export**: PDF (hand-rolled, base-14 fonts, embedded images) and DOCX, student test + answer key,
+- **Export**: PDF (hand-rolled, embedded Source Serif 4 subsets with real bold/italic faces, embedded images) and DOCX, student test + answer key,
   shuffle question/answer order into named Versions; every export is snapshotted and re-exportable
   from Export History.
 - **Imports**: Blackboard test-generator text (`MC/MA/TF/ESS/NUM/MAT/FIB/ORD`, `*` = correct), Aiken,

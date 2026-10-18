@@ -11,6 +11,8 @@ pub struct AxInfo {
     pub kind: u8,
     pub x: f64, pub y: f64, pub w: f64, pub h: f64,
     pub x0: f64, pub x1: f64, pub y0: f64, pub y1: f64,
+    /// Gridline steps (count by) of the two axes.
+    pub xs: f64, pub ys: f64,
 }
 
 impl AxInfo {
@@ -35,7 +37,7 @@ pub fn axes_of(p: &Params, pp: bool) -> Vec<AxInfo> {
 }
 
 fn stash(kind: u8, a: &Axes) {
-    LAST.with(|l| l.borrow_mut().push(AxInfo { kind, x: a.x, y: a.y, w: a.w, h: a.h, x0: a.x0, x1: a.x1, y0: a.y0, y1: a.y1 }));
+    LAST.with(|l| l.borrow_mut().push(AxInfo { kind, x: a.x, y: a.y, w: a.w, h: a.h, x0: a.x0, x1: a.x1, y0: a.y0, y1: a.y1, xs: a.xs, ys: a.ys }));
 }
 
 /// Pure model value used by the handles (closed forms only).
@@ -737,7 +739,14 @@ fn peaks(v: &[(f64, f64, f64)], pick: fn(&(f64, f64, f64)) -> f64) -> Vec<(f64, 
     o
 }
 
-pub fn pp_render(p: &Params) -> String {
+/// What a predator-prey figure models once its pair preset is applied: names, averages, cycle,
+/// unit, starting populations and the Lotka-Volterra rates.
+struct PpSetup {
+    prey: String, pred: String, pavg: f64, qavg: f64, cycle: f64, unit: String, ytitle: String,
+    auto_right: bool, x0: f64, y0: f64, alpha: f64, beta: f64, gamma: f64, delta: f64,
+}
+
+fn pp_setup(p: &Params) -> PpSetup {
     let (mut prey, mut pred) = (p.s("prey").trim().to_string(), p.s("pred").trim().to_string());
     let (mut pavg, mut qavg, mut cycle) = (p.f("prey_avg").max(1.0), p.f("pred_avg").max(1.0), p.f("cycle").max(0.1));
     let mut unit = p.s("unit").to_string();
@@ -754,7 +763,6 @@ pub fn pp_render(p: &Params) -> String {
         else { (p.f("prey0").max(0.01), p.f("pred0").max(0.01)) };
     if prey.is_empty() { prey = "Prey".into(); }
     if pred.is_empty() { pred = "Predators".into(); }
-    let tshow = p.f("tshow").max(0.1);
     let (alpha, beta, gamma, delta);
     if p.s("source") == "Model rates" {
         alpha = p.f("alpha"); beta = p.f("beta"); gamma = p.f("gamma"); delta = p.f("delta");
@@ -767,6 +775,142 @@ pub fn pp_render(p: &Params) -> String {
         let w = p1 / cycle;
         alpha = w; gamma = w; beta = w / qavg; delta = w / pavg;
     }
+    PpSetup { prey, pred, pavg, qavg, cycle, unit, ytitle, auto_right, x0, y0, alpha, beta, gamma, delta }
+}
+
+/// `v` to three significant figures, without trailing zeros (16.8, 111, 0.0337, 1.6, 10).
+pub fn sig3(v: f64) -> String {
+    if !v.is_finite() { return "–".into(); }
+    if v == 0.0 { return "0".into(); }
+    let mag = v.abs().log10().floor() as i32;
+    let dec = 2 - mag;
+    let f = 10f64.powi(dec);
+    let r = (v * f).round() / f;
+    // rounding up can add a digit (99.96 -> 100): recount
+    let dec = (2 - (r.abs().max(1e-300).log10().floor() as i32)).max(0) as usize;
+    let s = format!("{:.*}", dec, r);
+    let s = if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s };
+    if s == "-0" { "0".into() } else { s }
+}
+
+/// "1 year" / "1.6 years": the unit is plural unless the number shown is exactly 1.
+fn with_unit(v: &str, unit_plural: &str) -> String {
+    let one = unit_plural.trim_end_matches('s');
+    format!("{v} {}", if v == "1" { one } else { unit_plural })
+}
+
+/// The predator-prey card's live readout, as on the reference: the cycle length and the lag
+/// from a prey peak to the next predator peak, each population's range and average, and (when
+/// worked out from the populations) the model rates α β γ δ.
+pub fn pp_readout(p: &Params) -> Vec<String> {
+    let st = pp_setup(p);
+    let unit = st.unit.to_lowercase();
+    // long enough for a few full cycles: the small-swing period is 2π/√(αγ), big swings run longer
+    let t0 = std::f64::consts::TAU / (st.alpha * st.gamma).max(1e-9).sqrt();
+    let mut out = Vec::new();
+    let mut tend = 4.0 * t0;
+    let (mut pk_prey, mut pk_pred, mut sim) = (Vec::new(), Vec::new(), Vec::new());
+    for _ in 0..4 {
+        sim = lv(st.alpha, st.beta, st.gamma, st.delta, st.x0, st.y0, tend, 8000);
+        pk_prey = peaks(&sim, |v| v.1);
+        pk_pred = peaks(&sim, |v| v.2);
+        if pk_prey.len() >= 2 { break; }
+        tend *= 4.0;
+    }
+    if pk_prey.len() >= 2 {
+        let cycle = pk_prey[1].0 - pk_prey[0].0;
+        // lengths as the lag / period marks write them: whole units from 10 up, else tenths
+        let len = |v: f64| fnum(if v >= 10.0 { v.round() } else { (v * 10.0).round() / 10.0 });
+        let mut line = format!("A cycle every {}", with_unit(&len(cycle), &unit));
+        if let Some(q) = pk_pred.iter().find(|(t, _)| *t > pk_prey[0].0) {
+            line.push_str(&format!("; the predators peak {} after the prey", with_unit(&len(q.0 - pk_prey[0].0), &unit)));
+        }
+        out.push(line);
+    }
+    if !sim.is_empty() {
+        let range = |f: fn(&(f64, f64, f64)) -> f64| sim.iter().map(f).fold((f64::MAX, f64::MIN), |(lo, hi), v| (lo.min(v), hi.max(v)));
+        let (plo, phi) = range(|v| v.1);
+        let (qlo, qhi) = range(|v| v.2);
+        // over a whole cycle the averages are exactly γ/δ (prey) and α/β (predators)
+        out.push(format!("{}: {} to {}, averaging {}", st.prey, sig3(plo), sig3(phi), sig3(st.gamma / st.delta.max(1e-12))));
+        out.push(format!("{}: {} to {}, averaging {}", st.pred, sig3(qlo), sig3(qhi), sig3(st.alpha / st.beta.max(1e-12))));
+    }
+    if p.s("source") != "Model rates" {
+        out.push(format!("α = {}, β = {}, γ = {}, δ = {}", sig3(st.alpha), sig3(st.beta), sig3(st.gamma), sig3(st.delta)));
+    }
+    let _ = (st.pavg, st.qavg, st.cycle);
+    out
+}
+
+/// Turns one predator-prey axis's "fit" off, first copying the fitted range into its From / To /
+/// Count by boxes so the graph doesn't jump (only the over-time graph uses them).
+pub fn pp_unfit(p: &Params, x_axis: bool) -> Params {
+    let mut q = p.clone();
+    let mut fitted = p.clone();
+    fitted.set_b(if x_axis { "x_fit" } else { "y_fit" }, true);
+    if let Some(a) = axes_of(&fitted, true).into_iter().find(|a| a.kind == 9) {
+        if x_axis {
+            q.set_f("x_min", a.x0); q.set_f("x_max", a.x1); q.set_f("x_step", a.xs);
+        } else {
+            q.set_f("y_min", a.y0); q.set_f("y_max", a.y1); q.set_f("y_step", a.ys);
+        }
+    }
+    q.set_b(if x_axis { "x_fit" } else { "y_fit" }, false);
+    q
+}
+
+/// The population-growth card's live readout, as on the reference: the inflection point and the
+/// lag and stationary phases of a logistic curve, the doubling time of an exponential one, and
+/// how far an overshooting one swings.
+pub fn growth_readout(p: &Params) -> Vec<String> {
+    let mode = p.s("growth");
+    let (n0, r, k) = (p.f("n0").max(1e-6), p.f("r").max(1e-6), p.f("k").max(1.0));
+    let unit = p.s("unit").to_lowercase();
+    let unit1 = unit.trim_end_matches('s').to_string();
+    let org = p.s("organism").trim();
+    let who = if org.is_empty() { "individuals" } else { org };
+    let mut out = Vec::new();
+    if matches!(mode, "Logistic (S-curve)" | "Exponential and logistic") && n0 < k / 2.0 {
+        let ti = ((k - n0) / n0).ln() / r;
+        let slope = r * k / 4.0;
+        out.push(format!("Inflection point: N = K/2 = {} at t = {}, growing fastest, {} {who} per {unit1}", fnum((k / 2.0 * 100.0).round() / 100.0), with_unit(&sig3(ti), &unit), sig3(slope)));
+        // where the tangent at the inflection point meets N₀ and K
+        let (t1, t2) = ((ti - (k / 2.0 - n0) / slope).max(0.0), ti + (k / 2.0) / slope);
+        out.push(format!("Lag phase until t = {}; stationary phase from t = {}", sig3(t1), sig3(t2)));
+    }
+    if matches!(mode, "Exponential (J-curve)" | "Exponential and logistic") {
+        out.push(format!("Doubles every {}", with_unit(&sig3(std::f64::consts::LN_2 / r), &unit)));
+    }
+    if mode == "Overshoot and oscillation" {
+        let tau = if p.f("tau") > 0.0 { p.f("tau") } else { 1.3 / r };
+        let rt = r * tau;
+        let how = if rt < (-1.0f64).exp() { "too small to overshoot K" } else if rt < std::f64::consts::FRAC_PI_2 { "overshoots K, the swings dying away" } else { "swings around K that keep going" };
+        out.push(format!("rτ = {}: {how}", sig3(rt)));
+    }
+    out
+}
+
+/// "Fit now": the axes fitted to the current curve, written into the x- and y-axis boxes (and the
+/// second graph's), with fitting left as it was.
+pub fn growth_fit_now(p: &Params) -> Params {
+    let mut fitted = p.clone();
+    fitted.set_b("fit", true);
+    let axes = axes_of(&fitted, false);
+    let mut q = p.clone();
+    if let Some(a) = axes.first() {
+        q.set_f("x_min", a.x0); q.set_f("x_max", a.x1); q.set_f("x_step", a.xs);
+        q.set_f("y_min", a.y0); q.set_f("y_max", a.y1); q.set_f("y_step", a.ys);
+    }
+    if let Some(a) = axes.get(1) {
+        q.set_f("y2_max", a.y1); q.set_f("y2_step", a.ys);
+    }
+    q
+}
+
+pub fn pp_render(p: &Params) -> String {
+    let PpSetup { prey, pred, unit, ytitle, auto_right, x0, y0, alpha, beta, gamma, delta, .. } = pp_setup(p);
+    let pair = p.s("pair");
+    let tshow = p.f("tshow").max(0.1);
     let n = 800usize;
     let data = lv(alpha, beta, gamma, delta, x0, y0, tshow, n);
     let (cprey, cpred, dash_pred) = if p.s("style") == "Black and white" { (INK, INK, "9 6") } else { ("#2563eb", "#dc2626", "9 6") };
@@ -876,7 +1020,7 @@ pub fn pp_render(p: &Params) -> String {
                 let t = if ytitle.is_empty() || preset_start(pair).is_some() || p.s("y_title").trim().is_empty() { pred.clone() } else { pred.clone() };
                 txt(&mut d, cx, cy, 15.0, "middle", SANS, &format!(r#"font-weight="bold" transform="rotate(-90 {cx:.1} {cy:.1})""#), &t);
             }
-            LAST.with(|l| l.borrow_mut().push(AxInfo { kind: 11, x: ap.x, y: ap.y, w: ap.w, h: ap.h, x0: ap.x0, x1: ap.x1, y0: ap.y0, y1: ap.y1 }));
+            LAST.with(|l| l.borrow_mut().push(AxInfo { kind: 11, x: ap.x, y: ap.y, w: ap.w, h: ap.h, x0: ap.x0, x1: ap.x1, y0: ap.y0, y1: ap.y1, xs: ap.xs, ys: ap.ys }));
             ap
         } else { Axes { ..a } };
         begin_clip(&mut d, &a, "ppclip");
@@ -1030,6 +1174,113 @@ pub fn pp_examples() -> Vec<Example> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn gp(over: &[(&str, Value)]) -> Params {
+        let mut p = Params::defaults(&growth_params());
+        for (k, v) in over { p.0.insert(k.to_string(), v.clone()); }
+        p
+    }
+
+    #[test]
+    fn sig3_formats_like_the_reference() {
+        for (v, want) in [(16.83, "16.8"), (111.2, "111"), (6.72, "6.72"), (44.6, "44.6"), (0.6743, "0.674"), (0.03372, "0.0337"), (1.6004, "1.6"), (10.0, "10"), (7.7836, "7.78"), (11.78, "11.8"), (0.375, "0.375"), (99.96, "100"), (1500.0, "1500"), (12345.0, "12300"), (0.0, "0"), (-2.346, "-2.35")] {
+            assert_eq!(sig3(v), want, "{v}");
+        }
+    }
+
+    /// The readouts match the reference's numbers for its opening figure and each growth model.
+    #[test]
+    fn growth_readout_matches_the_reference() {
+        let p = gp(&[]);
+        assert_eq!(growth_readout(&p), vec![
+            "Inflection point: N = K/2 = 500 at t = 7.78 years, growing fastest, 125 individuals per year".to_string(),
+            "Lag phase until t = 3.94; stationary phase from t = 11.8".to_string(),
+        ]);
+        let p = gp(&[("organism", s("deer")), ("unit", s("Days")), ("k", Value::F(3000.0))]);
+        assert_eq!(growth_readout(&p)[0], "Inflection point: N = K/2 = 1500 at t = 10 days, growing fastest, 375 deer per day");
+        assert_eq!(growth_readout(&p)[1], "Lag phase until t = 6.06; stationary phase from t = 14");
+        // starting above K/2 there is no inflection point
+        assert!(growth_readout(&gp(&[("n0", Value::F(600.0))])).is_empty());
+        assert_eq!(growth_readout(&gp(&[("growth", s("Exponential (J-curve)"))])), vec!["Doubles every 1.39 years".to_string()]);
+        assert_eq!(growth_readout(&gp(&[("growth", s("Exponential and logistic"))])).len(), 3);
+        assert_eq!(growth_readout(&gp(&[("growth", s("Exponential (J-curve)")), ("r", Value::F(0.6931))])), vec!["Doubles every 1 year".to_string()]);
+        let over = |r: f64| growth_readout(&gp(&[("growth", s("Overshoot and oscillation")), ("r", Value::F(r)), ("tau", Value::F(2.5))]))[0].clone();
+        assert_eq!(over(0.14), "rτ = 0.35: too small to overshoot K");
+        assert_eq!(over(0.15), "rτ = 0.375: overshoots K, the swings dying away");
+        assert_eq!(over(0.62), "rτ = 1.55: overshoots K, the swings dying away");
+        assert_eq!(over(0.64), "rτ = 1.6: swings around K that keep going");
+        assert!(growth_readout(&gp(&[("growth", s("Boom and crash"))])).is_empty());
+    }
+
+    /// "Fit now" writes the fitted axes into the boxes: with fitting off the graph then draws
+    /// exactly as the fitted one, for one- and two-graph layouts.
+    #[test]
+    fn growth_fit_now_freezes_the_fitted_axes() {
+        for over in [
+            vec![],
+            vec![("k", Value::F(3000.0))],
+            vec![("growth", s("Exponential (J-curve)")), ("tspan", Value::F(12.0))],
+            vec![("graph", s("Population size and growth rate"))],
+            vec![("graph", s("Growth rate and per capita rate")), ("growth", s("Overshoot and oscillation"))],
+            vec![("graph", s("Both rates against population size"))],
+        ] {
+            let mut p = gp(&over);
+            p.set_b("fit", true);
+            let fitted = growth_render(&p);
+            let mut q = growth_fit_now(&p);
+            assert!(q.b("fit"), "Fit now leaves fitting as it was");
+            q.set_b("fit", false);
+            assert_eq!(growth_render(&q), fitted, "{over:?}");
+        }
+        // with fitting off, Fit now catches the axes up with a changed K
+        let mut p = gp(&[("fit", Value::B(false)), ("k", Value::F(3000.0))]);
+        assert_eq!(p.f("y_max"), 1100.0);
+        p = growth_fit_now(&p);
+        assert!(!p.b("fit"));
+        assert_eq!((p.f("y_min"), p.f("y_max"), p.f("y_step")), (0.0, 3500.0, 500.0));
+        assert_eq!((p.f("x_min"), p.f("x_max")), (0.0, 20.0));
+    }
+
+    fn pp(over: &[(&str, Value)]) -> Params {
+        let mut p = Params::defaults(&pp_params());
+        for (k, v) in over { p.0.insert(k.to_string(), v.clone()); }
+        p
+    }
+
+    /// The predator-prey readout matches the reference for the hare and lynx opening figure.
+    #[test]
+    fn pp_readout_matches_the_reference() {
+        let r = pp_readout(&pp(&[]));
+        assert_eq!(r[0], "A cycle every 10 years; the predators peak 1.6 years after the prey");
+        assert_eq!(r[1], "Hares: 16.8 to 111, averaging 50");
+        assert_eq!(r[2], "Lynx: 6.72 to 44.6, averaging 20");
+        assert_eq!(r[3], "α = 0.674, β = 0.0337, γ = 0.674, δ = 0.0135");
+        // model rates typed in: no rates line, averages from the rates
+        let r = pp_readout(&pp(&[("source", s("Model rates")), ("alpha", Value::F(0.674)), ("beta", Value::F(0.0337)), ("gamma", Value::F(0.674)), ("delta", Value::F(0.0135))]));
+        assert_eq!(r.len(), 3);
+        assert_eq!(r[0], "A cycle every 10 years; the predators peak 1.6 years after the prey");
+        assert_eq!(r[1], "Hares: 16.8 to 111, averaging 49.9");
+        // a preset pair uses its own names, units and cycle
+        let r = pp_readout(&pp(&[("pair", s("Aphid and ladybug"))]));
+        assert!(r[0].starts_with("A cycle every 20 days"), "{}", r[0]);
+        assert!(r[1].starts_with("Aphids: ") && r[2].starts_with("Ladybugs: "), "{r:?}");
+        // a short cycle in one unit reads "1 year"
+        assert!(pp_readout(&pp(&[("cycle", Value::F(1.0))]))[0].starts_with("A cycle every 1 year;"));
+    }
+
+    /// Turning an axis's fit off keeps the fitted range in its boxes (no jump).
+    #[test]
+    fn pp_unfit_keeps_the_axes() {
+        let p = pp(&[]);
+        let before = pp_render(&p);
+        let q = pp_unfit(&p, true);
+        assert!(!q.b("x_fit") && q.b("y_fit"));
+        let q = pp_unfit(&q, false);
+        assert!(!q.b("y_fit"));
+        assert_eq!((q.f("x_min"), q.f("x_max"), q.f("x_step")), (0.0, 40.0, 2.0));
+        assert_eq!((q.f("y_min"), q.f("y_max"), q.f("y_step")), (0.0, 120.0, 10.0));
+        assert_eq!(pp_render(&q), before);
+    }
 
     #[test]
     fn growth_variants() {

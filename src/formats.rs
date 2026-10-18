@@ -1548,8 +1548,27 @@ fn asset_hex(node: &serde_json::Value) -> Option<&str> {
 fn is_block(t: &str) -> bool {
     matches!(
         t,
-        "paragraph" | "heading" | "blockquote" | "panel" | "document" | "bullet-list" | "ordered-list" | "list-item" | "code-block" | "rule" | "table" | "side-by-side" | "block-image"
-    )
+        "paragraph" | "heading" | "blockquote" | "panel" | "document" | "bullet-list" | "ordered-list" | "list-item" | "code-block" | "rule" | "table" | "side-by-side" | "block-image" | "side-by-side-panel" | "horizontal-rule" | "divider"
+    ) || is_task_list(t) || is_task_item(t)
+}
+
+/// Task (checkbox) lists: Test Parrot's slash menu offers one; the node names follow its
+/// kebab-case vocabulary, with the camel-case and snake-case spellings other editors use.
+fn is_task_list(t: &str) -> bool {
+    matches!(t, "task-list" | "taskList" | "task_list")
+}
+fn is_task_item(t: &str) -> bool {
+    matches!(t, "task-item" | "taskItem" | "task_item")
+}
+
+/// A task item's tick: `checked` on the node or in its `attrs`.
+fn task_checked(item: &serde_json::Value) -> bool {
+    item.get("checked").or_else(|| item.get("attrs").and_then(|a| a.get("checked"))).and_then(serde_json::Value::as_bool).unwrap_or(false)
+}
+
+/// The box a task item prints with: ☑ ticked, ☐ open (both in Source Serif 4).
+fn task_box(checked: bool) -> &'static str {
+    if checked { "\u{2611} " } else { "\u{2610} " }
 }
 
 /// One block → chunks of markup (one per paragraph-like unit); empty paragraphs (spacers)
@@ -1575,9 +1594,12 @@ fn flatten_block(block: &serde_json::Value, chunks: &mut Vec<String>, blanks: &m
             for n in children(block) {
                 flatten_inline(n, &mut line, blanks, images);
             }
-            let core = line.trim();
-            let bolded = if core.is_empty() || core.contains('\n') || core.contains('*') { core.to_string() } else { format!("**{core}**") };
-            push(chunks, bolded);
+            let level = block
+                .get("level")
+                .or_else(|| block.get("attrs").and_then(|a| a.get("level")))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(1);
+            push(chunks, heading_markup(line.trim(), level));
         }
         "blockquote" => {
             let mut inner: Vec<String> = Vec::new();
@@ -1587,7 +1609,33 @@ fn flatten_block(block: &serde_json::Value, chunks: &mut Vec<String>, blanks: &m
             let quoted: Vec<String> = inner.join("\n").lines().filter(|l| !l.trim().is_empty()).map(|l| format!("> {l}")).collect();
             push(chunks, quoted.join("\n"));
         }
-        "panel" | "document" | "side-by-side" | "list-item" => {
+        "side-by-side" => {
+            // one panel per child (`side-by-side-panel` / `panel`; anything else is a panel of its own)
+            let mut panels: Vec<String> = Vec::new();
+            for c in children(block) {
+                let mut inner: Vec<String> = Vec::new();
+                if matches!(node_type(c), "side-by-side-panel" | "panel") {
+                    for k in children(c) {
+                        flatten_block(k, &mut inner, blanks, images);
+                    }
+                } else {
+                    flatten_block(c, &mut inner, blanks, images);
+                }
+                panels.push(inner.join("\n\n"));
+            }
+            push(chunks, side_markup(&panels));
+        }
+        t if is_task_item(t) => {
+            for c in children(block) {
+                flatten_block(c, chunks, blanks, images);
+            }
+        }
+        t if is_task_list(t) => {
+            let mut lines: Vec<String> = Vec::new();
+            list_lines(block, 0, &mut lines, blanks, images);
+            push(chunks, lines.join("\n"));
+        }
+        "panel" | "side-by-side-panel" | "document" | "list-item" => {
             for c in children(block) {
                 flatten_block(c, chunks, blanks, images);
             }
@@ -1602,7 +1650,7 @@ fn flatten_block(block: &serde_json::Value, chunks: &mut Vec<String>, blanks: &m
             flatten_inline(block, &mut line, blanks, images);
             push(chunks, line);
         }
-        "rule" => chunks.push("—".to_string()),
+        "rule" | "horizontal-rule" | "divider" => chunks.push("---".to_string()),
         "table" => {
             let t = table_lines(block, blanks, images);
             push(chunks, t);
@@ -1639,7 +1687,7 @@ fn one_line(node: &serde_json::Value, blanks: &mut Vec<String>, images: &mut Vec
     let mut inline = String::new();
     for c in children(node) {
         let t = node_type(c);
-        if skip_lists && matches!(t, "bullet-list" | "ordered-list") {
+        if skip_lists && (matches!(t, "bullet-list" | "ordered-list") || is_task_list(t)) {
             continue;
         }
         if is_block(t) {
@@ -1647,8 +1695,13 @@ fn one_line(node: &serde_json::Value, blanks: &mut Vec<String>, images: &mut Vec
             let mut sub: Vec<String> = Vec::new();
             flatten_block(c, &mut sub, blanks, images);
             for s in sub {
-                // Nested quote/list markers inside one line read as plain text.
-                let s: Vec<String> = s.lines().map(|l| l.trim_start_matches("> ").to_string()).collect();
+                // Nested quote/list/heading markers inside one line read as plain text.
+                let s: Vec<String> = s
+                    .lines()
+                    .filter(|l| crate::richtext::fence(l).is_none() && !crate::richtext::divider(l))
+                    .map(|l| l.trim_start_matches("> "))
+                    .map(|l| l.get(crate::richtext::heading_prefix_len(l)..).unwrap_or(l).to_string())
+                    .collect();
                 add(&mut out, &s.join(" "));
             }
         } else {
@@ -1663,11 +1716,19 @@ fn one_line(node: &serde_json::Value, blanks: &mut Vec<String>, images: &mut Vec
 /// indented two spaces per level.
 fn list_lines(list: &serde_json::Value, depth: usize, lines: &mut Vec<String>, blanks: &mut Vec<String>, images: &mut Vec<String>) {
     let ordered = node_type(list) == "ordered-list";
+    let tasks = is_task_list(node_type(list));
     let start = list.get("start").and_then(serde_json::Value::as_u64).unwrap_or(1) as usize;
     let indent = "  ".repeat(depth);
     for (i, item) in children(list).iter().enumerate() {
-        let marker = if ordered { format!("{}. ", start + i) } else { "• ".to_string() };
-        let text = if node_type(item) == "list-item" {
+        // A task list is a bullet list whose items start with their box.
+        let marker = if ordered {
+            format!("{}. ", start + i)
+        } else if tasks || is_task_item(node_type(item)) {
+            format!("• {}", task_box(task_checked(item)))
+        } else {
+            "• ".to_string()
+        };
+        let text = if node_type(item) == "list-item" || is_task_item(node_type(item)) {
             one_line(item, blanks, images, true)
         } else {
             let mut s = String::new();
@@ -1676,7 +1737,7 @@ fn list_lines(list: &serde_json::Value, depth: usize, lines: &mut Vec<String>, b
         };
         lines.push(format!("{indent}{marker}{text}").trim_end().to_string());
         for c in children(item) {
-            if matches!(node_type(c), "bullet-list" | "ordered-list") {
+            if matches!(node_type(c), "bullet-list" | "ordered-list") || is_task_list(node_type(c)) {
                 list_lines(c, depth + 1, lines, blanks, images);
             }
         }
@@ -1723,6 +1784,59 @@ fn table_lines(table: &serde_json::Value, blanks: &mut Vec<String>, images: &mut
         }
     }
     lines.join("\n")
+}
+
+/// A heading's markup: `#`..`###` for levels 1-3. Stem markup has no deeper heading (a `####`
+/// line has always been plain text, and stems that hold one must keep reading that way), so
+/// levels 4-6 print distinct from level 3 and from each other with inline styles on a line of
+/// their own: 4 bold, 5 bold italic, 6 italic. Text the heading syntax cannot carry (several
+/// lines, a `___` blank) falls back to bold text; text that already has `*` markers stays as is.
+fn heading_markup(core: &str, level: u64) -> String {
+    if level >= 4 && !core.is_empty() && !core.contains('\n') && !core.contains('*') {
+        let mark = match level {
+            4 => "**",
+            5 => "***",
+            _ => "*",
+        };
+        let styled = format!("{mark}{core}{mark}");
+        // only when it reads back as one styled run (e.g. `* a` edge spaces would not)
+        if crate::richtext::inline(&styled).iter().all(|sp| sp.text.is_empty() || (sp.bold == (level <= 5) && sp.italic == (level >= 5))) {
+            return styled;
+        }
+        return core.to_string();
+    }
+    let n = level.clamp(1, 3) as usize;
+    let h = format!("{} {core}", "#".repeat(n));
+    if core.is_empty() {
+        String::new()
+    } else if !core.contains('\n') && crate::richtext::heading(&h).is_some() {
+        h
+    } else if core.contains('\n') || core.contains('*') {
+        core.to_string()
+    } else {
+        format!("**{core}**")
+    }
+}
+
+/// Side-by-side panels' markup; nested groups inside a panel are unwrapped (no nesting), and
+/// a single panel is just its content.
+fn side_markup(panels: &[String]) -> String {
+    let clean: Vec<String> = panels
+        .iter()
+        .map(|p| p.lines().filter(|l| crate::richtext::fence(l).is_none()).collect::<Vec<_>>().join("\n").trim_matches('\n').to_string())
+        .collect();
+    if clean.len() < 2 {
+        return clean.join("\n\n");
+    }
+    let mut out = vec![crate::richtext::FENCE_OPEN.to_string()];
+    for (k, p) in clean.iter().enumerate() {
+        if k > 0 {
+            out.push(crate::richtext::FENCE_NEXT.to_string());
+        }
+        out.push(p.clone());
+    }
+    out.push(crate::richtext::FENCE_CLOSE.to_string());
+    out.join("\n")
 }
 
 fn node_alt(node: &serde_json::Value) -> &str {
@@ -1785,11 +1899,18 @@ fn marked_text(node: &serde_json::Value) -> String {
     if sub || sup {
         core = crate::richtext::unicode_script(&core, sup).unwrap_or_else(|| if sup { format!("^{{{core}}}") } else { format!("_{{{core}}}") });
     }
+    if has(&["strike", "strikethrough", "s", "del"]) {
+        core = format!("~~{core}~~");
+    }
     if has(&["em", "emphasis", "italic"]) {
         core = format!("*{core}*");
     }
     if has(&["strong", "bold"]) {
         core = format!("**{core}**");
+    }
+    // A link mark ({"type": "link", "attrs": {"href": ...}}) wraps everything.
+    if let Some(href) = arr(node, "marks").iter().find(|m| m.get("type").and_then(serde_json::Value::as_str) == Some("link")).and_then(|m| m.get("attrs")?.get("href")?.as_str()) {
+        core = link_markup(&core, href);
     }
     format!("{lead}{core}{trail}")
 }
@@ -2413,6 +2534,30 @@ fn tidy(s: &str) -> String {
     out.join("\n")
 }
 
+/// `text` linked to `href` as `[text](url)` (edge whitespace kept outside) when the address is
+/// http, https or mailto and the result reads back as that link; otherwise the text alone
+/// (relative, `javascript:` and other links drop to plain text, as before links existed).
+fn link_markup(text: &str, href: &str) -> String {
+    let core = text.trim();
+    let url: String = href.trim().chars().map(|c| match c {
+        ' ' => "%20".to_string(),
+        '(' => "%28".to_string(),
+        ')' => "%29".to_string(),
+        c => c.to_string(),
+    }).collect();
+    if core.is_empty() || core.contains('\n') || !crate::richtext::link_url_ok(&url) {
+        return text.to_string();
+    }
+    let lead = &text[..text.len() - text.trim_start().len()];
+    let trail = &text[text.trim_end().len()..];
+    let md = format!("[{core}]({url})");
+    let ch: Vec<char> = md.chars().collect();
+    match crate::richtext::link_at(&ch, 0) {
+        Some((_, end)) if end + 1 == ch.len() => format!("{lead}{md}{trail}"),
+        _ => text.to_string(),
+    }
+}
+
 fn looks_html(t: &str) -> bool {
     let l = t.to_ascii_lowercase();
     l.contains('<') && l.contains('>') && (l.contains("</") || l.contains("<br") || l.contains("<img") || l.contains("<p"))
@@ -2457,7 +2602,8 @@ impl HtmlOut {
                 }
                 let s = tidy(&s);
                 if !s.is_empty() {
-                    chunks.push(if s.contains('\n') || s.contains('*') { s } else { format!("**{s}**") });
+                    let level = name[1..].parse::<u64>().unwrap_or(1);
+                    chunks.push(heading_markup(&s, level));
                 }
             }
             "ul" | "ol" => {
@@ -2482,7 +2628,7 @@ impl HtmlOut {
                 let raw: String = raw_text(kids);
                 push_chunk(chunks, raw.trim_matches('\n').trim_end().to_string());
             }
-            "hr" => chunks.push("—".to_string()),
+            "hr" => chunks.push("---".to_string()),
             _ => self.blocks(kids, chunks),
         }
     }
@@ -2503,7 +2649,18 @@ impl HtmlOut {
             HNode::El { name, kids, .. } => match name.as_str() {
                 "br" => out.push('\n'),
                 "b" | "strong" => self.wrap(kids, out, "**"),
+                "s" | "del" | "strike" => self.wrap(kids, out, "~~"),
+                "span" | "font" if n.attr("style").is_some_and(|st| st.to_ascii_lowercase().replace(' ', "").contains("text-decoration:line-through") || st.to_ascii_lowercase().contains("line-through")) => {
+                    self.wrap(kids, out, "~~")
+                }
                 "i" | "em" | "cite" | "var" => self.wrap(kids, out, "*"),
+                "a" => {
+                    let mut s = String::new();
+                    for k in kids {
+                        self.inline(k, &mut s);
+                    }
+                    out.push_str(&link_markup(&s, n.attr("href").unwrap_or("")));
+                }
                 "sub" | "sup" => {
                     let mut s = String::new();
                     for k in kids {
@@ -2526,6 +2683,9 @@ impl HtmlOut {
                     out.push_str(&picture_text(n.attr("alt").unwrap_or("").trim()));
                 }
                 "math" => out.push_str(&math_text(n)),
+                "input" if n.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("checkbox")) => {
+                    out.push_str(task_box(n.attr("checked").is_some()));
+                }
                 "script" | "style" | "head" => {}
                 _ if is_html_block(name) => {
                     let mut sub = Vec::new();
@@ -2561,6 +2721,11 @@ impl HtmlOut {
         }
         let lead = &s[..s.len() - s.trim_start().len()];
         let trail = &s[s.trim_end().len()..];
+        // strikethrough markers only count when they hug the text (`~~ a~~` would stay literal)
+        if mark == "~~" && !crate::richtext::inline(&format!("{mark}{core}{mark}")).iter().filter(|sp| !sp.text.is_empty()).all(|sp| sp.strike) {
+            out.push_str(&s);
+            return;
+        }
         out.push_str(&format!("{lead}{mark}{core}{mark}{trail}"));
     }
 
@@ -2590,7 +2755,12 @@ impl HtmlOut {
                 }
                 continue;
             }
-            let marker = if ordered { format!("{}. ", start + i) } else { "• ".to_string() };
+            let mut marker = if ordered { format!("{}. ", start + i) } else { "• ".to_string() };
+            // TipTap-style task items: `<li data-checked="true">` (a checkbox input inside the
+            // item prints its own box).
+            if let Some(c) = item.attr("data-checked") {
+                marker.push_str(task_box(c == "true" || c.is_empty()));
+            }
             i += 1;
             lines.push(format!("{indent}{marker}{}", self.one_line(ikids, true)).trim_end().to_string());
             for c in ikids {
@@ -5932,6 +6102,94 @@ mod import_format_tests {
     }
 
     // ---------- HTML → markup ----------
+
+    fn tp_stem(content: serde_json::Value) -> String {
+        flatten_doc(&serde_json::json!({"type": "document", "content": content})).text
+    }
+
+    #[test]
+    fn struck_text_imports_as_strikethrough() {
+        // HTML (Moodle, QTI, Canvas, Blackboard, Anki all read HTML through the same converter)
+        assert_eq!(html_inline("Mass is <s>9 g</s> 7 g"), "Mass is ~~9 g~~ 7 g");
+        assert_eq!(html_inline("<del>old</del> new <strike>gone</strike>"), "~~old~~ new ~~gone~~");
+        assert_eq!(html_inline("<span style=\"text-decoration: line-through;\">x</span> y"), "~~x~~ y");
+        assert_eq!(html_inline("<span style=\"color:red\">red</span>"), "red");
+        // edge whitespace stays outside the markers; empty or tilde-led runs stay plain
+        assert_eq!(html_inline("a<s> b </s>c"), "a ~~b~~ c");
+        assert_eq!(html_inline("<s> </s>x"), "x");
+        assert_eq!(html_inline("<s>~x</s>"), "~x");
+        let (stem, _) = html_to_markup("<p>Cross out the <del>wrong</del> word.</p>");
+        assert!(crate::richtext::inline(&stem).iter().any(|sp| sp.strike && sp.text == "wrong"), "{stem:?}");
+        // Moodle XML question text
+        let xml = r#"<quiz><question type="essay"><name><text>q</text></name><questiontext format="html"><text><![CDATA[<p>Not <strike>this</strike></p>]]></text></questiontext></question></quiz>"#;
+        let d = doc(xml.as_bytes(), "q.xml");
+        assert_eq!(d.questions[0].stem, "Not ~~this~~");
+        // Test Parrot marks
+        let t = tp_stem(serde_json::json!([{"type": "paragraph", "content": [{"type": "text", "text": "old", "marks": ["strike"]}, {"type": "text", "text": " new"}]}]));
+        assert_eq!(t, "~~old~~ new");
+    }
+
+    #[test]
+    fn task_lists_import_as_boxed_bullets() {
+        // Test Parrot task lists (kebab-case like its other nodes; camelCase accepted too)
+        let t = tp_stem(serde_json::json!([
+            {"type": "paragraph", "content": [{"type": "text", "text": "Check:"}]},
+            {"type": "task-list", "content": [
+                {"type": "task-item", "checked": true, "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Goggles on"}]}]},
+                {"type": "task-item", "attrs": {"checked": false}, "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Gloves "}, {"type": "text", "text": "on", "marks": ["bold"]}]}]}
+            ]},
+            {"type": "taskList", "content": [{"type": "taskItem", "attrs": {"checked": true}, "content": [{"type": "text", "text": "Done"}]}]}
+        ]));
+        assert_eq!(t, "Check:\n\n\u{2022} \u{2611} Goggles on\n\u{2022} \u{2610} Gloves **on**\n\n\u{2022} \u{2611} Done");
+        let b = crate::richtext::parse(&t);
+        assert!(matches!(&b[1], crate::richtext::Block::Bullets(items) if items.len() == 2), "a real bullet list: {b:?}");
+        // HTML task lists: checkbox inputs, or TipTap's data-checked items
+        assert_eq!(html_to_markup("<ul><li><input type=\"checkbox\" checked> Ruler</li><li><input type=\"checkbox\"> Pencil</li></ul>").0, "\u{2022} \u{2611} Ruler\n\u{2022} \u{2610} Pencil");
+        assert_eq!(html_to_markup("<ul data-type=\"taskList\"><li data-checked=\"true\"><p>A</p></li><li data-checked=\"false\"><p>B</p></li></ul>").0, "\u{2022} \u{2611} A\n\u{2022} \u{2610} B");
+        // the boxes print (Source Serif 4 has them, P3 CID fonts)
+        assert!(crate::fonts::charmap(crate::fonts::Style::Regular).get('\u{2610}').is_some() && crate::fonts::charmap(crate::fonts::Style::Regular).get('\u{2611}').is_some());
+    }
+
+    #[test]
+    fn links_import_as_link_markup() {
+        assert_eq!(html_inline("See <a href=\"https://ex.org/a?b=1\">the <b>notes</b></a> now"), "See [the **notes**](https://ex.org/a?b=1) now");
+        assert_eq!(html_inline("Mail <a href=\"mailto:t@s.org\"> me </a>."), "Mail [me](mailto:t@s.org) .");
+        // spaces and parentheses in the address are percent-encoded so the link parses
+        assert_eq!(html_inline("<a href=\"https://en.wikipedia.org/wiki/Ion_(physics)\">ion</a>"), "[ion](https://en.wikipedia.org/wiki/Ion_%28physics%29)");
+        // relative, javascript and other schemes stay plain text, as before
+        assert_eq!(html_inline("<a href=\"/course/view.php\">course</a>"), "course");
+        assert_eq!(html_inline("<a href=\"javascript:alert(1)\">x</a>"), "x");
+        assert_eq!(html_inline("<a>anchor</a>"), "anchor");
+        // link text that could not read back as a link (math) stays plain
+        assert_eq!(html_inline("<a href=\"https://a.org\">$x$ [1]</a>"), "$x$ [1]");
+        let (stem, _) = html_to_markup("<p>Read <a href=\"https://ex.org\">this</a>.</p>");
+        assert!(crate::richtext::inline(&stem).iter().any(|sp| sp.text == "this" && sp.link.as_deref() == Some("https://ex.org")), "{stem:?}");
+        // Test Parrot link marks
+        let t = tp_stem(serde_json::json!([{"type": "paragraph", "content": [{"type": "text", "text": "site", "marks": [{"type": "link", "attrs": {"href": "https://s.org"}}, "bold"]}, {"type": "text", "text": " here"}]}]));
+        assert_eq!(t, "[**site**](https://s.org) here");
+    }
+
+    #[test]
+    fn headings_dividers_and_side_by_side_import() {
+        // h4..h6 print distinct from h3 (and each other): bold, bold italic, italic lines
+        assert_eq!(html_to_markup("<h1>Part A</h1><p>x</p><hr><h4>deep</h4>").0, "# Part A\n\nx\n\n---\n\n**deep**");
+        assert_eq!(html_to_markup("<h3>Three</h3><h4>Four</h4><h5>Five</h5><h6>Six</h6>").0, "### Three\n\n**Four**\n\n***Five***\n\n*Six*");
+        // a heading with a blank keeps the old bold form
+        assert_eq!(html_to_markup("<h2>Fill ___ in</h2>").0, "**Fill ___ in**");
+        let t = tp_stem(serde_json::json!([
+            {"type": "heading", "level": 2, "content": [{"type": "text", "text": "Data"}]},
+            {"type": "rule"},
+            {"type": "side-by-side", "content": [
+                {"type": "side-by-side-panel", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "left"}]}]},
+                {"type": "side-by-side-panel", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "right"}]}, {"type": "paragraph", "content": [{"type": "text", "text": "more"}]}]}
+            ]}
+        ]));
+        assert_eq!(t, "## Data\n\n---\n\n::: side\nleft\n::: next\nright\n\nmore\n:::");
+        let b = crate::richtext::parse(&t);
+        assert!(matches!(&b[0], crate::richtext::Block::Heading(2, _)));
+        assert_eq!(b[1], crate::richtext::Block::Divider);
+        assert!(matches!(&b[2], crate::richtext::Block::Side(p) if p.len() == 2 && p[1].len() == 2));
+    }
 
     #[test]
     fn html_converter_handles_messy_html() {

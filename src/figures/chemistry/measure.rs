@@ -198,6 +198,8 @@ fn disp_params() -> Vec<ParamDef> {
         ParamDef::float("after", "After reading (mL)", 0.0, 100.0, 0.05, 6.0),
         ParamDef::choice("object", "Object", &["Marbles", "Rock", "Cube", "Metal cylinder"], "Marbles"),
         ParamDef::int("count", "Number of marbles", 1, 5, 2),
+        ParamDef::choice("marble_color", "Marble colour", &["Blue", "Gray"], "Blue"),
+        ParamDef::bool("arrow", "Arrow between the cylinders", true),
         ParamDef::bool("dotted", "Dotted line at the meniscus", false),
         ParamDef::text("title", "Chart title text", ""),
         ParamDef::text("lab_before", "Under the first cylinder", "Before"),
@@ -242,8 +244,9 @@ fn disp_render(p: &Params) -> String {
                         let in_row = per.min(n - row * per);
                         let x0 = cx - (in_row as f64 - 1.0) * r;
                         let (x, y) = (x0 + col as f64 * 2.0 * r, base - r - row as f64 * r * 1.8);
-                        d.circle(x, y, r, "#8fb4d6", "#2e4f6e", 1.5);
-                        d.circle(x - r * 0.3, y - r * 0.3, r * 0.25, "#d9e9f6", "none", 0.0);
+                        let (body, rim, shine) = if p.s("marble_color") == "Gray" { ("#9a9a9a", "#2b2b2b", "#e6e6e6") } else { ("#8fb4d6", "#2e4f6e", "#d9e9f6") };
+                        d.circle(x, y, r, body, rim, 1.5);
+                        d.circle(x - r * 0.3, y - r * 0.3, r * 0.25, shine, "none", 0.0);
                     }
                 }
                 other => {
@@ -259,7 +262,9 @@ fn disp_render(p: &Params) -> String {
         tx(&mut d, cx, 560.0, 15.0, "middle", INK, true, if idx == 0 { p.s("lab_before") } else { p.s("lab_after") });
         foci.push(Focus { x: xr + 2.0, y: v.y(lvl), label_px: (v.y(num_step) - v.y(0.0)).abs().max(70.0 / p.i("mag_marks").clamp(1, 6) as f64) });
     }
-    d.arrow(222.0, 300.0, 292.0, 300.0, INK, 2.0);
+    if p.b("arrow") {
+        d.arrow(222.0, 300.0, 292.0, 300.0, INK, 2.0);
+    }
     let svg = magnify::compose(p, d.finish(), &foci, true);
     let dp = read_dp(minor);
     let foot = if p.b("answer") {
@@ -356,10 +361,18 @@ fn length_params() -> Vec<ParamDef> {
         ParamDef::bool("answer", "Answer key (the length under the figure)", false),
         ParamDef::text("title", "Chart title text", ""),
         ParamDef::choice("read_to", "Read to (answer key)", &["One estimated digit", "Nearest mark"], "One estimated digit"),
-        magnify::show_param(&["Ruler and magnifiers", "Ruler only"], "Ruler only"),
+        magnify::show_param(&LENGTH_SHOW, "Ruler only"),
         magnify::marks_param(),
         title_style(false),
     ]
+}
+
+/// Length reading "Show": one magnifier above the object's right end (the reference's opening
+/// look), the original pair of magnifiers under the ruler, or the ruler alone.
+const LENGTH_SHOW: [&str; 3] = ["Ruler and magnifiers", "Ruler only", "Ruler and one magnifier above"];
+
+fn length_one_above(p: &Params) -> bool {
+    p.s("mag_show") == LENGTH_SHOW[2]
 }
 
 fn length_render(p: &Params) -> String {
@@ -442,7 +455,12 @@ fn length_render(p: &Params) -> String {
         dashed(&mut d, x2, top_of_obj + 4.0, x2, ry + 40.0, "#c0392b", 1.1);
     }
     let foci = [Focus { x: x1, y: ry + 22.0, label_px: lstep * ppu }, Focus { x: x2, y: ry + 22.0, label_px: lstep * ppu }];
-    let svg = magnify::compose(p, d.finish(), &foci, true);
+    let svg = if length_one_above(p) {
+        // the lens over the right end, centred on the ruler's edge where the object ends
+        magnify::compose_above(p, d.finish(), &Focus { x: x2, y: ry + 6.0, label_px: lstep * ppu })
+    } else {
+        magnify::compose(p, d.finish(), &foci, true)
+    };
     let foot = if p.b("answer") {
         let shown = if p.s("read_to") == "Nearest mark" {
             let r = (len / u).round() * u;
@@ -640,10 +658,46 @@ fn ph_color(ph: f64) -> String {
     format!("#{:02x}{:02x}{:02x}", (a.0 + (b.0 - a.0) * f) as u8, (a.1 + (b.1 - a.1) * f) as u8, (a.2 + (b.2 - a.2) * f) as u8)
 }
 
+/// Digital meter looks: the original handheld meter with a hanging probe (saved figures), and
+/// the reference's opening look, a meter with ON/OFF and CAL whose probe stands in a beaker.
+const METER_LOOKS: [&str; 2] = ["Probe hanging", "Probe in a beaker"];
+
+/// The digital meter with its probe standing in a beaker of the solution (reference look).
+fn ph_meter_beaker(d: &mut Doc, ph: f64, dp: usize) {
+    // meter body, screen and reading
+    d.path("M64,128 Q40,128 40,152 L40,396 Q40,420 64,420 L306,420 Q330,420 330,396 L330,152 Q330,128 306,128 Z", "#ffffff", INK, 2.4);
+    d.rect(170.0, 116.0, 30.0, 12.0, "#ffffff", INK, 2.0);
+    d.path("M72,156 L298,156 Q306,156 306,164 L306,226 Q306,234 298,234 L72,234 Q64,234 64,226 L64,164 Q64,156 72,156 Z", "#eef0ec", INK, 2.2);
+    tx(d, 252.0, 214.0, 54.0, "end", INK, true, &num(ph, dp));
+    tx(d, 262.0, 214.0, 24.0, "start", INK, true, "pH");
+    for (x, n) in [(76.0, "ON/OFF"), (194.0, "CAL")] {
+        d.path(&format!("M{a},282 L{b},282 Q{c},282 {c},290 L{c},318 Q{c},326 {b},326 L{a},326 Q{x},326 {x},318 L{x},290 Q{x},282 {a},282 Z", a = x + 8.0, b = x + 92.0, c = x + 100.0), "#ffffff", INK, 2.0);
+        tx(d, x + 50.0, 311.0, 15.0, "middle", INK, true, n);
+    }
+    d.line(126.0, 366.0, 244.0, 366.0, "#a8a8a8", 2.0);
+    d.line(126.0, 380.0, 244.0, 380.0, "#a8a8a8", 2.0);
+    // cable from the meter's top to the probe
+    d.path("M185,116 C185,40 452,28 455,86", "none", INK, 5.0);
+    d.path("M185,116 C185,40 452,28 455,86", "none", "#ffffff", 2.2);
+    // beaker of solution, the probe standing in it
+    d.rect(392.0, 300.0, 116.0, 116.0, "#dedede", "none", 0.0);
+    d.line(392.0, 300.0, 508.0, 300.0, "#6a6a6a", 1.6);
+    for k in 0..4 {
+        let y = 312.0 + k as f64 * 30.0 - 30.0;
+        d.line(478.0, y, 500.0, y, INK, 1.8);
+    }
+    d.path("M449,86 L461,86 L466,100 L444,100 Z", "#ffffff", INK, 1.8);
+    d.path("M444,100 L466,100 Q470,100 470,104 L470,144 Q470,148 466,148 L444,148 Q440,148 440,144 L440,104 Q440,100 444,100 Z", "#555555", INK, 2.0);
+    d.rect(446.0, 148.0, 18.0, 230.0, "#f4f4f4", INK, 1.8);
+    d.line(455.0, 156.0, 455.0, 366.0, "#a8a8a8", 1.6);
+    d.path("M380,250 Q392,254 392,266 L392,418 L508,418 L508,250", "none", INK, 2.6);
+}
+
 fn ph_params() -> Vec<ParamDef> {
     vec![
         ParamDef::choice("instrument", "Instrument", &["Digital meter", "Analog meter", "pH paper"], "Digital meter"),
         ParamDef::choice("places", "Decimal places", &["0.0", "0.00"], "0.00"),
+        ParamDef::choice("meter", "Digital meter look", &METER_LOOKS, METER_LOOKS[0]),
         ParamDef::float("ph", "pH", 0.0, 14.0, 0.01, 4.62),
         ParamDef::text("title", "Chart title text", ""),
         answer_param("Answer key (the pH under the figure)"),
@@ -693,6 +747,9 @@ fn ph_render(p: &Params) -> String {
                 tx(&mut d, x, chart_y + 72.0, 14.0, "middle", INK, false, &format!("{i}"));
             }
             tx(&mut d, 280.0, chart_y + 108.0 + 30.0, 13.0, "middle", "#444", false, "Compare the strip with the colour chart");
+        }
+        _ if p.s("meter") == METER_LOOKS[1] => {
+            ph_meter_beaker(&mut d, ph, if p.s("places") == "0.0" { 1 } else { 2 });
         }
         _ => {
             let dp = if p.s("places") == "0.0" { 1 } else { 2 };
@@ -820,7 +877,7 @@ fn length_handles(p: &Params) -> Vec<Handle> {
     let ppu = rw / total;
     let len = p.f("length").clamp(0.05, total);
     let off = p.f("offset").clamp(0.0, (total - len).max(0.0));
-    let ymid = ry - 18.0;
+    let ymid = ry - 18.0 + if length_one_above(p) { magnify::above_shift() } else { 0.0 };
     let (x1, x2) = (rx0 + off * ppu, rx0 + (off + len) * ppu);
     vec![
         Handle::knob((x1, ymid), "Left end: drag to move it (the right end stays put)", move |q, t| {
@@ -939,7 +996,8 @@ fn ph_handles(p: &Params) -> Vec<Handle> {
                 })
             })
             .collect(),
-        _ => vec![Handle::zone((280.0, 95.0), (230.0, 90.0), "Scroll to change the pH", |_| {}).with_scroll(|q, dy| {
+        // the screen: the bench meter's sits lower left
+        _ => vec![Handle::zone(if p.s("meter") == METER_LOOKS[1] { (185.0, 195.0) } else { (280.0, 95.0) }, if p.s("meter") == METER_LOOKS[1] { (242.0, 78.0) } else { (230.0, 90.0) }, "Scroll to change the pH", |_| {}).with_scroll(|q, dy| {
             q.set_f("ph", q.f("ph") + dy * 0.05);
         })],
     }

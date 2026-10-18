@@ -99,6 +99,8 @@ struct State {
     attach: Option<Attach>,
     /// Live read of the paste box: (text it was computed for, result).
     paste_read: Option<(String, Result<PasteRead, String>)>,
+    /// Drawn inside the bank's Import modal (which lists the formats itself).
+    in_modal: bool,
 }
 
 /// What the paste box's text reads as, live while typing.
@@ -132,6 +134,8 @@ fn paste_counts_line(r: &PasteRead) -> (String, String) {
 
 thread_local! {
     static ST: RefCell<State> = RefCell::new(State::default());
+    /// The bank Import modal's own staging (the Imports page keeps what it has staged).
+    static MST: RefCell<State> = RefCell::new(State::default());
 }
 
 fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> R {
@@ -522,6 +526,166 @@ impl crate::App {
     }
 }
 
+// ----- the bank's Import modal (the same import, in place over the bank) -----
+
+fn modal_key() -> egui::Id {
+    egui::Id::new("qs_import_modal")
+}
+
+/// Formats named under the drop zone of the Import modal.
+pub const SUPPORTS: &[&str] = &[
+    "PDFs", "Word documents", "Photos", "Blackboard", "Canvas", "Brightspace (D2L)", "Moodle (XML, GIFT, Aiken)", "QTI", "Respondus", "text2qti", "Kahoot",
+    "Quizlet and Anki", "CSV and Excel spreadsheets", "Test Parrot files",
+];
+
+/// Opens the Import modal over bank `bank_id`: a fresh import whose questions go into that bank.
+pub fn open_import_modal(ctx: &egui::Context, bank_id: &Id) {
+    ctx.data_mut(|d| d.insert_temp(modal_key(), Some(bank_id.clone())));
+    MST.with(|s| {
+        let mut st = s.borrow_mut();
+        st.sources.clear();
+        st.pick = None;
+        st.attach = None;
+        st.paste_open = false;
+        st.paste_read = None;
+        st.dest = Some(bank_id.clone());
+    });
+}
+
+pub fn import_modal_open(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<Option<Id>>(modal_key())).flatten().is_some()
+}
+
+fn close_import_modal(ctx: &egui::Context, st: &mut State) {
+    ctx.data_mut(|d| d.insert_temp::<Option<Id>>(modal_key(), None));
+    st.sources.clear();
+    st.pick = None;
+    st.attach = None;
+    st.paste_open = false;
+}
+
+impl crate::App {
+    /// The bank editor's Import modal (call every frame on the bank screen): drop zone, file
+    /// picker and paste box first; once something is read, the full review (sources, page
+    /// preview, details, Import) grows inside the same modal. Importing lands in the bank.
+    pub fn draw_import_modal(&mut self, ctx: &egui::Context) {
+        let Some(bank_id) = ctx.data(|d| d.get_temp::<Option<Id>>(modal_key())).flatten() else { return };
+        if self.store.bank(&bank_id).is_none() {
+            ctx.data_mut(|d| d.insert_temp::<Option<Id>>(modal_key(), None));
+            return;
+        }
+        let mut st = MST.with(|s| std::mem::take(&mut *s.borrow_mut()));
+        if !st.inited {
+            st.inited = true;
+            st.skip_dups = true;
+            st.points = 1.0;
+        }
+        if st.dest.is_none() && st.sources.is_empty() {
+            st.dest = Some(bank_id.clone());
+        }
+        st.in_modal = true;
+        // Headless test hook (same as the Imports page): stage files once.
+        if let Ok(v) = std::env::var("QUESHION_IMPORT_FILES") {
+            let hid = egui::Id::new("qs_import_modal_files_hook");
+            if !ctx.data(|d| d.get_temp::<bool>(hid).unwrap_or(false)) {
+                ctx.data_mut(|d| d.insert_temp(hid, true));
+                add_paths(self, &mut st, std::env::split_paths(&v).collect());
+            }
+        }
+        intake(self, ctx, &mut st);
+        if st.ai_all && !self.ai_busy {
+            start_next_ai(self, &mut st, ctx);
+        }
+        fix_pick(&mut st);
+        let imports_before = self.store.imports.len();
+        let screen = ctx.content_rect();
+        let big = !st.sources.is_empty();
+        let w = if big { (screen.width() - 80.0).clamp(520.0, 1500.0) } else { 600.0_f32.min(screen.width() - 40.0) };
+        let view_h = (screen.height() - 150.0).max(420.0);
+        let mut cancel = false;
+        let modal = egui::Modal::new(egui::Id::new("qs_import_modal_window")).show(ctx, |ui| {
+            ui.set_width(w);
+            ui.horizontal(|ui| {
+                ui.label(theme::serif("Import").size(22.0).color(theme::ink()));
+                if let Some(b) = self.store.bank(&bank_id) {
+                    ui.label(theme::muted(format!("into “{}”", b.name)).size(13.0));
+                }
+            });
+            ui.add_space(8.0);
+            let body = |app: &mut crate::App, ui: &mut egui::Ui, st: &mut State| {
+                drop_area(app, ui, st);
+                if st.sources.is_empty() {
+                    ui.add_space(10.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(theme::strong("Supports").size(13.0));
+                    });
+                    ui.add_space(4.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+                        for s in SUPPORTS {
+                            let chip = egui::Button::new(theme::text(*s).size(12.0))
+                                .wrap_mode(egui::TextWrapMode::Extend)
+                                .fill(theme::accent_faded())
+                                .stroke(Stroke::new(1.0, theme::border()))
+                                .corner_radius(CornerRadius::same(10))
+                                .sense(Sense::hover());
+                            ui.add(chip);
+                        }
+                    });
+                    ui.add_space(8.0);
+                    privacy_note(app, ui);
+                } else {
+                    ui.add_space(10.0);
+                    let flags = dup_flags(app, st);
+                    workspace(app, ui, ctx, st, &flags, w, view_h);
+                }
+            };
+            egui::ScrollArea::vertical().id_salt("imp_modal_scroll").max_height(screen.height() - 140.0).auto_shrink([false, true]).show(ui, |ui| {
+                ui.allocate_ui_with_layout(Vec2::new(w, 0.0), Layout::top_down(Align::Min), |ui| {
+                    ui.set_width(w);
+                    body(self, ui, &mut st);
+                });
+            });
+            ui.add_space(10.0);
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.set_width(w);
+                let mut go = false;
+                if big {
+                    let flags = dup_flags(self, &st);
+                    let n: usize = st.sources.iter().enumerate().map(|(si, s)| (0..s.sel.len()).filter(|&i| included(st.skip_dups, s, &flags[si], i)).count()).sum();
+                    let into = st.dest.as_ref().and_then(|id| self.store.bank(id)).map(|b| format!("“{}”", b.name)).unwrap_or_else(|| format!("the new bank “{}”", bank_name_for(&st)));
+                    ui.label(theme::muted(format!("Will add {} to {into}.", plural(n, "question"))).size(12.5));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui.add_enabled_ui(n > 0, |ui| kit::primary_button(ui, "Import")).inner.clicked() {
+                            go = true;
+                        }
+                        if kit::ghost_button(ui, "Cancel").clicked() {
+                            cancel = true;
+                        }
+                    });
+                    if go {
+                        commit(self, &mut st, &flags);
+                    }
+                } else {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if kit::ghost_button(ui, "Cancel").clicked() {
+                            cancel = true;
+                        }
+                    });
+                }
+            });
+        });
+        let imported = self.store.imports.len() > imports_before;
+        if cancel || imported || (modal.should_close() && st.attach.is_none()) {
+            // (an import already opened the bank it went into)
+            close_import_modal(ctx, &mut st);
+        }
+        attach_dialog(self, ctx, &mut st);
+        MST.with(|s| *s.borrow_mut() = st);
+    }
+}
+
 /// OS drag-and-drop and Ctrl+V of plain text.
 fn intake(app: &mut crate::App, ctx: &egui::Context, st: &mut State) {
     let dropped = ctx.input(|i| i.raw.dropped_files.clone());
@@ -693,7 +857,7 @@ fn drop_area(app: &mut crate::App, ui: &mut egui::Ui, st: &mut State) {
                         }
                     });
                 }
-                if !compact {
+                if !compact && !st.in_modal {
                     ui.add_space(8.0);
                     ui.label(
                         theme::muted(

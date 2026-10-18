@@ -76,9 +76,9 @@ static FIG_7: [RefSection; 5] = [
 ];
 
 static FIG_8: [RefSection; 4] = [
-    s("Body", &["body"], ""),
-    s("Forces", &["body_size", "n", "body_lab", "mv_lab_mode", "notation", "motion", "mdir"], ""),
-    s("Motion", &["mv_lab", "ma_lab_mode", "ma_lab", "adir"], "Drawn beside the body, dashed, because velocity and acceleration aren't forces."),
+    s("Body", &["body", "body_size", "body_lab"], ""),
+    s("Forces", &["n", "notation"], ""),
+    s("Motion", &["motion", "mv_lab_mode", "mv_lab", "ma_lab_mode", "ma_lab", "mdir", "adir"], "Drawn beside the body, dashed, because velocity and acceleration aren't forces."),
     s("Figure", &["mirror", "color"], ""),
 ];
 
@@ -144,7 +144,7 @@ static FIG_15: [RefSection; 6] = [
 ];
 
 static FIG_16: [RefSection; 6] = [
-    s("Strips", &["custom", "strips"], "1 line is outside 400–700 nm, so not drawn. Widen the axis to show it."),
+    s("Strips", &["custom", "strips"], ""),
     s("Look", &["style", "brightness"], "Bright colored lines on black, as a glowing gas gives off."),
     s("Labels", &["labels", "label_style"], "Each element strip’s name, e.g. Hydrogen."),
     s("Wavelength axis", &["nm_from", "nm_to", "tick_every", "num_every", "axis_pos", "axis_title_style", "axis_title"], "Visible light runs from about 380 to 780 nm; every strip is the same width whatever the range."),
@@ -236,7 +236,7 @@ static FIG_27: [RefSection; 3] = [
 ];
 
 static FIG_28: [RefSection; 4] = [
-    s("Instrument", &["instrument", "places"], "Decimal places"),
+    s("Instrument", &["instrument", "places", "meter"], "Decimal places"),
     s("pH", &["ph"], "From 0 to 14, to 2 decimal places."),
     s("Title and answer key", &["title"], "Chart title"),
     s("More options", &["answer", "title_style"], ""),
@@ -252,25 +252,25 @@ static FIG_29: [RefSection; 6] = [
 ];
 
 static FIG_30: [RefSection; 9] = [
-    s("Population", &["growth", "n0", "r", "k", "unit", "organism"], ""),
-    s("Graphs", &["tspan", "graph"], "The growth rate dN/dt is individuals added per year; the per capita growth rate, (dN/dt)/N, is per individual."),
+    s("Population", &["growth", "n0", "r", "k", "tspan", "unit", "organism", "fit"], ""),
+    s("Graphs", &["graph"], "The growth rate dN/dt is individuals added per year; the per capita growth rate, (dN/dt)/N, is per individual."),
     s("Curve", &["curve_color", "draw_curve"], ""),
     s("Census data", &["census", "census_auto", "census_every", "census_scatter", "census_seed", "census_table"], ""),
     s("Marked on the graph", &["mark_k", "mark_infl", "k_label", "tau", "k_label_style", "mark_phases"], ""),
-    s("Titles", &["x_title", "y_title", "fit", "title", "curve_width", "title_style", "xtitle_style", "ytitle_style", "rate_title", "pc_title", "label_size"], ""),
+    s("Titles", &["x_title", "y_title", "title", "curve_width", "title_style", "xtitle_style", "ytitle_style", "rate_title", "pc_title", "label_size"], ""),
     s("x-axis", &["x_max", "x_min", "x_step", "x_numbers", "x_end", "x_end_text", "x_lo_end", "x_hi_end", "y_step"], ""),
     s("y-axis", &["y_max", "blank", "y_min", "y_numbers", "y_end", "y_end_text", "y_lo_end", "y_hi_end", "y2_max", "y2_step"], ""),
     s("Grid", &["minor"], ""),
 ];
 
 static FIG_31: [RefSection; 8] = [
-    s("Predator and prey", &["pair", "prey", "pred", "prey0", "pred0", "prey_avg", "pred_avg"], ""),
-    s("Graph", &["graph", "y_min", "y_max", "y_numbers"], ""),
-    s("Data", &["data", "marks"], ""),
-    s("Marked", &["source", "cycle", "alpha", "beta", "gamma", "delta", "show", "style", "y_axis", "census_every", "census_noise", "census_seed", "census_join", "mark_lag", "mark_period", "lag_labels"], ""),
-    s("Titles", &["x_title", "y_title", "title", "line_width", "legend", "title_style", "xtitle_style", "ytitle_style", "x_min", "x_max", "x_lo_end", "x_hi_end", "y_lo_end", "y_hi_end", "label_size"], ""),
-    s("x-axis", &["tshow", "unit", "x_fit", "x_step", "x_numbers", "x_end", "x_end_text", "y_fit", "y_step"], ""),
-    s("y-axis", &["y_end", "y_end_text"], ""),
+    s("Predator and prey", &["pair", "prey", "pred", "source", "prey0", "pred0", "prey_avg", "pred_avg", "alpha", "beta", "gamma", "delta", "cycle", "tshow", "unit"], ""),
+    s("Graph", &["graph", "show", "style", "y_axis"], ""),
+    s("Data", &["data", "census_every", "census_noise", "census_seed", "census_join"], ""),
+    s("Marked", &["marks", "mark_lag", "mark_period", "lag_labels"], ""),
+    s("Titles", &["x_title", "y_title", "title", "line_width", "legend", "title_style", "xtitle_style", "ytitle_style", "label_size"], ""),
+    s("x-axis", &["x_min", "x_max", "x_step", "x_fit", "x_numbers", "x_end", "x_end_text", "x_lo_end", "x_hi_end"], ""),
+    s("y-axis", &["y_min", "y_max", "y_step", "y_fit", "y_numbers", "y_end", "y_end_text", "y_lo_end", "y_hi_end"], ""),
     s("Grid", &["minor"], ""),
 ];
 
@@ -382,9 +382,8 @@ static FIG_45: [RefSection; 4] = [
     s("Labels", &["a_lab", "a_label", "a_arcs", "b_lab", "b_label", "b_arcs", "c_lab", "c_label", "c_arcs", "ab_lab", "ab_label", "bc_lab", "bc_label", "ca_lab", "ca_label", "height_label", "label_offsets"], "Drag any label on the figure to move it."),
 ];
 
-static FIG_46: [RefSection; 5] = [
+static FIG_46: [RefSection; 4] = [
     s("Vectors", &["n"], "Drawn to scale, head to tail, in order. One grid square is a magnitude of 1."),
-    items("Vector"),
     s("Resultant", &["resultant", "res_style", "res_lab_mode", "res_lab", "mark_angle", "ang_lab_mode", "ang_lab", "components"], "From the first tail to the last tip: 5 squares at 36.9°."),
     s("Grid and axes", &["grid", "axes"], ""),
     s("Figure", &["mirror", "color"], ""),
@@ -394,8 +393,8 @@ static FIG_47: [RefSection; 8] = [
     s("Graduated cylinder", &["size", "color"], "Liquid"),
     s("Scale", &["marks", "numbered", "unit"], "Smallest marks"),
     s("Readings", &["before", "after", "dotted"], "From 0 to 10 mL, to 2 decimal places."),
-    s("Object", &["object", "count"], ""),
-    s("Captions", &["lab_before", "lab_after"], ""),
+    s("Object", &["object", "count", "marble_color"], ""),
+    s("Captions", &["lab_before", "lab_after", "arrow"], ""),
     s("Title and answer key", &["title"], "Chart title"),
     s("More options", &["answer", "title_style"], ""),
     s("Magnifiers", &["mag_show", "mag_marks"], ""),

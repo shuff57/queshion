@@ -83,3 +83,39 @@ pub fn compose(p: &Params, svg: String, foci: &[Focus], below: bool) -> String {
     }
     d.finish()
 }
+
+/// Radius of the single magnifier drawn above an instrument (`compose_above`).
+pub const ABOVE_R: f64 = 120.0;
+/// Instrument rows above this y are blank in the length reading, so `compose_above` drops them.
+const ABOVE_CROP: f64 = 70.0;
+
+/// How far `compose_above` moves the instrument down (handles add it to their y).
+pub fn above_shift() -> f64 {
+    2.0 * ABOVE_R + 30.0 - ABOVE_CROP
+}
+
+/// One magnifier above the instrument, centred over the focus, joined to a small circle at it
+/// (the reference's length reading: the lens over the object's right end).
+pub fn compose_above(p: &Params, svg: String, f: &Focus) -> String {
+    let (w, h, body) = inner(&svg);
+    let n = p.i("mag_marks").clamp(1, 6) as f64;
+    let r = ABOVE_R;
+    let dy = above_shift();
+    let window = (n * f.label_px * 1.12).max(24.0);
+    let mut d = Doc::new(w, h + dy);
+    d.raw(&format!(r#"<g transform="translate(0 {dy:.2})">{body}</g>"#));
+    let (fx, fy) = (f.x, f.y + dy);
+    let c = (fx.clamp(r + 15.0, w - r - 15.0), r + 12.0);
+    let sr = window / 2.0;
+    let (ddx, ddy) = (c.0 - fx, c.1 - fy);
+    let len = (ddx * ddx + ddy * ddy).sqrt().max(1e-6);
+    let (nx, ny) = (-ddy / len, ddx / len);
+    for s in [-1.0, 1.0] {
+        d.raw(&format!(r##"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{INK}" stroke-width="1.2" stroke-dasharray="5 4"/>"##,
+            fx + nx * sr * s, fy + ny * sr * s, c.0 + nx * r * s, c.1 + ny * r * s));
+    }
+    d.circle(fx, fy, sr, "none", INK, 1.4);
+    d.raw(&zoom_group(&body, f, c, r, 2.0 * r / window, 0));
+    d.finish()
+}
+

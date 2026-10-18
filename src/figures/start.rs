@@ -12,23 +12,35 @@ pub fn overrides(id: &str) -> Vec<(&'static str, Value)> {
     let st = |v: &str| Value::S(v.to_string());
     match id {
         // Math polygons open unfilled (black outline on white), angles unshaded.
-        "triangle" | "rectangle" | "parallelogram" | "trapezoid" | "kite" | "regular-polygon" => vec![("fill", st("#ffffff"))],
-        "angles" => vec![("shade", Value::B(false))],
+        "triangle" | "rectangle" | "parallelogram" | "trapezoid" | "regular-polygon" => vec![("fill", st("#ffffff"))],
+        // the reference names the kite counter-clockwise (A right, B top, C left): our mirror
+        // image, so it opens flipped (share links v3)
+        "kite" => vec![("fill", st("#ffffff")), ("flip", Value::B(true))],
+        // the reference draws the bare angle: no point letters (share links v3)
+        "angles" => vec![("shade", Value::B(false)), ("letters", Value::B(false))],
+        // the reference opens on the bare lines and transversal, no angle marked (share links v3)
+        "parallel-lines" => vec![("marked", st("")), ("unknown", st(""))],
         // Readings open with the magnifier on.
         "gas-syringe" | "mass-reading" | "temperature-reading" | "volume-reading" => vec![("mag_show", st("Instrument and magnifier"))],
-        "length-reading" => vec![("mag_show", st("Ruler and magnifiers"))],
+        // the reference: one magnifier above the object's right end (share links v3)
+        "length-reading" => vec![("mag_show", st("Ruler and one magnifier above"))],
         "ruler-reading" => vec![("magnify", st("Ruler and magnifiers"))],
         // Chemistry starting examples.
         "line-spectrum" => vec![("strips", st("Hydrogen; Helium; Sodium; Unknown = Hydrogen + Sodium"))],
         // the reference opens on percent abundance (78.99 %, "Abundance (%)")
         "mass-spectrum" => vec![("element", st("Magnesium")), ("values", Value::B(true)), ("relative", Value::B(false))],
         "photoelectron-spectrum" => vec![("element", st("11 Na - Sodium"))],
-        "orbital-diagram" => vec![("element", st("8 O - Oxygen"))],
+        // the reference leaves the configuration line off ("Nothing left blank"; share links v3)
+        "orbital-diagram" => vec![("element", st("8 O - Oxygen")), ("config", Value::B(false))],
         "particle-diagram" => vec![
             ("a_count", Value::I(4)), ("a_size", st("L")), ("a_shade", st("Light gray")), ("a_charge", st("\u{2212}")),
             ("b_count", Value::I(4)), ("b_size", st("S")), ("b_shade", st("White")), ("b_charge", st("+")),
         ],
         "bohr-model" => vec![("nucleus", st("Balls"))],
+        // the reference's meter: ON/OFF and CAL, the probe standing in a beaker (share links v3)
+        "ph-reading" => vec![("meter", st("Probe in a beaker"))],
+        // the reference's grey marbles and no arrow between the cylinders (share links v3)
+        "volume-by-displacement" => vec![("marble_color", st("Gray")), ("arrow", Value::B(false))],
         "heating-cooling-curve" => vec![("curve_color", st("#c0392b")), ("plateau_labels", st("The change (Melting)"))],
         // Blank starting grids for students.
         "coordinate-grid" => vec![("equations", st("")), ("xmax", Value::F(15.0)), ("ymax", Value::F(15.0))],
@@ -44,13 +56,48 @@ pub fn overrides(id: &str) -> Vec<(&'static str, Value)> {
     }
 }
 
-/// Opening-state keys added after share links v1: a v1 link (no `v=`) was made against an
-/// opening state without them, so they fall back to the plain default when it is opened.
-pub fn since_v1(id: &str) -> &'static [&'static str] {
+/// Opening-state keys by the share-link version that introduced them. A link written with an
+/// older version (`share::version`) was made against an opening state without them, so they fall
+/// back to the plain default when it is opened (see `newer_than` / `older_values`).
+pub fn added_in(id: &str) -> &'static [(u32, &'static [&'static str])] {
     match id {
-        "vector-diagram" => &["res_style"],
+        "vector-diagram" => &[(2, &["res_style"])],
+        "orbital-diagram" => &[(3, &["config"])],
+        "angles" => &[(3, &["letters"])],
+        "parallel-lines" => &[(3, &["marked", "unknown"])],
+        "volume-by-displacement" => &[(3, &["marble_color", "arrow"])],
+        "ph-reading" => &[(3, &["meter"])],
+        "kite" => &[(3, &["flip"])],
+        "length-reading" => &[(3, &["mag_show"])],
         _ => &[],
     }
+}
+
+/// A key whose opening value was already overridden before the version that changed it: what
+/// links of earlier versions opened with (instead of the plain default).
+fn was_overridden(id: &str, key: &str) -> Option<Value> {
+    match (id, key) {
+        // v1/v2 opened with the two magnifiers under the ruler
+        ("length-reading", "mag_show") => Some(Value::S("Ruler and magnifiers".into())),
+        _ => None,
+    }
+}
+
+/// The opening-state keys a link written with format version `v` did not know about: they read
+/// as their older opening value, so the link opens exactly as it did when it was made.
+pub fn newer_than(id: &str, v: u32) -> Vec<&'static str> {
+    added_in(id).iter().filter(|(since, _)| *since > v).flat_map(|(_, keys)| keys.iter().copied()).collect()
+}
+
+/// For a link of version `v`: each newer opening key with the value it opened with then (`None`
+/// = the plain `ParamDef` default).
+pub fn older_values(id: &str, v: u32) -> Vec<(&'static str, Option<Value>)> {
+    newer_than(id, v).into_iter().map(|k| (k, was_overridden(id, k))).collect()
+}
+
+/// Opening-state keys added after share links v1 (kept for callers of the round-5 API).
+pub fn since_v1(id: &str) -> Vec<&'static str> {
+    newer_than(id, 1)
 }
 
 #[cfg(test)]
@@ -84,7 +131,9 @@ mod tests {
     #[test]
     fn representative_opening_states() {
         assert_eq!(start("volume-reading").s("mag_show"), "Instrument and magnifier");
-        assert_eq!(start("length-reading").s("mag_show"), "Ruler and magnifiers");
+        assert_eq!(start("length-reading").s("mag_show"), "Ruler and one magnifier above");
+        assert_eq!(super::older_values("length-reading", 2), vec![("mag_show", Some(Value::S("Ruler and magnifiers".into())))]);
+        assert_eq!(super::older_values("kite", 2), vec![("flip", None)]);
         assert_eq!(start("mass-spectrum").s("element"), "Magnesium");
         assert!(!start("mass-spectrum").b("relative"), "mass spectrum opens on percent abundance");
         assert_eq!(start("orbital-diagram").s("element"), "8 O - Oxygen");
@@ -114,6 +163,53 @@ mod tests {
         assert!(!svg.contains("<polygon"), "no arrows on the blank diagram");
         for id in ["prism", "cylinder", "pyramid", "cone", "sphere"] {
             assert_eq!(start(id).s("fill"), "White", "{id}");
+        }
+    }
+
+    /// Round-6/P4 opening states (the reference's first screen), each listed under the link
+    /// version that introduced it, and every overridden key is versioned or was there at v1.
+    #[test]
+    fn p4_opening_states_and_versions() {
+        assert!(!start("orbital-diagram").b("config"), "no configuration line");
+        assert!(!start("angles").b("letters"), "no point letters");
+        let d = registry().into_iter().find(|d| d.id == "ph-reading").unwrap();
+        let open = (d.render)(&start_params(&d));
+        assert!(open.contains(">ON/OFF<") && open.contains(">CAL<") && !open.contains(">MODE<"), "bench meter: {open}");
+        assert!(open.contains(">4.62<"));
+        let plain = (d.render)(&Params::defaults(&(d.params)()));
+        assert!(plain.contains(">MODE<"), "saved meters keep the hanging probe");
+        let mut one = start_params(&d);
+        one.set_s("places", "0.0");
+        assert!((d.render)(&one).contains(">4.6<"));
+        assert!(start("kite").b("flip"), "kite opens mirrored like the reference");
+        assert_eq!(start("kite").s("fill"), "#ffffff");
+        let vd = start("volume-by-displacement");
+        assert_eq!((vd.s("marble_color"), vd.b("arrow")), ("Gray", false));
+        let d = registry().into_iter().find(|d| d.id == "volume-by-displacement").unwrap();
+        let open = (d.render)(&start_params(&d));
+        let plain = (d.render)(&Params::defaults(&(d.params)()));
+        assert!(open.contains("#9a9a9a") && !open.contains("#8fb4d6"), "grey marbles");
+        assert!(plain.contains("#8fb4d6"), "saved figures keep blue marbles");
+        assert!(open.matches("<polygon").count() < plain.matches("<polygon").count(), "no arrow head");
+        let pl = start("parallel-lines");
+        assert_eq!((pl.s("marked"), pl.s("unknown")), ("", ""));
+        let d = registry().into_iter().find(|d| d.id == "parallel-lines").unwrap();
+        let svg = (d.render)(&start_params(&d));
+        assert!(!svg.contains("65\u{b0}") && !svg.contains(">x<"), "no angle marks: {svg}");
+        assert_eq!(super::newer_than("parallel-lines", 2), vec!["marked", "unknown"]);
+        assert!(super::newer_than("parallel-lines", 3).is_empty());
+        assert_eq!(super::newer_than("vector-diagram", 1), vec!["res_style"]);
+        assert!(super::newer_than("vector-diagram", 2).is_empty());
+        assert_eq!(super::since_v1("orbital-diagram"), vec!["config"]);
+        for (_, keys) in super::added_in("angles") {
+            for k in *keys {
+                assert!(super::overrides("angles").iter().any(|(o, _)| o == k), "{k}");
+            }
+        }
+        for d in registry() {
+            for (v, _) in super::added_in(d.id) {
+                assert!((2..=crate::figures::share::VERSION).contains(v), "{}", d.id);
+            }
         }
     }
 

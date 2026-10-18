@@ -18,6 +18,7 @@ use crate::figures::{self, FigureDef, Kind, ParamDef, Params, Subject, Value};
 use crate::model::{FigureSpec, Id, Question};
 use crate::theme;
 
+mod cards_panel;
 mod composite_canvas;
 mod pedigree_panel;
 
@@ -384,6 +385,9 @@ pub struct Workspace {
     examples_open: bool,
     /// Pedigree: the person selected for the Family card's person panel (index in drawing order).
     ped_sel: Option<usize>,
+    /// Particle diagram: kinds whose card stays on show although they draw nothing (just added,
+    /// or set to none) until removed.
+    kinds_keep: [bool; 4],
     /// Preview zoom: the scale the shown texture was rasterized at, the scale the last layout
     /// asked for, the inked part of the figure (SVG units) and the part of the canvas on show.
     raster: f32,
@@ -530,14 +534,11 @@ impl Workspace {
         let (i, def) = find_def(&id).ok_or_else(|| format!("this link is for a figure this version doesn't have (\"{id}\")"))?;
         let mut params: BTreeMap<String, serde_json::Value> =
             figures::start_params(def).0.iter().map(|(k, v)| (k.clone(), value_to_json(v))).collect();
-        // a v1 link was made against the older opening state: its newer keys read as defaults
-        let v1 = figures::share::version(text) < 2;
-        if v1 {
-            let defs = (def.params)();
-            for k in figures::start::since_v1(&id) {
-                if let Some(d) = defs.iter().find(|d| d.key == *k) {
-                    params.insert(k.to_string(), value_to_json(&d.default));
-                }
+        // an older link was made against an older opening state: its newer keys read as defaults
+        let defs = (def.params)();
+        for (k, was) in figures::start::older_values(&id, figures::share::version(text)) {
+            if let Some(d) = defs.iter().find(|d| d.key == k) {
+                params.insert(k.to_string(), value_to_json(&was.unwrap_or_else(|| d.default.clone())));
             }
         }
         params.extend(changed);
@@ -572,6 +573,7 @@ impl Workspace {
         }
         self.comp = Default::default();
         self.ped_sel = None;
+        self.kinds_keep = [false; 4];
         self.editing = None;
         self.shown = None;
         self.view = None;
@@ -1371,7 +1373,10 @@ impl Workspace {
             match h.shape {
                 Shape::Zone => {
                     if hot {
-                        painter.rect(hit, 4.0, theme::accent_faded().gamma_multiply(0.6), Stroke::new(1.5, acc), egui::StrokeKind::Inside);
+                        // a zone over much of the figure (a plot area, a particle box) gets only a
+                        // light outline: a fill there would wash the whole figure out
+                        let (fill, stroke) = zone_hover_style(hit.area(), img.area(), acc);
+                        painter.rect(hit, 4.0, fill, stroke, egui::StrokeKind::Inside);
                     }
                 }
                 sh => {
@@ -1461,7 +1466,8 @@ impl Workspace {
                     }
                     // the Classic setups dropdown goes in the figure's first card: an action-chips
                     // card ("Family") when there is one, else the first section
-                    let chips = figures::chips_for(def.id);
+                    // free-body / vector / particle chips sit inside their item cards
+                    let chips = figures::chips_for(def.id).filter(|_| !figures::cards::embeds_chips(def.id));
                     let classic_in_chips = chips.as_ref().is_some_and(|c| c.count_key.is_empty());
                     if let Some(card) = chips {
                         self.chips_card(ui, def.id, &pdefs, &card);
@@ -1486,12 +1492,15 @@ impl Workspace {
                         }
                         let id = ui.make_persistent_id(("fig_sec", def.id, sec.title.as_str()));
                         let relevant: Vec<usize> = sec.items.iter().copied().filter(|&i| figures::param_relevant(def.id, pdefs[i].key, &self.params)).collect();
-                        let summary = section_summary(&pdefs, &self.params, &relevant);
+                        let summary = sec.items.iter().find_map(|&i| figures::cards::summary(def.id, pdefs[i].key, &self.params)).unwrap_or_else(|| section_summary(&pdefs, &self.params, &relevant));
                         let mut reset = false;
                         let (mut reset_labels, mut straighten) = (false, false);
-                        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, si_ < 2)
+                        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, si_ < open_sections(def.id))
                             .show_header(ui, |ui| {
                                 ui.vertical(|ui| {
+                                    // leave room for Reset on the right: a long summary wraps
+                                    // short of it instead of running underneath
+                                    ui.set_max_width((ui.available_width() - SECTION_RESET_W).max(80.0));
                                     ui.label(theme::strong(sec.title.as_str()).size(13.0));
                                     if !summary.is_empty() {
                                         ui.label(theme::muted(summary).size(11.0));
@@ -1512,15 +1521,22 @@ impl Workspace {
                                 }
                                 for &i in &shown {
                                     if pdefs[i].key == figures::labels::KEY {
-                                        // the offsets param is never typed: dragging sets it, this clears it
-                                        if figures::labels::any_moved(&self.params)
-                                            && ui.button(RichText::new("Reset label positions").size(12.0)).on_hover_text("Put every dragged label back in its own place").clicked()
-                                        {
+                                        // the offsets param is never typed: dragging sets it, this clears it. Always
+                                        // shown (as the reference does), greyed out until a label has moved.
+                                        let moved = figures::labels::any_moved(&self.params);
+                                        let b = ui.add_enabled(moved, egui::Button::new(RichText::new("Reset label positions").size(12.0)));
+                                        let b = if moved { b.on_hover_text("Put every dragged label back in its own place") } else { b.on_disabled_hover_text("Drag a label on the figure to move it; this puts them back") };
+                                        if b.clicked() {
                                             reset_labels = true;
                                         }
                                         continue;
                                     }
+                                    if self.card_control(ui, def.id, pdefs[i].key, &pdefs) {
+                                        ui.add_space(6.0);
+                                        continue;
+                                    }
                                     param_control(ui, &pdefs[i], &mut self.params);
+                                    self.card_after(ui, def.id, pdefs[i].key, &pdefs);
                                     if pdefs[i].key == "rotate"
                                         && figures::labels::turnable(def.id)
                                         && ui.add_enabled(self.params.f("rotate") != 0.0, Button::new(RichText::new("Straighten").size(12.0))).on_hover_text("Turn the figure back to 0°").clicked()
@@ -1552,6 +1568,8 @@ impl Workspace {
                                 let k = pdefs[i].key;
                                 self.params.0.insert(k.to_string(), start.0.get(k).cloned().unwrap_or_else(|| pdefs[i].default.clone()));
                             }
+                            let anchors: Vec<&str> = sec.items.iter().map(|&i| pdefs[i].key).collect();
+                            self.reset_card_keys(def.id, &anchors, &pdefs, &start);
                         }
                         ui.separator();
                     }
@@ -1934,6 +1952,28 @@ fn import_any(bytes: &[u8]) -> Result<(Option<String>, Vec<u8>), String> {
 }
 
 // ---------- widgets ----------
+
+/// Width kept free for a section header's Reset button.
+const SECTION_RESET_W: f32 = 44.0;
+
+/// How many of a figure's generic sections open expanded. The first two, except under the
+/// pedigree's Family card, where the reference keeps Symbols, Labels and Chart title collapsed.
+fn open_sections(fig: &str) -> usize {
+    match fig {
+        "pedigree" => 0,
+        _ => 2,
+    }
+}
+
+/// Hover look of a click/scroll zone covering `zone` of the preview's `img` area (both in
+/// points²): small zones are tinted, large ones (over a quarter of the figure) only outlined.
+fn zone_hover_style(zone: f32, img: f32, acc: egui::Color32) -> (egui::Color32, Stroke) {
+    if img > 0.0 && zone > img * 0.25 {
+        (egui::Color32::TRANSPARENT, Stroke::new(1.0, acc.gamma_multiply(0.55)))
+    } else {
+        (theme::accent_faded().gamma_multiply(0.6), Stroke::new(1.5, acc))
+    }
+}
 
 /// The figure's FAQ at the bottom of its panel: one collapsed "FAQ" header holding a collapsed
 /// header per question, its answer underneath. Nothing for a figure without one.
@@ -2950,6 +2990,41 @@ mod tests {
         comp_frame(ctx, ws, vec![]);
     }
 
+    /// Label tool popovers keep clear of the Turn and zoom bars at the bottom right, and an
+    /// interior angle's popover opens outside the shape instead of over it.
+    #[test]
+    fn composite_popovers_keep_clear_of_the_bars_and_the_shape() {
+        let house = "rect 0 0 6 4; tri 0 4 6 4 3 7";
+        let (ctx, mut ws) = comp_ws(house);
+        ws.comp.tool = composite_canvas::Tool::Label;
+        comp_frame(&ctx, &mut ws, vec![]);
+        let area = |ctx: &egui::Context, id: &str| ctx.memory(|m| m.area_rect(egui::Id::new(id)));
+        for corner in [(6.0, 0.0), (0.0, 0.0)] {
+            ws.comp.angle = None;
+            comp_click(&ctx, &mut ws, corner);
+            assert_eq!(ws.comp.corner, Some(corner), "corner popover open");
+            for _ in 0..3 {
+                comp_frame(&ctx, &mut ws, vec![]);
+            }
+            let pop = area(&ctx, "comp_corner").expect("corner popover");
+            for bar in ["comp_turn", "comp_zoom"] {
+                let b = area(&ctx, bar).unwrap_or_else(|| panic!("{bar} drawn"));
+                assert!(!pop.intersects(b), "{corner:?}: popover {pop:?} covers {bar} {b:?}");
+            }
+            ws.comp.corner = None;
+        }
+        // the right shoulder's 135° interior angle: popover outside the shape
+        ws.comp.angle = Some(((6.0, 4.0), false));
+        for _ in 0..3 {
+            comp_frame(&ctx, &mut ws, vec![]);
+        }
+        let pop = area(&ctx, "comp_angle").expect("angle popover");
+        let shoulder = ws.comp.to_screen((6.0, 4.0));
+        let inside = ws.comp.to_screen((3.0, 3.0));
+        assert!(pop.left() >= shoulder.x - 2.0 || !pop.contains(inside), "angle popover {pop:?} over the shape (corner {shoulder:?})");
+        assert!(!pop.contains(inside));
+    }
+
     #[test]
     fn composite_canvas_moves_a_piece_and_undo_restores_it() {
         let (ctx, mut ws) = comp_ws("rect 0 0 4 3; dim 0 0 4 0");
@@ -3192,7 +3267,7 @@ mod tests {
         ws.select(i);
         assert_eq!(ws.params.s("res_style"), "Dashed", "opens dashed");
         let link = ws.share_link().unwrap();
-        assert!(link.ends_with("v=2"), "{link}");
+        assert!(link.ends_with(&format!("v={}", figures::share::VERSION)), "{link}");
         ws.apply_link(&link).unwrap();
         assert_eq!(ws.params.s("res_style"), "Dashed");
         // a v1 link: bare, or with only other params
@@ -3205,6 +3280,52 @@ mod tests {
         ws.apply_link(&v1d).unwrap();
         assert_eq!(ws.params.s("res_style"), "Left off", "what the sender set still wins");
         let _ = def;
+    }
+
+    /// Links written before the P4 opening states (v2, and v1) open exactly as they did: the new
+    /// opening keys read as the plain defaults. Links made now (v3) keep the new opening state.
+    #[test]
+    fn share_links_v2_keep_their_opening_state() {
+        let cases: [(&str, &str); 8] = [
+            ("length-reading", "mag_show"),
+            ("orbital-diagram", "config"),
+            ("angles", "letters"),
+            ("parallel-lines", "marked"),
+            ("parallel-lines", "unknown"),
+            ("volume-by-displacement", "arrow"),
+            ("ph-reading", "meter"),
+            ("kite", "flip"),
+        ];
+        let mut ws = Workspace::new(false);
+        for (id, key) in cases {
+            let (i, def) = find_def(id).unwrap();
+            let mut plain = Params::defaults(&(def.params)());
+            for (k, was) in figures::start::older_values(id, 2) {
+                if let Some(v) = was {
+                    plain.0.insert(k.to_string(), v);
+                }
+            }
+            let start = figures::start_params(def);
+            assert_ne!(plain.0.get(key), start.0.get(key), "{id}.{key} is a new opening state");
+            ws.select(i);
+            let now = ws.share_link().unwrap();
+            ws.apply_link(&now).unwrap();
+            assert_eq!(ws.params.0.get(key), start.0.get(key), "{id}: a v3 link keeps the opening {key}");
+            for old in [format!("queshion://figure/{id}?v=2"), format!("queshion://figure/{id}")] {
+                ws.apply_link(&old).unwrap();
+                assert_eq!(ws.params.0.get(key), plain.0.get(key), "{id}: {old} keeps the old {key}");
+                // the opening state of round 6: today's, with the P4 keys at their plain defaults
+                let mut was = start.clone();
+                for k in figures::start::newer_than(id, 2) {
+                    was.0.insert(k.to_string(), plain.0[k].clone());
+                }
+                assert_eq!(format!("{:?}", ws.params.0), format!("{:?}", was.0), "{id}: {old} opens as before");
+            }
+            // what a v2 sender changed still wins
+            let v2 = format!("queshion://figure/{id}?p={}&v=2", figures::share::b64url_encode(format!("{{\"title\":\"T\",\"{key}\":{}}}", value_to_json(start.0.get(key).unwrap())).as_bytes()));
+            ws.apply_link(&v2).unwrap();
+            assert_eq!(ws.params.0.get(key), start.0.get(key), "{id}: sender's {key} wins");
+        }
     }
 
     /// The composite shape opens on a blank canvas (its Start with screen), while its opening
@@ -3396,5 +3517,307 @@ mod tests {
             ws.ped_sel = Some(i);
             comp_frame(&ctx, &mut ws, vec![]);
         }
+    }
+
+    // ---------- figure-specific cards (figures::cards / cards_panel) ----------
+
+    /// A frame on a tall screen, so the whole side panel is laid out and clickable.
+    fn tall_frame(ctx: &egui::Context, ws: &mut Workspace, events: Vec<egui::Event>) -> egui::FullOutput {
+        let raw = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1400.0, 3600.0))), events, ..Default::default() };
+        let mut out = ctx.run_ui(raw, |ui| {
+            let _ = ws.show(ui);
+        });
+        out.textures_delta.clear();
+        out
+    }
+
+    fn open_tall(id: &str) -> (egui::Context, Workspace) {
+        let ctx = egui::Context::default();
+        theme::setup(&ctx);
+        ctx.enable_accesskit();
+        let mut ws = Workspace::new(false);
+        ws.select(find_def(id).unwrap().0);
+        for _ in 0..3 {
+            tall_frame(&ctx, &mut ws, vec![]);
+        }
+        (ctx, ws)
+    }
+
+    /// Clicks the `n`th (top to bottom) side-panel widget named `label`, as a screen reader finds it.
+    fn click_nth(ctx: &egui::Context, ws: &mut Workspace, label: &str, n: usize) {
+        let out = tall_frame(ctx, ws, vec![]);
+        let tree = out.platform_output.accesskit_update.expect("accesskit tree");
+        let mut hits: Vec<_> = tree.nodes.iter().filter(|(_, nd)| nd.label().is_some_and(|l| l == label)).filter_map(|(_, nd)| nd.bounds()).filter(|b| b.x0 < 700.0).collect();
+        hits.sort_by(|a, b| a.y0.total_cmp(&b.y0));
+        let b = hits.get(n).unwrap_or_else(|| panic!("no widget #{n} named {label:?} ({} found)", hits.len()));
+        let p = egui::pos2(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32);
+        tall_frame(ctx, ws, vec![egui::Event::PointerMoved(p)]);
+        let mut ev = btn(p, true);
+        ev.extend(btn(p, false));
+        tall_frame(ctx, ws, ev);
+        tall_frame(ctx, ws, vec![]);
+    }
+
+    /// Side-panel text labels (section titles, control captions) reading exactly `text`.
+    fn count_text(ctx: &egui::Context, ws: &mut Workspace, text: &str) -> usize {
+        let out = tall_frame(ctx, ws, vec![]);
+        let tree = out.platform_output.accesskit_update.expect("accesskit tree");
+        tree.nodes.iter().filter(|(_, nd)| nd.role() == egui::accesskit::Role::Label && nd.value().is_some_and(|v| v == text)).filter(|(_, nd)| nd.bounds().is_some_and(|b| b.x0 < 700.0)).count()
+    }
+
+    /// Opens the side-panel section titled `title` by clicking its arrow (left of the title).
+    fn open_section(ctx: &egui::Context, ws: &mut Workspace, title: &str) {
+        let out = tall_frame(ctx, ws, vec![]);
+        let tree = out.platform_output.accesskit_update.expect("accesskit tree");
+        let b = tree.nodes.iter().filter(|(_, nd)| nd.role() == egui::accesskit::Role::Label && nd.value().is_some_and(|v| v == title)).filter_map(|(_, nd)| nd.bounds()).find(|b| b.x0 < 700.0).unwrap_or_else(|| panic!("no section {title:?}"));
+        // the arrow: the unlabelled widget just left of the title, a little lower
+        let icon = tree.nodes.iter().filter(|(_, nd)| nd.role() == egui::accesskit::Role::Unknown).filter_map(|(_, nd)| nd.bounds()).filter(|r| r.x1 <= b.x0 + 1.0 && r.y0 >= b.y0 - 2.0 && r.y0 < b.y1 + 20.0).min_by(|a, c| a.y0.total_cmp(&c.y0)).expect("section arrow");
+        let p = egui::pos2(((icon.x0 + icon.x1) / 2.0) as f32, ((icon.y0 + icon.y1) / 2.0) as f32);
+        tall_frame(ctx, ws, vec![egui::Event::PointerMoved(p)]);
+        let mut ev = btn(p, true);
+        ev.extend(btn(p, false));
+        tall_frame(ctx, ws, ev);
+        for _ in 0..12 {
+            tall_frame(ctx, ws, vec![]);
+        }
+    }
+
+    fn count_named(ctx: &egui::Context, ws: &mut Workspace, label: &str) -> usize {
+        let out = tall_frame(ctx, ws, vec![]);
+        let tree = out.platform_output.accesskit_update.expect("accesskit tree");
+        tree.nodes.iter().filter(|(_, nd)| nd.label().is_some_and(|l| l == label)).filter(|(_, nd)| nd.bounds().is_some_and(|b| b.x0 < 700.0)).count()
+    }
+
+    /// "Reset label positions" is always in the Labels section, as on the reference: greyed out
+    /// until a label has been dragged, then it puts the labels back.
+    #[test]
+    fn reset_label_positions_is_always_shown() {
+        let (ctx, mut ws) = open_tall("triangle");
+        open_section(&ctx, &mut ws, "Labels");
+        let state = |ctx: &egui::Context, ws: &mut Workspace| {
+            let out = tall_frame(ctx, ws, vec![]);
+            let tree = out.platform_output.accesskit_update.expect("accesskit tree");
+            let n: Vec<bool> = tree.nodes.iter().filter(|(_, nd)| nd.label().is_some_and(|l| l == "Reset label positions")).map(|(_, nd)| nd.is_disabled()).collect();
+            n
+        };
+        assert_eq!(state(&ctx, &mut ws), vec![true], "shown and disabled with nothing moved");
+        let mut p = ws.params.clone();
+        p.set_s(figures::labels::KEY, "s0:10,5");
+        assert!(figures::labels::any_moved(&p));
+        ws.set_params_with_history(p);
+        assert_eq!(state(&ctx, &mut ws), vec![false], "enabled once a label moved");
+        click_nth(&ctx, &mut ws, "Reset label positions", 0);
+        assert!(!figures::labels::any_moved(&ws.params), "labels put back");
+    }
+
+    /// Under the pedigree's Family card the generic sections start collapsed (reference);
+    /// other figures still open their first two sections.
+    #[test]
+    fn pedigree_sections_start_collapsed() {
+        let (ctx, mut ws) = open_tall("pedigree");
+        assert_eq!(count_text(&ctx, &mut ws, "Symbols"), 1, "the header is there");
+        assert_eq!(count_text(&ctx, &mut ws, "Carriers"), 0, "Symbols starts collapsed");
+        assert_eq!(count_text(&ctx, &mut ws, "Key"), 0, "Labels starts collapsed");
+        open_section(&ctx, &mut ws, "Symbols");
+        assert!(count_text(&ctx, &mut ws, "Carriers") >= 1, "opens on a click");
+        assert_eq!((open_sections("pedigree"), open_sections("pulley")), (0, 2));
+    }
+
+    /// A section header's summary wraps short of its Reset button instead of running under it
+    /// (motion-graphs segment summaries are long).
+    #[test]
+    fn section_summaries_never_run_under_reset() {
+        for id in ["motion-graphs", "pulley", "free-body-diagram"] {
+            let (ctx, mut ws) = open_tall(id);
+            let out = tall_frame(&ctx, &mut ws, vec![]);
+            let tree = out.platform_output.accesskit_update.expect("accesskit tree");
+            let resets: Vec<_> = tree.nodes.iter().filter(|(_, nd)| nd.label().is_some_and(|l| l == "Reset")).filter_map(|(_, nd)| nd.bounds()).filter(|b| b.x0 < 700.0).collect();
+            assert!(!resets.is_empty(), "{id}");
+            let texts: Vec<_> = tree.nodes.iter().filter(|(_, nd)| nd.role() == egui::accesskit::Role::Label).filter_map(|(_, nd)| nd.bounds()).filter(|b| b.x0 < 700.0).collect();
+            for r in &resets {
+                for t in &texts {
+                    let overlap = t.x1 > r.x0 + 1.0 && t.x0 < r.x1 - 1.0 && t.y1 > r.y0 + 1.0 && t.y0 < r.y1 - 1.0;
+                    assert!(!overlap, "{id}: text {t:?} under Reset {r:?}");
+                }
+            }
+        }
+    }
+
+    /// Hovering a zone that covers much of the figure (PES plot, particle box) only outlines it;
+    /// small zones keep the tint.
+    #[test]
+    fn large_zones_are_outlined_not_tinted() {
+        let acc = theme::accent_col();
+        let (fill, _) = zone_hover_style(900.0, 1000.0, acc);
+        assert_eq!(fill, egui::Color32::TRANSPARENT);
+        let (fill, stroke) = zone_hover_style(50.0, 1000.0, acc);
+        assert_ne!(fill, egui::Color32::TRANSPARENT);
+        assert_eq!(stroke.width, 1.5);
+    }
+
+    /// Gel: the Lanes card shows one card per lane; adding, moving and removing lanes rewrite the
+    /// lanes text (a classic setup is copied in first), each as one undo step.
+    #[test]
+    fn gel_lane_cards_in_the_panel() {
+        use crate::figures::biology::gel;
+        let (ctx, mut ws) = open_tall("gel-electrophoresis");
+        assert_eq!(gel::current_setup(&ws.params), Some("Crime scene"));
+        assert_eq!(count_named(&ctx, &mut ws, "←"), 5, "one card per lane");
+        let before = ws.params.clone();
+        click_nth(&ctx, &mut ws, "+ Ladder", 0);
+        let lanes = gel::lane_cards(&ws.params);
+        assert_eq!(lanes.len(), 6);
+        assert_eq!(lanes[5], gel::LaneCard::ladder());
+        assert_eq!(gel::current_setup(&ws.params), None, "editing a setup's lanes copies them into the text");
+        click_nth(&ctx, &mut ws, "→", 0); // Ladder moves right of Crime scene
+        assert_eq!(gel::lane_cards(&ws.params)[1].label, "Ladder");
+        click_nth(&ctx, &mut ws, "×", 0); // remove the first lane (now Crime scene)
+        let lanes = gel::lane_cards(&ws.params);
+        assert_eq!(lanes.iter().map(|l| l.label.as_str()).collect::<Vec<_>>(), ["Ladder", "Suspect 1", "Suspect 2", "Suspect 3", "Ladder"]);
+        for _ in 0..3 {
+            ws.step_history(true);
+        }
+        assert_eq!(format!("{:?}", ws.params.0), format!("{:?}", before.0), "three undo steps restore the setup");
+    }
+
+    /// Typing into a lane's label keeps spaces as typed although the lanes text is tidied on
+    /// every keystroke (the box keeps its own buffer while focused).
+    #[test]
+    fn lane_label_typing_keeps_spaces() {
+        use crate::figures::biology::gel;
+        let (ctx, mut ws) = open_tall("gel-electrophoresis");
+        let mut p = ws.params.clone();
+        p.set_s("lanes", "Ladder: ladder 1kb | Mom: 800, 500");
+        ws.set_params_with_history(p);
+        let out = tall_frame(&ctx, &mut ws, vec![]);
+        let tree = out.platform_output.accesskit_update.expect("accesskit tree");
+        let b = tree.nodes.iter().filter(|(_, nd)| nd.value().is_some_and(|v| v == "Mom")).filter_map(|(_, nd)| nd.bounds()).next().expect("Mom's label box");
+        let at = egui::pos2(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32);
+        tall_frame(&ctx, &mut ws, vec![egui::Event::PointerMoved(at)]);
+        let mut ev = btn(at, true);
+        ev.extend(btn(at, false));
+        tall_frame(&ctx, &mut ws, ev);
+        tall_frame(&ctx, &mut ws, vec![egui::Event::Key { key: egui::Key::End, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }]);
+        for t in [" ", "B", " ", "2"] {
+            tall_frame(&ctx, &mut ws, vec![egui::Event::Text(t.into())]);
+        }
+        assert_eq!(gel::lane_cards(&ws.params)[1].label, "Mom B 2");
+    }
+
+    /// Free-body diagram: per-force cards with quick directions and delete-any; the Motion card
+    /// turns velocity and acceleration on with their own directions.
+    #[test]
+    fn force_cards_in_the_panel() {
+        let (ctx, mut ws) = open_tall("free-body-diagram");
+        assert_eq!(ws.params.i("n"), 2);
+        assert_eq!(count_named(&ctx, &mut ws, "Up"), 2);
+        click_nth(&ctx, &mut ws, "Left", 0);
+        assert_eq!(ws.params.f("f1_ang"), 180.0);
+        click_nth(&ctx, &mut ws, "+ Friction", 0);
+        assert_eq!((ws.params.i("n"), ws.params.s("f3_lab")), (3, "F_f"));
+        click_nth(&ctx, &mut ws, "×", 0); // delete force 1: the others move up
+        assert_eq!((ws.params.i("n"), ws.params.s("f1_lab"), ws.params.s("f2_lab")), (2, "F_N", "F_f"));
+        ws.step_history(true);
+        assert_eq!((ws.params.i("n"), ws.params.s("f1_lab")), (3, "F_g"));
+        // Motion is the third section (collapsed): open it and tick both
+        let id = egui::Id::new("fig_sec_probe");
+        let _ = id;
+        let secs = figures::layout::sections("free-body-diagram", &(reg()[ws.sel.unwrap()].params)(), Some(3));
+        assert_eq!(secs.iter().map(|s| s.title.as_str()).collect::<Vec<_>>(), ["Body", "Forces", "Motion", "Figure"]);
+        let mut p = ws.params.clone();
+        p.set_s("motion", "Both");
+        ws.set_params_with_history(p);
+        tall_frame(&ctx, &mut ws, vec![]);
+        assert_eq!(figures::cards::summary("free-body-diagram", "motion", &ws.params).as_deref(), Some("velocity and acceleration"));
+    }
+
+    /// Vector diagram: cards with remove, reorder and "Add a vector".
+    #[test]
+    fn vector_cards_in_the_panel() {
+        let (ctx, mut ws) = open_tall("vector-diagram");
+        click_nth(&ctx, &mut ws, "+ Add a vector", 0);
+        assert_eq!(ws.params.i("n"), 3);
+        click_nth(&ctx, &mut ws, "↓", 0); // A after B
+        assert_eq!((ws.params.s("v1_lab"), ws.params.s("v2_lab")), ("B", "A"));
+        click_nth(&ctx, &mut ws, "×", 1); // remove the second (A)
+        assert_eq!((ws.params.i("n"), ws.params.s("v1_lab"), ws.params.s("v2_lab")), (2, "B", "C"));
+    }
+
+    /// Population growth: readouts under the Population card, "Fit now" catches the axes up and
+    /// unticking "Fit the axes" keeps them where they are.
+    #[test]
+    fn growth_readout_and_fit_now_in_the_panel() {
+        let (ctx, mut ws) = open_tall("population-growth");
+        let def = &reg()[ws.sel.unwrap()];
+        let fitted = (def.render)(&ws.params);
+        click_nth(&ctx, &mut ws, "Fit the axes as these change", 0);
+        assert!(!ws.params.b("fit"));
+        assert_eq!((def.render)(&ws.params), fitted, "unticking keeps the axes");
+        let mut p = ws.params.clone();
+        p.set_f("k", 3000.0);
+        ws.set_params_with_history(p);
+        click_nth(&ctx, &mut ws, "Fit now", 0);
+        assert_eq!((ws.params.f("y_max"), ws.params.f("y_step")), (3500.0, 500.0));
+        assert!(!ws.params.b("fit"));
+        let lines = figures::cards::readout("population-growth", &ws.params);
+        assert!(lines[0].starts_with("Inflection point: N = K/2 = 1500"), "{lines:?}");
+    }
+
+    /// Line spectrum: strip cards with element select, Edit lines, move and "+ Mixture"; an old
+    /// figure (ticked elements) moves into the strip list on the first edit.
+    #[test]
+    fn strip_cards_in_the_panel() {
+        use crate::figures::chemistry::spectra::{strip_cards, StripCard as C};
+        let (ctx, mut ws) = open_tall("line-spectrum");
+        assert_eq!(count_named(&ctx, &mut ws, "Edit lines"), 3);
+        click_nth(&ctx, &mut ws, "Edit lines", 0);
+        assert!(matches!(&strip_cards(&ws.params)[0], C::Own { name, lines } if name == "Hydrogen" && lines.starts_with("410.2")));
+        click_nth(&ctx, &mut ws, "+ Mixture", 0);
+        assert_eq!(strip_cards(&ws.params).len(), 5);
+        click_nth(&ctx, &mut ws, "↑", 1); // Helium above the edited hydrogen (strip 1's own ↑)
+        assert_eq!(strip_cards(&ws.params)[0], C::Element("Helium".into()));
+        // an old figure
+        let def = &reg()[ws.sel.unwrap()];
+        let mut old = Params::defaults(&(def.params)());
+        old.set_b("neon", true);
+        let before = (def.render)(&old);
+        ws.set_params_with_history(old);
+        tall_frame(&ctx, &mut ws, vec![]);
+        assert_eq!((def.render)(&ws.params), before, "showing the cards changes nothing");
+        assert!(ws.params.s("strips").is_empty());
+        click_nth(&ctx, &mut ws, "+ Element", 0);
+        assert_eq!(ws.params.s("strips"), "Hydrogen; Neon; Helium");
+    }
+
+    /// Particle diagram: one card per kind, "+ Add a kind", remove moves later kinds up.
+    #[test]
+    fn particle_kind_cards_in_the_panel() {
+        use crate::figures::chemistry::atoms;
+        let (ctx, mut ws) = open_tall("particle-diagram");
+        assert_eq!(count_named(&ctx, &mut ws, "XL"), 2);
+        click_nth(&ctx, &mut ws, "+ Add a kind", 0);
+        assert!(atoms::kind_used(&ws.params, 2));
+        assert_eq!(count_named(&ctx, &mut ws, "XL"), 3);
+        click_nth(&ctx, &mut ws, "Pair", 2);
+        assert_eq!(ws.params.s("c_shape"), "Pair");
+        assert_eq!(atoms::kind_noun(&ws.params, 2), "Molecule");
+        assert_eq!(count_named(&ctx, &mut ws, "XL"), 4, "a molecule has Center and Outer sizes");
+        click_nth(&ctx, &mut ws, "×", 0);
+        assert_eq!(ws.params.s("b_shape"), "Pair");
+        assert!(!atoms::kind_used(&ws.params, 2));
+        // a kind set to none keeps its card until removed
+        let mut p = ws.params.clone();
+        p.set_i("a_count", 0);
+        ws.params = p;
+        assert_eq!(count_named(&ctx, &mut ws, "XL"), 3);
+    }
+
+    /// Predator-prey: the readout follows the Predator and prey card.
+    #[test]
+    fn pp_readout_in_the_panel() {
+        let (ctx, mut ws) = open_tall("predator-prey");
+        let out = tall_frame(&ctx, &mut ws, vec![]);
+        let tree = out.platform_output.accesskit_update.expect("accesskit tree");
+        assert!(tree.nodes.iter().any(|(_, nd)| nd.label().is_some_and(|l| l.starts_with("A cycle every 10 years"))) || tree.nodes.iter().any(|(_, nd)| nd.value().is_some_and(|l| l.starts_with("A cycle every 10 years"))));
     }
 }

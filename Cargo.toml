@@ -21,7 +21,10 @@ equashion-math = { path = "../equaSHion/crates/math" }
 equashion-layout = { path = "../equaSHion/crates/layout", features = ["extra-fonts"] }
 equashion-render = { path = "../equaSHion/crates/render", features = ["raster", "extra-fonts"] }
 equashion-egui = { path = "../equaSHion/crates/egui" }
+equashion-font = { path = "../equaSHion/crates/font" }  # already in the tree via equashion-layout; its bundled STIX Two Math is the PDF's fallback face (src/fonts.rs)
 resvg = { version = "0.45", default-features = false, features = ["text", "system-fonts"] }
+ttf-parser = "0.25"  # already in the tree via resvg/fontdb; PDF font metrics + subsetting (src/fonts.rs)
+flate2 = "1"         # already in the tree via zip/png; FlateDecode for embedded PDF fonts
 
 [profile.release]
 strip = true

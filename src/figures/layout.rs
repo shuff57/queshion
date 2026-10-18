@@ -72,7 +72,7 @@ pub fn sections(fig: &str, defs: &[ParamDef], n_now: Option<i64>) -> Vec<Section
     owned.extend(super::card_keys(fig));
     let mut out = sections_all(fig, defs, n_now);
     for s in &mut out {
-        s.items.retain(|&i| !owned.contains(&defs[i].key));
+        s.items.retain(|&i| !owned.contains(&defs[i].key) && !super::cards::owns(fig, defs[i].key));
     }
     out.retain(|s| !s.items.is_empty());
     out
@@ -266,7 +266,7 @@ mod tests {
             let mut owned = super::super::measures_for(d.id).map(|c| c.keys()).unwrap_or_default();
             owned.extend(super::super::rows_for(d.id).map(|c| c.keys()).unwrap_or_default());
             owned.extend(super::super::card_keys(d.id));
-            seen.extend((0..defs.len()).filter(|&i| owned.contains(&defs[i].key)));
+            seen.extend((0..defs.len()).filter(|&i| owned.contains(&defs[i].key) || super::super::cards::owns(d.id, defs[i].key)));
             seen.sort();
             assert_eq!(seen, (0..defs.len()).collect::<Vec<_>>(), "{}", d.id);
             assert!(secs.len() <= 12, "{} has {} sections", d.id, secs.len());
