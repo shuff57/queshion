@@ -814,7 +814,7 @@ fn blocks_ui(ui: &mut Ui, rc: &mut RichCtx, blocks: &[crate::richtext::Node], av
             }
             Block::Heading(level, line) => {
                 // bold, a step larger per level (1 is largest)
-                let scale = heading_scale(*level);
+                let scale = crate::richtext::heading_scale(*level);
                 let ho = Rich { size: size * scale, family: o.bold_family.clone(), lead: None, ..o.clone() };
                 let mut hc = RichCtx { o: &ho, ctx: rc.ctx.clone(), spans: std::mem::take(&mut rc.spans), next_span: rc.next_span, center: rc.center };
                 let mut e = Vec::new();
@@ -835,15 +835,6 @@ fn blocks_ui(ui: &mut Ui, rc: &mut RichCtx, blocks: &[crate::richtext::Node], av
         rc.center = false;
     }
     hit
-}
-
-/// Heading size relative to the body: level 1 largest.
-pub fn heading_scale(level: u8) -> f32 {
-    match level {
-        1 => 1.4,
-        2 => 1.2,
-        _ => 1.07,
-    }
 }
 
 // ---------- structured stems (richtext blocks) ----------

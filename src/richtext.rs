@@ -2056,3 +2056,12 @@ mod tests {
         assert!(uses_extensions("a\n# b") && !uses_extensions("a # b\n#x"));
     }
 }
+
+/// Heading size relative to the body: level 1 largest.
+pub fn heading_scale(level: u8) -> f32 {
+    match level {
+        1 => 1.4,
+        2 => 1.2,
+        _ => 1.07,
+    }
+}

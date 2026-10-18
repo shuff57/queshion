@@ -876,7 +876,7 @@ fn layout_nodes(nodes: &[Node], avail: f64, first_w: f64, body: f64, lead: f64) 
                 first = false;
             }
             Block::Heading(level, l) => {
-                let scale = crate::equation::heading_scale(*level) as f64;
+                let scale = crate::richtext::heading_scale(*level) as f64;
                 let hb = body * scale;
                 for (j, pl) in wrap_frags(&line_frags(l, true), fw(first, 0.0), avail, hb).into_iter().enumerate() {
                     let room = if j == 0 { fw(first, 0.0) } else { avail };
@@ -2667,7 +2667,7 @@ fn docx_nodes(b: &mut String, nodes: &[Node], ind: i64, body_sz: i64, max_tw: i6
             }
             Block::Table { header, rows } => docx_table(b, *header, rows, body_sz, max_tw, if center { None } else { Some(ind) }),
             Block::Heading(level, l) => {
-                let sz = (body_sz as f64 * crate::equation::heading_scale(*level) as f64).round() as i64;
+                let sz = (body_sz as f64 * crate::richtext::heading_scale(*level) as f64).round() as i64;
                 b.push_str(&format!("<w:p><w:pPr><w:keepNext/><w:spacing w:before=\"80\" w:after=\"40\"/><w:ind w:left=\"{ind}\"/>{jc}</w:pPr>"));
                 wline(b, l, sz, true);
                 b.push_str("</w:p>");

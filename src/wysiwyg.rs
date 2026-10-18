@@ -3666,7 +3666,7 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
                     let u = &bl.units[0];
                     let k = fidx(0);
                     let mut t = slice(stem, u.start..u.end);
-                    let hs = Sty { size: st.size * crate::equation::heading_scale(*level), family: st.bold.clone(), center: bl.center.is_some(), ..st.clone() };
+                    let hs = Sty { size: st.size * crate::richtext::heading_scale(*level), family: st.bold.clone(), center: bl.center.is_some(), ..st.clone() };
                     ui.add_space(st.size * 0.1);
                     let sh = show_unit(ui, ids[k], &mut t, width, &hs, "Heading", blank_base(u.start), rows_ro.as_deref(), false);
                     let rr = sh.out.response.response.rect;
