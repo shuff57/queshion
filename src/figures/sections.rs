@@ -230,9 +230,9 @@ static FIG_26: [RefSection; 6] = [
 ];
 
 static FIG_27: [RefSection; 3] = [
-    s("Symbols", &["carriers", "carrier_style"], "Carriers"),
-    s("Labels", &["gens", "size", "seed", "changes", "gen_labels", "numbers", "key", "genotypes", "allele_letter", "answer"], "Genotypes under each person"),
-    s("Chart title", &["inherit", "title", "symbol_size", "gen_prefix"], "Chart title"),
+    s("Symbols", &["carrier_style", "carriers", "symbol_size"], ""),
+    s("Labels", &["genotypes", "allele_letter", "gen_labels", "numbers", "key", "gen_prefix"], ""),
+    s("Chart title", &["title", "answer"], ""),
 ];
 
 static FIG_28: [RefSection; 4] = [

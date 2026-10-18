@@ -290,6 +290,16 @@ pub fn chips_for(id: &str) -> Option<ChipsCard> {
     physics::chips(id).or_else(|| math::chips(id)).or_else(|| chemistry::chips(id)).or_else(|| biology::chips(id))
 }
 
+/// Params a figure's own custom card takes over (drawn there, not in the generic sections): the
+/// pedigree's Family card owns the family setup, the "New pedigree" seed, the stored family and
+/// the old Overrides box (under its Advanced fold).
+pub fn card_keys(id: &str) -> &'static [&'static str] {
+    match id {
+        "pedigree" => &["inherit", "gens", "size", "seed", "changes", "family"],
+        _ => &[],
+    }
+}
+
 /// The Measures card of a figure, if it has one (math shapes and solids contribute).
 pub fn measures_for(id: &str) -> Option<MeasureCard> {
     math::measures(id)

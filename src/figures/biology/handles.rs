@@ -1,6 +1,6 @@
 //! Direct-manipulation handles for the biology figures (see `figures::interact`). Geometry is
 //! read back from each renderer's last layout so handles sit exactly on the drawn elements.
-use super::{gel, pedigree, pipette, popdyn, punnett};
+use super::{gel, pipette, popdyn, punnett};
 use crate::figures::interact::{Handle, Pt};
 use crate::figures::Params;
 
@@ -194,21 +194,10 @@ fn punnett_h(p: &Params, size: Pt) -> Vec<Handle> {
 
 // ---------------------------------------------------------------- pedigree
 
+/// Only the title here: clicking a person selects them for the Family card's person panel, which
+/// the workspace draws itself (`figuresui::pedigree_panel`) because selection is not a param.
 fn pedigree_h(p: &Params, size: Pt) -> Vec<Handle> {
-    let mut hs = vec![title_zone(size, if p.s("title").trim().is_empty() { 14.0 } else { 34.0 })];
-    let (_, _, whos) = pedigree::people_of(p);
-    let carriers = pedigree::carriers_visible(p);
-    for w in whos {
-        let (gi, num, st) = (w.gi, w.num, w.status);
-        let next = match st {
-            0 => 2,
-            2 if carriers => 1,
-            _ => 0,
-        };
-        let tip = format!("Click to cycle affected / unaffected{} (now {})", if carriers { " / carrier" } else { "" }, ["unaffected", "carrier", "affected"][st as usize]);
-        hs.push(Handle::zone((w.x, w.y), (w.r * 2.0 + 6.0, w.r * 2.0 + 6.0), &tip, move |q| pedigree::set_status(q, gi, num, next)));
-    }
-    hs
+    vec![title_zone(size, if p.s("title").trim().is_empty() { 14.0 } else { 34.0 })]
 }
 
 // ---------------------------------------------------------------- gel

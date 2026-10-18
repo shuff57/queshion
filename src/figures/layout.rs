@@ -69,6 +69,7 @@ pub fn sections(fig: &str, defs: &[ParamDef], n_now: Option<i64>) -> Vec<Section
     // Params a Measures card owns are drawn there, not in a section.
     let mut owned: Vec<&str> = super::measures_for(fig).map(|c| c.keys()).unwrap_or_default();
     owned.extend(super::rows_for(fig).map(|c| c.keys()).unwrap_or_default());
+    owned.extend(super::card_keys(fig));
     let mut out = sections_all(fig, defs, n_now);
     for s in &mut out {
         s.items.retain(|&i| !owned.contains(&defs[i].key));
@@ -264,6 +265,7 @@ mod tests {
             let mut seen: Vec<usize> = secs.iter().flat_map(|s| s.items.clone()).collect();
             let mut owned = super::super::measures_for(d.id).map(|c| c.keys()).unwrap_or_default();
             owned.extend(super::super::rows_for(d.id).map(|c| c.keys()).unwrap_or_default());
+            owned.extend(super::super::card_keys(d.id));
             seen.extend((0..defs.len()).filter(|&i| owned.contains(&defs[i].key)));
             seen.sort();
             assert_eq!(seen, (0..defs.len()).collect::<Vec<_>>(), "{}", d.id);

@@ -1,14 +1,23 @@
 //! Pedigree generator. A seeded random family is simulated under the chosen inheritance
 //! pattern (so affected/carrier status really follows Mendelian rules), laid out as a tree
-//! with roman-numeral generations, numbering and a key.
+//! with roman-numeral generations, numbering and a key. The family can then be changed by hand
+//! (`family.rs`: people added, removed and edited one at a time); the edited structure is stored
+//! in the `family` param and drawn instead of the generated one.
 //!
-//! "Changes" syntax: comma-separated `II-3=affected`, `III-2=carrier`, `II-1=unaffected`
-//! (person = generation roman numeral, dash, number counted left to right).
+//! Old "changes" syntax (the retired Overrides box, still honoured): comma-separated
+//! `II-3=affected`, `III-2=carrier`, `II-1=unaffected` (person = generation roman numeral, dash,
+//! number counted left to right).
 use super::*;
 
-/// One drawn individual (for interaction handles).
+mod family;
+#[cfg(test)]
+mod legacy;
+
+pub use family::{Caps, Family, Person as Member, Role, MAX_GENS};
+
+/// One drawn individual (for interaction handles and the person panel), in index order.
 #[derive(Clone, Debug)]
-pub struct Who { pub x: f64, pub y: f64, pub gi: usize, pub num: usize, pub male: bool, pub status: u8, pub r: f64 }
+pub struct Who { pub x: f64, pub y: f64, pub gi: usize, pub num: usize, pub male: bool, pub sex: u8, pub status: u8, pub r: f64 }
 
 thread_local! {
     static LAST: std::cell::RefCell<(f64, f64, Vec<Who>)> = const { std::cell::RefCell::new((0.0, 0.0, Vec::new())) };
@@ -19,29 +28,6 @@ pub fn people_of(p: &Params) -> (f64, f64, Vec<Who>) {
     LAST.with(|l| *l.borrow_mut() = (0.0, 0.0, Vec::new()));
     let _ = render(p);
     LAST.with(|l| l.borrow().clone())
-}
-
-/// Set `II-3=affected` style override for one person, replacing any earlier status for them
-/// (other flags such as `deceased` or `proband` on the same person are kept).
-/// `status`: 0 unaffected, 1 carrier, 2 affected.
-pub fn set_status(p: &mut Params, gi: usize, num: usize, status: u8) {
-    let who = format!("{}-{}", roman(gi), num);
-    let mut toks: Vec<String> = p.s("changes").split([',', ';']).map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
-    let mut keep: Vec<String> = Vec::new();
-    toks.retain(|t| match t.split_once('=') {
-        Some((a, b)) if a.trim().eq_ignore_ascii_case(&who) => {
-            for f in b.split('+') {
-                let f = f.trim().to_lowercase();
-                if !matches!(f.as_str(), "affected" | "a" | "carrier" | "c" | "unaffected" | "u" | "normal") && !f.is_empty() { keep.push(f); }
-            }
-            false
-        }
-        _ => true,
-    });
-    let name = ["unaffected", "carrier", "affected"][status.min(2) as usize];
-    keep.insert(0, name.to_string());
-    toks.push(format!("{who}={}", keep.join("+")));
-    p.set_s("changes", &toks.join(", "));
 }
 
 /// Whether carriers are drawn (so a click can cycle through the carrier state).
@@ -75,6 +61,8 @@ pub fn params() -> Vec<ParamDef> {
         ParamDef::choice("genotypes", "Genotypes under each person", &["None", "Answers", "Blanks"], "None"),
         ParamDef::text("allele_letter", "Allele letter for genotypes", "A"),
         ParamDef::bool("answer", "Answer key (the inheritance pattern under the figure)", false),
+        // the family as changed by hand (see family.rs); empty = the generated family
+        ParamDef::text("family", "Family changed by hand", ""),
     ]
 }
 
@@ -90,6 +78,7 @@ struct Person {
     /// disease-allele flags: autosomal both slots; X-linked [X1, X2 or Y(unused)]; Y-linked [_, Y]
     a: [u8; 2],
     gn: usize,
+    #[cfg_attr(not(test), allow(dead_code))]
     x: f64,
     status: Status,
 }
@@ -103,14 +92,7 @@ struct Node {
 }
 
 fn status_of(pe: &Person, m: Mode) -> Status {
-    let n = pe.a[0] + pe.a[1];
-    match m {
-        Mode::AD => if n >= 1 { Status::Affected } else { Status::Unaffected },
-        Mode::AR => match n { 2 => Status::Affected, 1 => Status::Carrier, _ => Status::Unaffected },
-        Mode::XR => if pe.male { if pe.a[0] == 1 { Status::Affected } else { Status::Unaffected } } else { match n { 2 => Status::Affected, 1 => Status::Carrier, _ => Status::Unaffected } },
-        Mode::XD => if pe.male { if pe.a[0] == 1 { Status::Affected } else { Status::Unaffected } } else if n >= 1 { Status::Affected } else { Status::Unaffected },
-        Mode::Y => if pe.male && pe.a[1] == 1 { Status::Affected } else { Status::Unaffected },
-    }
+    status_from(pe.a, pe.male, m)
 }
 
 struct Sim {
@@ -201,6 +183,7 @@ fn simulate(mode: Mode, gens: usize, size: &str, seed: u64) -> (Sim, Node) {
     best.unwrap()
 }
 
+#[cfg(test)]
 fn place(sim: &mut Sim, n: &Node, left: f64) {
     let c = left + n.width / 2.0;
     match n.mate {
@@ -221,7 +204,7 @@ fn place(sim: &mut Sim, n: &Node, left: f64) {
     }
 }
 
-fn roman(i: usize) -> &'static str { ["I", "II", "III", "IV", "V"][i.min(4)] }
+pub fn roman(i: usize) -> &'static str { ["I", "II", "III", "IV", "V"][i.min(4)] }
 
 fn symbol(d: &mut Doc, cx: f64, cy: f64, r: f64, male: bool, st: Status, carriers: bool) {
     symbol_ex(d, cx, cy, r, if male { 0 } else { 1 }, st, if carriers { "Center dot" } else { "Hidden" });
@@ -267,74 +250,350 @@ fn proband_mark(d: &mut Doc, cx: f64, cy: f64, r: f64) {
     d.poly(&[(tx, ty), (tx - ux * 10.0 - uy * 4.5, ty - uy * 10.0 + ux * 4.5), (tx - ux * 10.0 + uy * 4.5, ty - uy * 10.0 - ux * 4.5)], INK, INK, 1.0);
 }
 
-pub fn render(p: &Params) -> String {
-    let mode = match p.s("inherit") {
+fn mode_of(p: &Params) -> Mode {
+    match p.s("inherit") {
         "Autosomal dominant" => Mode::AD,
         "X-linked recessive" => Mode::XR,
         "X-linked dominant" => Mode::XD,
         "Y-linked" => Mode::Y,
         _ => Mode::AR,
-    };
-    let gens = p.i("gens").clamp(2, 4) as usize;
-    let (mut sim, root) = simulate(mode, gens, p.s("size"), p.i("seed").max(1) as u64);
-    place(&mut sim, &root, 0.0);
-
-    // numbering per generation by x
-    let mut num = vec![0usize; sim.people.len()];
-    let mut order: Vec<Vec<usize>> = vec![vec![]; gens];
-    for (i, pe) in sim.people.iter().enumerate() { order[pe.gn].push(i); }
-    for o in order.iter_mut() {
-        o.sort_by(|a, b| sim.people[*a].x.partial_cmp(&sim.people[*b].x).unwrap());
-        for (k, &i) in o.iter().enumerate() { num[i] = k + 1; }
     }
-    // changes: `II-3=affected`, flags joined with + (`II-3=affected+deceased+proband`, `female`, `unknown`)
-    let np = sim.people.len();
-    let mut deceased = vec![false; np];
-    let mut proband = vec![false; np];
-    let mut sex: Vec<u8> = sim.people.iter().map(|q| if q.male { 0 } else { 1 }).collect();
-    let mut related = vec![false; np];
-    for tok in p.s("changes").split([',', ';']) {
+}
+
+fn st_u8(s: Status) -> u8 {
+    match s {
+        Status::Unaffected => 0,
+        Status::Carrier => 1,
+        Status::Affected => 2,
+    }
+}
+
+fn st_of(v: u8) -> Status {
+    match v {
+        2 => Status::Affected,
+        1 => Status::Carrier,
+        _ => Status::Unaffected,
+    }
+}
+
+/// The random family for the current setup (inheritance, generations, family size, seed).
+fn generated(p: &Params) -> Family {
+    let gens = p.i("gens").clamp(2, 4) as usize;
+    let (sim, root) = simulate(mode_of(p), gens, p.s("size"), p.i("seed").max(1) as u64);
+    fn conv(sim: &Sim, n: &Node) -> family::Node {
+        let pe = |i: usize| {
+            let q = &sim.people[i];
+            family::Person { sex: if q.male { 0 } else { 1 }, status: st_u8(q.status), a: q.a, ..Default::default() }
+        };
+        family::Node { me: pe(n.person), mate: n.mate.map(pe), mate_left: n.mate_left, related: false, kids: n.kids.iter().map(|k| conv(sim, k)).collect() }
+    }
+    Family { root: conv(&sim, &root) }
+}
+
+/// The family changed by hand (the `family` param), if there is a valid one.
+pub fn explicit(p: &Params) -> Option<Family> {
+    let t = p.s("family");
+    if t.trim().is_empty() { None } else { Family::parse(t) }
+}
+
+/// Whether the family on screen was changed by hand (else it is the generated one).
+pub fn hand_changed(p: &Params) -> bool {
+    explicit(p).is_some()
+}
+
+/// The family that is drawn: the one changed by hand, else the generated one, with any typed
+/// overrides (`changes`) applied on top.
+pub fn family_of(p: &Params) -> Family {
+    let mut f = explicit(p).unwrap_or_else(|| generated(p));
+    apply_changes(&mut f, p.s("changes"));
+    f
+}
+
+/// Stores an edited family. Typed overrides are part of it from now on, so they are cleared.
+pub fn store(p: &mut Params, f: &Family) {
+    p.set_s("family", &f.to_text());
+    p.set_s("changes", "");
+}
+
+/// Migration of the old "Overrides" box: folds typed overrides into a stored family (drawn
+/// exactly the same). Returns whether there was anything to fold.
+pub fn migrate_overrides(p: &mut Params) -> bool {
+    if p.s("changes").trim().is_empty() {
+        return false;
+    }
+    let f = family_of(p);
+    store(p, &f);
+    true
+}
+
+/// "New pedigree": a fresh random family, dropping any changes made by hand.
+pub fn new_pedigree(p: &mut Params, seed: i64) {
+    p.set_i("seed", seed.max(1));
+    p.set_s("changes", "");
+    p.set_s("family", "");
+}
+
+/// A change of generations or family size starts a random family again (as on the reference).
+pub fn drop_hand_changes(p: &mut Params) {
+    p.set_s("changes", "");
+    p.set_s("family", "");
+}
+
+/// The inheritance changed: a family changed by hand keeps its people and is shaded again to fit
+/// the new pattern (as on the reference); a generated one is simply generated again.
+pub fn reshade_params(p: &mut Params) {
+    if hand_changed(p) {
+        let mut f = family_of(p);
+        reshade(&mut f, mode_of(p), p.i("seed").max(1) as u64);
+        store(p, &f);
+    }
+}
+
+/// The inheritance pattern's name, lower case ("autosomal recessive").
+pub fn mode_name(p: &Params) -> String {
+    p.s("inherit").to_lowercase()
+}
+
+fn status_from(a: [u8; 2], male: bool, m: Mode) -> Status {
+    let n = a[0] + a[1];
+    match m {
+        Mode::AD => if n >= 1 { Status::Affected } else { Status::Unaffected },
+        Mode::AR => match n { 2 => Status::Affected, 1 => Status::Carrier, _ => Status::Unaffected },
+        Mode::XR => if male { if a[0] == 1 { Status::Affected } else { Status::Unaffected } } else { match n { 2 => Status::Affected, 1 => Status::Carrier, _ => Status::Unaffected } },
+        Mode::XD => if male { if a[0] == 1 { Status::Affected } else { Status::Unaffected } } else if n >= 1 { Status::Affected } else { Status::Unaffected },
+        Mode::Y => if male && a[1] == 1 { Status::Affected } else { Status::Unaffected },
+    }
+}
+
+/// Shades a family (its people fixed) under `mode`: founders get the disease alleles the
+/// generator gives them, partners marrying in are mostly clear, and each child draws one allele
+/// from each parent. Retries until the youngest generation has some but not all affected.
+fn reshade(f: &mut Family, mode: Mode, seed: u64) {
+    fn child(mom: &family::Person, dad: &family::Person, male: bool, mode: Mode, rng: &mut Rng) -> [u8; 2] {
+        match mode {
+            Mode::AD | Mode::AR => [mom.a[rng.below(2)], dad.a[rng.below(2)]],
+            Mode::XR | Mode::XD => {
+                let from_mom = mom.a[rng.below(2)];
+                if male { [from_mom, 0] } else { [from_mom, dad.a[0]] }
+            }
+            Mode::Y => if male { [0, dad.a[1]] } else { [0, 0] },
+        }
+    }
+    fn mate(mode: Mode, rng: &mut Rng) -> [u8; 2] {
+        match mode {
+            Mode::AR => if rng.f() < 0.2 { [1, 0] } else { [0, 0] },
+            _ => [0, 0],
+        }
+    }
+    fn down(n: &mut family::Node, mode: Mode, rng: &mut Rng) {
+        let (mom, dad) = match &n.mate {
+            Some(m) if n.me.sex == 0 => (m.clone(), n.me.clone()),
+            Some(m) => (n.me.clone(), m.clone()),
+            None => (n.me.clone(), n.me.clone()),
+        };
+        for k in n.kids.iter_mut() {
+            k.me.a = child(&mom, &dad, k.me.sex == 0, mode, rng);
+            if let Some(km) = &mut k.mate {
+                km.a = mate(mode, rng);
+            }
+            down(k, mode, rng);
+        }
+    }
+    fn shade(n: &mut family::Node, mode: Mode, gn: usize, last: usize, tally: &mut (usize, usize)) {
+        let mut one = |q: &mut family::Person| {
+            q.status = st_u8(status_from(q.a, q.sex == 0, mode));
+            if gn == last {
+                tally.0 += 1;
+                tally.1 += (q.status == 2) as usize;
+            }
+        };
+        one(&mut n.me);
+        if let Some(m) = &mut n.mate {
+            one(m);
+        }
+        for k in n.kids.iter_mut() {
+            shade(k, mode, gn + 1, last, tally);
+        }
+    }
+    let last = f.depth() - 1;
+    let mut best: Option<family::Node> = None;
+    for attempt in 0..60u64 {
+        let mut rng = Rng::new(seed.wrapping_mul(1000).wrapping_add(attempt + 500));
+        let mut root = f.root.clone();
+        let (fa, mo) = match mode {
+            Mode::AD | Mode::XD => if rng.f() < 0.5 { ([1, 0], [0, 0]) } else { ([0, 0], [1, 0]) },
+            Mode::AR => ([1, 0], [1, 0]),
+            Mode::XR => ([0, 0], [1, 0]),
+            Mode::Y => ([0, 1], [0, 0]),
+        };
+        let me_male = root.me.sex == 0;
+        root.me.a = if me_male { fa } else { mo };
+        if let Some(m) = &mut root.mate {
+            m.a = if me_male { mo } else { fa };
+        }
+        down(&mut root, mode, &mut rng);
+        let mut tally = (0, 0);
+        shade(&mut root, mode, 0, last, &mut tally);
+        let ok = tally.1 >= 1 && tally.1 < tally.0;
+        if best.is_none() || ok {
+            best = Some(root);
+        }
+        if ok {
+            break;
+        }
+    }
+    if let Some(b) = best {
+        f.root = b;
+    }
+}
+
+/// Where everyone is drawn: generation and x (in slots) per person in index order, plus each
+/// couple's links in drawing order.
+struct Lay {
+    gn: Vec<usize>,
+    x: Vec<f64>,
+    width: f64,
+    nodes: Vec<NodeIx>,
+}
+
+struct NodeIx {
+    me: usize,
+    mate: Option<usize>,
+    related: bool,
+    kids: Vec<usize>,
+    twins: Vec<u8>,
+}
+
+/// Tidy layout: every couple (or single person) owns a block as wide as its children's blocks
+/// together (at least its own two or one slots), sits centred over it, and the children's
+/// blocks are laid side by side, so generations line up and nothing overlaps.
+fn layout(f: &Family) -> Lay {
+    fn width(n: &family::Node) -> f64 {
+        let s: f64 = n.kids.iter().map(width).sum();
+        s.max(if n.mate.is_some() { 2.0 } else { 1.0 })
+    }
+    fn place(n: &family::Node, left: f64, gn: usize, lay: &mut Lay) -> usize {
+        let w = width(n);
+        let c = left + w / 2.0;
+        let me = lay.x.len();
+        lay.x.push(c);
+        lay.gn.push(gn);
+        let mate = n.mate.as_ref().map(|_| {
+            lay.x.push(c);
+            lay.gn.push(gn);
+            me + 1
+        });
+        if let Some(m) = mate {
+            let (a, b) = (c - 0.5, c + 0.5);
+            let (px, mx) = if n.mate_left { (b, a) } else { (a, b) };
+            lay.x[me] = px;
+            lay.x[m] = mx;
+        }
+        let ni = lay.nodes.len();
+        lay.nodes.push(NodeIx { me, mate, related: n.related, kids: vec![], twins: vec![] });
+        let sum: f64 = n.kids.iter().map(width).sum();
+        let mut x = left + (w - sum) / 2.0;
+        for k in &n.kids {
+            let ki = place(k, x, gn + 1, lay);
+            lay.nodes[ni].kids.push(ki);
+            lay.nodes[ni].twins.push(k.me.twin);
+            x += width(k);
+        }
+        me
+    }
+    let mut lay = Lay { gn: vec![], x: vec![], width: width(&f.root), nodes: vec![] };
+    place(&f.root, 0.0, 0, &mut lay);
+    lay
+}
+
+/// People of each generation, left to right (their numbers are position + 1).
+fn numbering(lay: &Lay, gens: usize) -> (Vec<usize>, Vec<Vec<usize>>) {
+    let mut num = vec![0usize; lay.x.len()];
+    let mut order: Vec<Vec<usize>> = vec![vec![]; gens];
+    for (i, &g) in lay.gn.iter().enumerate() {
+        order[g].push(i);
+    }
+    for o in order.iter_mut() {
+        o.sort_by(|a, b| lay.x[*a].partial_cmp(&lay.x[*b]).unwrap());
+        for (k, &i) in o.iter().enumerate() {
+            num[i] = k + 1;
+        }
+    }
+    (num, order)
+}
+
+/// Applies typed overrides: `II-3=affected`, flags joined with + (`II-3=affected+deceased+proband`,
+/// `female`, `unknown`, `related`).
+fn apply_changes(f: &mut Family, changes: &str) {
+    if changes.trim().is_empty() {
+        return;
+    }
+    let lay = layout(f);
+    let (_, order) = numbering(&lay, f.depth());
+    for tok in changes.split([',', ';']) {
         let Some((who, what)) = tok.split_once('=') else { continue };
         let Some((g, n)) = who.trim().split_once('-') else { continue };
         let Some(gi) = ["I", "II", "III", "IV"].iter().position(|r| r.eq_ignore_ascii_case(g.trim())) else { continue };
         let Ok(n) = n.trim().parse::<usize>() else { continue };
         let Some(&pi) = order.get(gi).and_then(|o| o.get(n.wrapping_sub(1))) else { continue };
-        for f in what.split('+') {
-            match f.trim().to_lowercase().as_str() {
-                "affected" | "a" => sim.people[pi].status = Status::Affected,
-                "carrier" | "c" => sim.people[pi].status = Status::Carrier,
-                "unaffected" | "u" | "normal" => sim.people[pi].status = Status::Unaffected,
-                "deceased" | "dead" | "d" => deceased[pi] = true,
-                "proband" | "p" => proband[pi] = true,
-                "male" | "m" => sex[pi] = 0,
-                "female" | "f" => sex[pi] = 1,
-                "unknown" | "?" => sex[pi] = 2,
-                "related" | "consanguineous" => related[pi] = true,
+        for fl in what.split('+') {
+            let fl = fl.trim().to_lowercase();
+            if matches!(fl.as_str(), "related" | "consanguineous") {
+                f.set_related(pi, true);
+                continue;
+            }
+            let Some(q) = f.person_mut(pi) else { continue };
+            match fl.as_str() {
+                "affected" | "a" => q.status = 2,
+                "carrier" | "c" => q.status = 1,
+                "unaffected" | "u" | "normal" => q.status = 0,
+                "deceased" | "dead" | "d" => q.dead = true,
+                "proband" | "p" => q.proband = true,
+                "male" | "m" => q.sex = 0,
+                "female" | "f" => q.sex = 1,
+                "unknown" | "?" => q.sex = 2,
                 _ => {}
             }
         }
     }
+}
+
+/// "II-3" style labels of everyone, in index order.
+pub fn labels(p: &Params) -> Vec<String> {
+    people_of(p).2.iter().map(|w| format!("{}-{}", roman(w.gi), w.num)).collect()
+}
+
+pub fn render(p: &Params) -> String {
+    let mode = mode_of(p);
+    let fam = family_of(p);
+    let lay = layout(&fam);
+    let gens = fam.depth();
+    let people = fam.people();
+    let np = people.len();
+    let (num, _) = numbering(&lay, gens);
+    let sex: Vec<u8> = people.iter().map(|q| q.sex.min(2)).collect();
+    let status: Vec<Status> = people.iter().map(|q| st_of(q.status)).collect();
+    let deceased: Vec<bool> = people.iter().map(|q| q.dead).collect();
+    let proband: Vec<bool> = people.iter().map(|q| q.proband).collect();
     // family links (for genotype inference)
     let mut parents: Vec<Option<(usize, usize)>> = vec![None; np];
     let mut kids_of: Vec<Vec<usize>> = vec![vec![]; np];
-    fn link(n: &Node, parents: &mut Vec<Option<(usize, usize)>>, kids_of: &mut Vec<Vec<usize>>) {
+    for n in &lay.nodes {
         if let Some(m) = n.mate {
-            for k in &n.kids {
-                parents[k.person] = Some((n.person, m));
-                kids_of[n.person].push(k.person);
-                kids_of[m].push(k.person);
+            for &k in &n.kids {
+                parents[k] = Some((n.me, m));
+                kids_of[n.me].push(k);
+                kids_of[m].push(k);
             }
         }
-        for k in &n.kids { link(k, parents, kids_of); }
     }
-    link(&root, &mut parents, &mut kids_of);
 
     let car_style = carrier_style(p).to_string();
     let show_car = car_style != "Hidden";
     let gmode = p.s("genotypes");
     let letter = p.s("allele_letter").trim().chars().find(|c| c.is_alphabetic()).unwrap_or('A');
     let (up, lo) = (letter.to_uppercase().next().unwrap(), letter.to_lowercase().next().unwrap());
-    let st = |i: usize| sim.people[i].status;
+    let st = |i: usize| status[i];
     let affected = |i: usize| st(i) == Status::Affected;
     let rel_aff = |i: usize, want: bool| -> bool {
         parents[i].map(|(a, b)| affected(a) == want || affected(b) == want).unwrap_or(false) || kids_of[i].iter().any(|k| affected(*k) == want)
@@ -359,7 +618,7 @@ pub fn render(p: &Params) -> String {
             }
             Mode::AD => {
                 if !aff { plain(format!("{lo}{lo}")) }
-                else if rel_aff(i, false) || sim.people[i].a[0] + sim.people[i].a[1] == 1 && show_car { plain(format!("{up}{lo}")) }
+                else if rel_aff(i, false) || people[i].a[0] + people[i].a[1] == 1 && show_car { plain(format!("{up}{lo}")) }
                 else { plain(format!("{up}_")) }
             }
             Mode::XR => {
@@ -385,12 +644,12 @@ pub fn render(p: &Params) -> String {
     let r = p.f("symbol_size").clamp(12.0, 26.0);
     let geno_on = gmode == "Answers" || gmode == "Blanks";
     let gen_h = 112.0 + if geno_on { 24.0 } else { 0.0 };
-    let width_slots = root.width;
+    let width_slots = lay.width;
     let title = p.s("title").trim().to_string();
     let left = 56.0 + if p.b("gen_labels") { 18.0 } else { 0.0 };
     let tree_w = width_slots * slot;
     let key_on = p.b("key");
-    let any_car = sim.people.iter().any(|q| q.status == Status::Carrier) && show_car;
+    let any_car = status.contains(&Status::Carrier) && show_car;
     let key_items: Vec<(u8, Status, &str, u8)> = {
         // (sex, status, label, extra: 0 none, 1 deceased, 2 proband)
         let mut v = vec![(0u8, Status::Unaffected, "Unaffected male", 0u8), (0, Status::Affected, "Affected male", 0), (1, Status::Unaffected, "Unaffected female", 0), (1, Status::Affected, "Affected female", 0)];
@@ -416,39 +675,70 @@ pub fn render(p: &Params) -> String {
     let mut d = Doc::new(w, h);
     if !title.is_empty() { bold(&mut d, w / 2.0, 34.0, 20.0, "middle", &title); }
 
-    let px = |q: &Person| ox + left + q.x * slot;
+    let px = |i: usize| ox + left + lay.x[i] * slot;
     let py = |g: usize| top + 20.0 + g as f64 * gen_h;
 
-    // connectors first
-    fn walk(d: &mut Doc, sim: &Sim, n: &Node, px: &dyn Fn(&Person) -> f64, py: &dyn Fn(usize) -> f64, r: f64, gen_h: f64, related: &[bool]) {
-        let pa = &sim.people[n.person];
-        let y = py(pa.gn);
-        if let Some(m) = n.mate {
-            let pm = &sim.people[m];
-            let (xa, xb) = (px(pa).min(px(pm)), px(pa).max(px(pm)));
-            if related[n.person] || related[m] {
-                d.line(xa + r, y - 3.0, xb - r, y - 3.0, INK, 2.0);
-                d.line(xa + r, y + 3.0, xb - r, y + 3.0, INK, 2.0);
-            } else {
-                d.line(xa + r, y, xb - r, y, INK, 2.2);
+    // connectors first: partner line (double when related), line of descent, sibship bar, and a
+    // drop to each child (twins share one point on the bar; identical twins get a crossbar)
+    for n in &lay.nodes {
+        let y = py(lay.gn[n.me]);
+        let mid = match n.mate {
+            Some(m) => {
+                let (xa, xb) = (px(n.me).min(px(m)), px(n.me).max(px(m)));
+                if n.related {
+                    d.line(xa + r, y - 3.0, xb - r, y - 3.0, INK, 2.0);
+                    d.line(xa + r, y + 3.0, xb - r, y + 3.0, INK, 2.0);
+                } else {
+                    d.line(xa + r, y, xb - r, y, INK, 2.2);
+                }
+                (xa + xb) / 2.0
             }
-            if !n.kids.is_empty() {
-                let mid = (xa + xb) / 2.0;
-                let bar = y + gen_h / 2.0;
-                d.line(mid, y, mid, bar, INK, 2.2);
-                let xs: Vec<f64> = n.kids.iter().map(|k| px(&sim.people[k.person])).collect();
-                let (lo, hi) = (xs.iter().cloned().fold(f64::MAX, f64::min), xs.iter().cloned().fold(f64::MIN, f64::max));
-                d.line(lo.min(mid), bar, hi.max(mid), bar, INK, 2.2);
-                for x in xs { d.line(x, bar, x, y + gen_h - r, INK, 2.2); }
+            None => px(n.me),
+        };
+        if n.kids.is_empty() {
+            continue;
+        }
+        let bar = y + gen_h / 2.0;
+        d.line(mid, if n.mate.is_some() { y } else { y + r }, mid, bar, INK, 2.2);
+        let xs: Vec<f64> = n.kids.iter().map(|&k| px(k)).collect();
+        // where each child's line leaves the bar (a twin pair shares one point)
+        let mut drops: Vec<f64> = Vec::new();
+        let mut j = 0;
+        while j < xs.len() {
+            if n.twins[j] > 0 && j + 1 < xs.len() {
+                drops.push((xs[j] + xs[j + 1]) / 2.0);
+                j += 2;
+            } else {
+                drops.push(xs[j]);
+                j += 1;
             }
         }
-        for k in &n.kids { walk(d, sim, k, px, py, r, gen_h, related); }
+        let (lo, hi) = (drops.iter().cloned().fold(f64::MAX, f64::min), drops.iter().cloned().fold(f64::MIN, f64::max));
+        d.line(lo.min(mid), bar, hi.max(mid), bar, INK, 2.2);
+        let bottom = y + gen_h - r;
+        let mut j = 0;
+        while j < xs.len() {
+            if n.twins[j] > 0 && j + 1 < xs.len() {
+                let (xa, xb) = (xs[j], xs[j + 1]);
+                let apex = (xa + xb) / 2.0;
+                d.line(apex, bar, xa, bottom, INK, 2.2);
+                d.line(apex, bar, xb, bottom, INK, 2.2);
+                if n.twins[j] == 2 {
+                    let t = 0.45;
+                    let yy = bar + (bottom - bar) * t;
+                    d.line(apex + (xa - apex) * t, yy, apex + (xb - apex) * t, yy, INK, 2.2);
+                }
+                j += 2;
+            } else {
+                d.line(xs[j], bar, xs[j], bottom, INK, 2.2);
+                j += 1;
+            }
+        }
     }
-    walk(&mut d, &sim, &root, &px, &py, r, gen_h, &related);
 
-    for (i, q) in sim.people.iter().enumerate() {
-        let (cx, cy) = (px(q), py(q.gn));
-        symbol_ex(&mut d, cx, cy, r, sex[i], q.status, &car_style);
+    for i in 0..np {
+        let (cx, cy) = (px(i), py(lay.gn[i]));
+        symbol_ex(&mut d, cx, cy, r, sex[i], status[i], &car_style);
         if deceased[i] { deceased_mark(&mut d, cx, cy, r); }
         if proband[i] { proband_mark(&mut d, cx, cy, r); }
         let mut ty = cy + r * if sex[i] == 2 { 1.25 } else { 1.0 } + 17.0;
@@ -469,9 +759,9 @@ pub fn render(p: &Params) -> String {
             txt(&mut d, ox + 24.0, py(g) + 6.0, 19.0, "middle", SERIF, r#"font-weight="bold""#, &lab);
         }
     }
-    let whos: Vec<Who> = sim.people.iter().enumerate().map(|(i, q)| Who {
-        x: px(q), y: py(q.gn), gi: q.gn, num: num[i], male: sex[i] == 0, r,
-        status: match q.status { Status::Unaffected => 0, Status::Carrier => 1, Status::Affected => 2 },
+    let whos: Vec<Who> = (0..np).map(|i| Who {
+        x: px(i), y: py(lay.gn[i]), gi: lay.gn[i], num: num[i], male: sex[i] == 0, sex: sex[i], r,
+        status: st_u8(status[i]),
     }).collect();
     LAST.with(|l| *l.borrow_mut() = (w, h, whos));
     let mut ky_end = tree_bottom;
@@ -570,5 +860,235 @@ mod tests {
         // Y-linked: only males can be affected
         let (sim, _) = simulate(Mode::Y, 3, "Medium", 5);
         assert!(sim.people.iter().all(|q| q.male || q.status != Status::Affected));
+    }
+
+    fn params_with(over: &[(&str, Value)]) -> Params {
+        let mut p = Params::defaults(&params());
+        for (k, v) in over {
+            p.0.insert(k.to_string(), v.clone());
+        }
+        p
+    }
+
+    /// Every generated family (and its typed overrides) draws byte for byte as the renderer did
+    /// before families became editable, so old figures, presets, share links and classic setups
+    /// look the same.
+    #[test]
+    fn generated_families_draw_exactly_as_before() {
+        let mut n = 0;
+        for m in ["Autosomal dominant", "Autosomal recessive", "X-linked recessive", "X-linked dominant", "Y-linked"] {
+            for gens in 2..=4 {
+                for size in ["Small", "Medium", "Large"] {
+                    for seed in [1, 3, 17, 404] {
+                        let base = [("inherit", s(m)), ("gens", Value::I(gens)), ("size", s(size)), ("seed", Value::I(seed))];
+                        let mut cases = vec![params_with(&base)];
+                        let mut extra = |o: &[(&str, Value)]| {
+                            let mut v = base.to_vec();
+                            v.extend(o.iter().cloned());
+                            cases.push(params_with(&v));
+                        };
+                        extra(&[("genotypes", s("Answers")), ("carrier_style", s("Half filled"))]);
+                        extra(&[("genotypes", s("Answers")), ("carrier_style", s("Hidden")), ("answer", Value::B(true)), ("title", s("T"))]);
+                        extra(&[("changes", s("II-1=unknown+proband, II-2=related+deceased, I-1=carrier, III-2=affected+female"))]);
+                        extra(&[("changes", s("I-2=related, II-3=male+unaffected"))]);
+                        for p in cases {
+                            assert_eq!(render(&p), legacy::legacy_render(&p), "{m} {gens} {size} {seed} {:?}", p.s("changes"));
+                            n += 1;
+                        }
+                    }
+                }
+            }
+        }
+        for ex in examples().into_iter().chain(classics()) {
+            let p = params_with(&ex.params);
+            assert_eq!(render(&p), legacy::legacy_render(&p), "{}", ex.name);
+        }
+        assert!(n > 800);
+    }
+
+    /// Storing the drawn family (text form) and reading it back draws the same figure; old
+    /// overrides migrate into the stored family without changing a pixel.
+    #[test]
+    fn stored_family_and_override_migration_draw_the_same() {
+        for seed in 1..25 {
+            for m in ["Autosomal recessive", "X-linked recessive", "Autosomal dominant"] {
+                let mut p = params_with(&[("inherit", s(m)), ("seed", Value::I(seed)), ("gens", Value::I(2 + seed % 3)), ("genotypes", s("Answers")),
+                    ("changes", s("II-2=affected+deceased, III-1=proband, II-1=related, I-1=unknown"))]);
+                let before = render(&p);
+                assert!(migrate_overrides(&mut p));
+                assert_eq!(p.s("changes"), "");
+                assert!(hand_changed(&p));
+                assert_eq!(render(&p), before, "seed {seed} {m}");
+                assert!(!migrate_overrides(&mut p), "nothing left to fold");
+                // and through the text form again
+                let f = Family::parse(p.s("family")).unwrap();
+                assert_eq!(f.to_text(), p.s("family"));
+            }
+        }
+        // a broken stored family falls back to the generated one
+        let mut p = params_with(&[]);
+        let generated_svg = render(&p);
+        p.set_s("family", "1:m-f(oops");
+        assert_eq!(render(&p), generated_svg);
+    }
+
+    fn check_layout(p: &Params, ctx: &str) {
+        let (_, _, whos) = people_of(p);
+        let fam = family_of(p);
+        assert_eq!(whos.len(), fam.len(), "{ctx}");
+        let gens = fam.depth();
+        for g in 0..gens {
+            let mut row: Vec<&Who> = whos.iter().filter(|w| w.gi == g).collect();
+            assert!(!row.is_empty(), "{ctx}: generation {g} empty");
+            // one row per generation, everyone at least a slot apart, numbered left to right
+            assert!(row.iter().all(|w| (w.y - row[0].y).abs() < 1e-9), "{ctx}");
+            row.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap());
+            for (k, w) in row.iter().enumerate() {
+                assert_eq!(w.num, k + 1, "{ctx}");
+                if k > 0 {
+                    assert!(w.x - row[k - 1].x >= 74.0 - 1e-6, "{ctx}: overlap in generation {g}");
+                }
+            }
+        }
+        // a child is drawn one generation below its parents, under the span of the sibship
+        let lay = layout(&fam);
+        for n in &lay.nodes {
+            for &k in &n.kids {
+                assert_eq!(lay.gn[k], lay.gn[n.me] + 1, "{ctx}");
+            }
+        }
+    }
+
+    /// Random sequences of edits (child, partner, sibling, remove, flags) keep a tidy layout:
+    /// generations on their own rows, nobody overlapping, numbering left to right; every
+    /// intermediate family survives the text round trip.
+    #[test]
+    fn edits_keep_a_tidy_layout() {
+        for seed in 1..40u64 {
+            let mut p = params_with(&[("seed", Value::I(seed as i64)), ("gens", Value::I(2 + (seed % 3) as i64)), ("size", s(["Small", "Medium", "Large"][seed as usize % 3]))]);
+            let mut rng = Rng::new(seed);
+            check_layout(&p, "start");
+            for step in 0..30 {
+                let mut f = family_of(&p);
+                let i = rng.below(f.len());
+                let what = rng.below(9);
+                match what {
+                    0 | 1 => { f.add_child(i); }
+                    2 => { f.add_partner(i); }
+                    3 | 4 => { f.add_sibling(i); }
+                    5 => { f.remove(i); }
+                    6 => { f.set_related(i, true); }
+                    7 => { if f.caps(i).is_some_and(|c| c.twin) { f.person_mut(i).unwrap().twin = 1 + rng.below(2) as u8; } }
+                    _ => { let q = f.person_mut(i).unwrap(); q.status = rng.below(3) as u8; q.dead = rng.f() < 0.3; q.proband = rng.f() < 0.2; }
+                }
+                assert!(f.depth() <= MAX_GENS);
+                store(&mut p, &f);
+                assert_eq!(family_of(&p), f, "seed {seed} step {step}");
+                check_layout(&p, &format!("seed {seed} step {step} op {what}"));
+                to_png(&render(&p), 0.3).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn add_and_remove_change_the_drawing() {
+        let mut p = params_with(&[]);
+        let n0 = people_of(&p).2.len();
+        let mut f = family_of(&p);
+        // the last person drawn in the youngest generation gets a partner and a child
+        let leaf = (0..f.len()).rev().find(|&i| f.caps(i).unwrap().partner).unwrap();
+        let kid = f.add_child(leaf).unwrap();
+        store(&mut p, &f);
+        let (_, _, whos) = people_of(&p);
+        assert_eq!(whos.len(), n0 + 2, "partner + child");
+        assert_eq!(whos[kid].gi, whos[leaf].gi + 1);
+        assert_eq!(f.depth(), 4);
+        // removing the partner takes the child too
+        let mate = f.index_of(&family::Loc { path: f.locate(leaf).unwrap().path, mate: true }).unwrap();
+        assert!(f.remove(mate));
+        store(&mut p, &f);
+        assert_eq!(people_of(&p).2.len(), n0);
+        assert_eq!(f.depth(), 3);
+    }
+
+    /// The panel's edits show with the standard symbols, and the key lists them.
+    #[test]
+    fn edited_people_get_the_standard_symbols() {
+        let mut p = params_with(&[("carrier_style", s("Half filled"))]);
+        p.set_s("family", "1:m-f(m=<f(udp,fC,mt,fT,m,f),fA)");
+        let svg = render(&p);
+        for k in ["Sex unknown", "Deceased", "Proband", "Carrier female", "Affected female"] {
+            assert!(svg.contains(k), "key misses {k}");
+        }
+        assert!(!svg.contains("Carrier male"));
+        let (_, _, whos) = people_of(&p);
+        assert_eq!(whos.len(), 11);
+        assert_eq!(whos[4].sex, 2, "III-1 is drawn as a diamond");
+        assert_eq!(whos[5].status, 1);
+        assert!(svg.contains("<polygon"), "diamond / proband arrow");
+        // related partners: a double line; twins: diagonal lines from one point on the sibship bar
+        let lines = svg.matches("<line").count();
+        let mut q = p.clone();
+        q.set_s("family", "1:m-f(m-<f(u,fC,m,f,m,f),fA)");
+        let plain = render(&q);
+        assert!(lines > plain.matches("<line").count(), "double line, crossbar, deceased slash add lines");
+        // the old click-to-cycle is gone: people are selected in the UI, and the handles only
+        // keep the title
+        assert_eq!(super::super::handles::handles("pedigree", &p, (600.0, 500.0)).unwrap().len(), 1);
+    }
+
+    /// Changing the inheritance of a family changed by hand keeps its people and flags and shades
+    /// it again by the rules of the new pattern.
+    #[test]
+    fn inheritance_change_reshades_a_hand_made_family() {
+        let mut p = params_with(&[("gens", Value::I(4)), ("size", s("Large"))]);
+        let mut f = family_of(&p);
+        f.add_sibling(2);
+        f.person_mut(0).unwrap().dead = true;
+        f.person_mut(3).unwrap().proband = true;
+        store(&mut p, &f);
+        for m in ["Y-linked", "X-linked recessive", "Autosomal recessive", "Autosomal dominant", "X-linked dominant"] {
+            p.set_s("inherit", m);
+            reshade_params(&mut p);
+            let g = family_of(&p);
+            assert_eq!(g.len(), f.len(), "{m}: same people");
+            assert!(g.person(0).unwrap().dead && g.person(3).unwrap().proband, "{m}: flags kept");
+            let sexes = |x: &Family| x.people().iter().map(|q| q.sex).collect::<Vec<_>>();
+            assert_eq!(sexes(&g), sexes(&f));
+            let ppl = g.people();
+            match m {
+                "Y-linked" => assert!(ppl.iter().all(|q| q.sex == 0 || q.status != 2), "only males affected"),
+                "Autosomal recessive" => assert!(ppl.iter().all(|q| (q.status == 2) == (q.a[0] + q.a[1] == 2))),
+                "X-linked recessive" => assert!(ppl.iter().all(|q| q.sex != 0 || q.status != 1), "no carrier males"),
+                _ => {}
+            }
+            let last = g.depth() - 1;
+            let lay = layout(&g);
+            let young: Vec<u8> = (0..g.len()).filter(|&i| lay.gn[i] == last).map(|i| g.person(i).unwrap().status).collect();
+            assert!(young.contains(&2) || m == "Y-linked", "{m}: someone affected in the youngest generation");
+        }
+        // a generated family stays generated
+        let mut q = params_with(&[]);
+        q.set_s("inherit", "Y-linked");
+        reshade_params(&mut q);
+        assert!(!hand_changed(&q));
+    }
+
+    #[test]
+    fn new_pedigree_and_setup_changes_drop_hand_changes() {
+        let mut p = params_with(&[("changes", s("II-1=affected"))]);
+        migrate_overrides(&mut p);
+        assert!(hand_changed(&p));
+        let before = render(&p);
+        new_pedigree(&mut p, 4242);
+        assert!(!hand_changed(&p) && p.s("changes").is_empty() && p.i("seed") == 4242);
+        assert_ne!(render(&p), before);
+        migrate_overrides(&mut p);
+        p.set_s("changes", "I-1=affected");
+        drop_hand_changes(&mut p);
+        assert!(!hand_changed(&p) && p.s("changes").is_empty());
+        let l = labels(&p);
+        assert_eq!(l[..2], ["I-1", "I-2"]);
+        assert_eq!(l.len(), family_of(&p).len());
     }
 }

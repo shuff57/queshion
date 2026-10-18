@@ -19,6 +19,7 @@ use crate::model::{FigureSpec, Id, Question};
 use crate::theme;
 
 mod composite_canvas;
+mod pedigree_panel;
 
 const DEBOUNCE: Duration = Duration::from_millis(150);
 const CARD_W: f32 = 210.0;
@@ -334,6 +335,8 @@ pub struct Workspace {
     toast: Option<(String, bool)>,
     /// "Start from an example" gallery modal is open.
     examples_open: bool,
+    /// Pedigree: the person selected for the Family card's person panel (index in drawing order).
+    ped_sel: Option<usize>,
 }
 
 /// A saved parameter set for one figure ("Save preset"), kept in `figure-presets.json`.
@@ -505,6 +508,7 @@ impl Workspace {
             self.params.set_s("spec", "");
         }
         self.comp = Default::default();
+        self.ped_sel = None;
         self.editing = None;
         self.shown = None;
         self.pending = None;
@@ -513,6 +517,7 @@ impl Workspace {
 
     fn back(&mut self) {
         self.reset_history();
+        self.ped_sel = None;
         self.sel = None;
         self.imp = None;
         self.shown = None;
@@ -555,6 +560,8 @@ impl Workspace {
             {
                 eprintln!("QUESHION_FIG_LINK: {e}");
             }
+            // QUESHION_PED_SEL / QUESHION_PED_DO: select a pedigree person and run panel actions
+            self.ped_qa_hooks();
             if std::env::var("QUESHION_FIG_EXAMPLES").as_deref() == Ok("1") {
                 self.examples_open = true;
             }
@@ -1190,6 +1197,10 @@ impl Workspace {
         let pdefs = (def.params)();
 
         self.live = false;
+        // pedigree people are selected by clicking them (with or without the handles shown)
+        if def.id == "pedigree" {
+            self.pedigree_canvas(ui, img, k, si);
+        }
         if self.hide_handles {
             return;
         }
@@ -1321,7 +1332,13 @@ impl Workspace {
             painter.text(
                 full.left_bottom() + Vec2::new(4.0, -2.0),
                 egui::Align2::LEFT_BOTTOM,
-                if has_labels { "Drag the dots to edit; drag a label to move it" } else { "Drag the dots to edit; double-click a label to rename it" },
+                if def.id == "pedigree" {
+                    "Click someone to change them; double-click the title to rename it"
+                } else if has_labels {
+                    "Drag the dots to edit; drag a label to move it"
+                } else {
+                    "Drag the dots to edit; double-click a label to rename it"
+                },
                 egui::FontId::proportional(10.5),
                 theme::muted_col(),
             );
@@ -1356,6 +1373,11 @@ impl Workspace {
                     let classic_in_chips = chips.as_ref().is_some_and(|c| c.count_key.is_empty());
                     if let Some(card) = chips {
                         self.chips_card(ui, def.id, &pdefs, &card);
+                    }
+                    // the pedigree's Family card: setup, New pedigree and the person editor
+                    let classic_in_chips = classic_in_chips || def.id == "pedigree";
+                    if def.id == "pedigree" {
+                        self.pedigree_card(ui);
                     }
                     if rows_advanced && let Some(card) = figures::rows_for(def.id) {
                         egui::CollapsingHeader::new(RichText::new("Advanced: spec").size(12.0))
@@ -3041,4 +3063,60 @@ mod tests {
         assert_eq!(ws.params.s("spec"), "rect 0 0 4 3", "panning edits nothing");
     }
 
+    /// Pedigree: clicking a person on the preview selects them; each panel edit is one undo
+    /// step stored in the `family` param (so exports and share links carry it); old typed
+    /// overrides fold into the family on the first edit; Remove clears the selection.
+    #[test]
+    fn pedigree_click_selects_and_panel_edits_are_undo_steps() {
+        use crate::figures::biology::pedigree as ped;
+        let (ctx, mut ws) = open_fig("pedigree");
+        ws.params.set_s("changes", "I-1=deceased");
+        ws.reset_history();
+        for _ in 0..3 {
+            comp_frame(&ctx, &mut ws, vec![]);
+        }
+        let (_, _, whos) = ped::people_of(&ws.params);
+        let target = whos.iter().position(|w| w.gi == 2).unwrap();
+        let (o, k) = ws.preview_map.expect("preview drawn");
+        let at = egui::pos2(o.x + (whos[target].x * k) as f32, o.y + (whos[target].y * k) as f32);
+        let mut ev = btn(at, true);
+        ev.extend(btn(at, false));
+        comp_frame(&ctx, &mut ws, ev);
+        comp_frame(&ctx, &mut ws, vec![]);
+        assert_eq!(ws.ped_sel, Some(target), "a click selects");
+        assert!(ws.params.s("family").is_empty(), "selecting edits nothing");
+        let start = ws.params.clone();
+        let n0 = whos.len();
+        ws.ped_action("affected");
+        assert!(ped::hand_changed(&ws.params) && ws.params.s("changes").is_empty(), "overrides folded into the family");
+        assert!(ped::family_of(&ws.params).person(0).unwrap().dead, "the folded override survives");
+        ws.ped_action("child");
+        let kid = ws.ped_sel.unwrap();
+        assert_eq!(ped::family_of(&ws.params).len(), n0 + 2, "partner + child");
+        assert_eq!(ped::people_of(&ws.params).2[kid].gi, 3);
+        ws.ped_action("sibling");
+        ws.ped_action("unknown");
+        assert_eq!(ped::family_of(&ws.params).person(ws.ped_sel.unwrap()).unwrap().sex, 2);
+        assert_eq!(ws.undo.len(), 4, "one undo step per edit");
+        // exports carry the edits
+        let out = ws.output().unwrap();
+        assert!(out.svg.as_deref().unwrap().contains("Sex unknown"));
+        assert_eq!(out.spec.unwrap().params.get("family").and_then(|v| v.as_str()), Some(ws.params.s("family")));
+        let link = ws.share_link().unwrap();
+        let mut dst = Workspace::new(false);
+        dst.apply_link(&link).unwrap();
+        assert_eq!(dst.params.s("family"), ws.params.s("family"), "share link round trip");
+        // remove takes the selection away; undo all the way back restores the start
+        ws.ped_action("remove");
+        assert_eq!(ws.ped_sel, None);
+        for _ in 0..5 {
+            ws.step_history(true);
+        }
+        assert_eq!(format!("{:?}", ws.params.0), format!("{:?}", start.0));
+        // the panel draws for every kind of person without panicking
+        for i in [0usize, 1, 2, target] {
+            ws.ped_sel = Some(i);
+            comp_frame(&ctx, &mut ws, vec![]);
+        }
+    }
 }
