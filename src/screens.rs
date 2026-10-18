@@ -406,6 +406,7 @@ impl crate::App {
         if self.storage_info {
             self.storage_info_modal(ctx);
         }
+        crate::bankui::draw_popover(self, ctx);
         self.draw_help_overlay(ctx);
         self.draw_restore_confirm(ctx);
         self.draw_toasts(ctx);
@@ -439,6 +440,7 @@ impl crate::App {
             questions: Vec::new(),
             created: t,
             modified: t,
+            details: Default::default(),
         };
         let id = bank.id.clone();
         self.store.banks.push(bank);
@@ -484,6 +486,7 @@ impl crate::App {
             questions: doc.questions,
             created: t,
             modified: t,
+            details: Default::default(),
         };
         let id = bank.id.clone();
         let count = bank.questions.len();
@@ -942,7 +945,7 @@ impl crate::App {
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = gap;
                     for (k, e) in chunk.iter().enumerate() {
-                        if exam_card(ui, cw, e, k % 2 == 1) {
+                        if exam_card(ui, self, cw, e, k % 2 == 1) {
                             open_ex = Some(e.id.clone());
                         }
                     }
@@ -1572,6 +1575,7 @@ impl crate::App {
             questions: vec![q1, q2, q3],
             created: t,
             modified: t,
+            details: Default::default(),
         };
         let bank_id = bank.id.clone();
         self.store.banks.push(bank);
@@ -1781,7 +1785,7 @@ fn paint_fact(p: &egui::Painter, pos: Pos2, w: f32, label: &str, value: &str) {
     paint_fit(p, pos + Vec2::new(0.0, 12.0), value, bold(13.0), theme::ink(), w);
 }
 
-fn exam_card(ui: &mut egui::Ui, w: f32, e: &ExamRow, tilt_right: bool) -> bool {
+fn exam_card(ui: &mut egui::Ui, app: &mut crate::App, w: f32, e: &ExamRow, tilt_right: bool) -> bool {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 236.0), egui::Sense::click());
     if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -1790,7 +1794,13 @@ fn exam_card(ui: &mut egui::Ui, w: f32, e: &ExamRow, tilt_right: bool) -> bool {
     p.rect(rect, CornerRadius::same(16), theme::card(), hover_border(&resp), StrokeKind::Inside);
     let pv = Rect::from_min_size(rect.min + Vec2::splat(1.0), Vec2::new(w - 2.0, 112.0));
     paint_preview_bg(p, pv);
-    paper_thumb(p, pv.center(), Vec2::new(70.0, 90.0), if tilt_right { 3.0 } else { -3.0 }, e.id.len() % 2 == 0, true);
+    // The exam's real first page; the generic sheet only while it has no questions.
+    let ctx = ui.ctx().clone();
+    let page = crate::examui::paint_exam_thumb(app, &ctx, p, pv.shrink2(Vec2::new(10.0, 9.0)), &e.id);
+    let p = ui.painter();
+    if page.is_none() {
+        paper_thumb(p, pv.center(), Vec2::new(70.0, 90.0), if tilt_right { 3.0 } else { -3.0 }, e.id.len() % 2 == 0, true);
+    }
     let x = rect.min.x + 14.0;
     let iw = w - 28.0;
     paint_fit(p, Pos2::new(x, pv.bottom() + 11.0), &e.name, serif_font(16.0), theme::ink(), iw);

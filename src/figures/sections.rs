@@ -91,10 +91,10 @@ static FIG_9: [RefSection; 5] = [
 ];
 
 static FIG_10: [RefSection; 4] = [
+    s("Lanes", &["lanes", "lane_names", "lane_labels", "lane_numbers"], ""),
     s("Gel", &["setup", "agarose", "look", "ruler"], "Agarose"),
     s("Labels", &["sizes", "electrodes", "answer", "ladder_sizes", "size_units", "electrode_style", "answer_kind"], "Lane labels"),
     s("Chart title and answer key", &["title", "band_height", "run_length"], "Chart title"),
-    s("Lanes", &["lanes", "lane_names", "lane_labels", "lane_numbers"], ""),
 ];
 
 static FIG_11: [RefSection; 7] = [
@@ -182,13 +182,14 @@ static FIG_20: [RefSection; 3] = [
     s("Color", &["color", "decimal_line", "answer", "title", "answer_text"], "Red digits show where the decimal point goes. The line keeps that clear on a black and white copy."),
 ];
 
-static FIG_21: [RefSection; 6] = [
+static FIG_21: [RefSection; 7] = [
     s("Motion", &["n", "x0", "tangent_t"], "A to B (0–4 s): speeding up from 0 to 4 m/s, a = 1 m/s²; 0 m to 8 m"),
+    items("Segment"),
+    s("Graphs", &["show", "ranges"], ""),
     s("Marks", &["letters", "styles", "tangent"], ""),
     s("Titles", &["title_mode", "title", "xt_mode", "xt", "yt_pos_mode", "yt_pos", "yt_vel_mode", "yt_vel", "yt_acc_mode", "yt_acc", "label_size"], "Type ^ for a superscript, as in m/s^2, and _ for a subscript."),
     s("Axes and grid", &["numbers", "grid", "t_min", "t_max", "t_step", "p_min", "p_max", "p_step", "v_min", "v_max", "v_step", "a_min", "a_max", "a_step"], ""),
     s("Figure", &["color"], ""),
-    s("Graphs", &["show", "ranges"], ""),
 ];
 
 static FIG_22: [RefSection; 1] = [
@@ -220,7 +221,7 @@ static FIG_25: [RefSection; 6] = [
 ];
 
 static FIG_26: [RefSection; 6] = [
-    s("Layout", &["layout", "boxes", "state", "state2"], "Boxes"),
+    s("Layout", &["layout", "boxes", "state", "state2", "gaps"], "Boxes"),
     s("Particles", &["d_count", "d_shape", "d_size", "d_shade", "shuffle", "a2_count", "b2_count", "c2_count", "d2_count"], ""),
     s("Key", &["key_show", "key_list", "note"], "Show"),
     s("Box", &["border"], "Border"),
@@ -263,6 +264,7 @@ static FIG_30: [RefSection; 9] = [
 ];
 
 static FIG_31: [RefSection; 8] = [
+    s("Predator and prey", &["pair", "prey", "pred", "prey0", "pred0", "prey_avg", "pred_avg"], ""),
     s("Graph", &["graph", "y_min", "y_max", "y_numbers"], ""),
     s("Data", &["data", "marks"], ""),
     s("Marked", &["source", "cycle", "alpha", "beta", "gamma", "delta", "show", "style", "y_axis", "census_every", "census_noise", "census_seed", "census_join", "mark_lag", "mark_period", "lag_labels"], ""),
@@ -270,7 +272,6 @@ static FIG_31: [RefSection; 8] = [
     s("x-axis", &["tshow", "unit", "x_fit", "x_step", "x_numbers", "x_end", "x_end_text", "y_fit", "y_step"], ""),
     s("y-axis", &["y_end", "y_end_text"], ""),
     s("Grid", &["minor"], ""),
-    s("Predator and prey", &["pair", "prey", "pred", "prey0", "pred0", "prey_avg", "pred_avg"], ""),
 ];
 
 static FIG_32: [RefSection; 3] = [
@@ -296,11 +297,11 @@ static FIG_34: [RefSection; 4] = [
 ];
 
 static FIG_35: [RefSection; 5] = [
-    s("Square", &["cross", "dominance", "parents", "filled", "geno_ratio", "parent_labels", "blank_parents", "blank_gametes", "cells", "blank_cells", "cell_phenotype", "geno_ratio_style"], "Parents"),
-    s("Ratios", &["ratio_form", "sex_split"], "Genotypes"),
-    s("Title and question", &["title", "question", "outline_heavy", "label_size"], "Chart title"),
-    s("Phenotypes", &["phenotypes", "pheno_ratio_style", "pheno_ratio"], ""),
+    s("Phenotypes", &["phenotypes"], ""),
+    s("Square", &["cross", "dominance", "parents", "filled", "parent_labels", "blank_parents", "blank_gametes", "cells", "blank_cells", "cell_phenotype"], "Parents"),
     s("Shading", &["shading", "shade_style", "shade_color"], ""),
+    s("Ratios", &["geno_ratio", "geno_ratio_style", "pheno_ratio", "pheno_ratio_style", "ratio_form", "sex_split"], "Genotypes and phenotypes under the square."),
+    s("Title and question", &["title", "question", "outline_heavy", "label_size"], "Chart title"),
 ];
 
 static FIG_36: [RefSection; 4] = [

@@ -661,7 +661,12 @@ fn draw_exam_cards(app: &mut crate::App, ui: &mut egui::Ui, rows: &[ExamRow], st
                 Stroke::new(1.0, if resp.hovered() { theme::accent_col() } else { theme::border() }),
                 StrokeKind::Inside,
             );
-            paint_thumb(p, rect.left_top() + Vec2::new(14.0 + 36.0, 14.0 + 46.0), -0.05, row.q.max(2));
+            let thumb_area = Rect::from_min_size(rect.left_top() + Vec2::new(14.0, 12.0), Vec2::new(78.0, card_h - 24.0));
+            let ctx = ui.ctx().clone();
+            let tp = ui.painter().clone();
+            if paint_exam_thumb(app, &ctx, &tp, thumb_area, &row.id).is_none() {
+                paint_thumb(&tp, rect.left_top() + Vec2::new(14.0 + 36.0, 14.0 + 46.0), -0.05, row.q.max(2));
+            }
             let tx = rect.left() + 14.0 + 78.0 + 12.0;
             let tw = rect.right() - 36.0 - tx;
             let g = clamped_galley(p, &row.name, FontId::new(16.0, theme::serif_family()), theme::ink(), tw, 2);
@@ -4220,7 +4225,18 @@ fn paint_pdf_page(p: &egui::Painter, rect: Rect, page_w: f64, page_h: f64, ops: 
                     let size = (font.1 as f32 * s).max(1.0);
                     let fam = if font.0 == "F2" || font.0 == "F4" { theme::bold_family() } else { egui::FontFamily::Proportional };
                     let base = to(tpos.0, tpos.1);
-                    p.text(Pos2::new(base.x, base.y - size * 0.78), Align2::LEFT_TOP, winansi_text(b), FontId::new(size, fam), fill);
+                    if size < 3.5 {
+                        // Card thumbnails: glyphs this small vanish, so text reads as a grey bar
+                        // of the run's real width (measured at 10 px and scaled down).
+                        let t = winansi_text(b);
+                        if !t.trim().is_empty() {
+                            let w = p.layout_no_wrap(t, FontId::new(10.0, fam), fill).size().x * size / 10.0;
+                            let bar = Rect::from_min_size(Pos2::new(base.x, base.y - size * 0.62), Vec2::new(w, (size * 0.5).max(0.8)));
+                            p.rect_filled(bar, CornerRadius::ZERO, fill.gamma_multiply(0.45));
+                        }
+                    } else {
+                        p.text(Pos2::new(base.x, base.y - size * 0.78), Align2::LEFT_TOP, winansi_text(b), FontId::new(size, fam), fill);
+                    }
                 }
             }
             "cm" => {
@@ -4281,6 +4297,21 @@ fn export_preview(app: &mut crate::App, ctx: &egui::Context, exam_id: &Id, key: 
     };
     let texs = files.iter().map(|f| app.image_texture(ctx, f).map(|t| t.id())).collect();
     Some((pv, texs))
+}
+
+/// First-page thumbnail of an exam (Home and Exams cards), painted from the same page
+/// layout the export uses, fitted into `area` (centered, drop shadow, thin edge). Returns
+/// the page rect, or None when the exam has no questions yet (callers draw their blank sheet).
+pub(crate) fn paint_exam_thumb(app: &mut crate::App, ctx: &egui::Context, p: &egui::Painter, area: Rect, exam_id: &Id) -> Option<Rect> {
+    let (pv, texs) = export_preview(app, ctx, exam_id, false)?;
+    let ops = pv.pages.first()?;
+    let aspect = (pv.page_w / pv.page_h) as f32;
+    let h = area.height().min(area.width() / aspect);
+    let r = Rect::from_center_size(area.center(), Vec2::new(h * aspect, h));
+    p.add(egui::Shadow { offset: [0, 4], blur: 10, spread: 0, color: Color32::from_black_alpha(45) }.as_shape(r, CornerRadius::same(1)));
+    paint_pdf_page(&p.with_clip_rect(r.intersect(p.clip_rect())), r, pv.page_w, pv.page_h, ops, &texs);
+    p.rect_stroke(r, CornerRadius::same(1), Stroke::new(1.0, Color32::from_rgb(0xcf, 0xc9, 0xb6)), StrokeKind::Inside);
+    Some(r)
 }
 
 /// The export dialog's preview strip: page thumbnails of the document that will export.
@@ -5373,6 +5404,7 @@ mod examed_tests {
             ],
             created: 0,
             modified: 0,
+            details: Default::default(),
         });
         let mut ex = model::Exam { items: vec![it("q1"), it("gone"), it("q2"), it("q3")], ..Default::default() };
         ex.items[0].answer_order = vec![1, 0];

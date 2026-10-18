@@ -18,6 +18,7 @@ pub mod math_geo;
 pub mod math_plot;
 pub mod physics;
 pub mod sections;
+pub mod share;
 pub mod start;
 pub mod svg;
 

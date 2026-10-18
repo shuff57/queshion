@@ -224,23 +224,38 @@ fn push_text(out: &mut Vec<StemPart>, s: &str) {
     }
 }
 
-/// Picture placeholders still needing a picture in one question: markers in its stem,
-/// answers and multipart parts, less the one its attached picture already covers.
+/// Picture placeholders still needing a picture in one question: every marker in its
+/// stem, answers, matching pairs, short-answer model answers and multipart parts (stems,
+/// choices and model answers), less the one its attached picture already covers.
 pub fn pictures_needed(q: &Question) -> usize {
+    let c = picture_markers(q);
+    if q.image.is_some() { c.saturating_sub(1) } else { c }
+}
+
+/// Every `[picture]` marker anywhere in a question, before the attached picture is counted.
+pub fn picture_markers(q: &Question) -> usize {
     let n = |s: &str| split_pictures(s).iter().filter(|p| matches!(p, StemPart::Picture(_))).count();
     let mut c = n(&q.stem);
-    if let Kind::Multipart { parts } = &q.kind {
-        c += parts.iter().map(|p| n(&p.stem)).sum::<usize>();
-        for p in parts {
-            if let PartKind::Mc { answers } = &p.kind {
-                c += answers.iter().map(|a| n(&a.text)).sum::<usize>();
+    match &q.kind {
+        Kind::Mc { answers } => c += answers.iter().map(|a| n(&a.text)).sum::<usize>(),
+        Kind::Short { sample } => c += n(sample),
+        Kind::Matching { pairs, distractors } => {
+            c += pairs.iter().map(|p| n(&p.left) + n(&p.right)).sum::<usize>();
+            c += distractors.iter().map(|d| n(d)).sum::<usize>();
+        }
+        Kind::Multipart { parts } => {
+            for p in parts {
+                c += n(&p.stem);
+                match &p.kind {
+                    PartKind::Mc { answers } => c += answers.iter().map(|a| n(&a.text)).sum::<usize>(),
+                    PartKind::Short { sample } => c += n(sample),
+                    PartKind::Tf { .. } => {}
+                }
             }
         }
+        Kind::Tf { .. } | Kind::Blank { .. } => {}
     }
-    if let Kind::Mc { answers } = &q.kind {
-        c += answers.iter().map(|a| n(&a.text)).sum::<usize>();
-    }
-    if q.image.is_some() { c.saturating_sub(1) } else { c }
+    c
 }
 
 #[cfg(test)]
@@ -385,5 +400,20 @@ mod tests {
         m.image = Some(crate::model::ImageRef { file: "media/x.png".into(), width: 1, height: 1 });
         assert_eq!(pictures_needed(&m), 3, "the attached picture covers one marker");
         assert_eq!(pictures_needed(&q("p", &[])), 0);
+        // Short-answer model answers count too (multipart parts and plain short answers).
+        let mut sa = q("s", &[]);
+        sa.kind = Kind::Short { sample: "[picture: key sketch]\nlinear".into() };
+        assert_eq!(pictures_needed(&sa), 1);
+        let mut mp = q("m", &[]);
+        mp.kind = Kind::Multipart {
+            parts: vec![
+                Part { stem: "NH3".into(), kind: PartKind::Short { sample: "[picture: NH3 key]\npyramidal".into() } },
+                Part { stem: "CO2".into(), kind: PartKind::Short { sample: "[picture: CO2 key]".into() } },
+            ],
+        };
+        assert_eq!(pictures_needed(&mp), 2);
+        let mut mt = q("t", &[]);
+        mt.kind = Kind::Matching { pairs: vec![crate::model::Pair { left: "[picture]".into(), right: "x".into() }], distractors: vec!["[picture: y]".into()] };
+        assert_eq!(pictures_needed(&mt), 2);
     }
 }

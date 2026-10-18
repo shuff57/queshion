@@ -477,7 +477,7 @@ fn import_pdf_headless(pdf: &str) {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     let mut st = store::Store::load();
     let n = questions.len();
-    st.banks.push(model::QuestionBank { id: model::new_id(), name: name.clone(), questions, created: now, modified: now });
+    st.banks.push(model::QuestionBank { id: model::new_id(), name: name.clone(), questions, created: now, modified: now, details: Default::default() });
     st.save_banks();
     println!("saved bank \"{name}\" with {n} questions to {}", store::store_dir_string());
 }

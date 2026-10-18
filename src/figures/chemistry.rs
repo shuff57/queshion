@@ -262,6 +262,55 @@ mod tests {
         }
     }
 
+    /// The reference's nine particle-diagram examples, incl. the two alloys; in the steel one the
+    /// small carbon atoms sit in the holes between iron atoms (not on lattice sites), and the
+    /// gaps switch leaves solids without it exactly as they were.
+    #[test]
+    fn particle_examples_and_interstitial_alloy() {
+        let names: Vec<&str> = examples("particle-diagram").unwrap().iter().map(|e| e.name).collect();
+        assert_eq!(names.len(), 9, "the reference lists nine: {names:?}");
+        assert_eq!(names[3], "Mixture of an element and a compound", "in the reference order");
+        for want in ["Mixture of an element and a compound", "Interstitial alloy: steel", "Substitutional alloy: brass"] {
+            assert!(names.contains(&want), "{want}");
+        }
+        let d = find("particle-diagram");
+        let defs = (d.params)();
+        let ex = examples("particle-diagram").unwrap();
+        let steel = ex.iter().find(|e| e.name.contains("steel")).unwrap();
+        let mut p = Params::defaults(&defs);
+        for (k, v) in &steel.params {
+            p.0.insert(k.to_string(), v.clone());
+        }
+        let svg = (d.render)(&p);
+        // circles as (cx, cy, r)
+        let circles: Vec<(f64, f64, f64)> = svg
+            .split("<circle").skip(1)
+            .filter_map(|c| {
+                let g = |n: &str| c.split(&format!(" {n}=\"")).nth(1)?.split('"').next()?.parse::<f64>().ok();
+                Some((g("cx")?, g("cy")?, g("r")?))
+            })
+            .collect();
+        let big: Vec<_> = circles.iter().filter(|c| c.2 > 12.0 && c.0 < 360.0).collect();
+        let small: Vec<_> = circles.iter().filter(|c| c.2 < 6.0 && c.0 < 360.0).collect();
+        assert_eq!(big.len(), 24);
+        assert_eq!(small.len(), 6);
+        for s in &small {
+            // inside a hole: four iron neighbours, none overlapping it
+            let near = big.iter().filter(|b| ((b.0 - s.0).hypot(b.1 - s.1)) < 30.0).count();
+            assert_eq!(near, 4, "carbon at {s:?} sits in a hole");
+            assert!(big.iter().all(|b| (b.0 - s.0).hypot(b.1 - s.1) >= b.2 + s.2 - 0.5), "no overlap at {s:?}");
+        }
+        // gaps on / off is all that differs, and plain solids ignore the default
+        let mut q = p.clone();
+        q.set_b("gaps", false);
+        assert_ne!((d.render)(&q), svg);
+        let mut solid = Params::defaults(&defs);
+        solid.set_s("state", "Solid");
+        let before = (d.render)(&solid);
+        solid.set_b("gaps", true);
+        assert_eq!((d.render)(&solid), before, "one size of particle: nothing to put in the gaps");
+    }
+
     #[test]
     fn chips_add_kinds_and_actions() {
         for id in ["particle-diagram", "bohr-model"] {

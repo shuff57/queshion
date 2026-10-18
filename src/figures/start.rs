@@ -20,7 +20,8 @@ pub fn overrides(id: &str) -> Vec<(&'static str, Value)> {
         "ruler-reading" => vec![("magnify", st("Ruler and magnifiers"))],
         // Chemistry starting examples.
         "line-spectrum" => vec![("strips", st("Hydrogen; Helium; Sodium; Unknown = Hydrogen + Sodium"))],
-        "mass-spectrum" => vec![("element", st("Magnesium")), ("values", Value::B(true))],
+        // the reference opens on percent abundance (78.99 %, "Abundance (%)")
+        "mass-spectrum" => vec![("element", st("Magnesium")), ("values", Value::B(true)), ("relative", Value::B(false))],
         "photoelectron-spectrum" => vec![("element", st("11 Na - Sodium"))],
         "orbital-diagram" => vec![("element", st("8 O - Oxygen"))],
         "particle-diagram" => vec![
@@ -74,6 +75,7 @@ mod tests {
         assert_eq!(start("volume-reading").s("mag_show"), "Instrument and magnifier");
         assert_eq!(start("length-reading").s("mag_show"), "Ruler and magnifiers");
         assert_eq!(start("mass-spectrum").s("element"), "Magnesium");
+        assert!(!start("mass-spectrum").b("relative"), "mass spectrum opens on percent abundance");
         assert_eq!(start("orbital-diagram").s("element"), "8 O - Oxygen");
         assert_eq!(start("triangle").s("fill"), "#ffffff");
         let g = start("coordinate-grid");

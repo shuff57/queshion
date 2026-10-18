@@ -447,6 +447,7 @@ fn particle_params() -> Vec<ParamDef> {
         ParamDef::choice("boxes", "Boxes", &["One box", "Before and after"], "One box"),
         ParamDef::choice("state", "State (box, or before)", &["Gas", "Liquid", "Solid"], "Gas"),
         ParamDef::choice("state2", "State after", &["Gas", "Liquid", "Solid"], "Gas"),
+        ParamDef::bool("gaps", "Solid: small particles sit in the gaps (interstitial alloy)", false),
     ];
     v.push(ParamDef::text("title", "Chart title text", ""));
     v.push(ParamDef::text("lab_before", "Left box label", "Before"));
@@ -561,7 +562,7 @@ fn draw_mol(d: &mut Doc, sp: &Species, x: f64, y: f64, rot: f64) {
     atom(d, px, py, sp.r, sp.fill, &sp.ch);
 }
 
-fn fill_box(d: &mut Doc, bx: f64, by: f64, bs: f64, state: &str, layout_lattice: bool, items: &[Species], seed: u64, border: &str) {
+fn fill_box(d: &mut Doc, bx: f64, by: f64, bs: f64, state: &str, layout_lattice: bool, gaps: bool, items: &[Species], seed: u64, border: &str) {
     match border {
         "None" => {}
         "Double" => { d.rect(bx, by, bs, bs, "none", INK, 1.6); d.rect(bx - 5.0, by - 5.0, bs + 10.0, bs + 10.0, "none", INK, 1.6); }
@@ -598,16 +599,37 @@ fn fill_box(d: &mut Doc, bx: f64, by: f64, bs: f64, state: &str, layout_lattice:
     let (ymin, ymax) = match state { "Gas" => (by + m, by + bs - m), _ => (by + bs * 0.28, by + bs - m) };
     if state == "Solid" {
         let maxb = items.iter().map(bound).fold(0.0, f64::max);
-        let step = maxb * 2.0 * 1.02;
+        // interstitial alloy: kinds under half the largest's size sit in the gaps of the lattice
+        let (big, small): (Vec<usize>, Vec<usize>) = if gaps { (0..items.len()).partition(|&i| bound(&items[i]) > 0.5 * maxb) } else { ((0..items.len()).collect(), Vec::new()) };
+        let minb = small.iter().map(|&i| bound(&items[i])).fold(0.0, f64::max);
+        let step = if small.is_empty() { maxb * 2.0 * 1.02 } else { (maxb * 2.0).max((maxb + minb) * std::f64::consts::SQRT_2) * 1.02 };
         let per_row = (((bs - 2.0 * m) / step).floor() as usize).max(1);
-        let mut idx: Vec<usize> = (0..items.len()).collect();
+        let mut idx: Vec<usize> = big;
         for i in (1..idx.len()).rev() { let j = (rg.next() * (i as f64 + 1.0)) as usize % (i + 1); idx.swap(i, j); }
+        let mut sites: Vec<(f64, f64)> = Vec::new();
         for (k, &ii) in idx.iter().enumerate() {
             let (r, c) = (k / per_row, k % per_row);
-            let in_row = per_row.min(items.len() - r * per_row);
+            let in_row = per_row.min(idx.len() - r * per_row);
             let x = bx + bs / 2.0 + (c as f64 - (in_row as f64 - 1.0) / 2.0) * step;
             let y = by + bs - m - step / 2.0 - r as f64 * step;
             draw_mol(d, &items[ii], x, y, 0.0);
+            sites.push((x, y));
+        }
+        if !small.is_empty() {
+            // holes: the centre of every square of four neighbours, then the dips along the top
+            let has = |x: f64, y: f64| sites.iter().any(|&(sx, sy)| (sx - x).abs() < 1e-6 && (sy - y).abs() < 1e-6);
+            let mut holes: Vec<(f64, f64)> = Vec::new();
+            let mut top: Vec<(f64, f64)> = Vec::new();
+            for &(x, y) in &sites {
+                if !has(x + step, y) { continue; }
+                if has(x, y - step) && has(x + step, y - step) { holes.push((x + step / 2.0, y - step / 2.0)); }
+                else if y - step / 2.0 - minb > by + m { top.push((x + step / 2.0, y - step / 2.0)); }
+            }
+            for i in (1..holes.len()).rev() { let j = (rg.next() * (i as f64 + 1.0)) as usize % (i + 1); holes.swap(i, j); }
+            holes.extend(top);
+            for (&ii, &(x, y)) in small.iter().zip(holes.iter()) {
+                draw_mol(d, &items[ii], x, y, 0.0);
+            }
         }
         return;
     }
@@ -680,6 +702,7 @@ fn draw_key(d: &mut Doc, p: &Params, x: f64, ycen: f64) {
 fn particle_render(p: &Params) -> String {
     let two = p.s("boxes") == "Before and after";
     let lattice = p.s("layout") == "Lattice";
+    let gaps = p.b("gaps");
     let show = p.s("key_show");
     let build = |after: bool| -> Vec<Species> {
         let mut v = Vec::new();
@@ -699,11 +722,11 @@ fn particle_render(p: &Params) -> String {
     let seed = p.i("shuffle").max(0) as u64 * 7919;
     if show != "Key only" {
         let before = build(false);
-        fill_box(&mut d, 20.0, 20.0, bs, p.s("state"), lattice, &before, 11 + seed, p.s("border"));
+        fill_box(&mut d, 20.0, 20.0, bs, p.s("state"), lattice, gaps, &before, 11 + seed, p.s("border"));
         if two {
             let after = build(true);
             d.arrow(bs + 38.0, 20.0 + bs / 2.0, bs + 112.0, 20.0 + bs / 2.0, INK, 2.2);
-            fill_box(&mut d, bs + 130.0, 20.0, bs, p.s("state2"), lattice, &after, 23 + seed, p.s("border"));
+            fill_box(&mut d, bs + 130.0, 20.0, bs, p.s("state2"), lattice, gaps, &after, 23 + seed, p.s("border"));
             tx(&mut d, 20.0 + bs / 2.0, bs + 52.0, 15.0, "middle", INK, true, p.s("lab_before"));
             tx(&mut d, bs + 130.0 + bs / 2.0, bs + 52.0, 15.0, "middle", INK, true, p.s("lab_after"));
         }
@@ -831,9 +854,12 @@ pub(super) fn examples(id: &str) -> Option<Vec<Example>> {
             ex("Mixture of two elements", vec![("a_count", iv(6)), ("a_size", sv("M")), ("a_shade", sv("Light gray")), ("b_count", iv(5)), ("b_shape", sv("Pair")), ("b_size", sv("M")), ("b_shade", sv("Dark gray")), ("b_osize", sv("M")), ("b_oshade", sv("Dark gray"))]),
             ex("Pure compound: water molecules", vec![("a_count", iv(10)), ("a_shape", sv("Bent")), ("a_size", sv("L")), ("a_shade", sv("Gray")), ("a_osize", sv("S")), ("a_oshade", sv("White"))]),
             ex("Pure element: diatomic molecules", vec![("a_count", iv(8)), ("a_shape", sv("Pair")), ("a_size", sv("M")), ("a_shade", sv("Gray")), ("a_osize", sv("M")), ("a_oshade", sv("Gray"))]),
+            ex("Mixture of an element and a compound", vec![("a_count", iv(5)), ("a_shape", sv("Pair")), ("a_size", sv("M")), ("a_shade", sv("Dark gray")), ("a_osize", sv("M")), ("a_oshade", sv("Dark gray")), ("b_count", iv(5)), ("b_shape", sv("Bent")), ("b_size", sv("M")), ("b_shade", sv("Gray")), ("b_osize", sv("S")), ("b_oshade", sv("White"))]),
             ex("Before and after: hydrogen and oxygen react", vec![("boxes", sv("Before and after")), ("a_count", iv(4)), ("a_shape", sv("Pair")), ("a_size", sv("S")), ("a_shade", sv("White")), ("a_osize", sv("S")), ("a_oshade", sv("White")), ("a2_count", iv(0)), ("b_count", iv(2)), ("b_shape", sv("Pair")), ("b_size", sv("M")), ("b_shade", sv("Dark gray")), ("b_osize", sv("M")), ("b_oshade", sv("Dark gray")), ("c2_count", iv(4)), ("c_shape", sv("Bent")), ("c_size", sv("M")), ("c_shade", sv("Dark gray")), ("c_osize", sv("S")), ("c_oshade", sv("White"))]),
             ex("Key of each atom: water and carbon dioxide", vec![("a_count", iv(5)), ("a_shape", sv("Bent")), ("a_size", sv("M")), ("a_shade", sv("Gray")), ("a_osize", sv("S")), ("a_oshade", sv("White")), ("a_name", sv("O atom")), ("a_oname", sv("H atom")), ("b_count", iv(3)), ("b_shape", sv("In a line")), ("b_size", sv("M")), ("b_shade", sv("Black")), ("b_osize", sv("M")), ("b_oshade", sv("Gray")), ("b_name", sv("C atom")), ("key_show", sv("Box and key")), ("key_list", sv("Each atom"))]),
             ex("Ionic solid lattice: NaCl", vec![("layout", sv("Lattice")), ("state", sv("Solid")), ("a_count", iv(12)), ("a_size", sv("XL")), ("a_shade", sv("Light gray")), ("a_charge", sv("−")), ("a_name", sv("Cl⁻ ion")), ("b_count", iv(12)), ("b_size", sv("M")), ("b_shade", sv("Dark gray")), ("b_charge", sv("+")), ("b_name", sv("Na⁺ ion")), ("key_show", sv("Box and key")), ("border", sv("None"))]),
+            ex("Interstitial alloy: steel", vec![("state", sv("Solid")), ("gaps", bv(true)), ("a_count", iv(24)), ("a_size", sv("XL")), ("a_shade", sv("Light gray")), ("a_name", sv("Fe atom")), ("b_count", iv(6)), ("b_size", sv("XS")), ("b_shade", sv("Black")), ("b_name", sv("C atom")), ("key_show", sv("Box and key"))]),
+            ex("Substitutional alloy: brass", vec![("state", sv("Solid")), ("a_count", iv(16)), ("a_size", sv("XL")), ("a_shade", sv("Light gray")), ("a_name", sv("Cu atom")), ("b_count", iv(8)), ("b_size", sv("XL")), ("b_shade", sv("Dark gray")), ("b_name", sv("Zn atom")), ("key_show", sv("Box and key")), ("shuffle", iv(3))]),
         ],
         _ => return None,
     })

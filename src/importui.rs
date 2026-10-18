@@ -54,6 +54,23 @@ struct Source {
     exam_sel: Vec<bool>,
     /// Preview texture of a photo / PDF page waiting for the AI.
     tex: Option<egui::TextureHandle>,
+    /// The page image a photo / PDF page source was read from, kept after the AI reads it
+    /// so a picture placeholder can be cropped from it.
+    page: Option<Vec<u8>>,
+}
+
+/// The "Add a picture" dialog for one question of the import preview.
+#[derive(Clone, Default)]
+struct Attach {
+    /// Source and question index in its doc.
+    si: usize,
+    k: usize,
+    /// Which crop page is shown (index into `crop_pages`).
+    page: usize,
+    /// Selection on that page, normalized 0..1 (min x, min y, max x, max y).
+    sel: Option<[f32; 4]>,
+    drag_from: Option<Pos2>,
+    tex: Option<(usize, egui::TextureHandle)>,
 }
 
 /// What the centre pane previews.
@@ -78,6 +95,39 @@ struct State {
     ai_all: bool,
     /// Item shown in the page preview.
     pick: Option<Pick>,
+    /// Open "Add a picture" dialog.
+    attach: Option<Attach>,
+    /// Live read of the paste box: (text it was computed for, result).
+    paste_read: Option<(String, Result<PasteRead, String>)>,
+}
+
+/// What the paste box's text reads as, live while typing.
+#[derive(Clone, Debug, PartialEq)]
+struct PasteRead {
+    /// "Read as <format>".
+    format: String,
+    found: usize,
+    /// Found minus duplicates (of each other, or of the destination bank).
+    coming: usize,
+}
+
+/// Reads pasted text the way "Add pasted text" will: its format label, how many questions
+/// it holds and how many would come in once duplicates are skipped.
+fn read_paste(text: &str, existing: &HashSet<String>, skip_dups: bool) -> Result<PasteRead, String> {
+    let name = "Pasted text";
+    let bytes = text.as_bytes();
+    let head: String = text.chars().take(4000).collect();
+    let format = crate::formats::format_label(bytes, name).map(str::to_string).unwrap_or_else(|| text_kind(name, "", &head).to_string());
+    let doc = crate::formats::detect_and_parse(bytes, name)?;
+    let found = doc.questions.len();
+    let mut seen = existing.clone();
+    let coming = if skip_dups { doc.questions.iter().filter(|q| seen.insert(dup_key(q))).count() } else { found };
+    Ok(PasteRead { format, found, coming })
+}
+
+/// "3 questions found · 3 coming in".
+fn paste_counts_line(r: &PasteRead) -> (String, String) {
+    (format!("{} found · ", plural(r.found, "question")), format!("{} coming in", r.coming))
 }
 
 thread_local! {
@@ -180,6 +230,7 @@ impl State {
             version,
             exam_sel: vec![true; ne],
             tex: None,
+            page: None,
         });
     }
 
@@ -197,6 +248,7 @@ impl State {
             version: None,
             exam_sel: Vec::new(),
             tex: None,
+            page: None,
         });
     }
 }
@@ -342,7 +394,7 @@ impl crate::App {
                     s.status = Status::Ready;
                     s.fresh = true;
                     s.kind = "Photo, read by AI".to_string();
-                    s.image = None;
+                    s.page = s.image.take().map(|f| f.bytes);
                     s.tex = None;
                 }
                 Err(e) => {
@@ -452,12 +504,20 @@ impl crate::App {
             if let Ok(v) = std::env::var("QUESHION_IMPORT_FILES") {
                 add_paths(self, &mut st, std::env::split_paths(&v).collect());
             }
+            // QA hook: QUESHION_PASTE=<file> opens the paste box holding that file's text.
+            if let Ok(p) = std::env::var("QUESHION_PASTE") {
+                if let Ok(t) = std::fs::read_to_string(p) {
+                    self.paste = t;
+                    st.paste_open = true;
+                }
+            }
         }
         intake(self, ctx, &mut st);
         if st.ai_all && !self.ai_busy {
             start_next_ai(self, &mut st, ctx);
         }
         shell_frame(self, ctx, true, |app, ui| page(app, ui, ctx, &mut st));
+        attach_dialog(self, ctx, &mut st);
         ST.with(|s| *s.borrow_mut() = st);
     }
 }
@@ -617,6 +677,7 @@ fn drop_area(app: &mut crate::App, ui: &mut egui::Ui, st: &mut State) {
                                 "MC\nWhich planet is closest to the Sun?\nVenus\n*Mercury\nMars\n\nTF\nThe Sun is a star.\nT",
                             ),
                     );
+                    paste_live_line(app, ui, st);
                     ui.label(theme::muted("* marks the correct answer. One blank line between questions.").size(11.5));
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
@@ -648,6 +709,40 @@ fn drop_area(app: &mut crate::App, ui: &mut egui::Ui, st: &mut State) {
     let stroke = Stroke::new(1.5, theme::accent_col());
     let pts = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
     ui.painter().extend(Shape::dashed_line(&pts, stroke, 7.0, 5.0));
+}
+
+/// "Read as <format>" and "N questions found · N coming in" under the paste box, live.
+fn paste_live_line(app: &crate::App, ui: &mut egui::Ui, st: &mut State) {
+    let text = app.paste.trim();
+    if text.is_empty() {
+        st.paste_read = None;
+        return;
+    }
+    if st.paste_read.as_ref().is_none_or(|(t, _)| t != text) {
+        let mut existing: HashSet<String> = HashSet::new();
+        if let Some(b) = st.dest.as_ref().and_then(|id| app.store.bank(id)) {
+            existing.extend(b.questions.iter().map(dup_key));
+        }
+        st.paste_read = Some((text.to_string(), read_paste(text, &existing, st.skip_dups)));
+    }
+    let Some((_, res)) = &st.paste_read else { return };
+    ui.add_space(4.0);
+    match res {
+        Ok(r) => {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.label(theme::text(format!("Read as {}", r.format)).size(12.5));
+                ui.label(theme::muted("  ·  ").size(12.5));
+                let (a, b) = paste_counts_line(r);
+                ui.label(theme::text(a).size(12.5));
+                ui.label(theme::strong(b).size(12.5));
+            });
+        }
+        Err(e) => {
+            let e: String = e.chars().take(140).collect();
+            ui.add(egui::Label::new(theme::muted(format!("Not readable yet: {e}")).size(12.0)).wrap());
+        }
+    }
 }
 
 fn ctx_hovering(ctx: &egui::Context) -> bool {
@@ -971,6 +1066,26 @@ fn preview_pane(app: &mut crate::App, ui: &mut egui::Ui, ctx: &egui::Context, st
         .as_ref()
         .map(|d| order.iter().flatten().map(|&k| crate::bankops::pictures_needed(&d.questions[k])).sum())
         .unwrap_or(0);
+    if s.how == "paste" {
+        if let Some(d) = &s.doc {
+            let coming = (0..d.questions.len()).filter(|&k| included(skip, s, dup, k)).count();
+            let r = PasteRead { format: s.kind.clone(), found: d.questions.len(), coming };
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.label(theme::text(format!("Read as {}", r.format)).size(12.5));
+                ui.label(theme::muted("  ·  ").size(12.5));
+                let (a, b) = paste_counts_line(&r);
+                ui.label(theme::text(a).size(12.5));
+                ui.label(theme::strong(b).size(12.5));
+            });
+            ui.add_space(8.0);
+        }
+    }
+    let clickable: usize = s
+        .doc
+        .as_ref()
+        .map(|d| order.iter().flatten().filter(|&&k| stem_picture_open(&d.questions[k])).count())
+        .unwrap_or(0);
     if pictures > 0 {
         egui::Frame::new()
             .fill(theme::card())
@@ -990,11 +1105,7 @@ fn preview_pane(app: &mut crate::App, ui: &mut egui::Ui, ctx: &egui::Context, st
                     ));
                     ui.add(
                         egui::Label::new(
-                            theme::text(format!(
-                                "{} needed. Add {} in the question editor after importing.",
-                                plural(pictures, "picture"),
-                                if pictures == 1 { "it" } else { "them" }
-                            ))
+                            theme::text(picture_banner(pictures, clickable))
                             .size(12.5),
                         )
                         .wrap(),
@@ -1145,6 +1256,7 @@ fn sheet(
 
     let numbers = print_numbers(order.iter().map(|k| k.map(|k| &doc.questions[k])));
     let mut toggle: Option<usize> = None;
+    let mut open_attach: Option<usize> = None;
     for (n, k) in order.iter().enumerate() {
         let q = k.map(|k| &doc.questions[k]);
         // Like the print (and the exam page): a question that would cross a page break,
@@ -1160,6 +1272,32 @@ fn sheet(
         }
         let rect = paper_question(app, ui, ctx, q, numbers[n], cw, bp, crate::model::PaperStyle::Standard);
         ctx.data_mut(|d| d.insert_temp(h_id, rect.height()));
+        if let (Some(k), Some(q)) = (*k, q) {
+            if stem_picture_open(q) {
+                // The question's picture box: click anywhere on it (or the margin badge) to add one.
+                let hit = ui.interact(rect, ui.id().with(("imp_q_pic", si, k)), Sense::click());
+                let badge = Rect::from_center_size(Pos2::new(rect.right() + side * 0.5, rect.top() + bp * 0.75), Vec2::splat(18.0));
+                let bhit = ui.interact(badge.expand(3.0), ui.id().with(("imp_q_pic_b", si, k)), Sense::click());
+                let hot = hit.hovered() || bhit.hovered();
+                let p = ui.painter();
+                p.circle_filled(badge.center(), 9.0, if hot { theme::accent_col() } else { Color32::from_rgb(0xb0, 0x3a, 0x2e) });
+                let ic = Rect::from_center_size(badge.center(), Vec2::new(10.0, 8.0));
+                let w = Stroke::new(1.2, Color32::WHITE);
+                p.rect_stroke(ic, CornerRadius::same(1), w, StrokeKind::Middle);
+                p.line_segment([ic.left_bottom() + Vec2::new(1.5, -1.5), ic.center() + Vec2::new(0.0, 0.5)], w);
+                p.line_segment([ic.center() + Vec2::new(0.0, 0.5), ic.right_bottom() + Vec2::new(-1.5, -1.5)], w);
+                if hot {
+                    p.rect_stroke(rect.expand2(Vec2::new(5.0, 4.0)), CornerRadius::same(3), Stroke::new(1.2, theme::accent_col()), StrokeKind::Outside);
+                    let g = p.layout_no_wrap("Add a picture".into(), FontId::new(10.5, theme::bold_family()), theme::on_accent_col());
+                    let pr = Rect::from_min_size(Pos2::new(rect.left(), rect.top() - g.size().y - 8.0), g.size() + Vec2::new(14.0, 5.0));
+                    p.rect_filled(pr, CornerRadius::same(8), theme::accent_col());
+                    p.galley(pr.min + Vec2::new(7.0, 2.5), g, theme::on_accent_col());
+                }
+                if hit.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() || bhit.on_hover_text("Add a picture").clicked() {
+                    open_attach = Some(k);
+                }
+            }
+        }
         if let Some(k) = *k {
             let is_dup = dup.get(k).copied().unwrap_or(false);
             let inc = included(skip, s, dup, k);
@@ -1191,6 +1329,9 @@ fn sheet(
         if let Some(b) = s.sel.get_mut(k) {
             *b = !shown;
         }
+    }
+    if let Some(k) = open_attach {
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new("imp_open_attach"), Some((si, k))));
     }
 }
 
@@ -1445,6 +1586,7 @@ fn commit(app: &mut crate::App, st: &mut State, flags: &[Vec<bool>]) {
             questions: picked,
             created: t,
             modified: t,
+            details: Default::default(),
         };
         let id = bank.id.clone();
         app.store.banks.push(bank);
@@ -1472,6 +1614,233 @@ fn commit(app: &mut crate::App, st: &mut State, flags: &[Vec<bool>]) {
     st.new_name.clear();
     app.toast(format!("Imported {} into “{}”", plural(total, "question"), bank_name));
     app.open_bank(&bank_id);
+}
+
+// ----- adding a picture to a placeholder before importing -----
+
+/// True when the question's stem shows a "Picture needed" box that its own picture could
+/// fill (a stem marker and no attached picture yet). Markers in answer keys are counted but
+/// are not printed on the page.
+fn stem_picture_open(q: &Question) -> bool {
+    q.image.is_none()
+        && crate::bankops::split_pictures(&q.stem).iter().any(|p| matches!(p, crate::bankops::StemPart::Picture(_)))
+}
+
+/// The preview banner: how many pictures are needed and how to add the ones on the page.
+fn picture_banner(pictures: usize, clickable: usize) -> String {
+    let head = format!("{} needed.", plural(pictures, "picture"));
+    let keys = pictures.saturating_sub(clickable);
+    match (clickable, keys) {
+        (0, _) => format!("{head} They are in answer keys; edit them in the question editor after importing."),
+        (_, 0) if pictures == 1 => format!("{head} Click it to add it, or add it after importing."),
+        (_, 0) => format!("{head} Click one to add it, or add them after importing."),
+        (c, k) => format!(
+            "{head} Click {} on the page to add {}; {} in answer keys can be edited after importing.",
+            if c == 1 { "the box" } else { "a box" },
+            if c == 1 { "it" } else { "one" },
+            if k == 1 { "the one".to_string() } else { format!("the {k}") }
+        ),
+    }
+}
+
+/// Crops `sel` (normalized min x, min y, max x, max y) out of an image and returns PNG bytes.
+fn crop_png(bytes: &[u8], sel: [f32; 4]) -> Result<Vec<u8>, String> {
+    let img = image::load_from_memory(bytes).map_err(|e| format!("couldn't read that page: {e}"))?;
+    let (w, h) = (img.width() as f32, img.height() as f32);
+    let x0 = (sel[0].min(sel[2]).clamp(0.0, 1.0) * w).floor() as u32;
+    let y0 = (sel[1].min(sel[3]).clamp(0.0, 1.0) * h).floor() as u32;
+    let x1 = (sel[0].max(sel[2]).clamp(0.0, 1.0) * w).ceil() as u32;
+    let y1 = (sel[1].max(sel[3]).clamp(0.0, 1.0) * h).ceil() as u32;
+    if x1 <= x0 + 2 || y1 <= y0 + 2 {
+        return Err("select a larger area".to_string());
+    }
+    let part = img.crop_imm(x0, y0, x1 - x0, y1 - y0);
+    let mut out = std::io::Cursor::new(Vec::new());
+    part.write_to(&mut out, image::ImageFormat::Png).map_err(|e| e.to_string())?;
+    Ok(out.into_inner())
+}
+
+/// Gives the question its picture (it fills the first stem placeholder).
+fn attach_picture(q: &mut Question, img: model::ImageRef) {
+    q.image = Some(img);
+    q.modified = now_secs();
+}
+
+/// Pages a picture can be cropped from: the question's own page (a photo the AI read),
+/// then every photo / PDF page in the import list.
+fn crop_pages(st: &State, si: usize) -> Vec<(String, Vec<u8>)> {
+    let mut out: Vec<(String, Vec<u8>)> = Vec::new();
+    if let Some(p) = st.sources.get(si).and_then(|s| s.page.clone()) {
+        out.push((st.sources[si].name.clone(), p));
+    }
+    for (i, s) in st.sources.iter().enumerate() {
+        if i == si {
+            continue;
+        }
+        if let Some(b) = s.page.clone().or_else(|| s.image.as_ref().map(|f| f.bytes.clone())) {
+            out.push((s.name.clone(), b));
+        }
+    }
+    out
+}
+
+fn attach_dialog(app: &mut crate::App, ctx: &egui::Context, st: &mut State) {
+    let oid = egui::Id::new("imp_open_attach");
+    if let Some((si, k)) = ctx.data_mut(|d| d.remove_temp::<Option<(usize, usize)>>(oid)).flatten() {
+        st.attach = Some(Attach { si, k, ..Default::default() });
+    }
+    // QA hook: QUESHION_ATTACH=<question n> opens the dialog for the first source's n-th question.
+    if let Ok(v) = std::env::var("QUESHION_ATTACH") {
+        let hid = egui::Id::new("imp_attach_hook");
+        if !st.sources.is_empty() && !ctx.data(|d| d.get_temp::<bool>(hid).unwrap_or(false)) {
+            ctx.data_mut(|d| d.insert_temp(hid, true));
+            let n: usize = v.trim().parse().unwrap_or(1);
+            st.attach = Some(Attach { si: 0, k: n.saturating_sub(1), ..Default::default() });
+        }
+    }
+    let Some(mut at) = st.attach.take() else { return };
+    let Some(q) = st.sources.get(at.si).and_then(|s| s.doc.as_ref()).and_then(|d| d.questions.get(at.k)).cloned() else {
+        return;
+    };
+    let pages = crop_pages(st, at.si);
+    at.page = at.page.min(pages.len().saturating_sub(1));
+    let alt = crate::bankops::split_pictures(&q.stem).into_iter().find_map(|p| match p {
+        crate::bankops::StemPart::Picture(a) => Some(a),
+        _ => None,
+    });
+    let mut close = false;
+    let mut picked: Option<Vec<u8>> = None;
+    let modal = egui::Modal::new(egui::Id::new("imp_attach_modal")).show(ctx, |ui| {
+      egui::Frame::new().inner_margin(Margin::symmetric(14, 10)).show(ui, |ui| {
+        ui.set_width(if pages.is_empty() { 460.0 } else { 640.0 });
+        ui.label(theme::serif("Add a picture").size(22.0).color(theme::ink()));
+        ui.add_space(2.0);
+        let text_only: String = crate::bankops::split_pictures(&q.stem)
+            .into_iter()
+            .filter_map(|p| match p {
+                crate::bankops::StemPart::Text(t) => Some(t),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let preview: String = crate::equation::stem_preview(&text_only).chars().take(140).collect();
+        ui.add(egui::Label::new(theme::muted(preview).size(12.0)).wrap());
+        if let Some(Some(a)) = &alt {
+            ui.add_space(4.0);
+            ui.add(egui::Label::new(theme::text(format!("Placeholder: {a}")).size(12.5)).wrap());
+        }
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            if kit::primary_button(ui, "Choose image file…").clicked() {
+                if let Some(path) = rfd::FileDialog::new().add_filter("Pictures", &["png", "jpg", "jpeg", "gif", "webp"]).pick_file() {
+                    match std::fs::read(&path) {
+                        Ok(b) => picked = Some(b),
+                        Err(e) => app.toast_err(format!("Couldn't read that file: {e}")),
+                    }
+                }
+            }
+            if pages.is_empty() {
+                ui.label(theme::muted("Add the PDF or photo it came from to crop from its page.").size(11.5));
+            }
+        });
+        if !pages.is_empty() {
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                ui.label(theme::strong("Or crop it from a page").size(13.0));
+                if pages.len() > 1 {
+                    let mut pg = at.page;
+                    egui::ComboBox::from_id_salt("imp_attach_page")
+                        .selected_text(truncate_chars(&pages[pg].0, 34))
+                        .show_ui(ui, |ui| {
+                            for (i, (name, _)) in pages.iter().enumerate() {
+                                ui.selectable_value(&mut pg, i, name.clone());
+                            }
+                        });
+                    if pg != at.page {
+                        at.page = pg;
+                        at.sel = None;
+                    }
+                }
+            });
+            ui.label(theme::muted("Drag a box around the picture.").size(11.5));
+            ui.add_space(4.0);
+            if at.tex.as_ref().is_none_or(|(i, _)| *i != at.page) {
+                at.tex = image::load_from_memory(&pages[at.page].1).ok().map(|img| {
+                    let rgba = img.to_rgba8();
+                    let ci = egui::ColorImage::from_rgba_unmultiplied([rgba.width() as usize, rgba.height() as usize], rgba.as_raw());
+                    (at.page, ctx.load_texture(format!("imp_attach_page_{}", at.page), ci, egui::TextureOptions::LINEAR))
+                });
+            }
+            if let Some((_, tex)) = &at.tex {
+                let ts = tex.size_vec2();
+                let scale = (ui.available_width() / ts.x).min(520.0 / ts.y).min(1.0);
+                let (r, resp) = ui.allocate_exact_size(ts * scale, Sense::drag());
+                ui.painter().image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                ui.painter().rect_stroke(r, CornerRadius::ZERO, Stroke::new(1.0, theme::border()), StrokeKind::Outside);
+                let norm = |p: Pos2| Pos2::new(((p.x - r.left()) / r.width()).clamp(0.0, 1.0), ((p.y - r.top()) / r.height()).clamp(0.0, 1.0));
+                if resp.drag_started() {
+                    at.drag_from = resp.interact_pointer_pos().map(norm);
+                }
+                if let (Some(a), Some(p)) = (at.drag_from, resp.interact_pointer_pos()) {
+                    if resp.dragged() || resp.drag_stopped() {
+                        let b = norm(p);
+                        at.sel = Some([a.x.min(b.x), a.y.min(b.y), a.x.max(b.x), a.y.max(b.y)]);
+                    }
+                }
+                if resp.drag_stopped() {
+                    at.drag_from = None;
+                }
+                if let Some(s) = at.sel {
+                    let sr = Rect::from_min_max(
+                        Pos2::new(r.left() + s[0] * r.width(), r.top() + s[1] * r.height()),
+                        Pos2::new(r.left() + s[2] * r.width(), r.top() + s[3] * r.height()),
+                    );
+                    // Dim everything outside the selection.
+                    let dim = Color32::from_black_alpha(90);
+                    let p = ui.painter();
+                    p.rect_filled(Rect::from_min_max(r.min, Pos2::new(r.right(), sr.top())), CornerRadius::ZERO, dim);
+                    p.rect_filled(Rect::from_min_max(Pos2::new(r.left(), sr.bottom()), r.max), CornerRadius::ZERO, dim);
+                    p.rect_filled(Rect::from_min_max(Pos2::new(r.left(), sr.top()), Pos2::new(sr.left(), sr.bottom())), CornerRadius::ZERO, dim);
+                    p.rect_filled(Rect::from_min_max(Pos2::new(sr.right(), sr.top()), Pos2::new(r.right(), sr.bottom())), CornerRadius::ZERO, dim);
+                    p.rect_stroke(sr, CornerRadius::ZERO, Stroke::new(1.5, theme::accent_col()), StrokeKind::Outside);
+                }
+            }
+        }
+        ui.add_space(10.0);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if !pages.is_empty() {
+                let ready = at.sel.is_some();
+                if ui.add_enabled_ui(ready, |ui| kit::primary_button(ui, "Use selected area")).inner.clicked() {
+                    if let Some(sel) = at.sel {
+                        match crop_png(&pages[at.page].1, sel) {
+                            Ok(b) => picked = Some(b),
+                            Err(e) => app.toast_err(format!("Couldn't crop: {e}")),
+                        }
+                    }
+                }
+            }
+            if kit::ghost_button(ui, "Cancel").clicked() {
+                close = true;
+            }
+        });
+      });
+    });
+    let mut done = false;
+    if let Some(bytes) = picked {
+        match crate::store::put_image(&bytes) {
+            Ok(img) => {
+                if let Some(q) = st.sources.get_mut(at.si).and_then(|s| s.doc.as_mut()).and_then(|d| d.questions.get_mut(at.k)) {
+                    attach_picture(q, img);
+                }
+                app.toast("Picture added");
+                done = true;
+            }
+            Err(e) => app.toast_err(format!("Couldn't use that picture: {e}")),
+        }
+    }
+    if !(done || close || modal.should_close()) {
+        st.attach = Some(at);
+    }
 }
 
 // ----- import history (secondary) -----
@@ -1533,6 +1902,59 @@ fn history(app: &mut crate::App, ui: &mut egui::Ui) {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn paste_reads_format_and_counts_live() {
+        let text = "term1\tdef1\nterm2\tdef2\nterm3\tdef3\n";
+        let r = read_paste(text, &HashSet::new(), true).expect("term list reads");
+        assert!(r.format.contains("Flashcard"), "{}", r.format);
+        let n = crate::formats::detect_and_parse(text.as_bytes(), "Pasted text").unwrap().questions.len();
+        assert_eq!((r.found, r.coming), (n, n));
+        // Duplicates of the destination bank, and repeats inside the paste, stay out.
+        let one = "MC\nWhich planet is closest to the Sun?\nVenus\n*Mercury\n\nTF\nThe Sun is a star.\nT\n";
+        let r = read_paste(one, &HashSet::new(), true).unwrap();
+        assert_eq!((r.found, r.coming), (2, 2));
+        assert_eq!(paste_counts_line(&r), ("2 questions found · ".to_string(), "2 coming in".to_string()));
+        let doc = crate::formats::detect_and_parse(one.as_bytes(), "Pasted text").unwrap();
+        let existing: HashSet<String> = std::iter::once(dup_key(&doc.questions[0])).collect();
+        let twice = format!("{one}\nTF\nThe Sun is a star.\nT\n");
+        let r = read_paste(&twice, &existing, true).unwrap();
+        assert_eq!((r.found, r.coming), (3, 1));
+        let r = read_paste(&twice, &existing, false).unwrap();
+        assert_eq!(r.coming, 3, "with Skip duplicates off everything comes in");
+        assert!(read_paste("   \n", &HashSet::new(), true).is_err() || read_paste("   \n", &HashSet::new(), true).unwrap().found == 0);
+    }
+
+    #[test]
+    fn picture_banner_wording() {
+        assert_eq!(picture_banner(1, 1), "1 picture needed. Click it to add it, or add it after importing.");
+        assert_eq!(picture_banner(3, 3), "3 pictures needed. Click one to add it, or add them after importing.");
+        assert!(picture_banner(5, 1).contains("the 4 in answer keys"), "{}", picture_banner(5, 1));
+        assert!(picture_banner(2, 0).contains("answer keys"));
+    }
+
+    #[test]
+    fn crop_and_attach_fill_the_stem_placeholder() {
+        let img = image::RgbaImage::from_fn(100, 50, |x, _| if x < 50 { image::Rgba([255, 0, 0, 255]) } else { image::Rgba([0, 0, 255, 255]) });
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(img).write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let png = png.into_inner();
+        let out = crop_png(&png, [0.5, 0.0, 1.0, 1.0]).expect("crop");
+        let c = image::load_from_memory(&out).unwrap().to_rgba8();
+        assert_eq!((c.width(), c.height()), (50, 50));
+        assert_eq!(c.get_pixel(10, 10).0, [0, 0, 255, 255], "right half kept");
+        // Reversed drag corners work; a sliver is refused.
+        assert!(crop_png(&png, [1.0, 1.0, 0.5, 0.0]).is_ok());
+        assert!(crop_png(&png, [0.2, 0.2, 0.2, 0.9]).is_err());
+
+        let mut q = crate::formats::detect_and_parse(b"term\tdef\n", "p").unwrap().questions.remove(0);
+        q.stem = "Look:\n[picture: Lewis structure]\nBONDING: ___".into();
+        assert!(stem_picture_open(&q));
+        assert_eq!(crate::bankops::pictures_needed(&q), 1);
+        attach_picture(&mut q, model::ImageRef { file: "media/x.png".into(), width: 50, height: 50 });
+        assert!(!stem_picture_open(&q));
+        assert_eq!(crate::bankops::pictures_needed(&q), 0);
+    }
 
     #[test]
     fn docx_paragraphs_become_lines() {

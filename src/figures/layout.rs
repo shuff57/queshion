@@ -237,6 +237,25 @@ mod tests {
         assert!(secs.iter().all(|s| s.title != "More options"), "every population param has a reference section");
     }
 
+    /// Section order follows the reference pages on the figures review 3 flagged.
+    #[test]
+    fn reference_section_order() {
+        let titles = |id: &str, n: Option<i64>| {
+            let d = super::super::registry().into_iter().find(|d| d.id == id).unwrap();
+            let defs = (d.params)();
+            sections(id, &defs, n).into_iter().map(|s| s.title).collect::<Vec<_>>()
+        };
+        let mg = titles("motion-graphs", Some(4));
+        assert_eq!(mg[0], "Motion");
+        assert!(mg[1].starts_with("Segment 1"), "{mg:?}");
+        let g = mg.iter().position(|t| t == "Graphs").unwrap();
+        assert!(mg[1..g].iter().all(|t| t.starts_with("Segment ")), "segments sit under Motion, then Graphs: {mg:?}");
+        assert_eq!(&mg[g + 1..g + 3], ["Marks", "Titles"]);
+        assert_eq!(titles("gel-electrophoresis", None)[..2], ["Lanes", "Gel"]);
+        assert_eq!(titles("predator-prey", None)[..2], ["Predator and prey", "Graph"]);
+        assert_eq!(titles("punnett-square", None), ["Phenotypes", "Square", "Shading", "Ratios", "Title and question"]);
+    }
+
     #[test]
     fn every_param_lands_in_exactly_one_section() {
         for d in super::super::registry() {

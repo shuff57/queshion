@@ -121,6 +121,34 @@ pub struct QuestionBank {
     pub questions: Vec<Question>,
     pub created: i64,
     pub modified: i64,
+    /// Optional sharing details (Test Parrot's "Question Bank details"). Older stores
+    /// have none; only what the teacher enters travels with an exported bank.
+    #[serde(default, skip_serializing_if = "BankDetails::is_empty")]
+    pub details: BankDetails,
+}
+
+/// A bank's description, declared author and license (all optional free text).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct BankDetails {
+    #[serde(default, skip_serializing_if = "String::is_empty")] pub description: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")] pub author: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")] pub license_name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")] pub license_url: String,
+}
+
+impl BankDetails {
+    pub fn is_empty(&self) -> bool {
+        [&self.description, &self.author, &self.license_name, &self.license_url].iter().all(|s| s.trim().is_empty())
+    }
+    /// The same details with surrounding whitespace removed (what gets saved).
+    pub fn trimmed(&self) -> BankDetails {
+        BankDetails {
+            description: self.description.trim().to_string(),
+            author: self.author.trim().to_string(),
+            license_name: self.license_name.trim().to_string(),
+            license_url: self.license_url.trim().to_string(),
+        }
+    }
 }
 
 /// One question placed on the exam working copy. Points are the bank question's own.
@@ -356,6 +384,20 @@ pub struct ExportRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bank_details_default_for_old_stores_and_stay_out_when_empty() {
+        let old = r#"{"id":"b1","name":"Old","questions":[],"created":1,"modified":2}"#;
+        let b: QuestionBank = serde_json::from_str(old).expect("pre-details bank loads");
+        assert!(b.details.is_empty());
+        let out = serde_json::to_string(&b).unwrap();
+        assert!(!out.contains("details"), "empty details are not written: {out}");
+        let mut b2 = b.clone();
+        b2.details.author = "A. Teacher".into();
+        let back: QuestionBank = serde_json::from_str(&serde_json::to_string(&b2).unwrap()).unwrap();
+        assert_eq!(back.details.author, "A. Teacher");
+        assert_eq!(back.details.description, "");
+    }
 
     #[test]
     fn old_exams_load_with_defaults() {

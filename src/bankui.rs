@@ -224,6 +224,8 @@ struct BankEditState {
     last_open: Option<String>,
     /// Topic rename / merge / delete dialog.
     topic_edit: Option<TopicEdit>,
+    /// "Question Bank details" dialog draft (None = closed).
+    details: Option<crate::model::BankDetails>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -560,6 +562,7 @@ impl App {
         // Insert-figure modal stacks on top of the open editor.
         self.draw_figure_picker(&ctx);
         draw_topic_dialog(self, &ctx, key, &bank_id);
+        draw_details_dialog(self, &ctx, key, &bank_id);
         draw_usage_dialog(self, &ctx);
     }
 
@@ -577,14 +580,28 @@ impl App {
             let name_w = (ui.available_width() - 340.0).clamp(220.0, 680.0);
             ui.vertical(|ui| {
                 let mut name_buf = bank_name.clone();
-                let resp = ui.add(
-                    TextEdit::singleline(&mut name_buf)
-                        .font(egui::FontId::new(34.0, theme::serif_family()))
-                        .text_color(theme::ink())
-                        .frame(Frame::new())
-                        .hint_text("Untitled bank")
-                        .desired_width(name_w),
-                );
+                let name_font = egui::FontId::new(34.0, theme::serif_family());
+                // The name field hugs its text so the rename pencil sits right after it.
+                let text_w = ui.fonts_mut(|f| f.layout_no_wrap(name_buf.clone(), name_font.clone(), theme::ink()).size().x);
+                let field_w = (text_w + 12.0).clamp(160.0, name_w);
+                let resp = ui
+                    .horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        let resp = ui.add(
+                            TextEdit::singleline(&mut name_buf)
+                                .id(ui.id().with(("bank_name_field", bank_id.as_str())))
+                                .font(name_font.clone())
+                                .text_color(theme::ink())
+                                .frame(Frame::new())
+                                .hint_text("Untitled bank")
+                                .desired_width(field_w),
+                        );
+                        if !resp.has_focus() && pencil_button(ui).on_hover_text("Rename this bank").clicked() {
+                            resp.request_focus();
+                        }
+                        resp
+                    })
+                    .inner;
                 if resp.changed() && !name_buf.trim().is_empty() && name_buf.trim() != bank_name {
                     let t = now_secs();
                     if let Some(b) = self.store.bank_mut(bank_id) {
@@ -632,8 +649,20 @@ impl App {
                 if kit::ghost_button(ui, "Import").clicked() {
                     self.screen = crate::Screen::Imports;
                 }
+                if kit::ghost_button(ui, "Pop-over").on_hover_text("Open this bank in its own window").clicked() {
+                    open_popover(ctx, bank_id);
+                }
+                if kit::ghost_button(ui, "Details").on_hover_text("Description, author and license").clicked() {
+                    let d = self.store.bank(bank_id).map(|b| b.details.clone()).unwrap_or_default();
+                    with_state(ctx, key, |s: &mut BankEditState| s.details = Some(d));
+                }
             });
         });
+        let desc = self.store.bank(bank_id).map(|b| b.details.description.trim().to_string()).unwrap_or_default();
+        if !desc.is_empty() {
+            ui.add_space(2.0);
+            ui.add(egui::Label::new(theme::text(desc).size(13.0)).wrap());
+        }
         ui.add_space(12.0);
         // Usage counts per question for the cards (one pass per frame).
         let usage = crate::bankops::question_usage(&self.store.exams, bank_id);
@@ -1241,12 +1270,7 @@ pub fn export_bank(app: &mut App, bank_id: &Id) {
         .add_filter("Question bank JSON", &["json"])
         .save_file();
     let Some(path) = path else { return };
-    let doc = serde_json::json!({
-        "kind": "test-parrot-question-bank",
-        "version": 1,
-        "name": bank.name,
-        "questions": bank.questions,
-    });
+    let doc = bank_export_json(&bank);
     let written = serde_json::to_string_pretty(&doc)
         .map_err(|e| e.to_string())
         .and_then(|s| std::fs::write(&path, s).map_err(|e| e.to_string()));
@@ -1254,6 +1278,20 @@ pub fn export_bank(app: &mut App, bank_id: &Id) {
         Ok(()) => app.toast(format!("Exported to {}", path.display())),
         Err(e) => app.toast_err(format!("Export failed: {e}")),
     }
+}
+
+/// The exported bank document. Details travel only when the teacher entered some.
+pub(crate) fn bank_export_json(bank: &crate::model::QuestionBank) -> serde_json::Value {
+    let mut doc = serde_json::json!({
+        "kind": "test-parrot-question-bank",
+        "version": 1,
+        "name": bank.name,
+        "questions": bank.questions,
+    });
+    if !bank.details.is_empty() {
+        doc["details"] = serde_json::to_value(bank.details.trimmed()).unwrap_or_default();
+    }
+    doc
 }
 
 /// "Where your work is stored" info popup; clears its flag on Close/backdrop/Esc.
@@ -1912,9 +1950,293 @@ fn truncate(s: &str, max_chars: usize) -> String {
 
 // ---------- tests ----------
 
+// ---------- bank details, rename pencil, Pop-over window ----------
+
+/// Small borderless pencil icon button (the rename affordance after the bank name).
+fn pencil_button(ui: &mut Ui) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(26.0), Sense::click());
+    let col = if resp.hovered() { theme::accent_col() } else { theme::muted_col() };
+    if resp.hovered() {
+        ui.painter().rect_filled(rect, CornerRadius::same(6), theme::hover_bg());
+    }
+    let c = rect.center();
+    let s = Stroke::new(1.6, col);
+    // Pencil: a slanted outline from the lower-left tip to the upper-right end, with a cap line.
+    let u = Vec2::new(1.0, -1.0).normalized();
+    let v = Vec2::new(1.0, 1.0).normalized();
+    let tip = c - u * 7.5;
+    let end = c + u * 7.5;
+    let shoulder = tip + u * 3.5;
+    let pts = vec![tip, shoulder + v * 2.6, end + v * 2.6, end - v * 2.6, shoulder - v * 2.6, tip];
+    ui.painter().add(egui::Shape::line(pts, s));
+    ui.painter().line_segment([end - u * 3.0 + v * 2.6, end - u * 3.0 - v * 2.6], s);
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// Writes edited details onto a bank; returns true when anything changed.
+pub(crate) fn apply_details(bank: &mut crate::model::QuestionBank, draft: &crate::model::BankDetails, now: i64) -> bool {
+    let d = draft.trimmed();
+    if bank.details == d {
+        return false;
+    }
+    bank.details = d;
+    bank.modified = now;
+    true
+}
+
+/// Test Parrot's "Question Bank details" dialog: description, declared author, license.
+fn draw_details_dialog(app: &mut App, ctx: &egui::Context, key: UiId, bank_id: &Id) {
+    let Some(mut d) = with_state(ctx, key, |s: &mut BankEditState| s.details.clone()) else {
+        return;
+    };
+    let mut close = false;
+    let mut save = false;
+    let modal = egui::Modal::new(UiId::new("bank_details_dialog")).show(ctx, |ui| {
+      Frame::new().inner_margin(Margin::symmetric(14, 10)).show(ui, |ui| {
+        ui.set_min_width(520.0);
+        ui.set_max_width(560.0);
+        ui.label(theme::serif("Question bank details").size(22.0));
+        ui.add_space(4.0);
+        ui.label(theme::text("Only details you enter are included when this bank is exported and shared.").size(12.5));
+        ui.add_space(10.0);
+        let w = ui.available_width();
+        let field = |ui: &mut Ui, label: &str| {
+            ui.label(theme::strong(label).size(13.0));
+            ui.add_space(2.0);
+        };
+        field(ui, "Description");
+        ui.add(TextEdit::multiline(&mut d.description).desired_rows(4).desired_width(w).hint_text("What these questions cover, grade level, …"));
+        ui.add_space(8.0);
+        field(ui, "Declared author");
+        ui.add(TextEdit::singleline(&mut d.author).desired_width(w));
+        ui.add_space(8.0);
+        field(ui, "License name");
+        ui.add(TextEdit::singleline(&mut d.license_name).desired_width(w).hint_text("e.g. CC BY 4.0"));
+        ui.add_space(8.0);
+        field(ui, "License URL");
+        ui.add(TextEdit::singleline(&mut d.license_url).desired_width(w).hint_text("https://"));
+        ui.add_space(12.0);
+        ui.separator();
+        ui.add_space(6.0);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if kit::primary_button(ui, "Save details").clicked() {
+                save = true;
+            }
+            if kit::ghost_button(ui, "Cancel").clicked() {
+                close = true;
+            }
+        });
+      });
+    });
+    if save {
+        let changed = app.store.bank_mut(bank_id).is_some_and(|b| apply_details(b, &d, now_secs()));
+        if changed {
+            app.store.save_banks();
+            app.toast("Details saved");
+        }
+    }
+    if save || close || modal.should_close() {
+        with_state(ctx, key, |s: &mut BankEditState| s.details = None);
+    } else {
+        with_state(ctx, key, |s: &mut BankEditState| s.details = Some(d));
+    }
+}
+
+fn popover_key() -> UiId {
+    UiId::new("qs_bank_popover")
+}
+
+/// Opens (or re-targets) the bank Pop-over window.
+pub fn open_popover(ctx: &egui::Context, bank_id: &Id) {
+    ctx.data_mut(|d| d.insert_temp(popover_key(), Some(bank_id.clone())));
+}
+
+#[derive(Clone, Default)]
+struct PopoverState {
+    search: String,
+}
+
+/// The bank Pop-over: the bank's questions in a separate native window (an embedded egui
+/// window where the platform has no multi-viewport support) so a teacher can keep a bank
+/// in view while building an exam: search, copy a question's text, add it to the open
+/// exam, or jump back to edit it. Called every frame from the screen router.
+pub fn draw_popover(app: &mut App, ctx: &egui::Context) {
+    // Headless/QA hook: QUESHION_POPOVER=<n> opens the n-th bank's Pop-over once.
+    if let Ok(v) = std::env::var("QUESHION_POPOVER") {
+        let hid = UiId::new("qs_popover_hook");
+        if !ctx.data(|d| d.get_temp::<bool>(hid).unwrap_or(false)) {
+            ctx.data_mut(|d| d.insert_temp(hid, true));
+            let n: usize = v.trim().parse().unwrap_or(1);
+            if let Some(b) = app.store.banks.get(n.saturating_sub(1)) {
+                open_popover(ctx, &b.id.clone());
+            }
+            if std::env::var("QUESHION_EMBED_VIEWPORTS").as_deref() == Ok("1") {
+                ctx.set_embed_viewports(true);
+            }
+        }
+    }
+    let Some(bank_id) = ctx.data(|d| d.get_temp::<Option<Id>>(popover_key())).flatten() else { return };
+    let Some(bank) = app.store.bank(&bank_id).cloned() else {
+        ctx.data_mut(|d| d.insert_temp::<Option<Id>>(popover_key(), None));
+        return;
+    };
+    let exam_id = match &app.screen {
+        Screen::ExamEdit(id) => Some(id.clone()),
+        _ => None,
+    };
+    let exam_name = exam_id.as_ref().and_then(|id| app.store.exam(id)).map(|e| e.name.clone());
+    let vid = egui::ViewportId::from_hash_of("qs_bank_popover_window");
+    let builder = egui::ViewportBuilder::default()
+        .with_title(format!("{} · queShion", bank.name))
+        .with_inner_size([440.0, 680.0])
+        .with_min_inner_size([320.0, 360.0]);
+    let mut close = false;
+    let mut add: Option<Id> = None;
+    let mut edit: Option<Id> = None;
+    ctx.show_viewport_immediate(vid, builder, |ui, class| {
+        let pctx = ui.ctx().clone();
+        if pctx.input(|i| i.viewport().close_requested()) {
+            close = true;
+        }
+        let embedded = class == egui::ViewportClass::EmbeddedWindow;
+        let sk = UiId::new("qs_popover_state").with(&bank_id);
+        let mut ps: PopoverState = pctx.data(|d| d.get_temp(sk)).unwrap_or_default();
+        let body = |ui: &mut Ui, ps: &mut PopoverState, close: &mut bool, add: &mut Option<Id>, edit: &mut Option<Id>| {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(theme::serif(&bank.name).size(20.0).color(theme::ink()));
+                    let n = bank.questions.len();
+                    ui.label(theme::muted(format!("{n} question{}", if n == 1 { "" } else { "s" })).size(12.0));
+                });
+                if embedded {
+                    ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                        if kit::ghost_button(ui, "Close").clicked() {
+                            *close = true;
+                        }
+                    });
+                }
+            });
+            ui.add_space(6.0);
+            search_pill(ui, &mut ps.search, ui.available_width().min(380.0), "Search questions");
+            ui.add_space(4.0);
+            ui.label(
+                theme::muted(match &exam_name {
+                    Some(n) => format!("Add sends a question to “{n}”."),
+                    None => "Open an exam in the main window to add questions to it.".to_string(),
+                })
+                .size(11.5),
+            );
+            ui.add_space(6.0);
+            let q = ps.search.trim().to_lowercase();
+            egui::ScrollArea::vertical().id_salt("popover_scroll").auto_shrink([false, false]).show(ui, |ui| {
+                let mut shown = 0;
+                for (i, question) in bank.questions.iter().enumerate() {
+                    let plain = crate::equation::stem_preview(&question.stem);
+                    if !q.is_empty() && !plain.to_lowercase().contains(&q) {
+                        continue;
+                    }
+                    shown += 1;
+                    kit::card().inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            ui.label(theme::muted(format!("{}.", i + 1)).size(12.0));
+                            kit::type_pill(ui, kind_chip_label(question.kind.qkind()));
+                            if let Some(p) = points_label(question.points) {
+                                ui.label(theme::muted(p).size(11.5));
+                            }
+                        });
+                        ui.add(egui::Label::new(theme::text(truncate(&plain, 180)).size(12.5)).wrap());
+                        ui.horizontal(|ui| {
+                            let in_exam = exam_id.as_ref().and_then(|e| app.store.exam(e)).is_some_and(|e| e.items.iter().any(|it| it.question_id == question.id));
+                            if exam_id.is_some() {
+                                let label = if in_exam { "Add again" } else { "Add to exam" };
+                                if kit::ghost_button(ui, label).clicked() {
+                                    *add = Some(question.id.clone());
+                                }
+                            }
+                            if ui.add(Button::new(theme::accent("Copy text").size(12.0)).frame(false)).clicked() {
+                                ui.ctx().copy_text(plain.clone());
+                            }
+                            if ui.add(Button::new(theme::accent("Edit").size(12.0)).frame(false)).clicked() {
+                                *edit = Some(question.id.clone());
+                            }
+                        });
+                    });
+                    ui.add_space(6.0);
+                }
+                if shown == 0 {
+                    ui.label(theme::muted("No questions match.").size(12.5));
+                }
+            });
+        };
+        if embedded {
+            // Embedded fallback: the viewport is already an egui window; just pad it.
+            ui.set_min_size(Vec2::new(400.0, 520.0));
+            body(ui, &mut ps, &mut close, &mut add, &mut edit);
+        } else {
+            egui::CentralPanel::default()
+                .frame(Frame::new().fill(theme::cream()).inner_margin(Margin::same(14)))
+                .show(ui, |ui| body(ui, &mut ps, &mut close, &mut add, &mut edit));
+        }
+        pctx.data_mut(|d| d.insert_temp(sk, ps));
+    });
+    if let (Some(qid), Some(eid)) = (add, exam_id.as_ref()) {
+        if let Some(before) = app.store.exam(eid).map(|e| e.items.clone()) {
+            app.undo.push(before);
+            app.redo.clear();
+            if let Some(ex) = app.store.exam_mut(eid) {
+                ex.items.push(crate::model::ExamItem::new(bank_id.clone(), qid));
+                ex.modified = now_secs();
+            }
+            app.store.save_exams();
+            app.toast("Added to the exam");
+        }
+    }
+    if let Some(qid) = edit {
+        if let Some(q) = app.store.question(&bank_id, &qid).cloned() {
+            app.open_bank(&bank_id);
+            app.qedit = Some(qedit::Draft::from_question(bank_id.clone(), &q));
+            ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
+        }
+    }
+    if close {
+        ctx.data_mut(|d| d.insert_temp::<Option<Id>>(popover_key(), None));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn empty_bank() -> crate::model::QuestionBank {
+        crate::model::QuestionBank { id: "b".into(), name: "B".into(), questions: Vec::new(), created: 1, modified: 1, details: Default::default() }
+    }
+
+    #[test]
+    fn details_save_trimmed_and_only_on_change() {
+        let mut b = empty_bank();
+        let mut d = crate::model::BankDetails::default();
+        assert!(!apply_details(&mut b, &d, 5), "nothing entered, nothing changes");
+        assert_eq!(b.modified, 1);
+        d.author = "  Ms. Rivera ".into();
+        d.license_name = "CC BY 4.0".into();
+        assert!(apply_details(&mut b, &d, 7));
+        assert_eq!(b.details.author, "Ms. Rivera");
+        assert_eq!(b.modified, 7);
+        assert!(!apply_details(&mut b, &d, 9), "same details again is a no-op");
+    }
+
+    #[test]
+    fn export_carries_details_only_when_entered() {
+        let mut b = empty_bank();
+        assert!(bank_export_json(&b).get("details").is_none());
+        b.details.description = "Unit 4 bonding".into();
+        b.details.license_url = "https://creativecommons.org/licenses/by/4.0/".into();
+        let v = bank_export_json(&b);
+        assert_eq!(v["details"]["description"], "Unit 4 bonding");
+        assert_eq!(v["details"]["license_url"], "https://creativecommons.org/licenses/by/4.0/");
+        assert!(v["details"].get("author").is_none(), "empty fields stay out");
+    }
 
     #[test]
     fn duplicate_inserts_a_fresh_copy_after_the_original() {

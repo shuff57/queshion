@@ -168,9 +168,20 @@ thread_local! {
     static THUMBS: RefCell<HashMap<String, Option<TextureHandle>>> = RefCell::new(HashMap::new());
 }
 
+thread_local! {
+    /// How many thumbnails were actually rendered (tests check the cache holds across frames).
+    static THUMB_RENDERS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn thumb(ctx: &egui::Context, def: &FigureDef, budget: &mut u8) -> Option<TextureHandle> {
-    let p = figures::start_params(def);
-    let key = format!("{}:{:x}", def.id, hash_params(def.id, &p));
+    thumb_for(ctx, def, &figures::start_params(def), 0.6, budget)
+}
+
+/// Cached preview texture of `def` drawn with `p` (keyed by figure id + params hash, so the
+/// browser card of a figure and an example with the same params share one texture). Renders at
+/// most `budget` misses per frame and asks for another frame while any are missing.
+fn thumb_for(ctx: &egui::Context, def: &FigureDef, p: &Params, scale: f32, budget: &mut u8) -> Option<TextureHandle> {
+    let key = format!("{}:{:x}:{scale}", def.id, hash_params(def.id, p));
     if let Some(hit) = THUMBS.with(|t| t.borrow().get(&key).cloned()) {
         return hit;
     }
@@ -179,11 +190,73 @@ fn thumb(ctx: &egui::Context, def: &FigureDef, budget: &mut u8) -> Option<Textur
         return None;
     }
     *budget -= 1;
-    let tex = figures::to_png(&(def.render)(&p), 0.6)
+    THUMB_RENDERS.with(|c| c.set(c.get() + 1));
+    let tex = figures::to_png(&(def.render)(p), scale)
         .ok()
         .and_then(|png| texture(ctx, format!("testparrot:thumb:{key}"), &png));
     THUMBS.with(|t| t.borrow_mut().insert(key, tex.clone()));
     tex
+}
+
+const EX_CARD_W: f32 = 270.0;
+/// One gallery row: card (preview 170 + name + buttons + margins) plus the gap under it.
+const EX_CARD_H: f32 = 304.0;
+
+/// One gallery card: preview, name, Edit and PNG. Returns (edit clicked, png clicked).
+fn example_card(ui: &mut Ui, ctx: &egui::Context, def: &FigureDef, e: &figures::Example, k: usize, budget: &mut u8, cw: f32) -> (bool, bool) {
+    let p = example_params(def, e);
+    let (mut edit, mut png) = (false, false);
+    Frame::new()
+        .fill(theme::card())
+        .stroke(Stroke::new(1.0, theme::border()))
+        .corner_radius(CornerRadius::same(crate::kit::R_CARD))
+        .inner_margin(Margin::same(10))
+        .show(ui, |ui| {
+            ui.set_width(cw - 22.0);
+            ui.vertical(|ui| {
+                Frame::new().fill(egui::Color32::WHITE).corner_radius(CornerRadius::same(6)).show(ui, |ui| {
+                    ui.set_width(cw - 22.0);
+                    ui.set_height(170.0);
+                    ui.centered_and_justified(|ui| match thumb_for(ctx, def, &p, 0.75, budget) {
+                        Some(t) => {
+                            ui.add(egui::Image::new(&t).shrink_to_fit());
+                        }
+                        None => {
+                            ui.spinner();
+                        }
+                    });
+                });
+                ui.add_space(6.0);
+                ui.allocate_ui(Vec2::new(cw - 22.0, 36.0), |ui| {
+                    ui.set_min_height(36.0);
+                    ui.label(theme::strong(e.name).size(13.0));
+                });
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    edit = ui.push_id(("ex_edit", k), |ui| accent_btn(ui, "Edit")).inner.on_hover_text("Load this example to change it").clicked();
+                    png = ui.push_id(("ex_png", k), |ui| ghost(ui, "PNG")).inner.on_hover_text("Save this example as a PNG as it is").clicked();
+                });
+            });
+        });
+    (edit, png)
+}
+
+/// The gallery's PNG button: the example as a 2x PNG on white, through a save dialog.
+fn export_example_png(def: &FigureDef, e: &figures::Example) -> Act {
+    let p = example_params(def, e);
+    let png = match figures::to_png(&(def.render)(&p), 2.0).and_then(|b| flatten_white(&b)) {
+        Ok(b) => b,
+        Err(err) => return Act::Toast(format!("Couldn't render the example: {err}"), true),
+    };
+    let slug: String = e.name.to_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let slug = slug.split('-').filter(|s| !s.is_empty()).collect::<Vec<_>>().join("-");
+    let Some(path) = rfd::FileDialog::new().set_file_name(format!("{}-{slug}.png", def.id)).add_filter("PNG", &["png"]).save_file() else {
+        return Act::None;
+    };
+    match std::fs::write(&path, png) {
+        Ok(()) => Act::Toast(format!("Exported {}", path.display()), false),
+        Err(err) => Act::Toast(format!("Export failed: {err}"), true),
+    }
 }
 
 // ---------- workspace ----------
@@ -252,6 +325,15 @@ pub struct Workspace {
     /// Where the last preview drew the figure: top-left on screen and points per SVG unit
     /// (lets tests aim synthetic pointer events at a label).
     preview_map: Option<(egui::Pos2, f64)>,
+    /// Share link: the paste box ("Open from link") and its error, in the toolbar menu and on
+    /// the browser ("Open link…" toggles `link_open`).
+    link_text: String,
+    link_err: Option<String>,
+    link_open: bool,
+    /// A message for the host to show (set inside menus that can't return an `Act`).
+    toast: Option<(String, bool)>,
+    /// "Start from an example" gallery modal is open.
+    examples_open: bool,
 }
 
 /// A saved parameter set for one figure ("Save preset"), kept in `figure-presets.json`.
@@ -378,8 +460,42 @@ impl Workspace {
         Ok(())
     }
 
+    /// The offline share link of the figure on screen: `queshion://figure/<id>?p=<base64url>`
+    /// holding only the params that differ from the figure's opening state.
+    fn share_link(&self) -> Option<String> {
+        let def = &reg()[self.sel?];
+        Some(figures::share::encode(def.id, &self.params, &figures::start_params(def)))
+    }
+
+    /// Opens a pasted share link: switches to its figure and applies its params as one undo step.
+    /// Params go through the same path as a saved spec (type checks, migrations, clamping).
+    fn apply_link(&mut self, text: &str) -> Result<(), String> {
+        let (id, changed) = figures::share::decode(text)?;
+        let (i, def) = find_def(&id).ok_or_else(|| format!("this link is for a figure this version doesn't have (\"{id}\")"))?;
+        let mut params: BTreeMap<String, serde_json::Value> =
+            figures::start_params(def).0.iter().map(|(k, v)| (k.clone(), value_to_json(v))).collect();
+        params.extend(changed);
+        let p = params_from_spec(def, &FigureSpec { id: id.clone(), params });
+        self.imp = None;
+        if self.sel != Some(i) {
+            self.select(i);
+        }
+        self.set_params_with_history(p);
+        Ok(())
+    }
+
+    /// Applies example `idx` of the open figure (the gallery's Edit button) as one undo step.
+    fn use_example(&mut self, idx: usize) -> bool {
+        let Some(si) = self.sel else { return false };
+        let def = &reg()[si];
+        let Some(e) = figures::examples_for(def.id).into_iter().nth(idx) else { return false };
+        self.set_params_with_history(example_params(def, &e));
+        true
+    }
+
     fn select(&mut self, i: usize) {
         self.reset_history();
+        self.examples_open = false;
         self.sel = Some(i);
         self.params = figures::start_params(&reg()[i]);
         self.comp = Default::default();
@@ -425,12 +541,55 @@ impl Workspace {
                     self.reset_history();
                 }
             }
+            // QA hooks: QUESHION_FIG_LINK=<share link> opens a figure from a link (as "Open from
+            // link" does); QUESHION_FIG_EXAMPLES=1 opens the example gallery; QUESHION_FIG_OPENLINK=1
+            // shows the browser's "Open link" box.
+            if let Ok(l) = std::env::var("QUESHION_FIG_LINK")
+                && let Err(e) = self.apply_link(&l)
+            {
+                eprintln!("QUESHION_FIG_LINK: {e}");
+            }
+            if std::env::var("QUESHION_FIG_EXAMPLES").as_deref() == Ok("1") {
+                self.examples_open = true;
+            }
+            if std::env::var("QUESHION_FIG_OPENLINK").as_deref() == Ok("1") {
+                self.link_open = true;
+            }
         }
-        if self.sel.is_some() || self.imp.is_some() {
+        let act = if self.sel.is_some() || self.imp.is_some() {
             self.workspace_view(ui)
         } else {
             self.browser_view(ui)
+        };
+        match (act, self.toast.take()) {
+            (Act::None, Some((t, err))) => Act::Toast(t, err),
+            (a, _) => a,
         }
+    }
+
+    /// The paste box that reopens a share link (browser and toolbar menu).
+    fn link_box(&mut self, ui: &mut Ui, width: f32) -> bool {
+        let mut opened = false;
+        ui.horizontal(|ui| {
+            let r = ui.add(TextEdit::singleline(&mut self.link_text).hint_text("Paste a queshion://figure/… link").desired_width(width));
+            let go = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if ui.add_enabled(!self.link_text.trim().is_empty(), Button::new(RichText::new("Open from link").size(13.0))).clicked() || go {
+                let t = self.link_text.clone();
+                match self.apply_link(&t) {
+                    Ok(()) => {
+                        self.link_text.clear();
+                        self.link_err = None;
+                        self.link_open = false;
+                        opened = true;
+                    }
+                    Err(e) => self.link_err = Some(e),
+                }
+            }
+        });
+        if let Some(e) = &self.link_err {
+            ui.label(RichText::new(e).color(theme::red()).size(11.0));
+        }
+        opened
     }
 
     // ----- browser -----
@@ -450,6 +609,9 @@ impl Workspace {
                 if ghost(ui, "Import SVG/PNG…").clicked() {
                     self.import_open = !self.import_open;
                 }
+                if ghost(ui, "Open link…").on_hover_text("Reopen a figure from a share link someone copied").clicked() {
+                    self.link_open = !self.link_open;
+                }
                 ui.add(
                     TextEdit::singleline(&mut self.search)
                         .hint_text("Search figures…")
@@ -462,6 +624,24 @@ impl Workspace {
         if self.import_open {
             self.import_panel(ui);
             ui.add_space(8.0);
+        }
+        if self.link_open {
+            Frame::new()
+                .fill(theme::card())
+                .stroke(Stroke::new(1.0, theme::border()))
+                .corner_radius(CornerRadius::same(crate::kit::R_CARD))
+                .inner_margin(Margin::same(12))
+                .show(ui, |ui| {
+                    ui.label(theme::strong("Open a shared figure").size(13.0));
+                    ui.label(theme::muted("Paste a link made with Share link → Copy link. It opens offline; the link holds the settings.").size(12.0));
+                    ui.add_space(6.0);
+                    let w = (ui.available_width() - 140.0).clamp(200.0, 560.0);
+                    self.link_box(ui, w);
+                });
+            ui.add_space(8.0);
+            if self.sel.is_some() {
+                return Act::None;
+            }
         }
 
         let q = self.search.trim().to_lowercase();
@@ -778,7 +958,82 @@ impl Workspace {
                 act = Act::Close;
             }
         });
+        if self.examples_open && self.imp.is_none() && self.sel.is_some() {
+            let a = self.examples_gallery(&ctx);
+            if !matches!(a, Act::None) {
+                act = a;
+            }
+        }
         act
+    }
+
+    /// "Start from an example": a modal grid of the figure's examples, each drawn by the figure's
+    /// own renderer (textures cached by figure + params, a few rendered per frame), with Edit
+    /// (load it here, one undo step) and PNG (save it as it is).
+    fn examples_gallery(&mut self, ctx: &egui::Context) -> Act {
+        let Some(si) = self.sel else { return Act::None };
+        let def = &reg()[si];
+        let ex = figures::examples_for(def.id);
+        let (mut edit, mut png, mut close) = (None, None, false);
+        let vw = ctx.viewport_rect().width();
+        let vh = ctx.viewport_rect().height();
+        let w = (vw - 120.0).clamp(300.0, 1000.0);
+        let m = Modal::new(UiId::new(("testparrot_fig_examples", self.modal))).show(ctx, |ui| {
+            ui.set_width(w);
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(theme::serif_strong(format!("{} examples", def.title)).size(20.0));
+                    ui.label(theme::muted("Pick one to edit it here, or save it as a PNG as it is.").size(12.0));
+                });
+                ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                    if ghost(ui, "Close").clicked() {
+                        close = true;
+                    }
+                });
+            });
+            ui.add_space(10.0);
+            if ex.is_empty() {
+                ui.label(theme::muted("No examples for this figure yet."));
+                return;
+            }
+            // the modal sizes itself from its content, so ask for the grid's height up front
+            let cols_for = |avail: f32| ((avail + 12.0) / (EX_CARD_W + 12.0)).floor().clamp(1.0, 3.0) as usize;
+            let rows = ex.len().div_ceil(cols_for(w - 14.0)) as f32;
+            let max_h = (vh - 200.0).max(200.0);
+            ScrollArea::vertical().id_salt("fig_examples_grid").max_height(max_h).min_scrolled_height((rows * EX_CARD_H).min(max_h)).auto_shrink([false, true]).show(ui, |ui| {
+                let avail = ui.available_width() - 14.0;
+                let cols = cols_for(avail);
+                let cw = (avail - 12.0 * (cols as f32 - 1.0)) / cols as f32;
+                let mut budget = 3u8;
+                for (r, chunk) in ex.chunks(cols).enumerate() {
+                    ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing.x = 12.0;
+                        for (j, e) in chunk.iter().enumerate() {
+                            let k = r * cols + j;
+                            let (ed, pn) = example_card(ui, ctx, def, e, k, &mut budget, cw);
+                            if ed {
+                                edit = Some(k);
+                            }
+                            if pn {
+                                png = Some(k);
+                            }
+                        }
+                    });
+                    ui.add_space(12.0);
+                }
+            });
+        });
+        if close || m.should_close() {
+            self.examples_open = false;
+        }
+        if let Some(k) = edit {
+            self.use_example(k);
+            self.examples_open = false;
+        }
+        if let Some(k) = png {
+            return export_example_png(def, &ex[k]);
+        }
+        Act::None
     }
 
     /// Undo / Redo, "Examples" and "Presets" (saved parameter sets + copy/paste spec).
@@ -793,16 +1048,28 @@ impl Workspace {
         if ui.add_enabled(can_redo, Button::new(RichText::new("Redo").size(13.0))).on_hover_text("Redo (Ctrl+Shift+Z)").clicked() {
             self.step_history(false);
         }
-        ui.menu_button("Examples", |ui| {
-            let ex = figures::examples_for(def.id);
-            if ex.is_empty() {
-                ui.label(theme::muted("No examples for this figure yet."));
+        let n_ex = figures::examples_for(def.id).len();
+        if ui
+            .add_enabled(n_ex > 0, Button::new(RichText::new("Examples").size(13.0)))
+            .on_hover_text("Start from an example: a gallery of ready-made figures")
+            .on_disabled_hover_text("No examples for this figure yet")
+            .clicked()
+        {
+            self.examples_open = true;
+        }
+        ui.menu_button("Share link", |ui| {
+            ui.set_min_width(300.0);
+            if ui.button("Copy link").on_hover_text("Copy a link that reopens this exact figure").clicked()
+                && let Some(l) = self.share_link()
+            {
+                ui.ctx().copy_text(l);
+                self.toast = Some(("Link copied. Share it, and anyone who opens it in queShion sees this exact figure.".into(), false));
+                ui.close();
             }
-            for e in ex {
-                if ui.button(e.name).clicked() {
-                    self.set_params_with_history(example_params(def, &e));
-                    ui.close();
-                }
+            ui.label(theme::muted("Works offline: the link itself holds the settings.").size(11.0));
+            ui.separator();
+            if self.link_box(ui, 190.0) {
+                ui.close();
             }
         });
         ui.menu_button("Presets", |ui| {
@@ -2326,6 +2593,95 @@ mod tests {
         let def = find_def("triangle").unwrap().1;
         let q = params_from_spec(def, &FigureSpec { id: "triangle".into(), params: Default::default() });
         assert_eq!(q.s(figures::labels::KEY), "");
+    }
+
+    /// Copy link -> Open from link reproduces the exact params of every figure's opening state,
+    /// every example and a saved spec (incl. dragged label offsets), switching figures as needed.
+    #[test]
+    fn share_link_round_trips_every_figure_and_example() {
+        for (i, def) in reg().iter().enumerate() {
+            let mut cases = vec![figures::start_params(def)];
+            cases.extend(figures::examples_for(def.id).iter().map(|e| example_params(def, e)));
+            for p in cases {
+                let src = Workspace { sel: Some(i), params: p.clone(), ..Default::default() };
+                let link = src.share_link().unwrap();
+                assert!(link.starts_with(&format!("queshion://figure/{}", def.id)), "{link}");
+                let mut dst = Workspace::new(false);
+                dst.select(find_def("waves").unwrap().0);
+                dst.apply_link(&link).unwrap_or_else(|e| panic!("{}: {e} ({link})", def.id));
+                assert_eq!(dst.sel, Some(i));
+                assert_eq!(format!("{:?}", dst.params.0), format!("{:?}", p.0), "{} via {link}", def.id);
+            }
+        }
+        // a moved label and typed text survive too; the link is one undo step
+        let (i, def) = find_def("triangle").unwrap();
+        let mut p = figures::start_params(def);
+        figures::labels::set(&mut p, "s0", (12.5, -7.0));
+        p.set_s("name_a", "Ω");
+        let link = Workspace { sel: Some(i), params: p.clone(), ..Default::default() }.share_link().unwrap();
+        let mut ws = Workspace::new(false);
+        ws.select(i);
+        let before = ws.params.clone();
+        ws.apply_link(&link).unwrap();
+        assert_eq!(figures::labels::get(&ws.params, "s0"), (12.5, -7.0));
+        assert_eq!(ws.params.s("name_a"), "Ω");
+        ws.step_history(true);
+        assert_eq!(format!("{:?}", ws.params.0), format!("{:?}", before.0), "undo goes back");
+    }
+
+    #[test]
+    fn share_link_errors_are_friendly() {
+        let mut ws = Workspace::new(false);
+        assert!(ws.apply_link("").is_err());
+        assert!(ws.apply_link("hello").is_err());
+        let e = ws.apply_link("queshion://figure/no-such-figure").unwrap_err();
+        assert!(e.contains("no-such-figure"), "{e}");
+        assert!(ws.sel.is_none(), "a bad link leaves the browser alone");
+        // wrong-typed or out-of-range values fall back / clamp like a saved spec
+        let (i, def) = find_def("waves").unwrap();
+        let json = r#"{"amp":"loud","cycles":1e9}"#;
+        let link = format!("queshion://figure/waves?p={}", figures::share::b64url_encode(json.as_bytes()));
+        ws.apply_link(&link).unwrap();
+        assert_eq!(ws.sel, Some(i));
+        let start = figures::start_params(def);
+        assert_eq!(ws.params.0.get("amp"), start.0.get("amp"));
+        assert!(ws.params.f("cycles") < 1e9);
+    }
+
+    /// The example gallery draws each example once (cached textures, nothing re-rendered on later
+    /// frames), and Edit loads an example as one undo step.
+    #[test]
+    fn example_gallery_caches_previews_and_edit_applies() {
+        let (ctx, mut ws) = open_fig("motion-graphs");
+        let def = &reg()[ws.sel.unwrap()];
+        let ex = figures::examples_for(def.id);
+        assert!(ex.len() >= 5);
+        ws.examples_open = true;
+        for _ in 0..(ex.len() + 4) {
+            comp_frame(&ctx, &mut ws, vec![]);
+        }
+        let keys = |ws: &Workspace| {
+            let _ = ws;
+            ex.iter().map(|e| format!("{}:{:x}:0.75", def.id, hash_params(def.id, &example_params(def, e)))).collect::<Vec<_>>()
+        };
+        for k in keys(&ws) {
+            assert!(THUMBS.with(|t| t.borrow().get(&k).is_some_and(|x| x.is_some())), "missing preview {k}");
+        }
+        let n = THUMB_RENDERS.with(|c| c.get());
+        for _ in 0..4 {
+            comp_frame(&ctx, &mut ws, vec![]);
+        }
+        assert_eq!(THUMB_RENDERS.with(|c| c.get()), n, "no re-render once cached");
+        assert!(ws.examples_open);
+        let before = ws.params.clone();
+        assert!(ws.use_example(2));
+        assert_eq!(format!("{:?}", ws.params.0), format!("{:?}", example_params(def, &ex[2]).0));
+        ws.step_history(true);
+        assert_eq!(format!("{:?}", ws.params.0), format!("{:?}", before.0));
+        // a figure without examples has no gallery to fill
+        let mut none = Workspace::new(false);
+        none.select(find_def("demo-shapes").unwrap().0);
+        assert!(!none.use_example(0));
     }
 
     #[test]
