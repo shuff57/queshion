@@ -10,7 +10,7 @@
 //!   exporters wrap it. Every `text` entry may carry stem markup (`docs/stem-format.md`)
 //!   and is parsed with `crate::richtext::parse`: `\n` hard breaks, blank-line paragraphs,
 //!   bullet / numbered lists, quotes, ` | ` tables, `**bold**`, `*italic*`, `_{sub}`,
-//!   `^{sup}`; `$math$` is degraded to Unicode (`equation::stem_to_plain`). A stem
+//!   `^{sup}`; `$math$` is degraded to Unicode (`equation_text::stem_to_plain`). A stem
 //!   without markup prints exactly as before. Extra `text` entries print as further blocks
 //!   (put explicit breaks as `\n` inside an entry, not as extra entries, or a stem will
 //!   be mistaken for a matching left-item list). `choices` are pre-lettered ("A. Venus"),

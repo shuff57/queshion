@@ -2783,7 +2783,7 @@ fn markup_lines(text: &str, latex: bool) -> Vec<String> {
     }
     let mut out = Vec::new();
     walk(&parse(text), &mut out);
-    if latex { out } else { out.into_iter().map(|l| crate::equation::stem_to_plain(&l)).collect() }
+    if latex { out } else { out.into_iter().map(|l| crate::equation_text::stem_to_plain(&l)).collect() }
 }
 
 /// A question as text for the clipboard: stem, choices (A. B. ...), matching columns, parts,

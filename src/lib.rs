@@ -24,6 +24,7 @@ pub mod bankui;
 pub mod ditto;
 pub mod examui;
 pub mod equation;
+pub mod equation_text;
 pub mod export;
 pub mod figfit;
 pub mod figures;

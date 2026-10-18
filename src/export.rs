@@ -505,7 +505,7 @@ fn split_unicode_scripts(text: &str, face: Face, base: i8, out: &mut Vec<Frag>) 
     }
 }
 
-/// Styled runs of one parsed line; `$math$` degrades through `equation::stem_to_plain`.
+/// Styled runs of one parsed line; `$math$` degrades through `equation_text::stem_to_plain`.
 fn line_frags(line: &richtext::Line, force_bold: bool) -> Vec<Frag> {
     let mut out = Vec::new();
     for s in line {
@@ -520,7 +520,7 @@ fn line_frags(line: &richtext::Line, force_bold: bool) -> Vec<Frag> {
                 out.push(Frag { text: s.text.clone(), face: Face::Mono, script: base, strike: s.strike, link: s.link.clone() });
             }
         } else if s.math {
-            let t = crate::equation::stem_to_plain(&format!("${}$", s.text));
+            let t = crate::equation_text::stem_to_plain(&format!("${}$", s.text));
             split_unicode_scripts(&t, face, 0, &mut out);
         } else {
             let n0 = out.len();

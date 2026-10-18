@@ -3807,7 +3807,7 @@ fn map_question(number: u32, q: &model::Question) -> Mapped {
 fn map_question_style(number: u32, q: &model::Question, style: model::PaperStyle) -> Mapped {
     let mut m = map_question_raw_style(number, q, style);
     // Exports have no typesetter yet: degrade `$latex$` to its Unicode approximation.
-    let plain = |s: &mut String| *s = crate::equation::stem_to_plain(s);
+    let plain = |s: &mut String| *s = crate::equation_text::stem_to_plain(s);
     m.dq.text.iter_mut().for_each(plain);
     m.pieces.iter_mut().for_each(plain);
     m.dq.choices.iter_mut().for_each(plain);
