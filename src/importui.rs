@@ -607,6 +607,11 @@ impl crate::App {
                 }
             }
         }
+        // Browser file pickers finish asynchronously; their bytes land here on a later frame.
+        #[cfg(target_arch = "wasm32")]
+        for f in crate::platform::take_picked() {
+            add_bytes(self, &mut st, &f.name, f.bytes, "file");
+        }
         intake(self, ctx, &mut st);
         if st.ai_all && !self.ai_busy {
             start_next_ai(self, &mut st, ctx);
@@ -691,6 +696,11 @@ impl crate::App {
                 ctx.data_mut(|d| d.insert_temp(hid, true));
                 add_paths(self, &mut st, std::env::split_paths(&v).collect());
             }
+        }
+        // Browser file pickers finish asynchronously; their bytes land here on a later frame.
+        #[cfg(target_arch = "wasm32")]
+        for f in crate::platform::take_picked() {
+            add_bytes(self, &mut st, &f.name, f.bytes, "file");
         }
         intake(self, ctx, &mut st);
         if st.ai_all && !self.ai_busy {
@@ -2375,6 +2385,11 @@ impl crate::App {
             }
         }
         let Some(mut rs) = RESOLVE.with(|r| r.borrow_mut().take()) else { return };
+        // Originals chosen through the browser picker.
+        #[cfg(target_arch = "wasm32")]
+        for f in crate::platform::take_picked() {
+            resolve_add_file(self, &mut rs, &f.name, f.bytes);
+        }
         let Some(bank) = self.store.bank(&rs.bank).cloned() else { return };
         // Originals dropped onto the window while the dialog is open.
         #[cfg(target_arch = "wasm32")]

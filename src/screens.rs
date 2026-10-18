@@ -1145,8 +1145,17 @@ impl crate::App {
                 let probe2 = probe.clone();
                 let ctx2 = ctx.clone();
                 let cfg2 = cfg.clone();
+                #[cfg(not(target_arch = "wasm32"))]
                 std::thread::spawn(move || {
                     let r = crate::ai::test_connection(&cfg2);
+                    if let Ok(mut g) = probe2.lock() {
+                        *g = Some(r);
+                    }
+                    ctx2.request_repaint();
+                });
+                #[cfg(target_arch = "wasm32")]
+                wasm_bindgen_futures::spawn_local(async move {
+                    let r = crate::ai::test_connection_async(&cfg2).await;
                     if let Ok(mut g) = probe2.lock() {
                         *g = Some(r);
                     }
