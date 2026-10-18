@@ -4061,7 +4061,7 @@ mod solids_measures_tests {
     /// An old saved spec loaded through the real load path (defaults + spec + migrate).
     fn load(id: &str, old: serde_json::Value) -> Params {
         let spec = crate::model::FigureSpec { id: id.into(), params: old.as_object().unwrap().clone().into_iter().collect() };
-        crate::figuresui::params_from_spec(&def(id), &spec)
+        crate::figures::spec::params_from_spec(&def(id), &spec)
     }
     fn svg_has(id: &str, p: &Params, text: &str) -> bool { (def(id).render)(p).contains(text) }
     fn s(v: &str) -> Value { Value::S(v.into()) }
@@ -4116,7 +4116,7 @@ mod solids_measures_tests {
     fn new_specs_round_trip_unchanged() {
         for id in ["cylinder", "cone", "sphere", "pyramid", "prism"] {
             let p = with(id, &[("stands", s("Oblique")), ("slant", s("7")), ("edge", s("6")), ("d_lab", s("Text"))]);
-            let p2 = crate::figuresui::params_from_spec(&def(id), &crate::figuresui::spec_for(id, &p));
+            let p2 = crate::figures::spec::params_from_spec(&def(id), &crate::figures::spec::spec_for(id, &p));
             for (k, v) in &p.0 { if (def(id).params)().iter().any(|d| d.key == k) { assert_eq!(p2.0.get(k), Some(v), "{id}: {k}"); } }
         }
     }
