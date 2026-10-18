@@ -41,15 +41,15 @@ pub struct ImportFile {
 // ---------- time ----------
 
 pub fn now_secs() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
 }
 
 pub fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
 }
@@ -907,7 +907,7 @@ impl crate::App {
         ui.horizontal(|ui| {
             kit::small_caps(ui, "Recent exams");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if kit::view_toggle(ui, &mut exam_mode) {
+                if kit::view_toggle(ui, &mut exam_mode, "home_exams") {
                     self.settings.home_exams_list = exam_mode == kit::ViewMode::List;
                     self.save_view_prefs();
                 }
@@ -980,7 +980,7 @@ impl crate::App {
         ui.horizontal(|ui| {
             kit::small_caps(ui, "Your banks");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if kit::view_toggle(ui, &mut bank_mode) {
+                if kit::view_toggle(ui, &mut bank_mode, "home_banks") {
                     self.settings.home_banks_list = bank_mode == kit::ViewMode::List;
                     self.save_view_prefs();
                 }

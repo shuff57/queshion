@@ -7,7 +7,8 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use egui::{
     Align, Button, ComboBox, CornerRadius, Frame, Id as UiId, Layout, Margin, Modal, RichText,
@@ -2171,7 +2172,7 @@ fn example_params(def: &FigureDef, e: &figures::Example) -> Params {
 
 /// A fresh seed for the Random reading buttons.
 fn random_seed() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(7)
+    web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(7)
 }
 
 /// Applies a chip: fills slot `count + 1` and bumps the count, or (no `count_key`) just sets the
@@ -2190,7 +2191,7 @@ fn apply_chip(p: &mut Params, pdefs: &[ParamDef], card: &figures::ChipsCard, chi
             Value::S(t) => Value::S(t.replace("{L}", &letter)),
             Value::I(i64::MIN) => {
                 let (lo, hi) = match &def.kind { Kind::Int { min, max } => (*min, *max), _ => (1, 1_000_000) };
-                let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos() as i64).unwrap_or(7);
+                let t = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.subsec_nanos() as i64).unwrap_or(7);
                 Value::I(lo + t.rem_euclid((hi - lo).max(1)))
             }
             other => other.clone(),

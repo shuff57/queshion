@@ -449,7 +449,7 @@ impl App {
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let mut mode = view_of(list);
-                if kit::view_toggle(ui, &mut mode) {
+                if kit::view_toggle(ui, &mut mode, "banks_list") {
                     list = mode == ViewMode::List;
                 }
             });
@@ -808,7 +808,7 @@ impl App {
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let mut mode = view_of(list);
-                if kit::view_toggle(ui, &mut mode) {
+                if kit::view_toggle(ui, &mut mode, "bank_edit") {
                     list = mode == ViewMode::List;
                 }
             });

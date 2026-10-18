@@ -2099,7 +2099,7 @@ pub(crate) fn make_question(stem: String, kind: Kind) -> Question {
 
 /// `store::now()` is private, so parsers timestamp with `SystemTime` directly.
 fn now_secs() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+    web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
 // =====================================================================================
