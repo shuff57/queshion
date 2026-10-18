@@ -84,6 +84,44 @@ pub fn compose(p: &Params, svg: String, foci: &[Focus], below: bool) -> String {
     d.finish()
 }
 
+/// One magnifier to the right of a tall instrument (thermometer, cylinder, buret, beaker), sized
+/// like the reference's: a lens about two fifths of the instrument's height that shows the asked
+/// number of numbered marks with room around them, so the numbers at its top and bottom stay
+/// whole (`compose` zoomed in so far that "30" was cut to "3("). `f.x` should sit between the
+/// scale's ticks and its numbers.
+pub fn compose_side(p: &Params, svg: String, f: &Focus) -> String {
+    if !wants_magnifier(p) {
+        return svg;
+    }
+    let (w, h, body) = inner(&svg);
+    let n = p.i("mag_marks").clamp(1, 6) as f64;
+    let r = (h * 0.2).clamp(95.0, 125.0);
+    let window = ((n + 1.2) * f.label_px).max(36.0);
+    let k = 2.0 * r / window;
+    if magnifier_only(p) {
+        let gap = 24.0;
+        let mut d = Doc::new(2.0 * r + 2.0 * gap, 2.0 * r + 2.0 * gap);
+        d.raw(&zoom_group(&body, f, (gap + r, gap + r), r, k, 0));
+        return d.finish();
+    }
+    let (cw, ch) = (w + 2.0 * r + 50.0, h.max(2.0 * r + 20.0));
+    let mut d = Doc::new(cw, ch);
+    d.raw(&body);
+    let c = (w + 25.0 + r, f.y.clamp(r + 10.0, ch - r - 10.0));
+    // the small circle on the instrument marks exactly what the lens shows
+    let sr = window / 2.0;
+    let (dx, dy) = (c.0 - f.x, c.1 - f.y);
+    let len = (dx * dx + dy * dy).sqrt().max(1e-6);
+    let (nx, ny) = (-dy / len, dx / len);
+    for s in [-1.0, 1.0] {
+        d.raw(&format!(r##"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{INK}" stroke-width="1.2" stroke-dasharray="5 4"/>"##,
+            f.x + nx * sr * s, f.y + ny * sr * s, c.0 + nx * r * s, c.1 + ny * r * s));
+    }
+    d.circle(f.x, f.y, sr, "none", INK, 1.4);
+    d.raw(&zoom_group(&body, f, c, r, k, 0));
+    d.finish()
+}
+
 /// Radius of the single magnifier drawn above an instrument (`compose_above`).
 pub const ABOVE_R: f64 = 120.0;
 /// Instrument rows above this y are blank in the length reading, so `compose_above` drops them.

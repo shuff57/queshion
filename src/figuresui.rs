@@ -904,7 +904,12 @@ impl Workspace {
             let h = hash_params(def.id, &self.params);
             // the preview is rasterized at the zoom it is shown at (see `preview_interactive`),
             // so a bigger window or a small figure stays crisp; exports keep their own scale
-            let want = if self.want_raster > 0.0 { self.want_raster } else { 1.5 };
+            let max_side = ctx.input(|i| i.max_texture_side) as f64;
+            let fit = |want: f32, canvas: (f64, f64)| {
+                let side = canvas.0.max(canvas.1);
+                if side > 0.0 { want.min((max_side / side) as f32) } else { want }
+            };
+            let want = fit(if self.want_raster > 0.0 { self.want_raster } else { 1.5 }, self.canvas);
             let rescale = self.shown.is_some() && (want - self.raster).abs() > 0.01;
             let stale = rescale || self.shown.as_ref().is_none_or(|(sh, _)| *sh != h);
             if stale {
@@ -920,7 +925,7 @@ impl Workspace {
                 if first || rescale || self.live || t0.elapsed() >= DEBOUNCE {
                     let svg = (def.render)(&self.params);
                     self.canvas = figures::svg_size(&svg);
-                    let scale = want;
+                    let scale = fit(want, self.canvas);
                     match figures::to_rgba(&svg, scale) {
                         Ok((w, hh, px)) => {
                             let img = egui::ColorImage::from_rgba_premultiplied([w as usize, hh as usize], &px);
@@ -1512,8 +1517,9 @@ impl Workspace {
                                 });
                             })
                             .body(|ui| {
-                                if !sec.help.is_empty() {
-                                    ui.label(theme::muted(sec.help.as_str()).size(11.0));
+                                let help = figures::sections::live_help(def.id, &sec.title, &sec.help, &self.params);
+                                if !help.is_empty() {
+                                    ui.label(theme::muted(help).size(11.0));
                                     ui.add_space(4.0);
                                 }
                                 if si_ == 0 && !classic_in_chips {
@@ -1535,7 +1541,11 @@ impl Workspace {
                                         ui.add_space(6.0);
                                         continue;
                                     }
+                                    let old = self.params.0.get(pdefs[i].key).cloned();
                                     param_control(ui, &pdefs[i], &mut self.params);
+                                    if let Some(old) = old.filter(|o| self.params.0.get(pdefs[i].key) != Some(o)) {
+                                        figures::after_panel_change(def.id, pdefs[i].key, &old, &mut self.params);
+                                    }
                                     self.card_after(ui, def.id, pdefs[i].key, &pdefs);
                                     if pdefs[i].key == "rotate"
                                         && figures::labels::turnable(def.id)

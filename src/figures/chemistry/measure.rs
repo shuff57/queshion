@@ -108,6 +108,57 @@ fn volume_params() -> Vec<ParamDef> {
     ]
 }
 
+/// "one decimal place" / "2 decimal places" / "whole numbers".
+fn places_text(dp: usize) -> String {
+    match dp { 0 => "whole numbers".into(), 1 => "one decimal place".into(), n => format!("{n} decimal places") }
+}
+
+/// The reading section's range line ("From 0 to 100 mL, to one decimal place.") for the current
+/// size, unit and marks, so it never names a range the figure isn't drawing.
+pub fn range_note(id: &str, p: &Params) -> Option<String> {
+    let max_txt = |v: f64| num(v, 0);
+    Some(match id {
+        "volume-reading" => {
+            let (max, _, minor, _) = vol_scale(p);
+            let unit = if p.s("unit").is_empty() { "mL" } else { p.s("unit") };
+            format!("From 0 to {} {unit}, to {}.", max_txt(max), places_text(read_dp(minor)))
+        }
+        "volume-by-displacement" => {
+            let max = size_ml(p.s("size"));
+            let (n0, m0) = cyl_marks(max);
+            let (_, minor, _) = marks_from(p, max, n0, m0);
+            let unit = if p.s("unit").is_empty() { "mL" } else { p.s("unit") };
+            format!("From 0 to {} {unit}, to {}.", max_txt(max), places_text(read_dp(minor)))
+        }
+        "gas-syringe" => {
+            let max = if p.s("size").starts_with("50") { 50.0 } else { 100.0 };
+            format!("From 0 to {} {}, to one decimal place.", max_txt(max), p.s("unit"))
+        }
+        "length-reading" => {
+            let imperial = p.s("units").starts_with("Imp");
+            let cm: f64 = p.s("ruler").split_whitespace().next().and_then(|t| t.parse().ok()).unwrap_or(15.0);
+            let (total, unit) = if imperial { (match cm as i64 { 15 => 6.0, 20 => 8.0, 30 => 12.0, 50 => 20.0, _ => 40.0 }, "in") } else { (cm, "cm") };
+            format!("From 0.05 to {} {unit}, to 2 decimal places.", num(total, 2))
+        }
+        "mass-reading" => {
+            let dp = if p.s("balance").starts_with("Triple") { 2 } else { match p.s("places") { "0.1" => 1, "0.001" => 3, _ => 2 } };
+            format!("From 0 to 610 g, to {}.", places_text(dp))
+        }
+        "temperature-reading" => {
+            let sym = match p.s("unit") { "Kelvin (K)" => "K", "Fahrenheit (°F)" => "°F", _ => "°C" };
+            if p.s("thermometer") == "Digital probe" {
+                let dp = if p.s("places") == "0" { 0 } else { 1 };
+                format!("From -50 to 400 {sym}, to {}.", places_text(dp))
+            } else {
+                let (lo, hi) = match sym { "K" => (260, 380), "°F" => (10, 230), _ => (-10, 110) };
+                format!("From {} to {hi} {sym}, to one decimal place.", lo)
+            }
+        }
+        "ph-reading" => format!("From 0 to 14, to {}.", places_text(if p.s("places") == "0.0" { 1 } else { 2 })),
+        _ => return None,
+    })
+}
+
 fn size_ml(s: &str) -> f64 { s.split_whitespace().next().and_then(|t| t.parse().ok()).unwrap_or(100.0) }
 fn ml_of(s: &str) -> Option<f64> { s.split_whitespace().next().and_then(|t| t.parse().ok()) }
 
@@ -164,7 +215,7 @@ fn volume_render(p: &Params) -> String {
         d.rect(cx + 24.0, 653.0, 30.0, 6.0, "#d44", "#833", 1.0);
         scale_ticks_n(&mut d, &v, xr, -1.0, xr + 12.0, "start", unit, num_step, numbers);
         if p.b("dotted") { dashed(&mut d, cx, v.y(reading), xr + 40.0, v.y(reading), "#555", 1.2); }
-        focus = Focus { x: xr + 2.0, y: v.y(reading), label_px: (v.y(num_step) - v.y(0.0)).abs().max(60.0 / p.i("mag_marks").clamp(1, 6) as f64) };
+        focus = Focus { x: xr + 4.0, y: v.y(reading), label_px: (v.y(num_step) - v.y(0.0)).abs().max(60.0 / p.i("mag_marks").clamp(1, 6) as f64) };
     } else {
         let (w, ytop, ybot) = if beaker { (170.0, 90.0, 470.0) } else { (70.0, 90.0, 500.0) };
         let md = if beaker { 3.0 } else { 7.0 };
@@ -179,9 +230,9 @@ fn volume_render(p: &Params) -> String {
         }
         scale_ticks_n(&mut d, &v, xr, -1.0, xr + 12.0, "start", unit, num_step, numbers);
         if p.b("dotted") { dashed(&mut d, cx, v.y(reading), xr + 40.0, v.y(reading), "#555", 1.2); }
-        focus = Focus { x: xr + 2.0, y: v.y(reading), label_px: (v.y(num_step) - v.y(0.0)).abs().max(80.0 / p.i("mag_marks").clamp(1, 6) as f64) };
+        focus = Focus { x: xr + 4.0, y: v.y(reading), label_px: (v.y(num_step) - v.y(0.0)).abs().max(80.0 / p.i("mag_marks").clamp(1, 6) as f64) };
     }
-    let svg = magnify::compose(p, d.finish(), &[focus], false);
+    let svg = magnify::compose_side(p, d.finish(), &focus);
     let foot = if p.b("answer") { vec![format!("Reading: {} {unit}", num(reading, read_dp(minor)))] } else { vec![] };
     wrap(p, svg, &foot)
 }
@@ -632,11 +683,14 @@ fn temp_render(p: &Params) -> String {
             if mj { tx(&mut d, cx + 40.0, y(v) + 4.0, 12.0, "start", INK, false, &format!("{}", v.round() as i64)); }
         }
         tx(&mut d, cx + 12.0, ytop - 20.0, 14.0, "start", INK, true, sym);
-        focus = Focus { x: cx + 16.0, y: y(t), label_px: lstep / (hi - lo) * (ybot - ytop) };
+        // between the ticks and their numbers, so the lens shows both whole
+        focus = Focus { x: cx + 26.0, y: y(t), label_px: lstep / (hi - lo) * (ybot - ytop) };
     }
     let dp = if p.s("thermometer") == "Digital probe" { if p.s("places") == "0" { 0 } else { 1 } } else { 1 };
     let foot = if p.b("answer") { vec![format!("Temperature: {} {sym}", num(t, dp))] } else { vec![] };
-    let svg = magnify::compose(p, d.finish(), &[focus], false);
+    // the digital probe keeps the old lens over its display; the glass thermometer gets the
+    // reference-sized lens that keeps its numbers whole
+    let svg = if p.s("thermometer") == "Digital probe" { magnify::compose(p, d.finish(), &[focus], false) } else { magnify::compose_side(p, d.finish(), &focus) };
     wrap(p, svg, &foot)
 }
 

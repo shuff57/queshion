@@ -326,6 +326,14 @@ pub fn param_relevant(id: &str, key: &str, p: &Params) -> bool {
     }
 }
 
+/// Follow-up after the panel changed param `key` of figure `id` from `old` (a pulley's load
+/// label follows a switch to or from the block and tackle).
+pub fn after_panel_change(id: &str, key: &str, old: &Value, p: &mut Params) {
+    if let ("pulley", "setup", Value::S(old)) = (id, key, old) {
+        physics::pulley_setup_changed(old, p);
+    }
+}
+
 /// Values worked out from the typed ones, as (value_key, text) pairs shown grey in empty boxes
 /// and on "Measure" label buttons.
 pub fn computed_for(id: &str, p: &Params) -> Vec<(&'static str, String)> {

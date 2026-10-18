@@ -923,7 +923,8 @@ impl Canvas {
     fn texture(&mut self, ctx: &egui::Context, p: &Params, painter: &egui::Painter) {
         let r = self.rect;
         let (cv, pr) = self.render_view(p);
-        let ppp = ctx.pixels_per_point();
+        // never past the GPU's texture side; the image is drawn at the rect's size regardless
+        let ppp = ctx.pixels_per_point().min(ctx.input(|i| i.max_texture_side) as f32 / (cv.w.max(cv.h) as f32).max(1.0));
         let mut hs = std::collections::hash_map::DefaultHasher::new();
         format!("{:?}{:?}{}", pr.0, cv, ppp).hash(&mut hs);
         let key = hs.finish();
@@ -941,7 +942,7 @@ impl Canvas {
             }
         }
         if let Some((_, t)) = &self.tex {
-            let sz = t.size_vec2() / ppp;
+            let sz = vec2(r.width(), r.height());
             // Lines mode greys the figure so the snap markers stand out
             let tint = if self.tool == Tool::Line { Color32::from_white_alpha(110) } else { Color32::WHITE };
             painter.image(t.id(), Rect::from_min_size(r.min, sz), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), tint);

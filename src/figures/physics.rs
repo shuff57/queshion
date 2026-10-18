@@ -7,7 +7,7 @@ mod graphs;
 mod instr;
 mod mech;
 mod pulley;
-pub(crate) use pulley::pulley_relevant;
+pub(crate) use pulley::{pulley_relevant, pulley_setup_changed};
 mod examples;
 
 /// "Start from an example" entries for this subject's figures.

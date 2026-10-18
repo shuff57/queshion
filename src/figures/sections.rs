@@ -23,10 +23,10 @@ static FIG_0: [RefSection; 2] = [
 ];
 
 static FIG_1: [RefSection; 7] = [
-    s("Atom or ion", &["charge", "gained_lost"], "Picking an element sets its protons, its neutrons from its mass number (C: 12 − 6 = 6) and a neutral atom’s sh"),
+    s("Atom or ion", &["charge", "gained_lost"], "Picking an element sets its protons, its neutrons from the mass number (C: 12 − 6 = 6) and, for a neutral atom, its shells."),
     s("Protons, neutrons and electrons", &["empty", "caption", "neutrons", "shuffle", "shell_labels"], "Set any count by hand. Nothing is checked, so a wrong atom draws exactly as set."),
-    s("Drawing", &["element", "nucleus", "placement"], "NUCLEUS"),
-    s("Colors and symbols", &["proton_color", "proton_symbol", "neutron_color", "neutron_symbol", "electron_color", "electron_symbol"], "PROTON"),
+    s("Drawing", &["element", "nucleus", "placement"], ""),
+    s("Colors and symbols", &["proton_color", "proton_symbol", "neutron_color", "neutron_symbol", "electron_color", "electron_symbol"], ""),
     s("Labels", &["shells_custom", "key", "brackets"], ""),
     s("Chart title", &["title"], ""),
     s("More options", &["title_style"], ""),
@@ -83,18 +83,18 @@ static FIG_8: [RefSection; 4] = [
 ];
 
 static FIG_9: [RefSection; 5] = [
-    s("Syringe", &["show", "size", "unit"], "Size"),
+    s("Syringe", &["show", "size", "unit"], ""),
     s("Volume of gas", &["volume"], "From 0 to 100 cm³, to one decimal place."),
-    s("Title and answer key", &["answer", "title"], "Chart title"),
+    s("Title and answer key", &["answer", "title"], ""),
     s("More options", &["title_style"], ""),
     s("Magnifier", &["mag_show", "mag_marks"], ""),
 ];
 
 static FIG_10: [RefSection; 4] = [
     s("Lanes", &["lanes", "lane_names", "lane_labels", "lane_numbers"], ""),
-    s("Gel", &["setup", "agarose", "look", "ruler"], "Agarose"),
-    s("Labels", &["sizes", "electrodes", "answer", "ladder_sizes", "size_units", "electrode_style", "answer_kind"], "Lane labels"),
-    s("Chart title and answer key", &["title", "band_height", "run_length"], "Chart title"),
+    s("Gel", &["setup", "agarose", "look", "ruler"], ""),
+    s("Labels", &["sizes", "electrodes", "answer", "ladder_sizes", "size_units", "electrode_style", "answer_kind"], ""),
+    s("Chart title and answer key", &["title", "band_height", "run_length"], ""),
 ];
 
 static FIG_11: [RefSection; 7] = [
@@ -110,8 +110,8 @@ static FIG_11: [RefSection; 7] = [
 static FIG_12: [RefSection; 6] = [
     s("Object", &["obj", "obj_lab_mode", "obj_lab", "size", "pos", "two", "n", "joined", "spacing"], ""),
     items("Object"),
-    s("Ramp", &["angle", "show_angle", "ang_lab_mode", "ang_lab", "surface", "grav_lab_mode", "grav_lab", "norm_lab_mode", "norm_lab", "fric_lab_mode", "fric_lab", "app_lab_mode", "app_lab", "vel_lab_mode", "vel_lab", "acc_lab_mode", "acc_lab"], ""),
-    s("Forces and motion", &["gravity", "normal", "friction", "applied", "velocity", "accel", "tension", "ten_lab_mode", "ten_lab", "contact", "cont_lab_mode", "cont_lab"], ""),
+    s("Ramp", &["angle", "show_angle", "ang_lab_mode", "ang_lab", "surface"], ""),
+    s("Forces and motion", &["gravity", "grav_lab_mode", "grav_lab", "normal", "norm_lab_mode", "norm_lab", "friction", "fric_lab_mode", "fric_lab", "applied", "app_lab_mode", "app_lab", "velocity", "vel_lab_mode", "vel_lab", "accel", "acc_lab_mode", "acc_lab", "tension", "ten_lab_mode", "ten_lab", "contact", "cont_lab_mode", "cont_lab"], ""),
     s("Marks", &["mark_len", "len_lab", "mark_h", "h_lab"], ""),
     s("Figure", &["mirror", "color"], ""),
 ];
@@ -126,19 +126,19 @@ static FIG_13: [RefSection; 6] = [
 ];
 
 static FIG_14: [RefSection; 6] = [
-    s("Ruler", &["units", "ruler", "marks", "read_to"], "Length"),
+    s("Ruler", &["units", "ruler", "marks", "read_to"], ""),
     s("Length and position", &["length", "offset"], "From 0.50 to 15.00 cm, to 2 decimal places."),
     s("Object", &["object", "dashes"], ""),
-    s("Title and answer key", &["answer", "title"], "Chart title"),
+    s("Title and answer key", &["answer", "title"], ""),
     s("More options", &["title_style"], ""),
     s("Magnifiers", &["mag_show", "mag_marks"], ""),
 ];
 
 static FIG_15: [RefSection; 6] = [
     s("Structure", &["formula", "preset", "lone", "formal", "expand"], "Built around O as the central atom."),
-    s("Look", &["shape", "bond_style"], "Shape"),
-    s("Changes", &["central"], "Make a wrong structure for a “find the mistake” question. Click an atom or bond in the figure, or change one b"),
-    s("Title and answer key", &["title", "tweak", "resonance", "resonance_pick"], "Chart title"),
+    s("Look", &["shape", "bond_style"], ""),
+    s("Changes", &["central"], "Make a wrong structure for a “find the mistake” question. Click an atom or bond in the figure, or type the change below."),
+    s("Title and answer key", &["title", "tweak", "resonance", "resonance_pick"], ""),
     s("Question", &["question"], ""),
     s("More options", &["title_style", "answer"], ""),
 ];
@@ -148,7 +148,7 @@ static FIG_16: [RefSection; 6] = [
     s("Look", &["style", "brightness"], "Bright colored lines on black, as a glowing gas gives off."),
     s("Labels", &["labels", "label_style"], "Each element strip’s name, e.g. Hydrogen."),
     s("Wavelength axis", &["nm_from", "nm_to", "tick_every", "num_every", "axis_pos", "axis_title_style", "axis_title"], "Visible light runs from about 380 to 780 nm; every strip is the same width whatever the range."),
-    s("Chart title and answer key", &["title"], "Chart title"),
+    s("Chart title and answer key", &["title"], ""),
     s("More options", &["hydrogen", "helium", "neon", "sodium", "mercury", "lithium", "calcium", "title_style", "answer"], ""),
 ];
 
@@ -161,13 +161,13 @@ static FIG_17: [RefSection; 3] = [
 static FIG_18: [RefSection; 5] = [
     s("Balance", &["balance", "pan"], "Weighs up to 610 g, read to 0.01 g. The riders are placed for the mass you type."),
     s("Mass", &["mass", "places"], "From 0 to 610 g, to 2 decimal places."),
-    s("Title and answer key", &["title"], "Chart title"),
+    s("Title and answer key", &["title"], ""),
     s("More options", &["answer", "title_style"], ""),
     s("Magnifier", &["mag_show", "mag_marks"], ""),
 ];
 
 static FIG_19: [RefSection; 7] = [
-    s("Peaks", &["values"], "Peak heights"),
+    s("Peaks", &["values"], ""),
     s("For the student", &["element", "custom", "custom_name", "show_name", "leave_out"], ""),
     s("Titles", &["title", "xtitle_style", "xtitle", "ytitle_style", "ytitle"], ""),
     s("x-axis", &["source", "xaxis_fit"], ""),
@@ -177,13 +177,13 @@ static FIG_19: [RefSection; 7] = [
 ];
 
 static FIG_20: [RefSection; 3] = [
-    s("Micropipette", &["size", "tip", "size_label"], "Size"),
+    s("Micropipette", &["size", "tip", "size_label", "shape"], ""),
     s("Reading", &["volume"], "A 20 µL pipette is set from 2 to 20 µL, in steps of 0.1 µL."),
     s("Color", &["color", "decimal_line", "answer", "title", "answer_text"], "Red digits show where the decimal point goes. The line keeps that clear on a black and white copy."),
 ];
 
 static FIG_21: [RefSection; 7] = [
-    s("Motion", &["n", "x0", "tangent_t"], "A to B (0–4 s): speeding up from 0 to 4 m/s, a = 1 m/s²; 0 m to 8 m"),
+    s("Motion", &["n", "x0", "tangent_t"], ""),
     items("Segment"),
     s("Graphs", &["show", "ranges"], ""),
     s("Marks", &["letters", "styles", "tangent"], ""),
@@ -198,11 +198,11 @@ static FIG_22: [RefSection; 1] = [
 
 static FIG_23: [RefSection; 7] = [
     s("Atom or ion", &["charge"], ""),
-    s("Configuration", &["order", "exceptions"], "Order"),
-    s("Look", &["element", "layout", "shorthand", "arrows", "orbitals", "edits"], "Arrows"),
-    s("For the student", &["blank", "config", "caption", "config_blank", "symbol_style", "sublabels"], "Symbol"),
+    s("Configuration", &["order", "exceptions"], ""),
+    s("Look", &["element", "layout", "shorthand", "arrows", "orbitals", "edits"], ""),
+    s("For the student", &["blank", "config", "caption", "config_blank", "symbol_style", "sublabels"], ""),
     s("Changes", &["extra_empty"], "Click an orbital to change its electrons, for a “which rule is broken?” question."),
-    s("Title and answer key", &["title"], "Chart title"),
+    s("Title and answer key", &["title"], ""),
     s("More options", &["title_style", "answer"], ""),
 ];
 
@@ -221,10 +221,10 @@ static FIG_25: [RefSection; 6] = [
 ];
 
 static FIG_26: [RefSection; 6] = [
-    s("Layout", &["layout", "boxes", "state", "state2", "gaps"], "Boxes"),
+    s("Layout", &["layout", "boxes", "state", "state2", "gaps"], ""),
     s("Particles", &["d_count", "d_shape", "d_size", "d_shade", "shuffle", "a2_count", "b2_count", "c2_count", "d2_count"], ""),
-    s("Key", &["key_show", "key_list", "note"], "Show"),
-    s("Box", &["border"], "Border"),
+    s("Key", &["key_show", "key_list", "note"], ""),
+    s("Box", &["border"], ""),
     s("Chart title", &["title", "lab_before", "lab_after"], ""),
     s("More options", &["a_count", "a_shape", "a_size", "a_shade", "b_count", "b_shape", "b_size", "b_shade", "c_count", "c_shape", "c_size", "c_shade", "a_charge", "a_osize", "a_oshade", "a_ocharge", "a_name", "a_oname", "b_charge", "b_osize", "b_oshade", "b_ocharge", "b_name", "b_oname", "c_charge", "c_osize", "c_oshade", "c_ocharge", "c_name", "c_oname", "d_charge", "d_osize", "d_oshade", "d_ocharge", "d_name", "d_oname", "title_style"], ""),
 ];
@@ -236,17 +236,17 @@ static FIG_27: [RefSection; 3] = [
 ];
 
 static FIG_28: [RefSection; 4] = [
-    s("Instrument", &["instrument", "places", "meter"], "Decimal places"),
+    s("Instrument", &["instrument", "places", "meter"], ""),
     s("pH", &["ph"], "From 0 to 14, to 2 decimal places."),
-    s("Title and answer key", &["title"], "Chart title"),
+    s("Title and answer key", &["title"], ""),
     s("More options", &["answer", "title_style"], ""),
 ];
 
 static FIG_29: [RefSection; 6] = [
-    s("Energy axis", &["units", "gridlines"], "Scale"),
-    s("Peaks", &["labels", "counts", "source", "custom", "drawn", "sublabel_style", "energies"], "Drawn as"),
+    s("Energy axis", &["units", "gridlines"], ""),
+    s("Peaks", &["labels", "counts", "source", "custom", "drawn", "sublabel_style", "energies"], ""),
     s("For the student", &["names", "numbered"], "The answer key always names the element and its configuration."),
-    s("Title and answer key", &["title", "compare", "scale"], "Chart title"),
+    s("Title and answer key", &["title", "compare", "scale"], ""),
     s("Element", &["element"], ""),
     s("More options", &["title_style", "answer"], ""),
 ];
@@ -282,7 +282,7 @@ static FIG_32: [RefSection; 3] = [
 
 static FIG_33: [RefSection; 6] = [
     s("Launch", &["from", "angle", "show_angle", "ang_lab_mode", "ang_lab", "vx_lab_mode", "vx_lab", "vy_lab_mode", "vy_lab"], ""),
-    s("Object", &["object", "size"], ""),
+    s("Object", &["object", "size", "ball_at"], ""),
     s("Path", &["path", "steps", "letters"], ""),
     s("Velocity and gravity", &["show_v", "v_lab_mode", "v_lab", "comps", "show_g", "g_lab_mode", "g_lab"], ""),
     s("Marks", &["cliff", "mark_h", "h_lab", "mark_r", "r_lab", "mark_cliff", "cliff_lab"], ""),
@@ -291,17 +291,17 @@ static FIG_33: [RefSection; 6] = [
 
 static FIG_34: [RefSection; 4] = [
     s("Setup", &["setup", "l_kind"], ""),
-    s("Objects", &["l_lab_mode", "l_lab", "l_size", "r_lab_mode", "r_lab", "r_size", "lower", "third", "third_side", "t_lab_mode", "t_lab", "t_size", "second", "s_lab", "strands", "angle", "ang_lab_mode", "ang_lab", "surface", "gravity", "grav_lab_mode", "grav_lab", "normal", "norm_lab_mode", "norm_lab", "friction", "fric_lab_mode", "fric_lab"], ""),
-    s("Forces and motion", &["tension", "tens_lab_mode", "tens_lab", "accel", "acc_lab_mode", "acc_lab"], ""),
+    s("Objects", &["l_lab_mode", "l_lab", "l_size", "r_lab_mode", "r_lab", "r_size", "lower", "third", "third_side", "t_lab_mode", "t_lab", "t_size", "second", "s_lab", "strands", "angle", "ang_lab_mode", "ang_lab", "surface"], ""),
+    s("Forces and motion", &["tension", "tens_lab_mode", "tens_lab", "gravity", "grav_lab_mode", "grav_lab", "normal", "norm_lab_mode", "norm_lab", "friction", "fric_lab_mode", "fric_lab", "accel", "acc_lab_mode", "acc_lab"], ""),
     s("Figure", &["mirror", "color"], ""),
 ];
 
 static FIG_35: [RefSection; 5] = [
     s("Phenotypes", &["phenotypes"], ""),
-    s("Square", &["cross", "dominance", "parents", "filled", "parent_labels", "blank_parents", "blank_gametes", "cells", "blank_cells", "cell_phenotype"], "Parents"),
+    s("Square", &["cross", "dominance", "parents", "filled", "parent_labels", "blank_parents", "blank_gametes", "cells", "blank_cells", "cell_phenotype"], ""),
     s("Shading", &["shading", "shade_style", "shade_color"], ""),
     s("Ratios", &["geno_ratio", "geno_ratio_style", "pheno_ratio", "pheno_ratio_style", "ratio_form", "sex_split"], "Genotypes and phenotypes under the square."),
-    s("Title and question", &["title", "question", "outline_heavy", "label_size"], "Chart title"),
+    s("Title and question", &["title", "question", "outline_heavy", "label_size"], ""),
 ];
 
 static FIG_36: [RefSection; 4] = [
@@ -326,10 +326,10 @@ static FIG_38: [RefSection; 3] = [
 ];
 
 static FIG_39: [RefSection; 5] = [
-    s("Ruler", &["marks", "ruler", "read_to", "marbles", "magnify"], "Length"),
+    s("Ruler", &["marks", "ruler", "read_to", "marbles", "magnify"], ""),
     s("Length and position", &["start", "length", "guides", "show_value", "dec", "ruler_color"], "From 0.50 to 15.00 cm, to 2 decimal places."),
-    s("Magnifiers", &["mag_marks"], "Numbered marks in the magnifier"),
-    s("Title and answer key", &["title_mode", "title", "answer"], "Chart title"),
+    s("Magnifiers", &["mag_marks"], ""),
+    s("Title and answer key", &["title_mode", "title", "answer"], ""),
     s("Object", &["obj_color", "object"], ""),
 ];
 
@@ -341,17 +341,17 @@ static FIG_40: [RefSection; 4] = [
 ];
 
 static FIG_41: [RefSection; 5] = [
-    s("Spring scale", &["cap", "units", "coded"], "Capacity"),
+    s("Spring scale", &["cap", "units", "coded", "minor"], ""),
     s("Reading", &["reading", "offset", "show_zero"], "From 0 to 10 N, to 2 decimal places."),
     s("On the hook", &["hook", "block_lab"], ""),
-    s("Magnifier", &["masses", "view", "mag_marks"], "Numbered marks in the magnifier"),
-    s("Title and answer key", &["title", "answer"], "Chart title"),
+    s("Magnifier", &["masses", "view", "mag_marks"], ""),
+    s("Title and answer key", &["title", "answer"], ""),
 ];
 
 static FIG_42: [RefSection; 5] = [
-    s("Thermometer", &["thermometer", "unit", "liquid"], "Unit"),
+    s("Thermometer", &["thermometer", "unit", "liquid"], ""),
     s("Temperature", &["temperature", "places"], "From -10 to 110 °C, to one decimal place."),
-    s("Title and answer key", &["title"], "Chart title"),
+    s("Title and answer key", &["title"], ""),
     s("More options", &["answer", "title_style"], ""),
     s("Magnifier", &["mag_show", "mag_marks"], ""),
 ];
@@ -385,26 +385,26 @@ static FIG_45: [RefSection; 4] = [
 static FIG_46: [RefSection; 4] = [
     s("Vectors", &["n"], "Drawn to scale, head to tail, in order. One grid square is a magnitude of 1."),
     s("Resultant", &["resultant", "res_style", "res_lab_mode", "res_lab", "mark_angle", "ang_lab_mode", "ang_lab", "components"], "From the first tail to the last tip: 5 squares at 36.9°."),
-    s("Grid and axes", &["grid", "axes"], ""),
+    s("Grid and axes", &["grid", "axes", "bold"], ""),
     s("Figure", &["mirror", "color"], ""),
 ];
 
 static FIG_47: [RefSection; 8] = [
-    s("Graduated cylinder", &["size", "color"], "Liquid"),
-    s("Scale", &["marks", "numbered", "unit"], "Smallest marks"),
+    s("Graduated cylinder", &["size", "color"], ""),
+    s("Scale", &["marks", "numbered", "unit"], ""),
     s("Readings", &["before", "after", "dotted"], "From 0 to 10 mL, to 2 decimal places."),
     s("Object", &["object", "count", "marble_color"], ""),
     s("Captions", &["lab_before", "lab_after", "arrow"], ""),
-    s("Title and answer key", &["title"], "Chart title"),
+    s("Title and answer key", &["title"], ""),
     s("More options", &["answer", "title_style"], ""),
     s("Magnifiers", &["mag_show", "mag_marks"], ""),
 ];
 
 static FIG_48: [RefSection; 6] = [
-    s("Instrument", &["instrument", "size", "color"], "Size"),
-    s("Scale", &["marks", "numbered", "unit"], "Smallest marks"),
+    s("Instrument", &["instrument", "size", "color"], ""),
+    s("Scale", &["marks", "numbered", "unit"], ""),
     s("Reading", &["reading", "dotted"], "From 0 to 100 mL, to one decimal place."),
-    s("Title and answer key", &["answer", "title"], "Chart title"),
+    s("Title and answer key", &["answer", "title"], ""),
     s("More options", &["title_style"], ""),
     s("Magnifier", &["mag_show", "mag_marks"], ""),
 ];
@@ -473,4 +473,24 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "waves" => &FIG_49,
         _ => return None,
     })
+}
+
+/// The help line under a section header for the figure's current state. Most are fixed text
+/// (`help`); a few follow the figure: the Lewis structure's central atom and the reading ranges,
+/// which change with the instrument's size, unit or decimal places.
+pub fn live_help(fig: &str, title: &str, help: &str, p: &super::Params) -> String {
+    if let Some(h) = super::chemistry::live_help(fig, title, p) {
+        return h;
+    }
+    match (fig, title) {
+        ("spring-scale", "Reading") => {
+            let cap = p.s("cap").trim_end_matches(" N").trim().parse::<f64>().unwrap_or(10.0);
+            format!("From 0 to {} N, to 2 decimal places.", super::chemistry::num(cap, if cap.fract() == 0.0 { 0 } else { 1 }))
+        }
+        ("ruler-reading", "Length and position") => {
+            let imperial = p.s("marks").ends_with(" in");
+            format!("From 0.10 to {}.00 {}, to 2 decimal places.", p.i("ruler"), if imperial { "in" } else { "cm" })
+        }
+        _ => help.to_string(),
+    }
 }

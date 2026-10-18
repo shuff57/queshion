@@ -33,12 +33,15 @@ fn spring_params() -> Vec<ParamDef> {
         ParamDef::text("block_lab", "Label on the block", ""),
         ParamDef::choice("view", "Show", &["Instrument and magnifier", "Magnifier only", "Instrument only"], "Instrument and magnifier"),
         ParamDef::choice("mag_marks", "Numbered marks in the magnifier", &["1", "2", "3", "4", "5", "6"], "3"),
+        // "Automatic" (saved figures): tenths only where they are 3 px apart, else fifths;
+        // the opening state uses tenths everywhere, as the reference's dial
+        ParamDef::choice("minor", "Small marks between numbers", &["Automatic", "Tenths"], "Automatic"),
         ParamDef::text("title", "Chart title", ""),
         ParamDef::bool("answer", "Print the answer key under the figure", false),
     ]
 }
 
-struct Inst { ix: f64, y0: f64, y1: f64, cap: f64, units: String, value: f64, coded: bool }
+struct Inst { ix: f64, y0: f64, y1: f64, cap: f64, units: String, value: f64, coded: bool, tenths: bool }
 
 fn lab_step(cap: f64) -> f64 { if cap <= 1.0 { 0.1 } else if cap <= 2.5 { 0.25 } else if cap <= 5.0 { 0.5 } else { cap / 10.0 } }
 
@@ -97,7 +100,7 @@ fn draw_inst(g: &mut G, c: &Inst, sw: f64, fs: f64, full: bool) {
         let ls = lab_step(c.cap) * mult;
         // tenths between numbered marks with a longer half mark, as the reference's dial;
         // fifths when tenths would crowd closer than 3 px
-        let per = if (c.y1 - c.y0).abs() * (ls / mult / 10.0) / c.cap >= 3.0 { 10 } else { 5 };
+        let per = if c.tenths || (c.y1 - c.y0).abs() * (ls / mult / 10.0) / c.cap >= 3.0 { 10 } else { 5 };
         let minor = ls / per as f64;
         let steps = (cap_u / minor).round() as i64;
         for i in 0..=steps {
@@ -150,7 +153,7 @@ fn spring_render(p: &Params) -> String {
     let view = p.s("view").to_string();
     let show_inst = view != "Magnifier only";
     let show_mag = view != "Instrument only";
-    let cfg = Inst { ix, y0: 130.0, y1: 424.0, cap, units: p.s("units").to_string(), value, coded: p.b("coded") };
+    let cfg = Inst { ix, y0: 130.0, y1: 424.0, cap, units: p.s("units").to_string(), value, coded: p.b("coded"), tenths: p.s("minor") == "Tenths" };
     if !p.s("title").trim().is_empty() { g.title_text(w / 2.0, 26.0, 19.0, p.s("title")); }
     let py = cfg.y0 + (cfg.y1 - cfg.y0) * value.clamp(-0.08 * cap, 1.06 * cap) / cap;
     if let Some(x0) = ix0 {

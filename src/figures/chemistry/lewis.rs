@@ -330,6 +330,20 @@ fn base(p: &Params, central: Option<&str>) -> Result<Mol, String> {
     from_formula(f, p.b("expand"), flat, central)
 }
 
+/// The Structure section's help line for the current formula: which atom the drawing is built
+/// around (the one asked for under Changes when set, else the generator's choice).
+pub fn central_note(p: &Params) -> String {
+    let central = Some(p.s("central")).filter(|c| !c.trim().is_empty());
+    match base(p, central) {
+        Ok(m) => match m.centre {
+            Some(c) if m.atoms.len() == 1 => format!("A single {} atom or ion, drawn with its valence electrons.", m.atoms[c].sym),
+            Some(c) => format!("Built around {} as the central atom.", m.atoms[c].sym),
+            None => "Built from more than one central atom, joined in a chain.".into(),
+        },
+        Err(_) => String::new(),
+    }
+}
+
 /// Structures to draw (one, or every resonance structure) with the changes applied.
 fn build_all(p: &Params) -> Result<Vec<Mol>, String> {
     let central = Some(p.s("central")).filter(|c| !c.trim().is_empty());

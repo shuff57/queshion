@@ -268,6 +268,8 @@ fn vector_params() -> Vec<ParamDef> {
     v.push(ParamDef::bool("components", "Show its components", false));
     v.push(ParamDef::choice("grid", "Grid and axes", &["Grid", "Axes only", "None"], "Grid"));
     v.push(ParamDef::bool("axes", "x and y axes, from the first tail", false));
+    // off for saved figures (thin arrows, small labels, tight grid); the opening state turns it on
+    v.push(ParamDef::bool("bold", "Bold arrows and big labels, with room for them on the grid", false));
     v.push(ParamDef::bool("mirror", "Mirror (flip left to right)", false));
     v.push(ParamDef::bool("color", "Color (for slides)", false));
     v
@@ -296,18 +298,63 @@ pub(super) fn vlayout(p: &Params, w: f64, h: f64) -> VLay {
     let res = *pts.last().unwrap();
     let (mut x0, mut x1, mut y0, mut y1) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
     for q in &pts { x0 = x0.min(q.0); x1 = x1.max(q.0); y0 = y0.min(q.1); y1 = y1.max(q.1); }
-    let gx0 = x0.floor() - 1.0;
-    let gx1 = (x1.ceil() + 1.0).max(gx0 + 4.0);
-    let gy0 = y0.floor() - 1.0;
-    let gy1 = (y1.ceil() + 1.0).max(gy0 + 4.0);
+    let (mut gx0, mut gx1, mut gy0, mut gy1) = (x0.floor() - 1.0, x1.ceil() + 1.0, y0.floor() - 1.0, y1.ceil() + 1.0);
+    if p.b("bold") {
+        // big labels need room: a side whose label would fill more than half of its one-square
+        // margin gets another square (A along the bottom, B up the right side: the reference's 7 x 6)
+        for (lo, hi) in vlabel_extents(p, &pts) {
+            if lo.0 < x0.floor() - 0.5 { gx0 = x0.floor() - 2.0; }
+            if hi.0 > x1.ceil() + 0.5 { gx1 = x1.ceil() + 2.0; }
+            if lo.1 < y0.floor() - 0.5 { gy0 = y0.floor() - 2.0; }
+            if hi.1 > y1.ceil() + 0.5 { gy1 = y1.ceil() + 2.0; }
+        }
+    }
+    let gx1 = gx1.max(gx0 + 4.0);
+    let gy1 = gy1.max(gy0 + 4.0);
     let u = ((w - 60.0) / (gx1 - gx0)).min((h - 50.0) / (gy1 - gy0)).min(64.0);
     let (ox, oy) = ((w - u * (gx1 - gx0)) / 2.0 - gx0 * u, (h + u * (gy1 - gy0)) / 2.0 + gy0 * u);
     VLay { n, pts, res, u, ox, oy, gx0, gx1, gy0, gy1 }
 }
 
+/// Label size and arrow width: the classic 25 pt / 3.5 px, or with "bold" in proportion to the
+/// grid square as on the reference (labels about 0.7 of a square, shafts about a tenth).
+pub(super) fn vstyle(p: &Params, u: f64) -> (f64, f64) {
+    if p.b("bold") { ((u * 0.7).clamp(22.0, 38.0), (u * 0.095).clamp(SW + 1.0, 6.0)) } else { (25.0, SW + 1.0) }
+}
+
+/// Rough extents (grid units, y up) of the vector and resultant labels, for the bold grid's room:
+/// each label sits beside the middle of its arrow, away from the middle of the figure.
+fn vlabel_extents(p: &Params, pts: &[Pt]) -> Vec<(Pt, Pt)> {
+    let n = pts.len() - 1;
+    let mut cen: Vec<Pt> = pts.to_vec();
+    let res = pts[n];
+    if p.b("components") { cen.push((res.0, 0.0)); }
+    let k = cen.len() as f64;
+    let mid = (cen.iter().map(|q| q.0).sum::<f64>() / k, cen.iter().map(|q| q.1).sum::<f64>() / k);
+    let mut segs: Vec<(Pt, Pt, &str)> = (0..n).map(|i| (pts[i], pts[i + 1], VK[i][4])).collect();
+    if p.b("resultant") && n >= 2 { segs.push(((0.0, 0.0), res, "res_lab")); }
+    segs.into_iter()
+        .filter_map(|(a, b, key)| {
+            let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+            let len = (dx * dx + dy * dy).sqrt();
+            if len < 1e-6 { return None; }
+            let (nx, ny) = (-dy / len, dx / len);
+            let m = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+            let d = (m.0 - mid.0) * nx + (m.1 - mid.1) * ny;
+            let s = if d.abs() < 0.05 { 1.0 } else { d.signum() };
+            let chars = p.s(key).trim().chars().filter(|c| c.is_alphanumeric()).count().max(1) as f64;
+            let off = 0.25 + 0.3 * nx.abs() + 0.35 * ny.abs();
+            let c = (m.0 + nx * s * off, m.1 + ny * s * off);
+            let (hx, hy) = (0.15 + 0.2 * chars, 0.35);
+            Some(((c.0 - hx, c.1 - hy), (c.0 + hx, c.1 + hy)))
+        })
+        .collect()
+}
+
 /// Label centres of the vectors and the resultant: each on the side of its arrow away from the
 /// middle of the figure (ties: right of travel, left for a lone vector / the resultant).
 pub(super) fn vlabel_pos(p: &Params, l: &VLay) -> (Vec<Pt>, Pt) {
+    let k = vstyle(p, l.u).0 / 25.0;
     let pxy = |q: Pt| (l.ox + q.0 * l.u, l.oy - q.1 * l.u);
     let mut cen: Vec<Pt> = l.pts.iter().map(|&q| pxy(q)).collect();
     if p.b("components") { cen.push(pxy((l.res.0, 0.0))); }
@@ -315,14 +362,14 @@ pub(super) fn vlabel_pos(p: &Params, l: &VLay) -> (Vec<Pt>, Pt) {
     let mid = (cen.iter().map(|q| q.0).sum::<f64>() / k, cen.iter().map(|q| q.1).sum::<f64>() / k);
     // offset grows with the label's half-extent across the arrow
     let place = |a: Pt, b: Pt, pref: f64, text: &str| -> Pt {
-        let tw = parse_tex(text, ITALIC).0.iter().map(|(t, lv)| t.chars().count() as f64 * if *lv == 0 { 13.0 } else { 9.0 }).sum::<f64>();
+        let tw = k * parse_tex(text, ITALIC).0.iter().map(|(t, lv)| t.chars().count() as f64 * if *lv == 0 { 13.0 } else { 9.0 }).sum::<f64>();
         let (dx, dy) = (b.0 - a.0, b.1 - a.1);
         let len = (dx * dx + dy * dy).sqrt().max(1e-6);
         let (nx, ny) = (-dy / len, dx / len);
         let m = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
         let d = (m.0 - mid.0) * nx + (m.1 - mid.1) * ny;
         let s = if d.abs() < 2.0 { pref } else { d.signum() };
-        let off = 8.0 + (tw / 2.0 + 4.0) * nx.abs() + 13.0 * ny.abs();
+        let off = k * 8.0 + (tw / 2.0 + 4.0 * k) * nx.abs() + 13.0 * k * ny.abs();
         (m.0 + nx * s * off, m.1 + ny * s * off)
     };
     let v = (0..l.n).map(|i| place(pxy(l.pts[i]), pxy(l.pts[i + 1]), if l.n == 1 { -1.0 } else { 1.0 }, p.s(VK[i][4]))).collect();
@@ -339,7 +386,7 @@ fn vector_render(p: &Params) -> String {
     let VLay { n, pts, res, u, ox, oy, gx0, gx1, gy0, gy1 } = vlayout(p, w, h);
     let pxy = |q: Pt| (ox + q.0 * u, oy - q.1 * u);
     let mode = p.s("grid").to_string();
-    let fs = 25.0;
+    let (fs, vsw) = vstyle(p, u);
     if mode == "Grid" {
         let mut x = gx0;
         while x <= gx1 + 1e-9 { let a = pxy((x, gy0)); let b = pxy((x, gy1)); g.line(a.0, a.1, b.0, b.1, "#cdd1d8", 1.2); x += 1.0; }
@@ -379,7 +426,7 @@ fn vector_render(p: &Params) -> String {
     for i in 0..n {
         let (a, b) = (pxy(pts[i]), pxy(pts[i + 1]));
         let c = if col { vcol } else { colr(false, i) };
-        styled_arrow(&mut g, p.s(VK[i][6]), a, b, c, SW + 1.0);
+        styled_arrow(&mut g, p.s(VK[i][6]), a, b, c, vsw);
         let (dx, dy) = (b.0 - a.0, b.1 - a.1);
         let l = (dx * dx + dy * dy).sqrt().max(1e-6);
         let _ = l;
@@ -387,7 +434,7 @@ fn vector_render(p: &Params) -> String {
     }
     if p.b("resultant") && n >= 2 {
         let (a, b) = (pxy((0.0, 0.0)), pxy(res));
-        styled_arrow(&mut g, p.s("res_style"), a, b, vcol, SW + 1.0);
+        styled_arrow(&mut g, p.s("res_style"), a, b, vcol, vsw);
         let (dx, dy) = (b.0 - a.0, b.1 - a.1);
         let _ = (dx, dy);
         g.label_at(rlab.0, rlab.1, fs, &lab_mode(p, "res_lab", "res_lab_mode"), ITALIC);
@@ -819,6 +866,9 @@ fn proj_params() -> Vec<ParamDef> {
         ParamDef::text("ang_lab", "Angle label (e.g. theta or 30°)", "theta"),
         ParamDef::choice("object", "Object", &["Ball", "Dot"], "Ball"),
         ParamDef::int("size", "Object size (%)", 30, 150, 60),
+        // saved figures: the ball rests on the ground; the opening state centres it on the
+        // ground line and launches from ground level, as the reference does
+        ParamDef::choice("ball_at", "On level ground the ball", &["Rests on the ground", "Is centred on the ground line"], "Rests on the ground"),
         ParamDef::choice("path", "Path", &["Dashed", "Solid", "None"], "Dashed"),
         ParamDef::int("steps", "Ball at equal time steps (0 = off)", 0, 12, 0),
         ParamDef::bool("letters", "Letter the positions A, B, C...", false),
@@ -861,9 +911,10 @@ pub(super) fn proj_geo(p: &Params, w: f64) -> PG {
     let range0 = vx * t_land0;
     let hmax0 = h0 + vy * vy / 2.0;
     let s = ((w - lx - 60.0) / range0).min((ground - 50.0 - 2.0 * r) / hmax0).min(500.0);
-    let drop_px = h0 * s + r; // launch centre above the ground line
+    let centred = !cliff && p.s("ball_at") == "Is centred on the ground line";
+    let drop_px = if centred { 0.0 } else { h0 * s + r }; // launch centre above the ground line
     let ly = ground - drop_px;
-    let t_land = vy + (vy * vy + 2.0 * drop_px / s).sqrt();
+    let t_land = if centred { 2.0 * vy } else { vy + (vy * vy + 2.0 * drop_px / s).sqrt() };
     PG { th, vx, vy, h0, r, ground, lx, ly, s, t_land }
 }
 
@@ -938,7 +989,8 @@ fn proj_render(p: &Params) -> String {
     }
     if p.b("show_angle") && th > 0.5 {
         let ar = br + 26.0;
-        g.dash(lx + br, ly, lx + ar + 12.0, ly, GREY, 1.0);
+        // the ground line is the reference when the launch is from it
+        if ly < ground - 0.5 { g.dash(lx + br, ly, lx + ar + 12.0, ly, GREY, 1.0); }
         g.polyline(&arc_pts(lx, ly, ar, 0.0, th), INK, 1.4);
         let m = pol(lx, ly, ar + 15.0, th / 2.0);
         let t = lab_mode(p, "ang_lab", "ang_lab_mode");

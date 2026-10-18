@@ -60,6 +60,18 @@ pub fn liquid(name: &str) -> (&'static str, &'static str) {
     }
 }
 
+/// A section help line that depends on the figure's state (`sections::live_help`): the Lewis
+/// structure's central atom, the instruments' reading ranges.
+pub fn live_help(id: &str, title: &str, p: &Params) -> Option<String> {
+    match (id, title) {
+        ("lewis-structures", "Structure") => Some(lewis::central_note(p)),
+        ("volume-reading", "Reading") | ("volume-by-displacement", "Readings") | ("gas-syringe", "Volume of gas")
+        | ("length-reading", "Length and position") | ("mass-reading", "Mass") | ("temperature-reading", "Temperature")
+        | ("ph-reading", "pH") => measure::range_note(id, p),
+        _ => None,
+    }
+}
+
 pub fn shade(name: &str) -> &'static str {
     match name {
         "White" => "#ffffff",

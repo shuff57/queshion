@@ -25,6 +25,19 @@ pub(crate) fn pulley_relevant(key: &str, p: &Params) -> bool {
     }
 }
 
+/// The panel changed the setup from `old`: a block and tackle's load reads "m" (the reference's
+/// label) while the other setups' left object reads m_1, so a label still at the other setup's
+/// default follows the switch. A typed label is kept, and saved figures are not touched.
+pub(crate) fn pulley_setup_changed(old: &str, p: &mut Params) {
+    const TACKLE: &str = "Block & tackle";
+    let new = p.s("setup").to_string();
+    match (old == TACKLE, new == TACKLE, p.s("l_lab")) {
+        (false, true, "m_1") => p.set_s("l_lab", "m"),
+        (true, false, "m") => p.set_s("l_lab", "m_1"),
+        _ => {}
+    }
+}
+
 pub(super) fn pulley_params() -> Vec<ParamDef> {
     vec![
         ParamDef::choice("setup", "Setup", &["Atwood", "Table", "Ramp", "Block & tackle"], "Atwood"),
@@ -93,10 +106,12 @@ fn slope(p: &Params) -> Slope {
 
 /// Pulley wheel position for the table / ramp: tangent to a string parallel to the surface at the
 /// first object's mid height.
+/// On the table the wheel is big and sits at the table's edge, its centre level with the table
+/// top's middle (as on the reference), within 22..36 for very small / big objects.
 fn slope_wheel(sl: &Slope, hh: f64) -> (Pt, f64) {
-    let pr = 22.0;
     let flat = sl.uu.1.abs() < 1e-9;
-    let q = if flat { (sl.apex.0 + 26.0, sl.apex.1 - hh) } else {
+    let pr = if flat { (hh + 6.0).clamp(22.0, 36.0) } else { 22.0 };
+    let q = if flat { (sl.apex.0 + 10.0 + pr, sl.apex.1 - hh) } else {
         let t = (-sl.uu.1 / sl.uu.0).abs(); // tan(theta)
         (sl.apex.0 + sl.nn.0 * hh + sl.uu.0 * hh * t, sl.apex.1 + sl.nn.1 * hh + sl.uu.1 * hh * t)
     };
@@ -114,7 +129,7 @@ pub(super) fn pulley_geo(p: &Params) -> PGeo {
             let sl = slope(p);
             let hh = mid_h(p, ls);
             let (c, pr) = slope_wheel(&sl, hh);
-            let mut rest = c.1 + 104.0;
+            let mut rest = c.1 + pr + 82.0;
             if ramp {
                 // keep the hanging mass and its weight label above the ground
                 rest = rest.min(sl.ground - dr - rs - if p.b("gravity") { 84.0 } else { 20.0 }).max(c.1 + 50.0);
@@ -203,6 +218,15 @@ fn t_arrow(g: &mut G, st: &Style, a: Pt, d: Pt, lab: &str, side: f64) {
     if nx.abs() > 0.3 { if nx * side < 0.0 { nx = -nx; ny = -ny; } } else if (ny < 0.0) != (side > 0.0) { nx = -nx; ny = -ny; }
     let m = ((a.0 + b.0) / 2.0 + nx * 14.0, (a.1 + b.1) / 2.0 + ny * 14.0 + 6.0);
     lab_at(g, m.0, m.1, lab, if nx > 0.3 { "start" } else if nx < -0.3 { "end" } else { "middle" });
+}
+
+/// Tension arrow of length 30 from `a` along unit `d` on a string that runs along the table /
+/// ramp, its label on the side of the outward normal `n` (above the string, clear of the wheel).
+fn t_arrow_along(g: &mut G, st: &Style, a: Pt, d: Pt, lab: &str, n: Pt) {
+    let b = (a.0 + d.0 * 30.0, a.1 + d.1 * 30.0);
+    g.arrow(a.0, a.1, b.0, b.1, st.tc(), 2.2);
+    let m = ((a.0 + b.0) / 2.0 + n.0 * 14.0, (a.1 + b.1) / 2.0 + n.1 * 14.0 + 6.0);
+    lab_at(g, m.0, m.1, lab, if n.0 > 0.3 { "start" } else if n.0 < -0.3 { "end" } else { "middle" });
 }
 
 /// Weight arrow from the bottom of a hanging box.
@@ -400,8 +424,10 @@ fn slope_setup(g: &mut G, p: &Params, geo: &PGeo, st: &Style, llab: &str, rlab: 
     }
     let falls = accel == "Right falls";
     if p.b("tension") {
-        t_arrow(g, st, sa, uu, &st.tens, 1.0);
-        t_arrow(g, st, (tan_pt.0 - uu.0 * 4.0, tan_pt.1 - uu.1 * 4.0), (-uu.0, -uu.1), &st.tens, 1.0);
+        // both labels above the string (on the table this is where they always were; on the ramp
+        // the upper one used to land inside the wheel)
+        t_arrow_along(g, st, sa, uu, &st.tens, nn);
+        t_arrow_along(g, st, (tan_pt.0 - uu.0 * 4.0, tan_pt.1 - uu.1 * 4.0), (-uu.0, -uu.1), &st.tens, nn);
         if hb.top - (wc.1 + pr) > 76.0 { t_arrow(g, st, (hb.cx, wc.1 + pr + 4.0), (0.0, 1.0), &st.tens, 1.0); }
         t_arrow(g, st, (hb.cx, hb.top), (0.0, -1.0), &st.tens, 1.0);
     }

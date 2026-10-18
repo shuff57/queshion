@@ -4,6 +4,7 @@
 use super::*;
 
 const SIZES: [&str; 6] = ["2 µL", "10 µL", "20 µL", "100 µL", "200 µL", "1000 µL"];
+pub const SHAPES: [&str; 2] = ["Long body, short shaft", "Short body, long shaft and tip"];
 
 pub fn params() -> Vec<ParamDef> {
     vec![
@@ -11,6 +12,9 @@ pub fn params() -> Vec<ParamDef> {
         ParamDef::float("volume", "Volume it is set to (µL)", 0.0, 1000.0, 0.01, 12.5),
         ParamDef::bool("tip", "Tip on the end", true),
         ParamDef::bool("size_label", "Size printed above the display", true),
+        // saved figures keep the long body; the opening state has the reference's shorter body
+        // with a long shaft and tip
+        ParamDef::choice("shape", "Shape", &SHAPES, SHAPES[0]),
         ParamDef::bool("color", "Color (red marks the decimal digit)", true),
         ParamDef::bool("decimal_line", "Decimal line", true),
         ParamDef::bool("answer", "Print the reading under the figure", false),
@@ -59,20 +63,41 @@ pub fn render(p: &Params) -> String {
     d.rect(cx - 9.0, 50.0, 18.0, 30.0, light, INK, 2.0);
     // body with thumb hook: the finger rest curls down to a rounded tip, and a rounded nub
     // (the notch between the rest and the body) rather than a sharp V, as the reference draws it
-    let b = format!(
-        "M{lb:.1},470 Q{l:.1},452 {l:.1},430 L{l:.1},92 Q{l:.1},80 {l2:.1},80 L{r1:.1},80 C{r2:.1},68 {r3:.1},74 {r3:.1},106 C{r3:.1},138 {r4:.1},158 {r5:.1},158 C{r6:.1},158 {r7:.1},150 {r7:.1},134 C{r7:.1},112 {r:.1},112 {r:.1},128 L{r:.1},430 Q{r:.1},452 {rb:.1},470 Z",
-        lb = cx - 21.0, rb = cx + 21.0,
-        l = cx - 28.0, l2 = cx - 16.0, r1 = cx + 12.0, r2 = cx + 40.0, r3 = cx + 58.0, r4 = cx + 56.0, r5 = cx + 48.0,
-        r6 = cx + 42.0, r7 = cx + 40.0, r = cx + 28.0
-    );
-    d.path(&b, body, INK, 2.2);
-    // collar, neck, shaft
-    d.raw(&format!(r#"<rect x="{:.1}" y="470" width="38" height="16" rx="3" fill="{light}" stroke="{INK}" stroke-width="2"/>"#, cx - 19.0));
-    d.poly(&[(cx - 17.0, 486.0), (cx + 17.0, 486.0), (cx + 8.0, 530.0), (cx - 8.0, 530.0)], light, INK, 2.0);
-    d.poly(&[(cx - 7.0, 530.0), (cx + 7.0, 530.0), (cx + 5.0, 572.0), (cx - 5.0, 572.0)], light, INK, 2.0);
-    if p.b("tip") {
-        d.rect(cx - 9.0, 568.0, 18.0, 7.0, accent, INK, 1.6);
-        d.poly(&[(cx - 8.0, 574.0), (cx + 8.0, 574.0), (cx + 1.5, 612.0), (cx - 1.5, 612.0)], if color { sp.tip } else { "#fff" }, INK, 1.8);
+    let short = p.s("shape") == SHAPES[1];
+    if short {
+        // the reference's proportions: the body ends under half way down, then a tapering neck,
+        // a long thin shaft and a long tip
+        let bb = 356.0;
+        let b = format!(
+            "M{lb:.1},{bb:.1} Q{l:.1},{q:.1} {l:.1},{s:.1} L{l:.1},92 Q{l:.1},80 {l2:.1},80 L{r1:.1},80 C{r2:.1},68 {r3:.1},74 {r3:.1},106 C{r3:.1},138 {r4:.1},158 {r5:.1},158 C{r6:.1},158 {r7:.1},150 {r7:.1},134 C{r7:.1},112 {r:.1},112 {r:.1},128 L{r:.1},{s:.1} Q{r:.1},{q:.1} {rb:.1},{bb:.1} Z",
+            lb = cx - 21.0, rb = cx + 21.0, q = bb - 18.0, s = bb - 40.0,
+            l = cx - 28.0, l2 = cx - 16.0, r1 = cx + 12.0, r2 = cx + 40.0, r3 = cx + 58.0, r4 = cx + 56.0, r5 = cx + 48.0,
+            r6 = cx + 42.0, r7 = cx + 40.0, r = cx + 28.0
+        );
+        d.path(&b, body, INK, 2.2);
+        d.raw(&format!(r#"<rect x="{:.1}" y="{bb:.1}" width="38" height="15" rx="3" fill="{light}" stroke="{INK}" stroke-width="2"/>"#, cx - 19.0));
+        d.poly(&[(cx - 17.0, bb + 15.0), (cx + 17.0, bb + 15.0), (cx + 11.0, bb + 50.0), (cx + 9.0, bb + 64.0), (cx - 9.0, bb + 64.0), (cx - 11.0, bb + 50.0)], light, INK, 2.0);
+        d.poly(&[(cx - 6.0, bb + 64.0), (cx + 6.0, bb + 64.0), (cx + 4.0, bb + 168.0), (cx - 4.0, bb + 168.0)], light, INK, 2.0);
+        if p.b("tip") {
+            d.rect(cx - 8.0, bb + 166.0, 16.0, 7.0, accent, INK, 1.6);
+            d.poly(&[(cx - 7.0, bb + 173.0), (cx + 7.0, bb + 173.0), (cx + 1.2, bb + 262.0), (cx - 1.2, bb + 262.0)], if color { sp.tip } else { "#fff" }, INK, 1.8);
+        }
+    } else {
+        let b = format!(
+            "M{lb:.1},470 Q{l:.1},452 {l:.1},430 L{l:.1},92 Q{l:.1},80 {l2:.1},80 L{r1:.1},80 C{r2:.1},68 {r3:.1},74 {r3:.1},106 C{r3:.1},138 {r4:.1},158 {r5:.1},158 C{r6:.1},158 {r7:.1},150 {r7:.1},134 C{r7:.1},112 {r:.1},112 {r:.1},128 L{r:.1},430 Q{r:.1},452 {rb:.1},470 Z",
+            lb = cx - 21.0, rb = cx + 21.0,
+            l = cx - 28.0, l2 = cx - 16.0, r1 = cx + 12.0, r2 = cx + 40.0, r3 = cx + 58.0, r4 = cx + 56.0, r5 = cx + 48.0,
+            r6 = cx + 42.0, r7 = cx + 40.0, r = cx + 28.0
+        );
+        d.path(&b, body, INK, 2.2);
+        // collar, neck, shaft
+        d.raw(&format!(r#"<rect x="{:.1}" y="470" width="38" height="16" rx="3" fill="{light}" stroke="{INK}" stroke-width="2"/>"#, cx - 19.0));
+        d.poly(&[(cx - 17.0, 486.0), (cx + 17.0, 486.0), (cx + 8.0, 530.0), (cx - 8.0, 530.0)], light, INK, 2.0);
+        d.poly(&[(cx - 7.0, 530.0), (cx + 7.0, 530.0), (cx + 5.0, 572.0), (cx - 5.0, 572.0)], light, INK, 2.0);
+        if p.b("tip") {
+            d.rect(cx - 9.0, 568.0, 18.0, 7.0, accent, INK, 1.6);
+            d.poly(&[(cx - 8.0, 574.0), (cx + 8.0, 574.0), (cx + 1.5, 612.0), (cx - 1.5, 612.0)], if color { sp.tip } else { "#fff" }, INK, 1.8);
+        }
     }
     // display window: three rows
     let (wx, wy, ww, rh) = (cx - 16.0, 150.0, 32.0, 28.0);
