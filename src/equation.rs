@@ -1,4 +1,4 @@
-//! Equation support for queShion, a thin adapter over the equaSHion crates (`../equaSHion`).
+//! Equation support for verSHion, a thin adapter over the equaSHion crates (`../equaSHion`).
 //!
 //! * Equations live inside ordinary `String` fields as `$linear$`, where `linear` is equaSHion's
 //!   linear format (`(a+b)/c`, `sqrt(x)`, `x^2`, and a LaTeX subset such as `\frac{a}{b}`).

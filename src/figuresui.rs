@@ -35,7 +35,7 @@ fn reg() -> &'static [FigureDef] {
         #[cfg(test)]
         v.extend(demo_defs());
         #[cfg(debug_assertions)]
-        if std::env::var("QUESHION_DEMO_FIGURES").as_deref() == Ok("1") {
+        if crate::env_var("VERSHION_DEMO_FIGURES").as_deref() == Ok("1") {
             v.extend(demo_defs());
         }
         v
@@ -43,7 +43,7 @@ fn reg() -> &'static [FigureDef] {
 }
 
 /// Tiny demo figure so the UI can be exercised while subject modules are empty. Only ever
-/// registered under `cfg(test)` or a debug build with `QUESHION_DEMO_FIGURES=1`.
+/// registered under `cfg(test)` or a debug build with `VERSHION_DEMO_FIGURES=1`.
 #[cfg(any(test, debug_assertions))]
 fn demo_defs() -> Vec<FigureDef> {
     fn params() -> Vec<ParamDef> {
@@ -497,11 +497,11 @@ impl Workspace {
         }
     }
 
-    /// Spec text others can paste back in: {"queshion":"figure","id":..,"params":{..}}.
+    /// Spec text others can paste back in: {"vershion":"figure","id":..,"params":{..}}.
     fn spec_json(&self) -> Option<String> {
         let def = &reg()[self.sel?];
         let spec = spec_for(def.id, &self.params);
-        serde_json::to_string(&serde_json::json!({"queshion": "figure", "id": spec.id, "params": spec.params})).ok()
+        serde_json::to_string(&serde_json::json!({"vershion": "figure", "id": spec.id, "params": spec.params})).ok()
     }
 
     fn apply_spec_text(&mut self, text: &str) -> Result<(), String> {
@@ -520,7 +520,7 @@ impl Workspace {
         Ok(())
     }
 
-    /// The offline share link of the figure on screen: `queshion://figure/<id>?p=<base64url>`
+    /// The offline share link of the figure on screen: `vershion://figure/<id>?p=<base64url>`
     /// holding only the params that differ from the figure's opening state.
     fn share_link(&self) -> Option<String> {
         let def = &reg()[self.sel?];
@@ -606,33 +606,33 @@ impl Workspace {
     pub fn show(&mut self, ui: &mut Ui) -> Act {
         if !self.qa_init {
             self.qa_init = true;
-            // QA hook: QUESHION_FIG=<figure id> opens that figure straight away.
-            if let Ok(id) = std::env::var("QUESHION_FIG")
+            // QA hook: VERSHION_FIG=<figure id> opens that figure straight away.
+            if let Ok(id) = crate::env_var("VERSHION_FIG")
                 && let Some((i, _)) = find_def(&id)
             {
                 self.select(i);
-                // QUESHION_FIG_PARAMS='{"spec":"rect 0 0 6 4"}' seeds its params (as QUESHION_RENDER_FIG does)
-                if let Ok(j) = std::env::var("QUESHION_FIG_PARAMS")
+                // VERSHION_FIG_PARAMS='{"spec":"rect 0 0 6 4"}' seeds its params (as VERSHION_RENDER_FIG does)
+                if let Ok(j) = crate::env_var("VERSHION_FIG_PARAMS")
                     && let Ok(over) = serde_json::from_str::<serde_json::Value>(&j)
                 {
                     self.params = figures::params_from_json(&reg()[i], &over);
                     self.reset_history();
                 }
             }
-            // QA hooks: QUESHION_FIG_LINK=<share link> opens a figure from a link (as "Open from
-            // link" does); QUESHION_FIG_EXAMPLES=1 opens the example gallery; QUESHION_FIG_OPENLINK=1
+            // QA hooks: VERSHION_FIG_LINK=<share link> opens a figure from a link (as "Open from
+            // link" does); VERSHION_FIG_EXAMPLES=1 opens the example gallery; VERSHION_FIG_OPENLINK=1
             // shows the browser's "Open link" box.
-            if let Ok(l) = std::env::var("QUESHION_FIG_LINK")
+            if let Ok(l) = crate::env_var("VERSHION_FIG_LINK")
                 && let Err(e) = self.apply_link(&l)
             {
-                eprintln!("QUESHION_FIG_LINK: {e}");
+                eprintln!("VERSHION_FIG_LINK: {e}");
             }
-            // QUESHION_PED_SEL / QUESHION_PED_DO: select a pedigree person and run panel actions
+            // VERSHION_PED_SEL / VERSHION_PED_DO: select a pedigree person and run panel actions
             self.ped_qa_hooks();
-            if std::env::var("QUESHION_FIG_EXAMPLES").as_deref() == Ok("1") {
+            if crate::env_var("VERSHION_FIG_EXAMPLES").as_deref() == Ok("1") {
                 self.examples_open = true;
             }
-            if std::env::var("QUESHION_FIG_OPENLINK").as_deref() == Ok("1") {
+            if crate::env_var("VERSHION_FIG_OPENLINK").as_deref() == Ok("1") {
                 self.link_open = true;
             }
         }
@@ -651,7 +651,7 @@ impl Workspace {
     fn link_box(&mut self, ui: &mut Ui, width: f32) -> bool {
         let mut opened = false;
         ui.horizontal(|ui| {
-            let r = ui.add(TextEdit::singleline(&mut self.link_text).hint_text("Paste a queshion://figure/… link").desired_width(width));
+            let r = ui.add(TextEdit::singleline(&mut self.link_text).hint_text("Paste a vershion://figure/… link").desired_width(width));
             let go = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             if ui.add_enabled(!self.link_text.trim().is_empty(), Button::new(RichText::new("Open from link").size(13.0))).clicked() || go {
                 let t = self.link_text.clone();
@@ -1155,7 +1155,7 @@ impl Workspace {
                 && let Some(l) = self.share_link()
             {
                 ui.ctx().copy_text(l);
-                self.toast = Some(("Link copied. Share it, and anyone who opens it in queShion sees this exact figure.".into(), false));
+                self.toast = Some(("Link copied. Share it, and anyone who opens it in verSHion sees this exact figure.".into(), false));
                 ui.close();
             }
             ui.label(theme::muted("Works offline: the link itself holds the settings.").size(11.0));
@@ -1993,8 +1993,8 @@ fn faq_section(ui: &mut Ui, fig: &str) {
         return;
     }
     let id = ui.make_persistent_id(("fig_faq", fig));
-    // QA hook: QUESHION_FIG_FAQ=1 opens the FAQ and its first answer and scrolls them into view
-    let qa = std::env::var("QUESHION_FIG_FAQ").is_ok_and(|v| v == "1");
+    // QA hook: VERSHION_FIG_FAQ=1 opens the FAQ and its first answer and scrolls them into view
+    let qa = crate::env_var("VERSHION_FIG_FAQ").is_ok_and(|v| v == "1");
     egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, qa)
         .show_header(ui, |ui| {
             ui.vertical(|ui| {
@@ -2713,7 +2713,7 @@ mod tests {
         let (i, _) = find_def(id).unwrap();
         ws.select(i);
         let before = hash_params(id, &ws.params);
-        ws.apply_spec_text(&format!(r#"{{"queshion":"figure","id":"{id}","params":{{"formula":"NH3"}}}}"#)).unwrap_or_else(|e| panic!("{e}"));
+        ws.apply_spec_text(&format!(r#"{{"vershion":"figure","id":"{id}","params":{{"formula":"NH3"}}}}"#)).unwrap_or_else(|e| panic!("{e}"));
         let after = hash_params(id, &ws.params);
         assert_ne!(before, after, "the pasted formula must change the params");
         ws.step_history(true);
@@ -2827,7 +2827,7 @@ mod tests {
             for p in cases {
                 let src = Workspace { sel: Some(i), params: p.clone(), ..Default::default() };
                 let link = src.share_link().unwrap();
-                assert!(link.starts_with(&format!("queshion://figure/{}", def.id)), "{link}");
+                assert!(link.starts_with(&format!("vershion://figure/{}", def.id)), "{link}");
                 let mut dst = Workspace::new(false);
                 dst.select(find_def("waves").unwrap().0);
                 dst.apply_link(&link).unwrap_or_else(|e| panic!("{}: {e} ({link})", def.id));
@@ -2856,13 +2856,13 @@ mod tests {
         let mut ws = Workspace::new(false);
         assert!(ws.apply_link("").is_err());
         assert!(ws.apply_link("hello").is_err());
-        let e = ws.apply_link("queshion://figure/no-such-figure").unwrap_err();
+        let e = ws.apply_link("vershion://figure/no-such-figure").unwrap_err();
         assert!(e.contains("no-such-figure"), "{e}");
         assert!(ws.sel.is_none(), "a bad link leaves the browser alone");
         // wrong-typed or out-of-range values fall back / clamp like a saved spec
         let (i, def) = find_def("waves").unwrap();
         let json = r#"{"amp":"loud","cycles":1e9}"#;
-        let link = format!("queshion://figure/waves?p={}", figures::share::b64url_encode(json.as_bytes()));
+        let link = format!("vershion://figure/waves?p={}", figures::share::b64url_encode(json.as_bytes()));
         ws.apply_link(&link).unwrap();
         assert_eq!(ws.sel, Some(i));
         let start = figures::start_params(def);
@@ -3281,12 +3281,12 @@ mod tests {
         ws.apply_link(&link).unwrap();
         assert_eq!(ws.params.s("res_style"), "Dashed");
         // a v1 link: bare, or with only other params
-        ws.apply_link("queshion://figure/vector-diagram").unwrap();
+        ws.apply_link("vershion://figure/vector-diagram").unwrap();
         assert_eq!(ws.params.s("res_style"), "Drawn", "v1 links keep the old opening state");
-        let v1 = format!("queshion://figure/vector-diagram?p={}", figures::share::b64url_encode(br#"{"n":3}"#));
+        let v1 = format!("vershion://figure/vector-diagram?p={}", figures::share::b64url_encode(br#"{"n":3}"#));
         ws.apply_link(&v1).unwrap();
         assert_eq!((ws.params.s("res_style"), ws.params.i("n")), ("Drawn", 3));
-        let v1d = format!("queshion://figure/vector-diagram?p={}", figures::share::b64url_encode(br#"{"res_style":"Left off"}"#));
+        let v1d = format!("vershion://figure/vector-diagram?p={}", figures::share::b64url_encode(br#"{"res_style":"Left off"}"#));
         ws.apply_link(&v1d).unwrap();
         assert_eq!(ws.params.s("res_style"), "Left off", "what the sender set still wins");
         let _ = def;
@@ -3321,7 +3321,7 @@ mod tests {
             let now = ws.share_link().unwrap();
             ws.apply_link(&now).unwrap();
             assert_eq!(ws.params.0.get(key), start.0.get(key), "{id}: a v3 link keeps the opening {key}");
-            for old in [format!("queshion://figure/{id}?v=2"), format!("queshion://figure/{id}")] {
+            for old in [format!("vershion://figure/{id}?v=2"), format!("vershion://figure/{id}")] {
                 ws.apply_link(&old).unwrap();
                 assert_eq!(ws.params.0.get(key), plain.0.get(key), "{id}: {old} keeps the old {key}");
                 // the opening state of round 6: today's, with the P4 keys at their plain defaults
@@ -3332,7 +3332,7 @@ mod tests {
                 assert_eq!(format!("{:?}", ws.params.0), format!("{:?}", was.0), "{id}: {old} opens as before");
             }
             // what a v2 sender changed still wins
-            let v2 = format!("queshion://figure/{id}?p={}&v=2", figures::share::b64url_encode(format!("{{\"title\":\"T\",\"{key}\":{}}}", value_to_json(start.0.get(key).unwrap())).as_bytes()));
+            let v2 = format!("vershion://figure/{id}?p={}&v=2", figures::share::b64url_encode(format!("{{\"title\":\"T\",\"{key}\":{}}}", value_to_json(start.0.get(key).unwrap())).as_bytes()));
             ws.apply_link(&v2).unwrap();
             assert_eq!(ws.params.0.get(key), start.0.get(key), "{id}: sender's {key} wins");
         }
@@ -3349,7 +3349,7 @@ mod tests {
         let arch = figures::start_params(def).s("spec").to_string();
         assert!(arch.starts_with("rect 0 0 6 4; semi 3 4 3 u"), "{arch}");
         // a bare link (made from an untouched figure before) still opens the arch
-        ws.apply_link("queshion://figure/composite-shape").unwrap();
+        ws.apply_link("vershion://figure/composite-shape").unwrap();
         assert_eq!(ws.params.s("spec"), arch);
         // a link that changed only the unit keeps the arch too, and the new settings default
         let mut p = figures::start_params(def);

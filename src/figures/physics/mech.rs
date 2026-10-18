@@ -354,7 +354,7 @@ fn vlabel_extents(p: &Params, pts: &[Pt]) -> Vec<(Pt, Pt)> {
 /// Label centres of the vectors and the resultant: each on the side of its arrow away from the
 /// middle of the figure (ties: right of travel, left for a lone vector / the resultant).
 pub(super) fn vlabel_pos(p: &Params, l: &VLay) -> (Vec<Pt>, Pt) {
-    let k = vstyle(p, l.u).0 / 25.0;
+    let sc = vstyle(p, l.u).0 / 25.0;
     let pxy = |q: Pt| (l.ox + q.0 * l.u, l.oy - q.1 * l.u);
     let mut cen: Vec<Pt> = l.pts.iter().map(|&q| pxy(q)).collect();
     if p.b("components") { cen.push(pxy((l.res.0, 0.0))); }
@@ -362,14 +362,14 @@ pub(super) fn vlabel_pos(p: &Params, l: &VLay) -> (Vec<Pt>, Pt) {
     let mid = (cen.iter().map(|q| q.0).sum::<f64>() / k, cen.iter().map(|q| q.1).sum::<f64>() / k);
     // offset grows with the label's half-extent across the arrow
     let place = |a: Pt, b: Pt, pref: f64, text: &str| -> Pt {
-        let tw = k * parse_tex(text, ITALIC).0.iter().map(|(t, lv)| t.chars().count() as f64 * if *lv == 0 { 13.0 } else { 9.0 }).sum::<f64>();
+        let tw = sc * parse_tex(text, ITALIC).0.iter().map(|(t, lv)| t.chars().count() as f64 * if *lv == 0 { 13.0 } else { 9.0 }).sum::<f64>();
         let (dx, dy) = (b.0 - a.0, b.1 - a.1);
         let len = (dx * dx + dy * dy).sqrt().max(1e-6);
         let (nx, ny) = (-dy / len, dx / len);
         let m = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
         let d = (m.0 - mid.0) * nx + (m.1 - mid.1) * ny;
         let s = if d.abs() < 2.0 { pref } else { d.signum() };
-        let off = k * 8.0 + (tw / 2.0 + 4.0 * k) * nx.abs() + 13.0 * k * ny.abs();
+        let off = sc * 8.0 + (tw / 2.0 + 4.0 * sc) * nx.abs() + 13.0 * sc * ny.abs();
         (m.0 + nx * s * off, m.1 + ny * s * off)
     };
     let v = (0..l.n).map(|i| place(pxy(l.pts[i]), pxy(l.pts[i + 1]), if l.n == 1 { -1.0 } else { 1.0 }, p.s(VK[i][4]))).collect();

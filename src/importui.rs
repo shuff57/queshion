@@ -340,7 +340,7 @@ fn add_bytes_inner(app: &mut crate::App, st: &mut State, name: &str, bytes: Vec<
             return;
         }
         "pdf" => {
-            // A bank-file PDF (queShion's, or Test Parrot's) carries its questions as data:
+            // A bank-file PDF (verSHion's, or Test Parrot's) carries its questions as data:
             // read those instead of sending page pictures to the AI.
             if let Some(data) = crate::bankexport::embedded_data(&bytes) {
                 let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
@@ -588,12 +588,12 @@ impl crate::App {
             st.inited = true;
             st.skip_dups = true;
             st.points = 1.0;
-            // Headless test hook: QUESHION_IMPORT_FILES=<path>[:<path>...] stages files once.
-            if let Ok(v) = std::env::var("QUESHION_IMPORT_FILES") {
+            // Headless test hook: VERSHION_IMPORT_FILES=<path>[:<path>...] stages files once.
+            if let Ok(v) = crate::env_var("VERSHION_IMPORT_FILES") {
                 add_paths(self, &mut st, std::env::split_paths(&v).collect());
             }
-            // QA hook: QUESHION_PASTE=<file> opens the paste box holding that file's text.
-            if let Ok(p) = std::env::var("QUESHION_PASTE") {
+            // QA hook: VERSHION_PASTE=<file> opens the paste box holding that file's text.
+            if let Ok(p) = crate::env_var("VERSHION_PASTE") {
                 if let Ok(t) = std::fs::read_to_string(p) {
                     self.paste = t;
                     st.paste_open = true;
@@ -669,7 +669,7 @@ impl crate::App {
         }
         st.in_modal = true;
         // Headless test hook (same as the Imports page): stage files once.
-        if let Ok(v) = std::env::var("QUESHION_IMPORT_FILES") {
+        if let Ok(v) = crate::env_var("VERSHION_IMPORT_FILES") {
             let hid = egui::Id::new("qs_import_modal_files_hook");
             if !ctx.data(|d| d.get_temp::<bool>(hid).unwrap_or(false)) {
                 ctx.data_mut(|d| d.insert_temp(hid, true));
@@ -1975,8 +1975,8 @@ fn attach_dialog(app: &mut crate::App, ctx: &egui::Context, st: &mut State) {
     if let Some((si, k)) = ctx.data_mut(|d| d.remove_temp::<Option<(usize, usize)>>(oid)).flatten() {
         st.attach = Some(Attach { si, k, ..Default::default() });
     }
-    // QA hook: QUESHION_ATTACH=<question n> opens the dialog for the first source's n-th question.
-    if let Ok(v) = std::env::var("QUESHION_ATTACH") {
+    // QA hook: VERSHION_ATTACH=<question n> opens the dialog for the first source's n-th question.
+    if let Ok(v) = crate::env_var("VERSHION_ATTACH") {
         let hid = egui::Id::new("imp_attach_hook");
         if !st.sources.is_empty() && !ctx.data(|d| d.get_temp::<bool>(hid).unwrap_or(false)) {
             ctx.data_mut(|d| d.insert_temp(hid, true));
@@ -2316,15 +2316,15 @@ fn crop_canvas(ui: &mut egui::Ui, tex: &egui::TextureHandle, max_h: f32, sel: &m
 impl crate::App {
     /// Draws the Resolve Images dialog when it is open (call every frame on the bank screen).
     pub fn draw_resolve_images(&mut self, ctx: &egui::Context, on_screen: &Id) {
-        // QA hooks: QUESHION_RESOLVE=1 opens it for the bank on screen; QUESHION_RESOLVE_FILES=<paths>
-        // adds originals; QUESHION_RESOLVE_CROP=<slot n> opens slot n's crop panel with a selection.
-        if std::env::var("QUESHION_RESOLVE").is_ok() {
+        // QA hooks: VERSHION_RESOLVE=1 opens it for the bank on screen; VERSHION_RESOLVE_FILES=<paths>
+        // adds originals; VERSHION_RESOLVE_CROP=<slot n> opens slot n's crop panel with a selection.
+        if crate::env_var("VERSHION_RESOLVE").is_ok() {
             let hid = egui::Id::new("qs_resolve_hook");
             if !ctx.data(|d| d.get_temp::<bool>(hid).unwrap_or(false)) {
                 ctx.data_mut(|d| d.insert_temp(hid, true));
                 {
                     open_resolve_images(self, on_screen);
-                    if let Ok(v) = std::env::var("QUESHION_RESOLVE_FILES") {
+                    if let Ok(v) = crate::env_var("VERSHION_RESOLVE_FILES") {
                         let mut rs = RESOLVE.with(|r| r.borrow_mut().take()).unwrap();
                         for p in std::env::split_paths(&v) {
                             let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
@@ -2332,7 +2332,7 @@ impl crate::App {
                                 resolve_add_file(self, &mut rs, &name, b);
                             }
                         }
-                        if let Ok(n) = std::env::var("QUESHION_RESOLVE_CROP").map(|v| v.trim().parse::<usize>().unwrap_or(1)) {
+                        if let Ok(n) = crate::env_var("VERSHION_RESOLVE_CROP").map(|v| v.trim().parse::<usize>().unwrap_or(1)) {
                             rs.panel = Some(n.saturating_sub(1));
                             rs.sel = Some([0.1, 0.2, 0.6, 0.45]);
                         }
@@ -2609,7 +2609,7 @@ impl crate::App {
 
 fn history(app: &mut crate::App, ui: &mut egui::Ui) {
     ui.label(theme::serif("Import history").size(22.0).color(theme::ink()));
-    ui.label(theme::muted("Everything queShion has read: pasted, converted by the AI, or read from a file.").size(12.5));
+    ui.label(theme::muted("Everything verSHion has read: pasted, converted by the AI, or read from a file.").size(12.5));
     ui.add_space(8.0);
     if app.store.imports.is_empty() {
         ui.label(theme::muted("No imports yet."));

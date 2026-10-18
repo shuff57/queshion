@@ -4,12 +4,54 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{de::DeserializeOwned, Serialize};
 use crate::model::{Exam, Id, Question, QuestionBank};
 
-pub fn store_dir() -> PathBuf {
-    let base = std::env::var_os("XDG_DATA_HOME")
+fn data_base() -> PathBuf {
+    std::env::var_os("XDG_DATA_HOME")
         .map(std::path::PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("queshion")
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+pub fn store_dir() -> PathBuf {
+    data_base().join("vershion")
+}
+
+/// One-time, non-destructive copy of the pre-rename data dir (`…/queshion`).
+/// Runs only when `…/vershion` is absent or empty; the old dir is left untouched.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn migrate_legacy_dir() {
+    let base = data_base();
+    let old = base.join("queshion");
+    let new = base.join("vershion");
+    if !old.is_dir() {
+        return;
+    }
+    let new_empty = std::fs::read_dir(&new)
+        .map(|mut d| d.next().is_none())
+        .unwrap_or(true);
+    if !new_empty {
+        return;
+    }
+    if let Err(e) = copy_tree(&old, &new) {
+        eprintln!("verSHion: could not copy legacy data from {}: {e}", old.display());
+    } else {
+        eprintln!("verSHion: copied legacy data from {} to {}", old.display(), new.display());
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let src = entry.path();
+        let dst = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_tree(&src, &dst)?;
+        } else if entry.file_type()?.is_file() {
+            std::fs::copy(&src, &dst)?;
+        }
+    }
+    Ok(())
 }
 
 fn now() -> i64 {

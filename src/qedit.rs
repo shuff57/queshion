@@ -1591,7 +1591,7 @@ fn equation_panel(ctx: &egui::Context, draft: &mut Draft, key: UiId) {
         let mut slot = p.borrow_mut();
         let ed = slot.get_or_insert_with(|| {
             crate::equation::EquationEditor::with_linear(&req.initial)
-                .id_salt("queshion_equation_modal")
+                .id_salt("vershion_equation_modal")
                 .font_size(26.0)
                 .canvas_height(110.0)
                 .auto_focus(true)

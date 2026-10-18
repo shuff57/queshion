@@ -3978,7 +3978,7 @@ fn map_question_raw_style(number: u32, q: &model::Question, style: model::PaperS
     Mapped { dq, img: q.image.clone(), pieces }
 }
 
-/// Headless export (QA hook QUESHION_EXPORT): writes `exam.pdf`, `exam.docx` and `key.pdf` for the
+/// Headless export (QA hook VERSHION_EXPORT): writes `exam.pdf`, `exam.docx` and `key.pdf` for the
 /// exam at `index` of the store into `dir`, with the real export's mapping (single copy, no
 /// shuffling; questions missing from their bank are skipped).
 pub fn headless_export(index: usize, dir: &std::path::Path) -> Result<(), String> {
@@ -4167,9 +4167,9 @@ fn build_key(exam: &model::Exam, mapped: &[Mapped], label: Option<String>, layou
     doc
 }
 
-/// `QUESHION_KEY_LAYOUT=list|section|marked` (headless export; default: the dialog's default).
+/// `VERSHION_KEY_LAYOUT=list|section|marked` (headless export; default: the dialog's default).
 fn env_key_layout() -> KeyLayout {
-    match std::env::var("QUESHION_KEY_LAYOUT").unwrap_or_default().trim() {
+    match crate::env_var("VERSHION_KEY_LAYOUT").unwrap_or_default().trim() {
         "list" => KeyLayout::List,
         "marked" => KeyLayout::Marked,
         _ => KeyLayout::Section,
@@ -4432,7 +4432,7 @@ impl SnapDoc {
 // Export preview: real pages, painted from the PDF's own content streams
 // ---------------------------------------------------------------------------
 
-/// One token of a (queShion-written) PDF content stream.
+/// One token of a (verSHion-written) PDF content stream.
 #[derive(Clone, Debug, PartialEq)]
 enum PdfTok {
     Num(f64),
@@ -4759,8 +4759,8 @@ fn page_thumb_texture(app: &mut crate::App, ctx: &egui::Context, exam_id: &Id, p
     }
     let _ = app;
     let (svg, placed) = page_svg(pv.page_w, pv.page_h, ops, &pv.fallback);
-    // QA hook: QUESHION_THUMB_SVG=<file> writes the thumbnail's SVG (and the page ops beside it).
-    if let Ok(path) = std::env::var("QUESHION_THUMB_SVG") {
+    // QA hook: VERSHION_THUMB_SVG=<file> writes the thumbnail's SVG (and the page ops beside it).
+    if let Ok(path) = crate::env_var("VERSHION_THUMB_SVG") {
         let _ = std::fs::write(&path, &svg);
         let _ = std::fs::write(format!("{path}.ops"), ops);
     }
@@ -5063,7 +5063,7 @@ impl crate::App {
                 ui.add_space(4.0);
                 ui.add(
                     egui::Label::new(muted(
-                        "Export History is kept only on this computer, in queShion's data folder. It is useful for re-exporting an earlier copy, but it is not an archival backup."
+                        "Export History is kept only on this computer, in verSHion's data folder. It is useful for re-exporting an earlier copy, but it is not an archival backup."
                             .to_string(),
                     ).size(11.5))
                     .wrap(),

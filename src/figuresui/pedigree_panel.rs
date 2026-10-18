@@ -55,7 +55,7 @@ impl Workspace {
     }
 
     /// One person-panel action on the selected person (the panel's buttons and the
-    /// `QUESHION_PED_DO` test hook share it): child, partner, sibling, remove, male, female,
+    /// `VERSHION_PED_DO` test hook share it): child, partner, sibling, remove, male, female,
     /// unknown, unaffected, carrier, affected, deceased / alive, proband / not_proband, related /
     /// unrelated, twin_no, twin_fraternal, twin_identical.
     pub(super) fn ped_action(&mut self, op: &str) {
@@ -98,16 +98,16 @@ impl Workspace {
         }
     }
 
-    /// Test hooks: `QUESHION_PED_SEL=III-2` selects that person; `QUESHION_PED_DO=child;partner`
+    /// Test hooks: `VERSHION_PED_SEL=III-2` selects that person; `VERSHION_PED_DO=child;partner`
     /// then runs panel actions in order (each new person becomes the selection, as in the UI).
     pub(super) fn ped_qa_hooks(&mut self) {
         if !self.sel.is_some_and(|si| reg()[si].id == "pedigree") {
             return;
         }
-        if let Ok(l) = std::env::var("QUESHION_PED_SEL") {
+        if let Ok(l) = crate::env_var("VERSHION_PED_SEL") {
             self.ped_sel = ped::labels(&self.params).iter().position(|x| x.eq_ignore_ascii_case(l.trim()));
         }
-        if let Ok(ops) = std::env::var("QUESHION_PED_DO") {
+        if let Ok(ops) = crate::env_var("VERSHION_PED_DO") {
             for op in ops.split([';', ',']).map(str::trim).filter(|o| !o.is_empty()) {
                 if let Some(who) = op.strip_prefix("sel=") {
                     self.ped_sel = ped::labels(&self.params).iter().position(|x| x.eq_ignore_ascii_case(who));

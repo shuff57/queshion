@@ -28,7 +28,7 @@ const CUSTOM_DEFAULT_MODEL: &str = "gemma4:31b";
 const TIMEOUT: Duration = Duration::from_secs(300);
 
 const OPENROUTER_KEY_ENV: &str = "OPENROUTER_API_KEY";
-const CUSTOM_KEY_ENV: &str = "QUESHION_AI_KEY";
+const CUSTOM_KEY_ENV: &str = "VERSHION_AI_KEY";
 /// Ollama's hosted service: same OpenAI-compatible surface (`/v1`), keyed.
 const OLLAMA_CLOUD_BASE: &str = "https://ollama.com/v1";
 const OLLAMA_CLOUD_DEFAULT_MODEL: &str = "gemma4:31b";
@@ -36,11 +36,11 @@ const OLLAMA_CLOUD_DEFAULT_MODEL: &str = "gemma4:31b";
 const CLOUD_KEY_ENV: &str = "OLLAMA_API_KEY";
 const CLOUD_KEY_FILE: &str = ".config/ollama-cloud/credentials.json";
 
-/// The conversion prompt: one page in, one queShion Ditto package (`docs/ditto-format.md`) out.
+/// The conversion prompt: one page in, one verSHion Ditto package (`docs/ditto-format.md`) out.
 const TRANSCRIBE_PROMPT: &str = include_str!("../prompts/ditto-convert.md");
 
 /// The instruction plus the user's typed note about the source, if any.
-/// Public so the headless `QUESHION_CONVERT` path shares the UI's prompt.
+/// Public so the headless `VERSHION_CONVERT` path shares the UI's prompt.
 pub fn prompt_for(hint: &str) -> String {
     transcription_prompt(hint)
 }
@@ -317,7 +317,7 @@ impl Ai {
 }
 
 /// One round trip: Ollama's native `/api/chat` or an OpenAI-compatible `/chat/completions`.
-/// Also the entry point for the headless `QUESHION_CONVERT` path.
+/// Also the entry point for the headless `VERSHION_CONVERT` path.
 pub fn transcribe(bytes: &[u8], mime: &str, cfg: &AiCfg, prompt: &str) -> Result<String, String> {
     transcribe_at(bytes, mime, cfg, prompt, 0.0)
 }
@@ -510,7 +510,7 @@ mod tests {
         for ty in ["multiple-choice", "true-false", "matching", "fill-in-the-blank", "short-answer", "multipart"] {
             assert!(p.contains(ty), "prompt must name {ty}");
         }
-        for must in ["___", "\"box\"", "queshion/ditto", "No markdown fences", "FRACTIONS"] {
+        for must in ["___", "\"box\"", "vershion/ditto", "No markdown fences", "FRACTIONS"] {
             assert!(p.contains(must), "prompt must mention {must}");
         }
     }
@@ -594,7 +594,7 @@ mod tests {
     }
 
     fn tmpdir(tag: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("queshion-keytest-{tag}-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("vershion-keytest-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d

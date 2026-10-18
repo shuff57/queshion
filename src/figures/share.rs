@@ -1,4 +1,4 @@
-//! Offline share links: `queshion://figure/<id>?p=<base64url>`. The payload is the compact JSON
+//! Offline share links: `vershion://figure/<id>?p=<base64url>`. The payload is the compact JSON
 //! object of only the params that differ from the figure's opening state (the reference sites do
 //! the same with a query string, e.g. `motion-graphs?letters=1`), base64url-encoded without
 //! padding. No server is involved: the link carries everything needed to rebuild the figure.
@@ -6,7 +6,7 @@
 
 use super::{Params, Value};
 
-pub const SCHEME: &str = "queshion://figure/";
+pub const SCHEME: &str = "vershion://figure/";
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
@@ -108,11 +108,11 @@ pub fn decode(text: &str) -> Result<(String, serde_json::Map<String, serde_json:
     let t = clean(text);
     let t = t.trim_matches(|c| c == '<' || c == '>' || c == '"' || c == '\'');
     if t.is_empty() {
-        return Err("paste a queshion://figure/... link first".into());
+        return Err("paste a vershion://figure/... link first".into());
     }
     // the scheme and "figure/" in any case (some apps capitalise a pasted link's start)
     let rest = if let Some(i) = t.to_ascii_lowercase().find("figure/") { &t[i + "figure/".len()..] } else {
-        return Err("not a queShion figure link (it should start with queshion://figure/)".into());
+        return Err("not a verSHion figure link (it should start with vershion://figure/)".into());
     };
     let (id, query) = match rest.split_once('?') {
         Some((a, b)) => (a, b),
@@ -162,8 +162,8 @@ mod tests {
     fn unchanged_figure_is_a_bare_link() {
         let d = registry().into_iter().find(|d| d.id == "waves").unwrap();
         let p = start_params(&d);
-        assert_eq!(encode(d.id, &p, &p), format!("queshion://figure/waves?v={VERSION}"));
-        let (id, m) = decode("queshion://figure/waves").unwrap();
+        assert_eq!(encode(d.id, &p, &p), format!("vershion://figure/waves?v={VERSION}"));
+        let (id, m) = decode("vershion://figure/waves").unwrap();
         assert_eq!(id, "waves");
         assert!(m.is_empty());
     }
@@ -176,9 +176,9 @@ mod tests {
         let mut q = p.clone();
         q.set_s("title", "x");
         assert_eq!(version(&encode(d.id, &q, &p)), VERSION);
-        assert_eq!(version("queshion://figure/waves"), 1);
-        assert_eq!(version("queshion://figure/waves?p=e30"), 1);
-        assert_eq!(version("<queshion://figure/waves?p=e30&v=2>"), 2);
+        assert_eq!(version("vershion://figure/waves"), 1);
+        assert_eq!(version("vershion://figure/waves?p=e30"), 1);
+        assert_eq!(version("<vershion://figure/waves?p=e30&v=2>"), 2);
     }
 
     #[test]
@@ -189,7 +189,7 @@ mod tests {
         p.set_b("letters", !base.b("letters"));
         p.set_s("title", "Car — ½ m/s² ✓");
         let link = encode(d.id, &p, &base);
-        assert!(link.starts_with("queshion://figure/motion-graphs?p="), "{link}");
+        assert!(link.starts_with("vershion://figure/motion-graphs?p="), "{link}");
         assert!(link.len() < 120, "compact: {link}");
         let (id, m) = decode(&link).unwrap();
         assert_eq!(id, "motion-graphs");
@@ -198,7 +198,7 @@ mod tests {
         // wrapped across lines, in angle brackets, without the scheme
         let wrapped = format!("<{}\n  {}>", &link[..30], &link[30..]);
         assert_eq!(decode(&wrapped).unwrap().1, m);
-        let bare = link.trim_start_matches("queshion://");
+        let bare = link.trim_start_matches("vershion://");
         assert_eq!(decode(bare).unwrap().1, m);
     }
 
@@ -206,22 +206,22 @@ mod tests {
     fn garbage_links_are_rejected() {
         assert!(decode("").is_err());
         assert!(decode("https://example.com/").is_err());
-        assert!(decode("queshion://figure/?p=e30").is_err());
-        assert!(decode("queshion://figure/waves?p=!!!").is_err());
-        assert!(decode("queshion://figure/waves?p=WzFd").is_err()); // "[1]" is not an object
-        assert!(decode("queshion://figure/wa ves").is_ok()); // whitespace is dropped
+        assert!(decode("vershion://figure/?p=e30").is_err());
+        assert!(decode("vershion://figure/waves?p=!!!").is_err());
+        assert!(decode("vershion://figure/waves?p=WzFd").is_err()); // "[1]" is not an object
+        assert!(decode("vershion://figure/wa ves").is_ok()); // whitespace is dropped
     }
 
     /// Links copied out of HTML (`&amp;`) keep their version, and a capitalised scheme or id
     /// still opens.
     #[test]
     fn escaped_and_capitalised_links() {
-        let link = format!("queshion://figure/motion-graphs?p={}&v=2", b64url_encode(br#"{"letters":true}"#));
+        let link = format!("vershion://figure/motion-graphs?p={}&v=2", b64url_encode(br#"{"letters":true}"#));
         let html = link.replace('&', "&amp;");
         assert_eq!(version(&html), 2);
         assert_eq!(version(&link.replace('&', "&#38;")), 2);
         assert_eq!(decode(&html).unwrap(), decode(&link).unwrap());
-        let caps = link.replace("queshion://figure/motion-graphs", "Queshion://Figure/Motion-Graphs");
+        let caps = link.replace("vershion://figure/motion-graphs", "Vershion://Figure/Motion-Graphs");
         let (id, m) = decode(&caps).unwrap();
         assert_eq!(id, "motion-graphs");
         assert_eq!(m["letters"], serde_json::json!(true));

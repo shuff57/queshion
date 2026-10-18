@@ -2571,7 +2571,7 @@ fn show_unit(ui: &mut Ui, uid: UiId, text: &mut String, width: f32, st: &Sty, hi
         usize::from(x.index)..usize::from(y.index)
     });
     let focused = ui.memory(|m| m.has_focus(uid));
-    let dbg = std::env::var("QUESHION_WYS_DEBUG").is_ok();
+    let dbg = crate::env_var("VERSHION_WYS_DEBUG").is_ok();
     if dbg && !ana.atoms.is_empty() {
         eprintln!("wys unit {:?}: galley {:?} clip {:?} width {width} rows {:?}", text.chars().take(30).collect::<String>(), out.galley.rect, out.text_clip_rect, out.galley.rows.iter().map(|r| (r.pos, r.row.size)).collect::<Vec<_>>());
     }

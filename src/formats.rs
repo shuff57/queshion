@@ -3,7 +3,7 @@
 //! [`detect_and_parse`] looks at the bytes first: a zip archive (`PK..`) is item 0 below,
 //! an old binary Office file (.xls/.doc) is refused with a save-as hint, and everything
 //! else is decoded as text (item 12) and tried as items 1–11 in order. The headless hook
-//! `QUESHION_PARSE=<file>` (main.rs) runs exactly this path and prints the questions as
+//! `VERSHION_PARSE=<file>` (main.rs) runs exactly this path and prints the questions as
 //! JSON, so every format can be checked without the GUI. The mapping conventions shared
 //! by the new formats: an auto-graded short answer (GIFT `{=a =b}`, Moodle shortanswer,
 //! QTI text entry) is a `Blank` whose one blank accepts every positive-credit string; a
@@ -3015,7 +3015,7 @@ fn attach_src(q: &mut Question, srcs: &[String], media: &HashMap<String, Vec<u8>
 
 /// `store::put_image`, except that unit tests never write into the user's real store
 /// (the `tests/import_formats.rs` integration test checks the real write against a
-/// temporary store directory through the headless `QUESHION_PARSE` hook).
+/// temporary store directory through the headless `VERSHION_PARSE` hook).
 fn store_image(bytes: &[u8]) -> Result<crate::model::ImageRef, String> {
     #[cfg(test)]
     {

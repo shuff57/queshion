@@ -1934,12 +1934,12 @@ mod tests {
         assert!(same > 40_000 && ext > 10_000, "{same} {ext}");
     }
 
-    /// Real stems (a JSON list of strings in QUESHION_STEMS_JSON): the ones that do not use
+    /// Real stems (a JSON list of strings in VERSHION_STEMS_JSON): the ones that do not use
     /// round 7 read exactly as before. `cargo test -- --ignored fixture_stems`.
     #[test]
     #[ignore]
     fn fixture_stems_read_as_before() {
-        let Ok(path) = std::env::var("QUESHION_STEMS_JSON") else { return };
+        let Ok(path) = crate::env_var("VERSHION_STEMS_JSON") else { return };
         let stems: Vec<String> = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         let mut using = 0;
         for s in &stems {

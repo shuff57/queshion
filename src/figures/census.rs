@@ -1,10 +1,10 @@
 //! Render census (QA, ignored by default): writes the SVG of every figure in many states to
-//! `$QUESHION_CENSUS_DIR`, one file per case, so two builds can be compared file by file
+//! `$VERSHION_CENSUS_DIR`, one file per case, so two builds can be compared file by file
 //! (`diff -r before after`). Cases per figure: plain defaults (what saved figures, presets and
 //! examples build on), the opening state, every example, every classic setup, every option of
 //! every choice and both values of every switch (over the plain defaults), and a slider nudge.
 //!
-//! `QUESHION_CENSUS_DIR=/tmp/x cargo test --release census_dump -- --ignored`
+//! `VERSHION_CENSUS_DIR=/tmp/x cargo test --release census_dump -- --ignored`
 use super::*;
 
 fn put(dir: &std::path::Path, name: String, svg: &str) {
@@ -15,7 +15,7 @@ fn put(dir: &std::path::Path, name: String, svg: &str) {
 #[test]
 #[ignore]
 fn census_dump() {
-    let Ok(dir) = std::env::var("QUESHION_CENSUS_DIR") else { return };
+    let Ok(dir) = crate::env_var("VERSHION_CENSUS_DIR") else { return };
     let dir = std::path::PathBuf::from(dir);
     std::fs::create_dir_all(&dir).unwrap();
     let mut n = 0;

@@ -716,7 +716,7 @@ impl crate::App {
                     ui.label(
                         theme::text(
                             "PDFs, scans, screenshots, old Word documents, questions you type \
-                             yourself: queShion gathers them into Question Banks and lays \
+                             yourself: verSHion gathers them into Question Banks and lays \
                              them out as a clean, printable exam.",
                         )
                         .size(14.0),
@@ -1100,7 +1100,7 @@ impl crate::App {
         match cfg.provider.as_str() {
             "cloud" => format!("Ollama Cloud runs gemma4:31b on Ollama's servers. {}", cfg.key_source_help()),
             "ollama" => "Ollama runs on your machine: install it, pull a vision model (the \
-                  default is gemma4:31b), and queShion finds it at 127.0.0.1:11434."
+                  default is gemma4:31b), and verSHion finds it at 127.0.0.1:11434."
                 .to_string(),
             _ => cfg.key_source_help(),
         }
@@ -1393,7 +1393,7 @@ impl crate::App {
             return;
         }
         let mut close = false;
-        let modal = egui::Modal::new(egui::Id::new("queshion_help"))
+        let modal = egui::Modal::new(egui::Id::new("vershion_help"))
             .frame(
                 crate::kit::card()
                     .inner_margin(Margin::same(22))
@@ -1401,7 +1401,7 @@ impl crate::App {
             )
             .show(ctx, |ui| {
                 ui.set_width(540.0);
-                ui.label(theme::serif("How queShion works").size(26.0));
+                ui.label(theme::serif("How verSHion works").size(26.0));
                 ui.add_space(4.0);
                 ui.label(theme::muted(
                     "Two ideas: Question Banks hold questions; Exams pick and arrange them for printing.",
@@ -1442,7 +1442,7 @@ impl crate::App {
 
     pub fn backup_now(&mut self) {
         let dest = rfd::FileDialog::new()
-            .set_file_name(format!("queshion-backup-{}.zip", fmt_date(now_secs())))
+            .set_file_name(format!("vershion-backup-{}.zip", fmt_date(now_secs())))
             .save_file();
         let Some(dest) = dest else { return };
         match write_backup(&dest) {
@@ -1453,7 +1453,7 @@ impl crate::App {
 
     pub fn start_restore(&mut self) {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("queShion backups", &["zip"])
+            .add_filter("verSHion backups", &["zip"])
             .pick_file()
         else {
             return;
@@ -1464,7 +1464,7 @@ impl crate::App {
     pub fn draw_restore_confirm(&mut self, ctx: &egui::Context) {
         let Some(path) = self.confirm_restore.clone() else { return };
         let mut action: u8 = 0; // 1 = dismissed, 2 = replace
-        let modal = egui::Modal::new(egui::Id::new("queshion_restore"))
+        let modal = egui::Modal::new(egui::Id::new("vershion_restore"))
             .frame(crate::kit::card().inner_margin(Margin::same(22)))
             .show(ctx, |ui| {
                 ui.set_width(440.0);
@@ -1515,7 +1515,7 @@ impl crate::App {
         }
     }
 
-    // ---------- demo data (QUESHION_SEED) ----------
+    // ---------- demo data (VERSHION_SEED) ----------
 
     /// One demo bank (MC / TF / FIB) and a two-item demo exam; persisted to disk.
     pub fn seed_demo(&mut self) {
@@ -1993,7 +1993,7 @@ pub(crate) fn pdf_pages_png(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {
     use std::process::{Command, Stdio};
     const MAX_PDF_PAGES: usize = 30;
 
-    let dir = std::env::temp_dir().join(format!("queshion-pdf-{}", now_ms()));
+    let dir = std::env::temp_dir().join(format!("vershion-pdf-{}", now_ms()));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let src = dir.join("in.pdf");
     std::fs::write(&src, data).map_err(|e| e.to_string())?;

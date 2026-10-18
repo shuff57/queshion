@@ -8,6 +8,18 @@
 
 use eframe::egui;
 
+/// Reads `VERSHION_*`, falling back to the pre-rename `QUESHION_*` for one release so
+/// existing QA scripts keep working.
+pub(crate) fn env_var(name: &str) -> Result<String, std::env::VarError> {
+    std::env::var(name)
+        .or_else(|first| std::env::var(name.replacen("VERSHION_", "QUESHION_", 1)).map_err(|_| first))
+}
+
+pub(crate) fn env_var_os(name: &str) -> Option<std::ffi::OsString> {
+    std::env::var_os(name)
+        .or_else(|| std::env::var_os(name.replacen("VERSHION_", "QUESHION_", 1)))
+}
+
 pub mod ai;
 pub mod bankexport;
 pub mod bankops;
@@ -105,9 +117,9 @@ pub struct App {
     pub import_name: String,
     /// Figures screen + insert-figure modal state.
     pub figs: figuresui::FigUi,
-    /// QA hook: scripted input (QUESHION_SCRIPT), see `raw_input_hook`.
+    /// QA hook: scripted input (VERSHION_SCRIPT), see `raw_input_hook`.
     pub qa_steps: Vec<String>,
-    /// QA hook: QUESHION_SHOT=<file.png> saves a screenshot of this window's own contents and exits.
+    /// QA hook: VERSHION_SHOT=<file.png> saves a screenshot of this window's own contents and exits.
     pub qa_shot: Option<(String, u32)>,
     pub qa_frame: u64,
 }
@@ -157,15 +169,15 @@ impl App {
             ai_hint: String::new(),
             import_name: String::new(),
             figs: Default::default(),
-            qa_shot: std::env::var("QUESHION_SHOT").ok().map(|p| (p, 0)),
-            qa_steps: std::env::var("QUESHION_SCRIPT")
+            qa_shot: crate::env_var("VERSHION_SHOT").ok().map(|p| (p, 0)),
+            qa_steps: crate::env_var("VERSHION_SCRIPT")
                 .map(|v| v.split(';').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect())
                 .unwrap_or_default(),
             qa_frame: 0,
         };
         let mut app = app; // non-mut unless the capture hook below needs it
-        // Screen-capture/test hook: QUESHION_SCREEN opens a given screen on startup.
-        if let Ok(s) = std::env::var("QUESHION_SCREEN") {
+        // Screen-capture/test hook: VERSHION_SCREEN opens a given screen on startup.
+        if let Ok(s) = crate::env_var("VERSHION_SCREEN") {
             app.screen = match s.trim() {
                 "home" => Screen::Home,
                 "banks" => Screen::Banks,
@@ -204,7 +216,7 @@ impl App {
 }
 
 impl eframe::App for App {
-    /// Test hook: QUESHION_SCRIPT="click:x,y;text:abc;key:Enter;wait" injects one input step
+    /// Test hook: VERSHION_SCRIPT="click:x,y;text:abc;key:Enter;wait" injects one input step
     /// every 10 frames after a 60 frame warm-up. Coordinates are egui points.
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
         if let Some((path, _)) = &self.qa_shot {
@@ -330,12 +342,12 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         if !self.qa_steps.is_empty() {
-            ctx.request_repaint_after(std::time::Duration::from_millis(16)); // keep the QUESHION_SCRIPT clock advancing
+            ctx.request_repaint_after(std::time::Duration::from_millis(16)); // keep the VERSHION_SCRIPT clock advancing
         }
         if let Some((_, frames)) = &mut self.qa_shot {
             *frames += 1;
-            // QUESHION_SHOT_FRAME=<n> delays the capture (lets a QUESHION_SCRIPT finish first).
-            let at = std::env::var("QUESHION_SHOT_FRAME").ok().and_then(|v| v.parse().ok()).unwrap_or(60u32);
+            // VERSHION_SHOT_FRAME=<n> delays the capture (lets a VERSHION_SCRIPT finish first).
+            let at = crate::env_var("VERSHION_SHOT_FRAME").ok().and_then(|v| v.parse().ok()).unwrap_or(60u32);
             if *frames == at {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
             }
@@ -346,8 +358,8 @@ impl eframe::App for App {
     }
 }
 
-/// Headless pre-window handling: QUESHION_TESTING=1 clears the store dir
-/// (double-guarded), QUESHION_SELFTEST=1 / QUESHION_SEED=1 build the app,
+/// Headless pre-window handling: VERSHION_TESTING=1 clears the store dir
+/// (double-guarded), VERSHION_SELFTEST=1 / VERSHION_SEED=1 build the app,
 /// seed optionally, and print the count line with no window. Returns true if
 /// the process should exit after printing.
 fn handle_headless() -> bool {
@@ -355,26 +367,26 @@ fn handle_headless() -> bool {
         .map(|v| !v.is_empty())
         .unwrap_or(false);
 
-    if std::env::var("QUESHION_TESTING").as_deref() == Ok("1") {
+    if crate::env_var("VERSHION_TESTING").as_deref() == Ok("1") {
         if !xdg_set {
-            eprintln!("QUESHION_TESTING=1 refused: XDG_DATA_HOME must be set explicitly");
+            eprintln!("VERSHION_TESTING=1 refused: XDG_DATA_HOME must be set explicitly");
             std::process::exit(1);
         }
         let dir = store::store_dir();
-        if dir.file_name().map(|n| n == "queshion").unwrap_or(false) {
+        if dir.file_name().map(|n| n == "vershion").unwrap_or(false) {
             let _ = std::fs::remove_dir_all(dir);
         }
     }
 
     let selftest =
-        std::env::var("QUESHION_SELFTEST").as_deref() == Ok("1")
-            || std::env::var("QUESHION_SEED").as_deref() == Ok("1");
+        crate::env_var("VERSHION_SELFTEST").as_deref() == Ok("1")
+            || crate::env_var("VERSHION_SEED").as_deref() == Ok("1");
     if !selftest {
         return false;
     }
     let ctx = egui::Context::default();
     let mut app = App::new_from(&ctx);
-    if std::env::var("QUESHION_SEED").as_deref() == Ok("1") {
+    if crate::env_var("VERSHION_SEED").as_deref() == Ok("1") {
         app.seed_demo();
     }
     println!(
@@ -388,20 +400,22 @@ fn handle_headless() -> bool {
 }
 
 fn main() -> Result<(), eframe::Error> {
-    // Headless one-shot: QUESHION_RENDER_FIG=<figure id> [QUESHION_FIG_PARAMS='{"formula":"NH3"}']
-    // QUESHION_OUT=<file.png> renders a Figures-tab figure to a PNG (strings/bools/numbers).
-    if let Ok(id) = std::env::var("QUESHION_RENDER_FIG") {
+    // Copy the pre-rename data dir once, before anything reads the store.
+    store::migrate_legacy_dir();
+    // Headless one-shot: VERSHION_RENDER_FIG=<figure id> [VERSHION_FIG_PARAMS='{"formula":"NH3"}']
+    // VERSHION_OUT=<file.png> renders a Figures-tab figure to a PNG (strings/bools/numbers).
+    if let Ok(id) = crate::env_var("VERSHION_RENDER_FIG") {
         let def = figures::registry().into_iter().find(|d| d.id == id).unwrap_or_else(|| panic!("no figure {id}"));
-        let over: serde_json::Value = std::env::var("QUESHION_FIG_PARAMS").ok().and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default();
+        let over: serde_json::Value = crate::env_var("VERSHION_FIG_PARAMS").ok().and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default();
         let p = figures::params_from_json(&def, &over);
         let png = figures::to_png(&(def.render)(&p), 1.5).expect("render");
-        std::fs::write(std::env::var("QUESHION_OUT").expect("QUESHION_OUT"), png).expect("write");
+        std::fs::write(crate::env_var("VERSHION_OUT").expect("VERSHION_OUT"), png).expect("write");
         return Ok(());
     }
-    // Headless one-shot: QUESHION_EXPORT=<exam index> QUESHION_OUT=<dir> writes exam.pdf, exam.docx
+    // Headless one-shot: VERSHION_EXPORT=<exam index> VERSHION_OUT=<dir> writes exam.pdf, exam.docx
     // and key.pdf for that exam of the store (the stem-rendering checks read these).
-    if let Ok(i) = std::env::var("QUESHION_EXPORT") {
-        let dir = std::path::PathBuf::from(std::env::var("QUESHION_OUT").expect("QUESHION_OUT"));
+    if let Ok(i) = crate::env_var("VERSHION_EXPORT") {
+        let dir = std::path::PathBuf::from(crate::env_var("VERSHION_OUT").expect("VERSHION_OUT"));
         std::fs::create_dir_all(&dir).expect("out dir");
         match examui::headless_export(i.parse().unwrap_or(0), &dir) {
             Ok(()) => println!("exported to {}", dir.display()),
@@ -412,8 +426,8 @@ fn main() -> Result<(), eframe::Error> {
         }
         return Ok(());
     }
-    // Headless one-shot: QUESHION_FIT=<crop.png> runs the figure-fitting loop on one picture.
-    if let Ok(png) = std::env::var("QUESHION_FIT") {
+    // Headless one-shot: VERSHION_FIT=<crop.png> runs the figure-fitting loop on one picture.
+    if let Ok(png) = crate::env_var("VERSHION_FIT") {
         let bytes = std::fs::read(&png).unwrap_or_else(|e| panic!("cannot read {png}: {e}"));
         let settings: Settings = store::load_json("settings.json").unwrap_or_default();
         let cfg = ai::AiCfg::from(&settings);
@@ -424,21 +438,21 @@ fn main() -> Result<(), eframe::Error> {
         }
         return Ok(());
     }
-    // Headless one-shot: QUESHION_IMPORT_PDF=<file.pdf> [QUESHION_BANK_NAME=..]
+    // Headless one-shot: VERSHION_IMPORT_PDF=<file.pdf> [VERSHION_BANK_NAME=..]
     // runs the Import screen's whole AI path (pages -> model -> Ditto parse -> figure crops)
     // and saves the result as a new bank in the store.
-    if let Ok(pdf) = std::env::var("QUESHION_IMPORT_PDF") {
+    if let Ok(pdf) = crate::env_var("VERSHION_IMPORT_PDF") {
         import_pdf_headless(&pdf);
         return Ok(());
     }
-    // Headless one-shot: QUESHION_PARSE=<reply text> [QUESHION_PAGE=<page.png> QUESHION_PAGE_NO=<n>]
+    // Headless one-shot: VERSHION_PARSE=<reply text> [VERSHION_PAGE=<page.png> VERSHION_PAGE_NO=<n>]
     // runs the AI-import parser (figures cropped from the page image) and prints
     // {questions, warnings, figures} as JSON; the import test battery scores this.
-    if let Ok(path) = std::env::var("QUESHION_PARSE") {
+    if let Ok(path) = crate::env_var("VERSHION_PARSE") {
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"));
         let text = String::from_utf8_lossy(&bytes).to_string();
-        let page = std::env::var("QUESHION_PAGE").ok().and_then(|p| std::fs::read(p).ok());
-        let page_no = std::env::var("QUESHION_PAGE_NO").ok().and_then(|n| n.parse().ok()).unwrap_or(1);
+        let page = crate::env_var("VERSHION_PAGE").ok().and_then(|p| std::fs::read(p).ok());
+        let page_no = crate::env_var("VERSHION_PAGE_NO").ok().and_then(|n| n.parse().ok()).unwrap_or(1);
         let res = if ditto::is_ditto(&text) {
             ditto::import_text(&text, page.as_deref(), page_no, "converted")
         } else {
@@ -456,9 +470,9 @@ fn main() -> Result<(), eframe::Error> {
         }
         return Ok(());
     }
-    // Headless one-shot: QUESHION_CONVERT=<file> [QUESHION_HINT="..."] transcribes a
+    // Headless one-shot: VERSHION_CONVERT=<file> [VERSHION_HINT="..."] transcribes a
     // photo/scan through the configured provider and prints the Blackboard import text.
-    if let Ok(path) = std::env::var("QUESHION_CONVERT") {
+    if let Ok(path) = crate::env_var("VERSHION_CONVERT") {
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"));
         let mime = match path.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str() {
             "png" => "image/png",
@@ -470,7 +484,7 @@ fn main() -> Result<(), eframe::Error> {
         };
         let settings: Settings = store::load_json("settings.json").unwrap_or_default();
         let cfg = ai::AiCfg::from(&settings);
-        let hint = std::env::var("QUESHION_HINT").unwrap_or_default();
+        let hint = crate::env_var("VERSHION_HINT").unwrap_or_default();
         let text = ai::transcribe_checked(&bytes, mime, &cfg, &ai::prompt_for(&hint))
             .map(|raw| ai::extract_import_text(&raw));
         match text {
@@ -486,8 +500,8 @@ fn main() -> Result<(), eframe::Error> {
     if handle_headless() {
         return Ok(());
     }
-    // Test hook: QUESHION_WINSIZE=WxH forces the initial inner size (e.g. 860x700).
-    let size = std::env::var("QUESHION_WINSIZE")
+    // Test hook: VERSHION_WINSIZE=WxH forces the initial inner size (e.g. 860x700).
+    let size = crate::env_var("VERSHION_WINSIZE")
         .ok()
         .and_then(|v| {
             let (w, h) = v.trim().split_once('x')?;
@@ -496,13 +510,13 @@ fn main() -> Result<(), eframe::Error> {
         .unwrap_or([1180.0, 780.0]);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("queShion")
+            .with_title("verSHion")
             .with_decorations(true)
             .with_inner_size(size)
             .with_min_inner_size([760.0, 520.0]),
         ..Default::default()
     };
-    eframe::run_native("queShion", options, Box::new(|cc| Ok(Box::new(App::new(cc)))))
+    eframe::run_native("verSHion", options, Box::new(|cc| Ok(Box::new(App::new(cc)))))
 }
 fn import_pdf_headless(pdf: &str) {
     let bytes = std::fs::read(pdf).unwrap_or_else(|e| panic!("cannot read {pdf}: {e}"));
@@ -522,7 +536,7 @@ fn import_pdf_headless(pdf: &str) {
     for q in &mut questions {
         q.points.get_or_insert(1.0);
     }
-    let name = std::env::var("QUESHION_BANK_NAME").unwrap_or_else(|_| "Imported questions".into());
+    let name = crate::env_var("VERSHION_BANK_NAME").unwrap_or_else(|_| "Imported questions".into());
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     let mut st = store::Store::load();
     let n = questions.len();

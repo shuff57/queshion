@@ -2,7 +2,7 @@
 //! PDF, answers included, that also carries the whole bank as data so it imports back
 //! losslessly; plus the plain JSON file. The PDF is laid out by the exam exporter
 //! (`export::render_pdf` on an [`ExamDoc`], read-only use of `layout` / `export`); the data
-//! rides along as an embedded file attachment (`queshion-bank.json`), appended to the
+//! rides along as an embedded file attachment (`vershion-bank.json`), appended to the
 //! finished PDF as an incremental update so the page content is exactly what the exporter
 //! drew. [`embedded_data`] reads it back (and Test Parrot's own `parrot.zip` attachment), so
 //! the import screen can take a bank-file PDF without the AI.
@@ -15,7 +15,7 @@ use crate::layout::{DocImage, DocQ, DocSection, ExamDoc};
 use crate::model::{Kind, PartKind, QKind, Question, QuestionBank};
 
 /// The attachment's file name inside the PDF.
-pub const ATTACHMENT: &str = "queshion-bank.json";
+pub const ATTACHMENT: &str = "vershion-bank.json";
 
 // ---------- the printable bank file ----------
 
@@ -168,7 +168,7 @@ pub fn grouped(bank: &QuestionBank) -> Vec<(QKind, Vec<&Question>)> {
 pub fn cover_lines(bank: &QuestionBank) -> Vec<String> {
     let mut out = vec![
         plural(bank.questions.len(), "question"),
-        "A digital file for importing into queShion: it holds the whole question bank, answers included. Import works only from this original file: printing it, scanning it, or saving it again as a PDF removes the data queShion reads.".to_string(),
+        "A digital file for importing into verSHion: it holds the whole question bank, answers included. Import works only from this original file: printing it, scanning it, or saving it again as a PDF removes the data verSHion reads.".to_string(),
     ];
     let types: Vec<String> = grouped(bank).iter().map(|(k, v)| format!("{} {}", kind_title(*k), v.len())).collect();
     out.push(format!("Question types: {}", types.join(" · ")));
@@ -211,7 +211,7 @@ pub fn bank_doc(bank: &QuestionBank, image: &dyn Fn(&crate::model::ImageRef) -> 
     }
     ExamDoc {
         title: bank.name.clone(),
-        header_line: "queShion · Question bank file · for teachers: answers included".to_string(),
+        header_line: "verSHion · Question bank file · for teachers: answers included".to_string(),
         heading_pt: 18.0,
         body_pt: 10.5,
         margin_mm: 18.0,
@@ -401,7 +401,7 @@ pub fn attach_file(pdf: &[u8], name: &str, data: &[u8], title: &str, subject: &s
         format!("{root} 0 obj\n{} /Names << /EmbeddedFiles << /Names [{} {fs} 0 R] >> >> /AF [{fs} 0 R] >>\nendobj\n", dict[..close].trim_end(), pdf_text(name)).as_bytes(),
     );
     offs.push((info, out.len()));
-    out.extend_from_slice(format!("{info} 0 obj\n<< /Title {} /Subject {} /Creator (queShion) /Producer (queShion) >>\nendobj\n", pdf_text(title), pdf_text(subject)).as_bytes());
+    out.extend_from_slice(format!("{info} 0 obj\n<< /Title {} /Subject {} /Creator (verSHion) /Producer (verSHion) >>\nendobj\n", pdf_text(title), pdf_text(subject)).as_bytes());
     offs.sort();
     let xref = out.len();
     let mut x = String::from("xref\n");
@@ -428,10 +428,10 @@ pub fn bank_pdf(bank: &QuestionBank) -> Result<Vec<u8>, String> {
     let doc = bank_doc(bank, &store_image);
     let pdf = crate::export::render_pdf(&doc)?;
     let data = serde_json::to_vec_pretty(&bank_data(bank)).map_err(|e| e.to_string())?;
-    attach_file(&pdf, ATTACHMENT, &data, &bank.name, "Teacher question bank containing answers; queShion bank file")
+    attach_file(&pdf, ATTACHMENT, &data, &bank.name, "Teacher question bank containing answers; verSHion bank file")
 }
 
-/// Question data embedded in a PDF: a queShion bank file's `queshion-bank.json`, or the
+/// Question data embedded in a PDF: a verSHion bank file's `vershion-bank.json`, or the
 /// `parrot.json` inside Test Parrot's `parrot.zip` attachment. Scans the file's
 /// `/Type /EmbeddedFile` streams (direct `/Length`, optional `/FlateDecode`).
 pub fn embedded_data(pdf: &[u8]) -> Option<Vec<u8>> {

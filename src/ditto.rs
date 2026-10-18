@@ -1,4 +1,4 @@
-//! queShion Ditto package (`.ditto.json`, see `docs/ditto-format.md`): what the AI conversion
+//! verSHion Ditto package (`.ditto.json`, see `docs/ditto-format.md`): what the AI conversion
 //! prompt (`prompts/ditto-convert.md`) produces. Import is tolerant: each question is checked
 //! alone, a bad one is skipped with a warning, and figure boxes are cropped out of the page
 //! image the model was shown.
@@ -7,7 +7,7 @@ use crate::model::{Answer, Difficulty, Exam, ExamItem, Kind, Pair, Part, PartKin
 use serde_json::Value;
 use std::collections::HashMap;
 
-pub const FORMAT: &str = "queshion/ditto";
+pub const FORMAT: &str = "vershion/ditto";
 
 #[derive(Debug)]
 pub struct DittoImport {
@@ -47,7 +47,7 @@ pub fn is_ditto(text: &str) -> bool {
 pub fn import_text(text: &str, page_png: Option<&[u8]>, page_no: usize, fallback_name: &str) -> Result<DittoImport, String> {
     let v = json_object(text).ok_or("The reply was not a JSON object.")?;
     if v.get("format").and_then(Value::as_str) != Some(FORMAT) {
-        return Err(format!("Not a queShion Ditto file (format should be \"{FORMAT}\")."));
+        return Err(format!("Not a verSHion Ditto file (format should be \"{FORMAT}\")."));
     }
     let bank = v.get("bank").ok_or("The file has no \"bank\".")?;
     let name = bank.get("name").and_then(Value::as_str).filter(|n| !n.trim().is_empty()).unwrap_or(fallback_name).to_string();
@@ -517,7 +517,7 @@ mod tests {
     #[test]
     fn bad_question_never_costs_the_page() {
         store();
-        let t = r#"{"format":"queshion/ditto","formatVersion":"0.1.0","bank":{"name":"B","questions":[
+        let t = r#"{"format":"vershion/ditto","formatVersion":"0.1.0","bank":{"name":"B","questions":[
           {"id":"q1","type":"multiple-choice","stem":"Pick","choices":[{"text":"a","correct":true},{"text":"b"}]},
           {"id":"q2","type":"mystery","stem":"?"},
           {"id":"q3","type":"fill-in-the-blank","stem":"A ___ and ___","blanks":[["x"],["y","z"]]}]}}"#;
@@ -529,7 +529,7 @@ mod tests {
     #[test]
     fn grouped_row_answers_are_flattened_one_per_blank() {
         store();
-        let t = r#"{"format":"queshion/ditto","bank":{"questions":[{"type":"fill-in-the-blank","stem":"KI ___ ___\nSO3 ___ ___","blanks":[["Ionic","potassium iodide"],["Covalent","sulfur trioxide"]]}]}}"#;
+        let t = r#"{"format":"vershion/ditto","bank":{"questions":[{"type":"fill-in-the-blank","stem":"KI ___ ___\nSO3 ___ ___","blanks":[["Ionic","potassium iodide"],["Covalent","sulfur trioxide"]]}]}}"#;
         let r = import_text(t, None, 1, "n").unwrap();
         match &r.doc.questions[0].kind {
             Kind::Blank { accept } => assert_eq!(accept, &vec![vec!["Ionic".to_string()], vec!["potassium iodide".into()], vec!["Covalent".into()], vec!["sulfur trioxide".into()]]),
@@ -624,7 +624,7 @@ mod tests {
     #[test]
     fn blank_without_markers_becomes_short() {
         store();
-        let t = r#"{"format":"queshion/ditto","bank":{"questions":[{"type":"fill-in-the-blank","stem":"Bonding: 14","blanks":[["14"],["10"]]}]}}"#;
+        let t = r#"{"format":"vershion/ditto","bank":{"questions":[{"type":"fill-in-the-blank","stem":"Bonding: 14","blanks":[["14"],["10"]]}]}}"#;
         let r = import_text(t, None, 1, "n").unwrap();
         assert!(matches!(&r.doc.questions[0].kind, Kind::Short { sample } if sample == "14; 10"));
     }
@@ -632,7 +632,7 @@ mod tests {
     #[test]
     fn figure_box_is_cropped_and_tolerates_fences() {
         store();
-        let t = "```json\n{\"format\":\"queshion/ditto\",\"bank\":{\"questions\":[{\"type\":\"short-answer\",\"stem\":\"See\",\"figure\":{\"box\":[0.2,0.2,0.6,0.5]}},{\"type\":\"short-answer\",\"stem\":\"Bad\",\"figure\":{\"box\":[0,0,1,1]}}]}}\n```";
+        let t = "```json\n{\"format\":\"vershion/ditto\",\"bank\":{\"questions\":[{\"type\":\"short-answer\",\"stem\":\"See\",\"figure\":{\"box\":[0.2,0.2,0.6,0.5]}},{\"type\":\"short-answer\",\"stem\":\"Bad\",\"figure\":{\"box\":[0,0,1,1]}}]}}\n```";
         let r = import_text(t, Some(&page()), 1, "n").unwrap();
         assert_eq!(r.figures, 1);
         assert!(r.doc.questions[0].image.is_some() && r.doc.questions[1].image.is_none());

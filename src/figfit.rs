@@ -43,9 +43,9 @@ fn param_help(def: &FigureDef) -> String {
         .join("\n")
 }
 
-/// `QUESHION_FIT_DEBUG=1` prints each step of the fitting loop to stderr.
+/// `VERSHION_FIT_DEBUG=1` prints each step of the fitting loop to stderr.
 fn debug(msg: &str) {
-    if std::env::var("QUESHION_FIT_DEBUG").is_ok() {
+    if crate::env_var("VERSHION_FIT_DEBUG").is_ok() {
         eprintln!("[figfit] {msg}");
     }
 }

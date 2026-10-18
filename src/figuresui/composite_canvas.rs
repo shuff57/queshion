@@ -280,14 +280,14 @@ impl Canvas {
         self.last_spec = spec;
     }
 
-    /// QA hook: `QUESHION_COMP="sel:0,tool:label,side:2,add:1,poly:0 0 4 0 4 3"` sets up the canvas
+    /// QA hook: `VERSHION_COMP="sel:0,tool:label,side:2,add:1,poly:0 0 4 0 4 3"` sets up the canvas
     /// for a screenshot (selection, tool, an open side / add menu, a polygon in progress).
     fn qa(&mut self, items: &[Item]) {
         if self.qa_done {
             return;
         }
         self.qa_done = true;
-        let Ok(cmds) = std::env::var("QUESHION_COMP") else { return };
+        let Ok(cmds) = crate::env_var("VERSHION_COMP") else { return };
         for c in cmds.split(',') {
             let (k, v) = c.split_once(':').unwrap_or((c, ""));
             let v = v.trim();

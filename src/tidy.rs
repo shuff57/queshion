@@ -847,7 +847,7 @@ mod tests {
     #[test]
     fn backup_copies_banks_json_without_overwriting() {
         let root = std::env::temp_dir().join(format!("tidy-backup-{}", std::process::id()));
-        let (store, backups) = (root.join("queshion"), root.join("queshion/backups"));
+        let (store, backups) = (root.join("vershion"), root.join("vershion/backups"));
         std::fs::create_dir_all(&store).unwrap();
         std::fs::write(store.join("banks.json"), "[1]").unwrap();
         let a = crate::store::backup_banks_in(&store, &backups, &[], 1_792_192_201).unwrap();

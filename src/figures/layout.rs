@@ -184,12 +184,12 @@ fn heuristic_sections(fig: &str, defs: &[ParamDef], n_now: Option<i64>) -> Vec<S
 mod tests {
     use super::*;
 
-    /// Dev tool: `QUESHION_DUMP=/path/sections.json cargo test --release dump_sections -- --ignored`
+    /// Dev tool: `VERSHION_DUMP=/path/sections.json cargo test --release dump_sections -- --ignored`
     /// writes every figure's panel section titles (used to compare with the reference pages).
     #[test]
     #[ignore]
     fn dump_sections() {
-        let Ok(path) = std::env::var("QUESHION_DUMP") else { return };
+        let Ok(path) = crate::env_var("VERSHION_DUMP") else { return };
         let mut out = serde_json::Map::new();
         let mut keys = serde_json::Map::new();
         for d in super::super::registry() {

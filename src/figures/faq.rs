@@ -1,5 +1,5 @@
 //! Per-figure FAQ: short questions and answers shown in a collapsible "FAQ" at the bottom of a
-//! figure's panel. Written for queShion (paraphrased topics, not copied text).
+//! figure's panel. Written for verSHion (paraphrased topics, not copied text).
 
 /// One question and its answer.
 pub struct Faq {

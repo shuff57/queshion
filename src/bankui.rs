@@ -560,8 +560,8 @@ impl App {
         }
 
         let key = UiId::new("testparrot_bank_edit_state").with(&bank_id);
-        // Headless test hook: QUESHION_OPEN_Q=<n> opens the n-th question once.
-        if let Ok(v) = std::env::var("QUESHION_OPEN_Q") {
+        // Headless test hook: VERSHION_OPEN_Q=<n> opens the n-th question once.
+        if let Ok(v) = crate::env_var("VERSHION_OPEN_Q") {
             let done = ctx.data_mut(|d| d.get_temp::<bool>(UiId::new("qopen_hook")).unwrap_or(false));
             if !done {
                 ctx.data_mut(|d| d.insert_temp(UiId::new("qopen_hook"), true));
@@ -588,8 +588,8 @@ impl App {
         self.draw_figure_picker(&ctx);
         draw_topic_dialog(self, &ctx, key, &bank_id);
         draw_details_dialog(self, &ctx, key, &bank_id);
-        // Headless/QA hook: QUESHION_TIDY=1 opens the bank's "Tidy stems" dialog once.
-        if std::env::var("QUESHION_TIDY").is_ok() {
+        // Headless/QA hook: VERSHION_TIDY=1 opens the bank's "Tidy stems" dialog once.
+        if crate::env_var("VERSHION_TIDY").is_ok() {
             let hid = UiId::new("qs_tidy_hook");
             if !ctx.data(|d| d.get_temp::<bool>(hid).unwrap_or(false)) {
                 ctx.data_mut(|d| d.insert_temp(hid, true));
@@ -598,8 +598,8 @@ impl App {
         }
         draw_tidy_dialog(self, &ctx, key, &bank_id);
         draw_usage_dialog(self, &ctx);
-        // Headless/QA hook: QUESHION_IMPORT_MODAL=1 opens the bank's Import modal once.
-        if std::env::var("QUESHION_IMPORT_MODAL").is_ok() {
+        // Headless/QA hook: VERSHION_IMPORT_MODAL=1 opens the bank's Import modal once.
+        if crate::env_var("VERSHION_IMPORT_MODAL").is_ok() {
             let hid = UiId::new("qs_import_modal_hook");
             if !ctx.data(|d| d.get_temp::<bool>(hid).unwrap_or(false)) {
                 ctx.data_mut(|d| d.insert_temp(hid, true));
@@ -1444,7 +1444,7 @@ thread_local! {
 /// Test Parrot's "Export Question Bank": a preview of the printable bank file (answers
 /// included), then Download PDF, or the JSON file.
 fn draw_bank_export(app: &mut App, ctx: &egui::Context) {
-    if let Ok(v) = std::env::var("QUESHION_BANK_EXPORT") {
+    if let Ok(v) = crate::env_var("VERSHION_BANK_EXPORT") {
         let hid = UiId::new("qs_bank_export_hook");
         if !ctx.data(|d| d.get_temp::<bool>(hid).unwrap_or(false)) {
             ctx.data_mut(|d| d.insert_temp(hid, true));
@@ -1474,8 +1474,8 @@ fn draw_bank_export(app: &mut App, ctx: &egui::Context) {
                 }
             }
         }
-        // QA hook: QUESHION_BANK_EXPORT_OUT=<file> also writes the PDF there.
-        if let (Ok(out), Ok(bytes)) = (std::env::var("QUESHION_BANK_EXPORT_OUT"), &pdf) {
+        // QA hook: VERSHION_BANK_EXPORT_OUT=<file> also writes the PDF there.
+        if let (Ok(out), Ok(bytes)) = (crate::env_var("VERSHION_BANK_EXPORT_OUT"), &pdf) {
             let _ = std::fs::write(out, bytes);
         }
         BANK_EXPORT.with(|c| *c.borrow_mut() = Some(BankExportCache { bank: bank_id.clone(), modified: bank.modified, pdf, pages }));
@@ -3006,8 +3006,8 @@ fn popover_card(ui: &mut Ui, q: &Question, n: usize, ps: &mut PopoverState, exam
 /// question as text, add it to the open exam, or jump back to edit it. Called every frame from
 /// the screen router.
 pub fn draw_popover(app: &mut App, ctx: &egui::Context) {
-    // Headless/QA hook: QUESHION_POPOVER=<n> opens the n-th bank's Pop-over once.
-    if let Ok(v) = std::env::var("QUESHION_POPOVER") {
+    // Headless/QA hook: VERSHION_POPOVER=<n> opens the n-th bank's Pop-over once.
+    if let Ok(v) = crate::env_var("VERSHION_POPOVER") {
         let hid = UiId::new("qs_popover_hook");
         if !ctx.data(|d| d.get_temp::<bool>(hid).unwrap_or(false)) {
             ctx.data_mut(|d| d.insert_temp(hid, true));
@@ -3015,11 +3015,11 @@ pub fn draw_popover(app: &mut App, ctx: &egui::Context) {
             if let Some(b) = app.store.banks.get(n.saturating_sub(1)) {
                 open_popover(ctx, &b.id.clone());
             }
-            if std::env::var("QUESHION_EMBED_VIEWPORTS").as_deref() == Ok("1") {
+            if crate::env_var("VERSHION_EMBED_VIEWPORTS").as_deref() == Ok("1") {
                 ctx.set_embed_viewports(true);
             }
-            // QUESHION_POPOVER_FILTERS=1 shows the filters row, =settings the copy settings
-            match std::env::var("QUESHION_POPOVER_FILTERS").as_deref() {
+            // VERSHION_POPOVER_FILTERS=1 shows the filters row, =settings the copy settings
+            match crate::env_var("VERSHION_POPOVER_FILTERS").as_deref() {
                 Ok("1") => ctx.data_mut(|d| d.get_temp_mut_or_default::<PopoverState>(UiId::new("qs_popover_state")).filters = true),
                 Ok("settings") => ctx.data_mut(|d| d.get_temp_mut_or_default::<PopoverState>(UiId::new("qs_popover_state")).settings = true),
                 _ => {}
@@ -3054,7 +3054,7 @@ pub fn draw_popover(app: &mut App, ctx: &egui::Context) {
     let exam_name = exam_id.as_ref().and_then(|id| app.store.exam(id)).map(|e| e.name.clone());
     let vid = egui::ViewportId::from_hash_of("qs_bank_popover_window");
     let builder = egui::ViewportBuilder::default()
-        .with_title(format!("{} · queShion", bank.name))
+        .with_title(format!("{} · verSHion", bank.name))
         .with_inner_size([460.0, 720.0])
         .with_min_inner_size([340.0, 380.0]);
     let mut close = false;
