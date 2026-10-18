@@ -1,7 +1,7 @@
 //! verSHion desktop binary: native entry, headless hooks, and the eframe adapter.
 use eframe::egui;
 use vershion::{
-    ai, ditto, examui, figfit, figures, formats, model, platform, screens, store, App, Settings,
+    ai, ditto, examui, figfit, figures, formats, model, platform, store, App, Settings,
 };
 
 /// eframe adapter for the host-agnostic [`vershion::App`].

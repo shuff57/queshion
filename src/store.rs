@@ -26,6 +26,9 @@ pub fn store_dir() -> PathBuf {
     store_dir_from_env()
 }
 
+#[cfg(target_arch = "wasm32")]
+pub mod web;
+
 /// The storage seam. Native uses [`FsBackend`]; the web build installs an IndexedDB backend
 /// before constructing the app.
 pub trait Backend {
