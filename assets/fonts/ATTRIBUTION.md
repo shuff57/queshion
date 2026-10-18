@@ -9,7 +9,7 @@ Liberation Mono.
   Bold there are byte-identical to the ones here). Licence: OFL-SourceSerif4.txt.
 
 - STIX Two Math Regular (the PDF fallback face for symbols Source Serif 4 lacks) is not a file
-  here: queShion uses the copy the equashion-font crate already compiles in
+  here: verSHion uses the copy the equashion-font crate already compiles in
   (../equaSHion/assets/fonts/STIXTwoMath-Regular.otf). Its licence is copied here as
   OFL-STIXTwoMath.txt (SIL OFL 1.1, Copyright The STIX Fonts Project Authors).
 

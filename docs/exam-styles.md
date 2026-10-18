@@ -8,7 +8,7 @@ DOCX export, and by the regenerable `.doc.json` snapshots.
 The four styles and their one-line descriptions come from Test Parrot's Format > Paper style
 menu (observed on testparrot.com, 2026-10-17, in a throwaway browser session with the
 "Quiz 5A - Ch. 4" exam imported). What each one changes was read off Test Parrot's page
-preview in each style; where queShion differs, the row says so.
+preview in each style; where verSHion differs, the row says so.
 
 | | Standard | Classic | Condensed | Exam Board |
 |---|---|---|---|---|
@@ -26,7 +26,7 @@ preview in each style; where queShion differs, the row says so.
 | Typeface | Source Serif 4 (PDF, preview); Times New Roman / Liberation Serif (DOCX) | same | same | same |
 
 Deviation from Test Parrot: in Standard, Test Parrot leaves a short-answer question with no
-work space bare (no lines at all) and only ruled lines appear in Classic. queShion keeps its
+work space bare (no lines at all) and only ruled lines appear in Classic. verSHion keeps its
 existing default of three ruled lines under a short answer in every style, so exams printed
 before paper styles existed print exactly as they did; the work space handle adds room on top.
 
@@ -100,7 +100,7 @@ order. Edit > Restore bank answer order clears every stored order.
 
 Multiple-choice questions can print their choices in 1, 2 or 4 columns, like Test Parrot's
 "Answer format > Answer columns" (observed 2026-10-18: a three-way 1 column / 2 columns /
-4 columns choice in each multiple-choice question's actions menu). In queShion the question's
+4 columns choice in each multiple-choice question's actions menu). In verSHion the question's
 actions menu on the exam page has an **Answer format** row with the same three-segment switch
 (`examui::answer_columns_switch`, shared with the bank Pop-over).
 
@@ -161,7 +161,7 @@ The export dialog has a **Key layout** choice under "Answer key":
 
 The layout is stored in the `.doc.json` snapshot (`key_layout`, default list), so snapshots
 written before round 7 regenerate exactly as they printed. The headless hook takes
-`QUESHION_KEY_LAYOUT=list|section|marked` (default section) and also writes `key.docx`.
+`VERSHION_KEY_LAYOUT=list|section|marked` (default section) and also writes `key.docx`.
 The export dialog now also has a **Cancel** button and a note that Export History is kept only
 on this computer and is not an archival backup (Test Parrot's wording, adapted). The Exams
 screen's card menu has **Open** above Rename and Delete, as on Test Parrot.

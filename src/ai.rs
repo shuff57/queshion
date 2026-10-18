@@ -510,7 +510,7 @@ mod tests {
         for ty in ["multiple-choice", "true-false", "matching", "fill-in-the-blank", "short-answer", "multipart"] {
             assert!(p.contains(ty), "prompt must name {ty}");
         }
-        for must in ["___", "\"box\"", "vershion/ditto", "No markdown fences", "FRACTIONS"] {
+        for must in ["___", "\"box\"", "queshion/ditto", "No markdown fences", "FRACTIONS"] {
             assert!(p.contains(must), "prompt must mention {must}");
         }
     }

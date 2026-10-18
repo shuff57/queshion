@@ -1,5 +1,5 @@
 //! Headless end-to-end check of every import format: each fixture in
-//! `tests/import_fixtures/` goes through the app binary's `QUESHION_PARSE=<file>` hook
+//! `tests/import_fixtures/` goes through the app binary's `VERSHION_PARSE=<file>` hook
 //! (the same `formats::detect_and_parse` path the Import screen uses) and the printed
 //! JSON is checked. Each run gets its own temporary store (`XDG_DATA_HOME`) so archive
 //! images are really written there, never into the user's store, and every run is
@@ -15,16 +15,16 @@ fn fixture(name: &str) -> PathBuf {
 
 /// Runs the binary's parse hook on one fixture → (questions JSON array, store dir).
 fn parse(name: &str) -> (Vec<serde_json::Value>, PathBuf) {
-    let store = std::env::temp_dir().join(format!("queshion-import-test-{}-{}", std::process::id(), name.replace('.', "_")));
+    let store = std::env::temp_dir().join(format!("vershion-import-test-{}-{}", std::process::id(), name.replace('.', "_")));
     let _ = std::fs::remove_dir_all(&store);
     std::fs::create_dir_all(&store).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_queshion"))
-        .env("QUESHION_PARSE", fixture(name))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vershion"))
+        .env("VERSHION_PARSE", fixture(name))
         .env("XDG_DATA_HOME", &store)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn queshion");
+        .expect("spawn vershion");
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         if child.try_wait().unwrap().is_some() {
@@ -32,7 +32,7 @@ fn parse(name: &str) -> (Vec<serde_json::Value>, PathBuf) {
         }
         if Instant::now() > deadline {
             let _ = child.kill();
-            panic!("{name}: QUESHION_PARSE did not finish within 60 s");
+            panic!("{name}: VERSHION_PARSE did not finish within 60 s");
         }
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -40,7 +40,7 @@ fn parse(name: &str) -> (Vec<serde_json::Value>, PathBuf) {
     assert!(out.status.success(), "{name}: {}", String::from_utf8_lossy(&out.stderr));
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{name}: bad JSON ({e})"));
     let qs = v["questions"].as_array().cloned().unwrap_or_default();
-    (qs, store.join("queshion"))
+    (qs, store.join("vershion"))
 }
 
 fn kind(q: &serde_json::Value) -> String {

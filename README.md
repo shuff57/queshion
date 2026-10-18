@@ -1,4 +1,4 @@
-# queShion
+# verSHion
 
 Turn anything into an exam — a pure-Rust desktop clone of [testparrot.com](https://www.testparrot.com/):
 question banks, printable exams, and one-shot AI conversion, all local-first.
@@ -16,15 +16,15 @@ question banks, printable exams, and one-shot AI conversion, all local-first.
   CSV and Excel `.xlsx`, Moodle GIFT and Moodle XML, QTI 1.2/2.x/3.0 files and Canvas / Common
   Cartridge / LMS export `.zip`s, Respondus and text2qti text, Quizlet/Anki term lists, Kahoot and
   Brightspace sheets, and real `.parrot.json` Test Parrot packages; paste or file. Grammar and
-  mappings: `src/formats.rs` module docs; `QUESHION_PARSE=<file>` prints any file's parse as JSON.
+  mappings: `src/formats.rs` module docs; `VERSHION_PARSE=<file>` prints any file's parse as JSON.
 - **AI conversion**: a photo/scan/screenshot is transcribed to import text by
   **Ollama Cloud** (`gemma4:31b` — default), local **Ollama**, **OpenRouter**, or any custom
   OpenAI-compatible endpoint. Keys are read from the environment or the ollama-cloud credentials
   file at request time and never stored.
 
-Data lives in `${XDG_DATA_HOME:-~/.local/share}/queshion/`. Headless helpers:
-`QUESHION_SELFTEST=1`, `QUESHION_SEED=1`, `QUESHION_CONVERT=<file>` (prints import text),
-`QUESHION_SCREEN=<welcome|home|banks|bank|exams|exam|imports|figures|settings>` opens that
+Data lives in `${XDG_DATA_HOME:-~/.local/share}/vershion/`. Headless helpers:
+`VERSHION_SELFTEST=1`, `VERSHION_SEED=1`, `VERSHION_CONVERT=<file>` (prints import text),
+`VERSHION_SCREEN=<welcome|home|banks|bank|exams|exam|imports|figures|settings>` opens that
 screen directly (for screenshot/test harnesses).
 
 - **Light & dark**: warm dark palette in the same hue family; the sun/moon switch at the

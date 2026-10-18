@@ -8,13 +8,13 @@ It all happens offline. The link holds the figure's settings, so no server or ac
 - **Copy link**: toolbar **Share link → Copy link** copies the link to the clipboard and shows
   "Link copied…". Send it any way you like: chat, mail, or a note in a question bank.
 - **Open from link**: paste a link into the box under **Share link** (when a figure is open), or
-  into **Open link…** on the Figures browser, then press **Open from link** or Enter. queShion
+  into **Open link…** on the Figures browser, then press **Open from link** or Enter. verSHion
   switches to that figure and applies the settings. This counts as one Undo step.
 
 ## Format
 
 ```
-queshion://figure/<figure-id>?p=<payload>&v=3
+vershion://figure/<figure-id>?p=<payload>&v=3
 ```
 
 - `<figure-id>` is the figure's stable slug, e.g. `motion-graphs` or `punnett-square`. These are
@@ -22,8 +22,8 @@ queshion://figure/<figure-id>?p=<payload>&v=3
 - `<payload>` is base64url (RFC 4648 §5, `A–Z a–z 0–9 - _`, no `=` padding) of a compact JSON
   object holding **only the params that differ from the figure's opening state** (what it shows
   when you first open it from the browser). The reference generators work the same way: an
-  unchanged figure gets a bare link, `queshion://figure/waves?v=3`, and one change stays short, e.g.
-  `queshion://figure/motion-graphs?p=eyJsZXR0ZXJzIjp0cnVlfQ&v=3` for `{"letters":true}`.
+  unchanged figure gets a bare link, `vershion://figure/waves?v=3`, and one change stays short, e.g.
+  `vershion://figure/motion-graphs?p=eyJsZXR0ZXJzIjp0cnVlfQ&v=3` for `{"letters":true}`.
 - `v` is the link format version (3 since P4, 2 since round 5). Links without it are version 1.
   The payload format is the same in every version; only the opening state it is laid over differs
   (see Compatibility).
@@ -36,10 +36,11 @@ Implementation: `src/figures/share.rs` (encode/decode, base64url) and `Workspace
 ## Reading a link
 
 Pasted text is handled leniently. Whitespace and line breaks are dropped (mail clients wrap long
-links), surrounding `<…>` or quotes are stripped, the `queshion://` prefix may be missing, and
+links), surrounding `<…>` or quotes are stripped, the `vershion://` prefix may be missing — links
+written before the rename with the old `queshion://` scheme still open — and
 other `&key=value` pairs are ignored. A link copied out of a web page or HTML mail, where `&`
 appears as `&amp;` (or `&#38;`), reads the same, version included, and the scheme, `figure/` and
-the figure id may be in any case (`Queshion://Figure/Motion-Graphs`); the payload stays
+the figure id may be in any case (`Vershion://Figure/Motion-Graphs`); the payload stays
 case-sensitive.
 
 The changed params are laid over the figure's opening state, and the result goes through the
@@ -81,9 +82,9 @@ box. Nothing else changes.
 
 ## QA hooks
 
-- `QUESHION_FIG_LINK=<link>` opens a link at startup, as **Open from link** does.
-- `QUESHION_FIG_OPENLINK=1` shows the browser's **Open link…** box.
-- `QUESHION_FIG_EXAMPLES=1` (with `QUESHION_FIG=<id>`) opens the example gallery.
+- `VERSHION_FIG_LINK=<link>` opens a link at startup, as **Open from link** does.
+- `VERSHION_FIG_OPENLINK=1` shows the browser's **Open link…** box.
+- `VERSHION_FIG_EXAMPLES=1` (with `VERSHION_FIG=<id>`) opens the example gallery.
 
 ## Composite shape
 

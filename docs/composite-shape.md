@@ -93,5 +93,5 @@ angle 0 4 arcs 2 red | x; angle 6 0 ext measure; point 0 0 A
 - **Moving labels** (Select and Label tools): the pointer shows "Drag to move this label" over a
   dimension, angle, point or text label; dragging it writes its `@DX,DY` offset as one undo step.
   A click without a drag still selects the mark (Select) or opens its part's popover (Label).
-- QA hook: `QUESHION_COMP="tool:label,side:N|angle:N|ext:N|corner:N"` opens a popover for outline
+- QA hook: `VERSHION_COMP="tool:label,side:N|angle:N|ext:N|corner:N"` opens a popover for outline
   side or corner N, for screenshots.

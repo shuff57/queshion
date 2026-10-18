@@ -1,8 +1,8 @@
 # Fonts
 
-Every font queShion ships is in `assets/fonts/`, and every one is licensed under the SIL Open
+Every font verSHion ships is in `assets/fonts/`, and every one is licensed under the SIL Open
 Font License 1.1. The licence texts sit beside the fonts, and `assets/fonts/ATTRIBUTION.md`
-says where each file came from. queShion bundles nothing under an unknown or non-embeddable
+says where each file came from. verSHion bundles nothing under an unknown or non-embeddable
 licence, and nothing is downloaded at build or run time.
 
 | Family | Faces | Licence | Used for |
@@ -10,16 +10,16 @@ licence, and nothing is downloaded at build or run time.
 | Source Serif 4 (Adobe, 4.005) | Regular, Bold, It, BoldIt (compiled into the binary by `src/fonts.rs`); Semibold (read at startup) | OFL 1.1, `assets/fonts/OFL-SourceSerif4.txt` | Printed exams: PDF body and headings, the on-page exam preview, card and export thumbnails, and headings across the app |
 | Source Sans 3 (Adobe) | Regular, It, Semibold, Bold (read at startup) | OFL 1.1, `assets/fonts/OFL-SourceSans3.txt` | App interface text |
 | Liberation Mono (Red Hat / Google, 2.1.5) | Regular (compiled in by `src/fonts.rs`, `fonts::Style::Mono`) | OFL 1.1 (Reserved Font Name "Liberation"), `assets/fonts/OFL-LiberationMono.txt` | `` `code` `` spans in PDFs (font F10, embedded as a subset only when a document has code) |
-| STIX Two Math (The STIX Fonts Project, 2.x) | Regular (compiled in by the `equashion-font` crate; queShion reuses those bytes, `fonts::fallback_bytes`) | OFL 1.1, `assets/fonts/OFL-STIXTwoMath.txt` | Equations (equaSHion), and in PDFs the fallback for symbols Source Serif 4 lacks (`⇒ ⇔ ↔ ∈ ∉ ⊂ ∪ ∩ ∠ ⊥ ∥ ≡ ∝ ∴ ⋅` ...), embedded as a Type 3 font of only the glyphs drawn |
+| STIX Two Math (The STIX Fonts Project, 2.x) | Regular (compiled in by the `equashion-font` crate; verSHion reuses those bytes, `fonts::fallback_bytes`) | OFL 1.1, `assets/fonts/OFL-STIXTwoMath.txt` | Equations (equaSHion), and in PDFs the fallback for symbols Source Serif 4 lacks (`⇒ ⇔ ↔ ∈ ∉ ⊂ ∪ ∩ ∠ ⊥ ∥ ≡ ∝ ∴ ⋅` ...), embedded as a Type 3 font of only the glyphs drawn |
 | egui defaults (Ubuntu-Light, Hack, Noto Emoji, emoji-icon-font) | as shipped in egui (`default_fonts` feature) | Ubuntu Font Licence 1.0, Hack (MIT / Bitstream Vera), OFL; see the `epaint_default_fonts` crate's `fonts/` folder; emoji-icon-font is MIT | Fallback glyphs behind the house faces on screen only; never embedded in exports |
 
 Equations on screen come from equaSHion's own fonts (STIX Two Math and others, all OFL; see
-`../equaSHion/assets/fonts`). queShion does not change them. In exports, `$math$` still
+`../equaSHion/assets/fonts`). verSHion does not change them. In exports, `$math$` still
 degrades to Unicode text (`equation::stem_to_plain`), which now prints in full (see below).
 
 ## Print serif: one set of faces everywhere
 
-Test Parrot prints exams in a serif. queShion uses **Source Serif 4** with four real faces,
+Test Parrot prints exams in a serif. verSHion uses **Source Serif 4** with four real faces,
 so italic text uses the italic design (single-storey *a*, its own advance widths) and is not
 the upright face slanted.
 

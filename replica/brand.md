@@ -1,4 +1,4 @@
-# Brand — queShion naming research
+# Brand — verSHion naming research
 
 Angle: teacher tool; local-first; question banks; print; versions; AI conversion.
 Name family: SH-initial compounds (user's initials). Second family (per user direction,
@@ -75,8 +75,8 @@ Screening only, not legal clearance; a lawyer search before selling anything.
 Offered as follow-up (skill steps 3–6) — the app currently uses the Test Parrot house palette; a rebrand pass would shift the accent hue family and sweep all strings. Ask when wanted.
 ## Decision (2026-10-15)
 
-User picked **queShion** — over the screening's top pick Chalkshed, and over the other SH
-families (Shufflery, Freshsheet, etc.). queShion wasn't from those rounds: the "sh" sound is
+User picked **verSHion** — over the screening's top pick Chalkshed, and over the other SH
+families (Shufflery, Freshsheet, etc.). verSHion wasn't from those rounds: the "sh" sound is
 carried by `-tion` (ques**tion**), not by the literal letters S–H.
-Renamed 2026-10-15: crate `queshion`, app title "queShion", store dir `~/.local/share/queshion/`,
-env vars `QUESHION_*`; repo dir moved to `~/queshion` 2026-10-15. GitHub repo: `queshion` (public).
+Renamed 2026-10-15: crate `vershion`, app title "verSHion", store dir `~/.local/share/vershion/`,
+env vars `VERSHION_*`; repo dir moved to `~/vershion` 2026-10-15. GitHub repo: `vershion` (public).

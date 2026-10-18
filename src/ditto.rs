@@ -7,7 +7,9 @@ use crate::model::{Answer, Difficulty, Exam, ExamItem, Kind, Pair, Part, PartKin
 use serde_json::Value;
 use std::collections::HashMap;
 
-pub const FORMAT: &str = "vershion/ditto";
+/// Stable data-format identifier, deliberately unchanged by the verSHion rename: existing
+/// `.ditto.json` files and the AI conversion prompt all carry `queshion/ditto`.
+pub const FORMAT: &str = "queshion/ditto";
 
 #[derive(Debug)]
 pub struct DittoImport {
@@ -517,7 +519,7 @@ mod tests {
     #[test]
     fn bad_question_never_costs_the_page() {
         store();
-        let t = r#"{"format":"vershion/ditto","formatVersion":"0.1.0","bank":{"name":"B","questions":[
+        let t = r#"{"format":"queshion/ditto","formatVersion":"0.1.0","bank":{"name":"B","questions":[
           {"id":"q1","type":"multiple-choice","stem":"Pick","choices":[{"text":"a","correct":true},{"text":"b"}]},
           {"id":"q2","type":"mystery","stem":"?"},
           {"id":"q3","type":"fill-in-the-blank","stem":"A ___ and ___","blanks":[["x"],["y","z"]]}]}}"#;
@@ -529,7 +531,7 @@ mod tests {
     #[test]
     fn grouped_row_answers_are_flattened_one_per_blank() {
         store();
-        let t = r#"{"format":"vershion/ditto","bank":{"questions":[{"type":"fill-in-the-blank","stem":"KI ___ ___\nSO3 ___ ___","blanks":[["Ionic","potassium iodide"],["Covalent","sulfur trioxide"]]}]}}"#;
+        let t = r#"{"format":"queshion/ditto","bank":{"questions":[{"type":"fill-in-the-blank","stem":"KI ___ ___\nSO3 ___ ___","blanks":[["Ionic","potassium iodide"],["Covalent","sulfur trioxide"]]}]}}"#;
         let r = import_text(t, None, 1, "n").unwrap();
         match &r.doc.questions[0].kind {
             Kind::Blank { accept } => assert_eq!(accept, &vec![vec!["Ionic".to_string()], vec!["potassium iodide".into()], vec!["Covalent".into()], vec!["sulfur trioxide".into()]]),
@@ -624,7 +626,7 @@ mod tests {
     #[test]
     fn blank_without_markers_becomes_short() {
         store();
-        let t = r#"{"format":"vershion/ditto","bank":{"questions":[{"type":"fill-in-the-blank","stem":"Bonding: 14","blanks":[["14"],["10"]]}]}}"#;
+        let t = r#"{"format":"queshion/ditto","bank":{"questions":[{"type":"fill-in-the-blank","stem":"Bonding: 14","blanks":[["14"],["10"]]}]}}"#;
         let r = import_text(t, None, 1, "n").unwrap();
         assert!(matches!(&r.doc.questions[0].kind, Kind::Short { sample } if sample == "14; 10"));
     }
@@ -632,7 +634,7 @@ mod tests {
     #[test]
     fn figure_box_is_cropped_and_tolerates_fences() {
         store();
-        let t = "```json\n{\"format\":\"vershion/ditto\",\"bank\":{\"questions\":[{\"type\":\"short-answer\",\"stem\":\"See\",\"figure\":{\"box\":[0.2,0.2,0.6,0.5]}},{\"type\":\"short-answer\",\"stem\":\"Bad\",\"figure\":{\"box\":[0,0,1,1]}}]}}\n```";
+        let t = "```json\n{\"format\":\"queshion/ditto\",\"bank\":{\"questions\":[{\"type\":\"short-answer\",\"stem\":\"See\",\"figure\":{\"box\":[0.2,0.2,0.6,0.5]}},{\"type\":\"short-answer\",\"stem\":\"Bad\",\"figure\":{\"box\":[0,0,1,1]}}]}}\n```";
         let r = import_text(t, Some(&page()), 1, "n").unwrap();
         assert_eq!(r.figures, 1);
         assert!(r.doc.questions[0].image.is_some() && r.doc.questions[1].image.is_none());

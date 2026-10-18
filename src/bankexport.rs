@@ -2,7 +2,7 @@
 //! PDF, answers included, that also carries the whole bank as data so it imports back
 //! losslessly; plus the plain JSON file. The PDF is laid out by the exam exporter
 //! (`export::render_pdf` on an [`ExamDoc`], read-only use of `layout` / `export`); the data
-//! rides along as an embedded file attachment (`vershion-bank.json`), appended to the
+//! rides along as an embedded file attachment (`queshion-bank.json`), appended to the
 //! finished PDF as an incremental update so the page content is exactly what the exporter
 //! drew. [`embedded_data`] reads it back (and Test Parrot's own `parrot.zip` attachment), so
 //! the import screen can take a bank-file PDF without the AI.
@@ -15,7 +15,9 @@ use crate::layout::{DocImage, DocQ, DocSection, ExamDoc};
 use crate::model::{Kind, PartKind, QKind, Question, QuestionBank};
 
 /// The attachment's file name inside the PDF.
-pub const ATTACHMENT: &str = "vershion-bank.json";
+/// Stable attachment name, deliberately unchanged by the verSHion rename: bank PDFs exported
+/// before the rename embed `queshion-bank.json` and must still import.
+pub const ATTACHMENT: &str = "queshion-bank.json";
 
 // ---------- the printable bank file ----------
 
@@ -431,7 +433,7 @@ pub fn bank_pdf(bank: &QuestionBank) -> Result<Vec<u8>, String> {
     attach_file(&pdf, ATTACHMENT, &data, &bank.name, "Teacher question bank containing answers; verSHion bank file")
 }
 
-/// Question data embedded in a PDF: a verSHion bank file's `vershion-bank.json`, or the
+/// Question data embedded in a PDF: a verSHion bank file's `queshion-bank.json`, or the
 /// `parrot.json` inside Test Parrot's `parrot.zip` attachment. Scans the file's
 /// `/Type /EmbeddedFile` streams (direct `/Length`, optional `/FlateDecode`).
 pub fn embedded_data(pdf: &[u8]) -> Option<Vec<u8>> {

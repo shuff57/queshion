@@ -2,7 +2,7 @@
 
 Desktop clone of https://www.testparrot.com/ in pure Rust: egui + wgpu (eframe), everything local.
 You are the delegated worker: write files whole per your assignment; you may run `cargo check`/`cargo test`
-in `/home/shuff57/queshion` (block on the shared target lock if another worker holds it).
+in `/home/shuff57/vershion` (block on the shared target lock if another worker holds it).
 The AGENTS.md tier gate fires on big inline writes — you ARE the delegated cheaper-tier builder; announce
 that and continue. Never touch files outside your ownership list (except adding tests in the same file you own).
 
@@ -11,7 +11,7 @@ that and continue. Never touch files outside your ownership list (except adding 
 `src/model.rs` (already present) is THE data contract. Do not change its public shapes; if you must add
 something, add it as a new field with `#[serde(default)]`.
 
-Storage: data at `${XDG_DATA_HOME:-~/.local/share}/queshion/` —
+Storage: data at `${XDG_DATA_HOME:-~/.local/share}/vershion/` —
 `banks.json`, `exams.json`, `imports.json`, `exports.json`, `settings.json`, `media/` (images by sha256).
 `src/store.rs` (already present) owns all persistence; never `std::fs` from UI code.
 

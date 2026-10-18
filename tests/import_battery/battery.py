@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""queShion import test battery: PDF -> pages -> live AI -> app parser -> score vs gold.
+"""verSHion import test battery: PDF -> pages -> live AI -> app parser -> score vs gold.
 
   python3 tests/import_battery/battery.py --pdf ~/Downloads/Ch4QuizKey.pdf --runs 3
-Needs: pdftoppm, ImageMagick `convert`, a saved AI key (Settings), target/release/queshion.
+Needs: pdftoppm, ImageMagick `convert`, a saved AI key (Settings), target/release/vershion.
 Never reads or prints the key; the app binary does the network call itself.
 """
 import argparse, concurrent.futures as cf, difflib, json, os, re, subprocess, sys, time
@@ -67,13 +67,13 @@ def make_controls(pages, out):
 
 def live(binary, img, out_txt, out_json, page_no=1):
     t0 = time.time()
-    r = sh([binary], {"QUESHION_CONVERT": str(img)})
+    r = sh([binary], {"VERSHION_CONVERT": str(img)})
     res = {"convert_ok": r.returncode == 0, "secs": round(time.time() - t0, 1), "err": r.stderr.strip()[:200]}
     out_txt.write_text(r.stdout)
     if r.returncode != 0:
         res["parse_ok"] = False; return res
     store = out_txt.parent / "store"; store.mkdir(exist_ok=True)
-    p = sh([binary], {"QUESHION_PARSE": str(out_txt), "QUESHION_PAGE": str(img), "QUESHION_PAGE_NO": str(page_no), "XDG_DATA_HOME": str(store)})
+    p = sh([binary], {"VERSHION_PARSE": str(out_txt), "VERSHION_PAGE": str(img), "VERSHION_PAGE_NO": str(page_no), "XDG_DATA_HOME": str(store)})
     res["parse_ok"] = p.returncode == 0
     if p.returncode == 0:
         out_json.write_text(p.stdout); d = json.loads(p.stdout)
@@ -159,14 +159,14 @@ def fit_stage(binary, out, runs, results):
     seen = {}
     for tag, p in crops:
         seen.setdefault(str(p), (tag, p))
-    store = out / "fit_store"; (store / "queshion").mkdir(parents=True, exist_ok=True)
+    store = out / "fit_store"; (store / "vershion").mkdir(parents=True, exist_ok=True)
     jobs = [(f"{tag}#{i+1}", p, True) for tag, p in seen.values() for i in range(runs)]
     photo = out / "controls" / "photo.png"
     if photo.exists():
         jobs += [(f"photo#{i+1}", photo, False) for i in range(runs)]
     def one(j):
         name, p, want = j
-        r = sh([binary], {"QUESHION_FIT": str(p), "XDG_DATA_HOME": str(store)})
+        r = sh([binary], {"VERSHION_FIT": str(p), "XDG_DATA_HOME": str(store)})
         o = r.stdout.strip()
         if want:
             return (f"fit {name}: editable Lewis figure, acetyl chloride preset", "HARD", "lewis-structures" in o and "acetyl chloride" in o, o[:120])
@@ -180,7 +180,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--pdf", required=True)
     ap.add_argument("--runs", type=int, default=3)
-    ap.add_argument("--binary", default=str(ROOT / "target/release/queshion"))
+    ap.add_argument("--binary", default=str(ROOT / "target/release/vershion"))
     ap.add_argument("--out", default=str(HERE / "_run"))
     ap.add_argument("--gold", default=str(HERE / "gold_ch4.json"))
     ap.add_argument("--no-controls", action="store_true")
@@ -220,8 +220,8 @@ def main():
         allchecks.append((f"page{pg}: same question kinds across {len(sigs)} runs", "SOFT", len(set(sigs)) == 1, str(sigs)))
 
     if not a.no_controls and a.fit:
-        key_dir = out / "fit_store" / "queshion"; key_dir.mkdir(parents=True, exist_ok=True)
-        src = Path.home() / ".local/share/queshion"
+        key_dir = out / "fit_store" / "vershion"; key_dir.mkdir(parents=True, exist_ok=True)
+        src = Path.home() / ".local/share/vershion"
         for f in ("settings.json", "ai-keys.json"):
             if (src / f).exists():
                 (key_dir / f).write_bytes((src / f).read_bytes()); (key_dir / f).chmod(0o600)
@@ -231,7 +231,7 @@ def main():
             (key_dir / "ai-keys.json").unlink(missing_ok=True)  # never leave a key copy behind
         report.append(("figure fitting", None, fc)); allchecks += [(f"fitting: {n}", t, ok, d) for n, t, ok, d in fc]
 
-    lines = ["# queShion import battery", f"PDF: {a.pdf}  ·  runs per page: {a.runs}", ""]
+    lines = ["# verSHion import battery", f"PDF: {a.pdf}  ·  runs per page: {a.runs}", ""]
     for tag, secs, cs in report:
         bad = [c for c in cs if not c[2]]
         lines.append(f"## {tag}  ({secs}s)  {len(cs)-len(bad)}/{len(cs)} pass")

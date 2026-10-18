@@ -2747,30 +2747,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
-name = "queshion"
-version = "0.1.0"
-dependencies = [
- "eframe",
- "egui",
- "equashion-egui",
- "equashion-font",
- "equashion-layout",
- "equashion-math",
- "equashion-render",
- "flate2",
- "image",
- "resvg",
- "rfd",
- "roxmltree",
- "serde",
- "serde_json",
- "sha2",
- "ttf-parser",
- "ureq",
- "zip",
-]
-
-[[package]]
 name = "quick-error"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3862,6 +3838,30 @@ dependencies = [
  "hashbrown 0.17.1",
  "png 0.18.1",
  "vello_common 0.2.0",
+]
+
+[[package]]
+name = "vershion"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "equashion-egui",
+ "equashion-font",
+ "equashion-layout",
+ "equashion-math",
+ "equashion-render",
+ "flate2",
+ "image",
+ "resvg",
+ "rfd",
+ "roxmltree",
+ "serde",
+ "serde_json",
+ "sha2",
+ "ttf-parser",
+ "ureq",
+ "zip",
 ]
 
 [[package]]

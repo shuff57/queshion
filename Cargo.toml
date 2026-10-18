@@ -1,9 +1,9 @@
 [package]
-name = "queshion"
+name = "vershion"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-description = "Turn anything into an exam: local question banks, exam layout, and AI conversion. queShion — a Rust clone of Test Parrot."
+description = "Turn anything into an exam: local question banks, exam layout, and AI conversion. verSHion — a Rust clone of Test Parrot."
 rust-version = "1.90"
 
 [dependencies]
