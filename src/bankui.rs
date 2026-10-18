@@ -13,7 +13,7 @@ use egui::Id as UiId;
 use crate::kit::{self, ViewMode};
 use crate::model::{Difficulty, Id, QKind, Question};
 use crate::screens::now_secs;
-use crate::{qedit, screens, theme, App, Screen};
+use crate::{qedit, screens, theme, time, App, Screen};
 
 // ---------- shared helpers (pub: other workers may use these) ----------
 
@@ -22,7 +22,7 @@ pub fn fmt_date(epoch: i64) -> String {
     if epoch <= 0 {
         return "—".to_string();
     }
-    let (y, m, d) = screens::civil_from_days(epoch.div_euclid(86_400));
+    let (y, m, d) = time::civil_from_days(epoch.div_euclid(86_400));
     const MONTHS: [&str; 12] = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];

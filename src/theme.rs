@@ -535,12 +535,4 @@ mod tests {
         let prop = &defs.families[&FontFamily::Proportional];
         assert_eq!(prop.first().map(String::as_str), Some("SourceSans3-Regular"));
     }
-
-    /// The date math behind the Imports list: known dates (math lives in screens.rs).
-    #[test]
-    fn civil_days_matches_known_dates() {
-        assert_eq!(crate::screens::civil_from_days(0), (1970, 1, 1));
-        assert_eq!(crate::screens::civil_from_days(19_468), (2023, 4, 21));
-        assert_eq!(crate::screens::civil_from_days(19_782), (2024, 2, 29)); // leap day
-    }
 }

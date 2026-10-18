@@ -236,7 +236,7 @@ pub fn backup_dir() -> PathBuf {
 
 /// "20261017-235201" for a unix time (UTC), for backup file names.
 pub fn backup_stamp(secs: i64) -> String {
-    let (y, m, d) = crate::screens::civil_from_days(secs.div_euclid(86400));
+    let (y, m, d) = crate::time::civil_from_days(secs.div_euclid(86400));
     let t = secs.rem_euclid(86400);
     format!("{y:04}{m:02}{d:02}-{:02}{:02}{:02}", t / 3600, t % 3600 / 60, t % 60)
 }

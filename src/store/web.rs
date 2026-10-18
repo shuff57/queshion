@@ -128,9 +128,7 @@ impl IdbBackend {
 
         // Ask the browser to keep this origin's data when it is under pressure.
         if let Some(nav) = web_sys::window().map(|w| w.navigator()) {
-            if let Ok(storage) = nav.storage() {
-                let _ = storage.persist();
-            }
+            let _ = nav.storage().persist();
         }
 
         Ok(IdbBackend { inner })

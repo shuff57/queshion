@@ -40,6 +40,7 @@ pub mod richtext;
 pub mod screens;
 pub mod store;
 pub mod theme;
+pub mod time;
 pub mod tidy;
 pub mod wysiwyg;
 
