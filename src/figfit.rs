@@ -118,6 +118,67 @@ pub fn fit(crop: &[u8], context: &str, cfg: &AiCfg) -> Result<Option<Fit>, Strin
     Ok(None)
 }
 
+/// Browser version of [`fit`], awaiting each model round trip instead of blocking.
+#[cfg(target_arch = "wasm32")]
+async fn ask_json_async(images: &[&[u8]], cfg: &AiCfg, prompt: &str) -> Result<Value, String> {
+    let reply = crate::ai::ask_images_async(images, cfg, prompt, 0.0).await?;
+    crate::ditto::json_object(&reply).ok_or_else(|| "the model did not answer with JSON".to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn fit_async(crop: &[u8], context: &str, cfg: &AiCfg) -> Result<Option<Fit>, String> {
+    if crop.is_empty() {
+        return Ok(None);
+    }
+    let pick = ask_json_async(
+        &[crop],
+        cfg,
+        &format!(
+            "This picture was cut from a test question: \"{}\".\nWhich generator can redraw THIS picture closely (same kind of drawing and same subject, not just the same subject area)?\n{}\n\nAnswer JSON only: {{\"id\": \"<generator id>\" or null, \"reason\": \"...\"}}. Use null unless one clearly fits.",
+            context.chars().take(200).collect::<String>(),
+            catalog()
+        ),
+    )
+    .await?;
+    debug(&format!("pick: {pick}"));
+    let Some(id) = pick.get("id").and_then(Value::as_str) else { return Ok(None) };
+    let Some(def) = figures::registry().into_iter().find(|d| d.id == id) else { return Ok(None) };
+
+    let mut feedback = String::new();
+    for _round in 0..3 {
+        let spec = ask_json_async(
+            &[crop],
+            cfg,
+            &format!(
+                "Set the \"{}\" generator so it redraws this picture. Question text: \"{}\".\nParameters:\n{}\n\nAnswer JSON only: {{\"params\": {{...}}}}, listing only the parameters that must differ from their defaults, with values of the stated kind. When a parameter offers a list of options and one option names what the picture shows, choose that option instead of typing free text.{feedback}",
+                def.title,
+                context.chars().take(200).collect::<String>(),
+                param_help(&def)
+            ),
+        )
+        .await?;
+        debug(&format!("params: {spec}"));
+        let spec_json = spec.get("params").cloned().unwrap_or(Value::Null).to_string();
+        let Ok((spec, png)) = render(&def, spec.get("params").unwrap_or(&Value::Null)) else { break };
+        let verdict = ask_json_async(
+            &[crop, &png],
+            cfg,
+            "Image 1 is the original picture. Image 2 is a redraw made by a generator. Do they show the same thing: same molecule or structure, same labels and values, same layout? Ignore line thickness, font and exact position.\nAnswer JSON only: {\"same\": true or false, \"differences\": \"what is different, as a short instruction for fixing the parameters\"}",
+        )
+        .await?;
+        debug(&format!("verdict: {verdict}"));
+        if verdict.get("same").and_then(Value::as_bool) == Some(true) {
+            return Ok(Some(Fit { spec, png }));
+        }
+        feedback.push_str(&format!(
+            "\nAn earlier attempt with parameters {} was compared with the original and differed: {}",
+            spec_json,
+            verdict.get("differences").and_then(Value::as_str).unwrap_or("it did not match")
+        ));
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

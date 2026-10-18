@@ -6,8 +6,19 @@ license = "MIT"
 description = "Turn anything into an exam: local question banks, exam layout, and AI conversion. verSHion — a Rust clone of Test Parrot."
 rust-version = "1.90"
 
+[[bin]]
+name = "vershion"
+path = "src/main.rs"
+
+[[bin]]
+name = "vershion-web"
+path = "src/web_main.rs"
+
 [dependencies]
 egui = "0.36"
+log = "0.4"
+# std clocks panic on wasm32; this is std's clock natively and the browser's in a page.
+web-time = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp"] }

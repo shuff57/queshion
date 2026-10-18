@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>verSHion</title>
+  <link data-trunk rel="copy-file" href="assets/loading-logo.svg" />
+  <style>
+    :root { color-scheme: light dark; }
+    html, body { margin: 0; height: 100%; overflow: hidden; }
+    body {
+      background: #f7f4ed;
+      color: #2b211c;
+      font-family: "Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    @media (prefers-color-scheme: dark) {
+      body { background: #211c18; color: #ece4dc; }
+    }
+    #vershion_canvas { display: block; width: 100vw; height: 100vh; }
+    #vershion_loading {
+      position: fixed; inset: 0; z-index: 2;
+      display: grid; place-items: center; text-align: center;
+      background: inherit;
+    }
+    #vershion_loading img {
+      width: min(52vw, 340px); height: auto;
+      max-height: 60vh;
+    }
+    #vershion_loading p { margin: 12px 24px; max-width: 46ch; line-height: 1.45; }
+    @media (prefers-reduced-motion: reduce) {
+      #vershion_loading img { animation: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div id="vershion_loading">
+    <div>
+      <img src="loading-logo.svg" alt="Loading verSHion" />
+      <noscript><p>verSHion needs JavaScript and WebGL2.</p></noscript>
+    </div>
+  </div>
+  <canvas id="vershion_canvas"></canvas>
+  <link data-trunk rel="rust" data-bin="vershion-web" data-wasm-opt="z" data-weak-refs />
+</body>
+</html>

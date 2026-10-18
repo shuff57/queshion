@@ -1,4 +1,5 @@
 /target
+/dist
 /.playwright-cli
 /.msgbox
 

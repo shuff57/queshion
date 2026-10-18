@@ -331,6 +331,8 @@ impl App {
         theme::begin_frame(self.settings.dark);
         theme::set_area(ui.max_rect());
         let ctx = ui.ctx().clone();
+        #[cfg(target_arch = "wasm32")]
+        crate::platform::set_repaint(ctx.clone());
         if !self.qa_steps.is_empty() {
             ctx.request_repaint_after(std::time::Duration::from_millis(16)); // keep the VERSHION_SCRIPT clock advancing
         }

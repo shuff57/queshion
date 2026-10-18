@@ -59,8 +59,8 @@ fn edit_id() -> egui::Id { egui::Id::NULL.with("examui_edit") }
 fn export_id() -> egui::Id { egui::Id::NULL.with("examui_export") }
 
 fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
 }
@@ -488,7 +488,7 @@ impl crate::App {
                             app.exam = Some(id.clone());
                             app.screen = crate::Screen::ExamEdit(id);
                         }
-                        kit::view_toggle(ui, &mut st.mode);
+                        kit::view_toggle(ui, &mut st.mode, "exam_view");
                     });
                 });
                 ui.add_space(14.0);
@@ -3148,8 +3148,8 @@ fn shuffled_answer_order(q: &model::Question, current: &[usize], rnd: &mut impl 
 
 /// A time-seeded LCG for the editor's one-off shuffles.
 fn editor_rng() -> impl FnMut() -> u64 {
-    let t = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let t = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(7);
     lcg(t)
@@ -5157,8 +5157,8 @@ fn do_export_inner(
     }
 
     // Deterministic per-run base seed: exam-id hash mixed with wall time.
-    let t = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let t = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0);
     let base_seed = fnv1a(exam.id.as_bytes()) ^ t;

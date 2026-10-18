@@ -104,14 +104,14 @@ pub fn chip_toggle(ui: &mut Ui, label: &str, on: bool) -> egui::Response {
 }
 
 /// Cards/List two-segment pill. Returns true when the mode changed.
-pub fn view_toggle(ui: &mut Ui, mode: &mut ViewMode) -> bool {
+pub fn view_toggle(ui: &mut Ui, mode: &mut ViewMode, salt: &str) -> bool {
     let size = Vec2::new(72.0, 30.0);
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
     ui.painter().rect(rect, pill_radius(30.0), theme::card(), Stroke::new(1.0, theme::border()), StrokeKind::Inside);
     let mut changed = false;
     for (i, m) in [ViewMode::Cards, ViewMode::List].into_iter().enumerate() {
         let seg = Rect::from_min_size(rect.min + Vec2::new(i as f32 * 36.0, 0.0), Vec2::new(36.0, 30.0)).shrink(2.0);
-        let resp = ui.interact(seg, ui.id().with(("view_seg", i)), Sense::click());
+        let resp = ui.interact(seg, ui.id().with((salt, "view_seg", i)), Sense::click());
         let on = *mode == m;
         if on {
             ui.painter().rect_filled(seg, pill_radius(26.0), theme::accent_faded());

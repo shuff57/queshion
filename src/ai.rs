@@ -174,16 +174,46 @@ fn home_dir() -> Option<std::path::PathBuf> {
     std::env::var_os("HOME").map(std::path::PathBuf::from)
 }
 
+/// Browser keys live in memory for the page's lifetime: a page cannot write a protected file,
+/// and a key must never land in IndexedDB/localStorage.
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static WEB_KEYS: std::cell::RefCell<Keys> = std::cell::RefCell::new(Keys::default());
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn load_keys() -> Keys {
     load_keys_in(&crate::store::store_dir())
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn load_keys() -> Keys {
+    WEB_KEYS.with(|k| k.borrow().clone())
 }
 pub fn load_keys_in(dir: &std::path::Path) -> Keys {
     std::fs::read(dir.join(KEYS_FILE)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
 /// Saves (`Some`) or removes (`None`) one provider's key.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn set_key(provider: &str, key: Option<&str>) -> Result<(), String> {
     set_key_in(&crate::store::store_dir(), provider, key)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn set_key(provider: &str, key: Option<&str>) -> Result<(), String> {
+    WEB_KEYS.with(|keys| {
+        let mut keys = keys.borrow_mut();
+        match key.map(str::trim).filter(|k| !k.is_empty()) {
+            Some(k) => {
+                keys.0.insert(provider.to_string(), k.to_string());
+            }
+            None => {
+                keys.0.remove(provider);
+            }
+        }
+    });
+    Ok(())
 }
 
 /// Atomic write (temp + rename) of the whole map, mode 0600 on unix from creation.
@@ -278,10 +308,44 @@ pub fn test_connection(cfg: &AiCfg) -> Result<(), String> {
     }
 }
 
-/// Browser placeholder; the fetch probe lands with the web entry.
+/// Browser probe: the same GET, awaited through `fetch`.
 #[cfg(target_arch = "wasm32")]
-pub fn test_connection(_cfg: &AiCfg) -> Result<(), String> {
-    Err("Testing the connection is not available in this build yet.".to_string())
+pub async fn test_connection_async(cfg: &AiCfg) -> Result<(), String> {
+    let base = cfg.base.trim_end_matches('/');
+    if base.is_empty() {
+        return Err("Set a base URL first.".to_string());
+    }
+    let url = if cfg.provider == "ollama" { format!("{base}/api/tags") } else { format!("{base}/models") };
+    let status = fetch_status_async(&url, request_key(cfg).as_deref()).await?;
+    match status {
+        200..=299 => Ok(()),
+        401 | 403 => Err("Key rejected (401).".to_string()),
+        404 => Err("Reached the server, but it has no /models endpoint (404). The key may still work.".to_string()),
+        n => Err(format!("The server answered {n}.")),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn fetch_status_async(url: &str, key: Option<&str>) -> Result<u16, String> {
+    use wasm_bindgen::JsCast as _;
+    let js = |e: wasm_bindgen::JsValue| format!("{e:?}");
+    let headers = web_sys::Headers::new().map_err(js)?;
+    if let Some(k) = key {
+        headers.set("Authorization", &format!("Bearer {k}")).map_err(js)?;
+    }
+    let init = web_sys::RequestInit::new();
+    init.set_method("GET");
+    init.set_mode(web_sys::RequestMode::Cors);
+    init.set_headers(&headers);
+    let signal = web_sys::AbortSignal::timeout_with_u32(30_000);
+    init.set_signal(Some(&signal));
+    let window = web_sys::window().ok_or("no window")?;
+    let promise = window.fetch_with_str_and_init(url, &init);
+    let resp = wasm_bindgen_futures::JsFuture::from(promise).await.map_err(|_| {
+        format!("Can't reach {url}. The server may be off, or it does not allow requests from this page (CORS).")
+    })?;
+    let resp: web_sys::Response = resp.dyn_into().map_err(|_| "not a response".to_string())?;
+    Ok(resp.status())
 }
 
 /// One pending conversion job; `Default` starts with none.
@@ -307,7 +371,7 @@ impl Ai {
         });
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(async move {
-            let _ = tx.send(convert_page(&bytes, &mime, &hint, &cfg, page_no));
+            let _ = tx.send(convert_page_async(&bytes, &mime, &hint, &cfg, page_no).await);
             ctx.request_repaint();
         });
     }
@@ -480,10 +544,165 @@ fn post_json(url: &str, body: Value, key: Option<&str>) -> Result<Value, String>
     Ok(v)
 }
 
-/// Browser transport placeholder; the fetch implementation lands with the web entry.
+/// The blocking path is not used in the browser; async callers use [`post_json_async`].
 #[cfg(target_arch = "wasm32")]
 fn post_json(url: &str, _body: Value, _key: Option<&str>) -> Result<Value, String> {
-    Err(format!("AI conversion is not available in this build yet (cannot reach {url})"))
+    Err(format!("This build uses the async browser transport (cannot reach {url})"))
+}
+
+/// Browser transport: one JSON POST with CORS and a 300 s timeout.
+#[cfg(target_arch = "wasm32")]
+async fn post_json_async(url: &str, body: &Value, key: Option<&str>) -> Result<Value, String> {
+    use wasm_bindgen::JsCast as _;
+    let js = |e: wasm_bindgen::JsValue| format!("{e:?}");
+    let headers = web_sys::Headers::new().map_err(js)?;
+    headers.set("Content-Type", "application/json").map_err(js)?;
+    if let Some(k) = key {
+        headers.set("Authorization", &format!("Bearer {k}")).map_err(js)?;
+    }
+    let init = web_sys::RequestInit::new();
+    init.set_method("POST");
+    init.set_mode(web_sys::RequestMode::Cors);
+    init.set_body(&wasm_bindgen::JsValue::from_str(&body.to_string()));
+    init.set_headers(&headers);
+    let signal = web_sys::AbortSignal::timeout_with_u32(300_000);
+    init.set_signal(Some(&signal));
+    let window = web_sys::window().ok_or("no window")?;
+    let promise = window.fetch_with_str_and_init(url, &init);
+    let resp = wasm_bindgen_futures::JsFuture::from(promise).await.map_err(|_| {
+        // A page cannot tell a CORS refusal from a server that is not there.
+        format!("Can't reach {url}. The server may be off, or it does not allow requests from this page (CORS).")
+    })?;
+    let resp: web_sys::Response = resp.dyn_into().map_err(|_| "not a response".to_string())?;
+    let status = resp.status();
+    let text = wasm_bindgen_futures::JsFuture::from(resp.text().map_err(js)?).await.map_err(js)?.as_string().unwrap_or_default();
+    let v: Value = serde_json::from_str(&text)
+        .map_err(|e| format!("{url} did not answer with JSON ({e}): {}", text.chars().take(160).collect::<String>()))?;
+    if !(200..300).contains(&status) {
+        let msg = v.pointer("/error/message").and_then(Value::as_str).or_else(|| v.get("error").and_then(Value::as_str)).unwrap_or("request failed");
+        return Err(format!("{url} answered {status}: {msg}"));
+    }
+    Ok(v)
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn ollama_chat_async(cfg: &AiCfg, prompt: &str, images: &[&[u8]], temp: f64) -> Result<String, String> {
+    let url = format!("{}/api/chat", cfg.base.trim_end_matches('/'));
+    let body = json!({
+        "model": cfg.model,
+        "messages": [{"role": "user", "content": prompt, "images": images.iter().map(|b| base64_encode(b)).collect::<Vec<_>>()}],
+        "stream": false,
+        "format": "json",
+        "options": {"temperature": temp},
+    });
+    let reply = post_json_async(&url, &body, None).await?;
+    reply
+        .pointer("/message/content")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "The Ollama reply had no message content.".to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn openai_chat_async(cfg: &AiCfg, prompt: &str, mime: &str, images: &[&[u8]], temp: f64) -> Result<String, String> {
+    let base = cfg.base.trim_end_matches('/');
+    if base.is_empty() {
+        return Err("Set a base URL for the custom AI endpoint in Settings.".to_string());
+    }
+    let url = format!("{base}/chat/completions");
+    let mut content = vec![json!({"type": "text", "text": prompt})];
+    for b in images {
+        content.push(json!({"type": "image_url", "image_url": {"url": format!("data:{mime};base64,{}", base64_encode(b))}}));
+    }
+    let body = json!({
+        "model": cfg.model,
+        "stream": false,
+        "temperature": temp,
+        "response_format": {"type": "json_object"},
+        "messages": [{"role": "user", "content": content}],
+    });
+    let key = request_key(cfg);
+    let reply = post_json_async(&url, &body, key.as_deref()).await?;
+    reply
+        .pointer("/choices/0/message/content")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "The reply had no message content.".to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn transcribe_at_async(bytes: &[u8], mime: &str, cfg: &AiCfg, prompt: &str, temp: f64) -> Result<String, String> {
+    match cfg.provider.as_str() {
+        "ollama" => ollama_chat_async(cfg, prompt, &[bytes], temp).await,
+        _ => openai_chat_async(cfg, prompt, mime, &[bytes], temp).await,
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn transcribe_checked_async(bytes: &[u8], mime: &str, cfg: &AiCfg, prompt: &str) -> Result<String, String> {
+    let mut reply = transcribe_at_async(bytes, mime, cfg, prompt, 0.0).await?;
+    if crate::ditto::json_error(&reply).is_none() {
+        return Ok(reply);
+    }
+    for attempt in 1..=2 {
+        let again = format!(
+            "{prompt}\n\nYour previous reply could not be used: {}. Answer again with ONLY the JSON object.",
+            crate::ditto::json_error(&reply).unwrap_or_default()
+        );
+        match transcribe_at_async(bytes, mime, cfg, &again, 0.2 * attempt as f64).await {
+            Ok(r) => {
+                reply = r;
+                if crate::ditto::json_error(&reply).is_none() {
+                    break;
+                }
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(reply)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn ask_images_async(images: &[&[u8]], cfg: &AiCfg, prompt: &str, temp: f64) -> Result<String, String> {
+    match cfg.provider.as_str() {
+        "ollama" => ollama_chat_async(cfg, prompt, images, temp).await,
+        _ => openai_chat_async(cfg, prompt, "image/png", images, temp).await,
+    }
+}
+
+/// The browser version of [`convert_page`]: same parse and crop path, awaited transport.
+#[cfg(target_arch = "wasm32")]
+pub async fn convert_page_async(bytes: &[u8], mime: &str, hint: &str, cfg: &AiCfg, page_no: usize) -> Result<Converted, String> {
+    let raw = transcribe_checked_async(bytes, mime, cfg, &transcription_prompt(hint)).await?;
+    let text = extract_import_text(&raw);
+    if text.is_empty() {
+        return Err("The model returned no text.".to_string());
+    }
+    if !crate::ditto::is_ditto(&text) {
+        let doc = crate::formats::detect_and_parse(text.as_bytes(), "converted")?;
+        return Ok(Converted { doc, warnings: Vec::new(), cropped: 0, redrawn: 0 });
+    }
+    let mut r = crate::ditto::import_text(&text, Some(bytes), page_no, "converted")?;
+    let mut redrawn = 0;
+    for (i, q) in r.doc.questions.iter_mut().enumerate() {
+        if q.image.is_none() || q.figure.is_some() {
+            continue;
+        }
+        let crop = crate::store::read_media(&q.image.as_ref().expect("checked").file).unwrap_or_default();
+        match crate::figfit::fit_async(&crop, &q.stem, cfg).await {
+            Ok(Some(f)) => match crate::store::put_image(&f.png) {
+                Ok(img) => {
+                    q.image = Some(img);
+                    q.figure = Some(f.spec);
+                    redrawn += 1;
+                }
+                Err(e) => r.warnings.push(format!("Question {}: couldn't save the redrawn figure ({e}).", i + 1)),
+            },
+            Ok(None) => r.warnings.push(format!("Question {}: no Figures-tab generator matched its picture, kept the cropped image.", i + 1)),
+            Err(e) => r.warnings.push(format!("Question {}: figure fitting failed ({e}), kept the cropped image.", i + 1)),
+        }
+    }
+    Ok(Converted { doc: r.doc, warnings: r.warnings, cropped: r.figures, redrawn })
 }
 
 /// Strips an accidental markdown fence (with its language tag) and outer whitespace; the
