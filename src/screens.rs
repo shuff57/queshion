@@ -1026,6 +1026,101 @@ impl crate::App {
     /// Settings > AI: masked key entry, save/remove, status and a connection test for the
     /// current keyed provider. The key lives only in the text buffer until saved (then it is
     /// cleared), and in `ai-keys.json`; it is never shown, logged or put in a toast.
+    /// Model picker: a dropdown filled by "Find models", plus a free-text name for models the
+    /// server does not list.
+    fn draw_model_picker(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        use crate::kit;
+        let cfg = crate::ai::AiCfg::from(&self.settings);
+        type Models = std::sync::Arc<std::sync::Mutex<Option<Result<Vec<String>, String>>>>;
+        let id_models = egui::Id::new("ai_models_list");
+        let id_for = egui::Id::new("ai_models_for");
+        let id_probe = egui::Id::new("ai_models_probe");
+        let id_msg = egui::Id::new("ai_models_msg");
+        let probe: Models = ctx.data_mut(|d| d.get_temp(id_probe)).unwrap_or_default();
+        let mut msg: Option<(String, bool)> = ctx.data_mut(|d| d.get_temp(id_msg));
+        let target = format!("{}|{}", cfg.provider, cfg.base);
+        if let Some(r) = probe.lock().ok().and_then(|mut g| g.take()) {
+            match r {
+                Ok(models) => {
+                    let n = models.len();
+                    ctx.data_mut(|d| {
+                        d.insert_temp(id_models, models);
+                        d.insert_temp(id_for, target.clone());
+                    });
+                    msg = Some((format!("Found {n} model{}.", if n == 1 { "" } else { "s" }), false));
+                }
+                Err(e) => msg = Some((e, true)),
+            }
+        }
+        let same = ctx.data_mut(|d| d.get_temp::<String>(id_for)).as_deref() == Some(target.as_str());
+        let models: Vec<String> = if same { ctx.data_mut(|d| d.get_temp(id_models)).unwrap_or_default() } else { Vec::new() };
+        ui.horizontal(|ui| {
+            ui.label(theme::text("Model"));
+            let mut chosen = self.settings.ai_model.trim().to_string();
+            let shown = if chosen.is_empty() { format!("{} (default)", cfg.model) } else { chosen.clone() };
+            egui::ComboBox::from_id_salt("ai_model_combo")
+                .width(300.0)
+                .selected_text(shown)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut chosen, String::new(), format!("Provider default ({})", cfg.model));
+                    for m in &models {
+                        ui.selectable_value(&mut chosen, m.clone(), m.as_str());
+                    }
+                    if models.is_empty() {
+                        ui.label(theme::muted("Press Find models to list this server’s models.").size(11.5));
+                    }
+                });
+            if chosen.as_str() != self.settings.ai_model.trim() {
+                self.settings.ai_model = chosen;
+            }
+            if kit::ghost_button(ui, "Find models").clicked() {
+                msg = Some(("Looking for models…".to_string(), false));
+                let probe2 = probe.clone();
+                let ctx2 = ctx.clone();
+                let cfg2 = cfg.clone();
+                #[cfg(not(target_arch = "wasm32"))]
+                std::thread::spawn(move || {
+                    let r = crate::ai::list_models(&cfg2);
+                    if let Ok(mut g) = probe2.lock() {
+                        *g = Some(r);
+                    }
+                    ctx2.request_repaint();
+                });
+                #[cfg(target_arch = "wasm32")]
+                wasm_bindgen_futures::spawn_local(async move {
+                    let r = crate::ai::list_models_async(&cfg2).await;
+                    if let Ok(mut g) = probe2.lock() {
+                        *g = Some(r);
+                    }
+                    ctx2.request_repaint();
+                });
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label(theme::muted("or type a model name").size(12.0));
+            ui.add(
+                egui::TextEdit::singleline(&mut self.settings.ai_model)
+                    .desired_width(300.0)
+                    .hint_text(cfg.model.as_str()),
+            );
+        });
+        if let Some((m, bad)) = &msg {
+            let t = if *bad { theme::muted(m.clone()).color(theme::bad()) } else { theme::muted(m.clone()) };
+            ui.label(t.size(12.0));
+        }
+        ctx.data_mut(|d| {
+            d.insert_temp(id_probe, probe);
+            match msg {
+                Some(m) => {
+                    d.insert_temp(id_msg, m);
+                }
+                None => {
+                    d.remove::<(String, bool)>(id_msg);
+                }
+            }
+        });
+    }
+
     fn draw_ai_key_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         use crate::kit;
         let cfg = crate::ai::AiCfg::from(&self.settings);
@@ -1221,14 +1316,7 @@ impl crate::App {
                             );
                         });
                     }
-                    ui.horizontal(|ui| {
-                        ui.label(theme::text("Model"));
-                        ui.add(
-                            egui::TextEdit::singleline(&mut app.settings.ai_model)
-                                .desired_width(360.0)
-                                .hint_text("gemma4:31b"),
-                        );
-                    });
+                    app.draw_model_picker(ui, ctx);
                     ui.add_space(6.0);
                     app.draw_ai_key_ui(ui, ctx);
                     ui.add_space(6.0);

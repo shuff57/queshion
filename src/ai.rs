@@ -397,6 +397,93 @@ async fn fetch_status_async(url: &str, key: Option<&str>) -> Result<u16, String>
     Ok(resp.status())
 }
 
+/// Model ids from a `/models` (OpenAI shape) or `/api/tags` (Ollama) reply.
+pub fn parse_models(provider: &str, v: &Value) -> Vec<String> {
+    let (rows, key) = if provider == "ollama" {
+        (v["models"].as_array(), "name")
+    } else {
+        (v["data"].as_array(), "id")
+    };
+    let mut ids: Vec<String> = rows
+        .into_iter()
+        .flatten()
+        .filter_map(|m| m.get(key).and_then(Value::as_str))
+        .map(str::to_string)
+        .collect();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+/// The models the server lists. Blocking; call from a thread.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn list_models(cfg: &AiCfg) -> Result<Vec<String>, String> {
+    let base = cfg.base.trim_end_matches('/');
+    if base.is_empty() {
+        return Err("Set a base URL first.".to_string());
+    }
+    let url = if cfg.provider == "ollama" { format!("{base}/api/tags") } else { format!("{base}/models") };
+    let mut req = agent().get(&url);
+    if let Some(k) = request_key(cfg) {
+        req = req.header("Authorization", &format!("Bearer {k}"));
+    }
+    let mut resp = req.call().map_err(|_| format!("Can't reach {base}."))?;
+    let status = resp.status().as_u16();
+    let text = resp.body_mut().read_to_string().map_err(|e| format!("Bad reply from {base}: {e}"))?;
+    if !(200..300).contains(&status) {
+        return Err(format!("The server answered {status}."));
+    }
+    let v: Value = serde_json::from_str(&text).map_err(|e| format!("{base} did not answer with JSON ({e})"))?;
+    Ok(parse_models(&cfg.provider, &v))
+}
+
+/// Browser model list: the same GET, awaited through `fetch`.
+#[cfg(target_arch = "wasm32")]
+pub async fn list_models_async(cfg: &AiCfg) -> Result<Vec<String>, String> {
+    let base = cfg.base.trim_end_matches('/');
+    if base.is_empty() {
+        return Err("Set a base URL first.".to_string());
+    }
+    let url = if cfg.provider == "ollama" { format!("{base}/api/tags") } else { format!("{base}/models") };
+    let v = get_json_async(&url, request_key(cfg).as_deref())
+        .await
+        .map_err(|e| cloud_error_hint(cfg, e))?;
+    Ok(parse_models(&cfg.provider, &v))
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn get_json_async(url: &str, key: Option<&str>) -> Result<Value, String> {
+    use wasm_bindgen::JsCast as _;
+    let js = |e: wasm_bindgen::JsValue| format!("{e:?}");
+    let headers = web_sys::Headers::new().map_err(js)?;
+    if let Some(k) = key {
+        headers.set("Authorization", &format!("Bearer {k}")).map_err(js)?;
+    }
+    let init = web_sys::RequestInit::new();
+    init.set_method("GET");
+    init.set_mode(web_sys::RequestMode::Cors);
+    init.set_headers(&headers);
+    let signal = web_sys::AbortSignal::timeout_with_u32(30_000);
+    init.set_signal(Some(&signal));
+    let window = web_sys::window().ok_or("no window")?;
+    let resp = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str_and_init(url, &init))
+        .await
+        .map_err(|_| {
+            format!("Can't reach {url}. The server may be off, or it does not allow requests from this page (CORS).")
+        })?;
+    let resp: web_sys::Response = resp.dyn_into().map_err(|_| "not a response".to_string())?;
+    let status = resp.status();
+    let text = wasm_bindgen_futures::JsFuture::from(resp.text().map_err(js)?)
+        .await
+        .map_err(js)?
+        .as_string()
+        .unwrap_or_default();
+    if !(200..300).contains(&status) {
+        return Err(format!("{url} answered {status}."));
+    }
+    serde_json::from_str(&text).map_err(|e| format!("{url} did not answer with JSON ({e})"))
+}
+
 /// One pending conversion job; `Default` starts with none.
 #[derive(Default)]
 pub struct Ai {
@@ -939,5 +1026,14 @@ mod tests {
         let local = AiCfg::from(&settings("ollama", "", ""));
         assert!(resolve_key(&local, &saved, &env_set, Some(&home)).is_none());
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn parses_model_lists() {
+        let openai = json!({"data":[{"id":"b"},{"id":"a"},{"id":"a"}]});
+        assert_eq!(parse_models("cloud", &openai), vec!["a".to_string(), "b".to_string()]);
+        let ollama = json!({"models":[{"name":"z"},{"name":"y"}]});
+        assert_eq!(parse_models("ollama", &ollama), vec!["y".to_string(), "z".to_string()]);
+        assert!(parse_models("openrouter", &json!({})).is_empty());
     }
 }
