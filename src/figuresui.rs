@@ -1774,7 +1774,7 @@ impl Workspace {
             }
             // Value.
             let unit_txt: String = if r.unit == "$unit" { self.params.s("unit").to_string() } else { r.unit.to_string() };
-            let mut shown = String::new();
+            let shown;
             if let Some(eq) = r.equals {
                 ui.add_sized([88.0, 20.0], egui::Label::new(theme::muted(format!("= {eq}")).size(12.0)));
                 shown = computed.get(r.value_key).cloned().unwrap_or_default();

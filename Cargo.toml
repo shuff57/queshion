@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 description = "Turn anything into an exam: local question banks, exam layout, and AI conversion. verSHion — a Rust clone of Test Parrot."
-rust-version = "1.90"
+rust-version = "1.92"
 
 [[bin]]
 name = "vershion"
@@ -19,6 +19,8 @@ egui = "0.36"
 log = "0.4"
 # std clocks panic on wasm32; this is std's clock natively and the browser's in a page.
 web-time = "1"
+# Pure-Rust PDF rasterizer: page previews and PDF imports on the web (no pdftoppm).
+hayro = { version = "0.8", default-features = false, features = ["embed-fonts", "embed-cmaps"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp"] }

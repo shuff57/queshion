@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 
 /// Grid geometry of the last render (for interaction handles).
 #[derive(Clone, Debug, Default)]
-pub struct Layout { pub w: f64, pub gx: f64, pub p1_y: f64, pub gy: f64, pub cell: f64, pub nc: usize, pub nr: usize, pub gsz: f64, pub ox: f64, pub pb_y: f64 }
+pub struct Layout { pub gx: f64, pub p1_y: f64, pub gy: f64, pub cell: f64, pub nc: usize, pub nr: usize, pub ox: f64, pub pb_y: f64 }
 
 thread_local! {
     static LAST: std::cell::RefCell<Option<Layout>> = const { std::cell::RefCell::new(None) };
@@ -296,8 +296,6 @@ fn gamete_parts(g: &[char], cross: Cross) -> Vec<Part> {
     }
     v
 }
-
-fn parts_len(p: &[Part]) -> usize { p.iter().map(|x| x.s.chars().count()).sum() }
 
 struct Child {
     genes: Vec<Pair>,
@@ -752,7 +750,7 @@ pub fn render(p: &Params) -> String {
         }
     }
     d.rect(gx, gy, cell * nc as f64, grid_h, "none", INK, if p.b("outline_heavy") { 3.0 } else { 1.6 });
-    LAST.with(|l| *l.borrow_mut() = Some(Layout { w, gx, p1_y, gy, cell, nc, nr, gsz, ox: side_cx - 30.0, pb_y: gy + grid_h / 2.0 }));
+    LAST.with(|l| *l.borrow_mut() = Some(Layout { gx, p1_y, gy, cell, nc, nr, ox: side_cx - 30.0, pb_y: gy + grid_h / 2.0 }));
     for i in 1..nc { d.line(gx + cell * i as f64, gy, gx + cell * i as f64, gy + grid_h, INK, 1.6); }
     for j in 1..nr { d.line(gx, gy + cell * j as f64, gx + cell * nc as f64, gy + cell * j as f64, INK, 1.6); }
 

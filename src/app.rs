@@ -46,6 +46,26 @@ pub enum Screen {
     ExamEdit(Id),
 }
 
+/// What Ctrl/Cmd+N creates on the current screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shortcut {
+    NewBank,
+    NewExam,
+}
+
+/// Ctrl/Cmd+N starts a new exam on Home/Exams and a new bank on Banks. Editors and an open
+/// question draft keep the key for themselves.
+pub fn shortcut_action(screen: &Screen, has_draft: bool) -> Option<Shortcut> {
+    if has_draft {
+        return None;
+    }
+    match screen {
+        Screen::Home | Screen::Exams => Some(Shortcut::NewExam),
+        Screen::Banks => Some(Shortcut::NewBank),
+        _ => None,
+    }
+}
+
 pub struct App {
     pub store: Store,
     pub screen: Screen,
@@ -327,6 +347,32 @@ impl App {
         }
     }
 
+    /// Ctrl/Cmd+N: start the item that matches the current screen (see [`shortcut_action`]).
+    fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        let Some(action) = shortcut_action(&self.screen, self.qedit.is_some()) else {
+            return;
+        };
+        if ctx.egui_wants_keyboard_input() {
+            return;
+        }
+        let pressed = ctx.input_mut(|i| {
+            i.consume_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::N))
+        });
+        if !pressed {
+            return;
+        }
+        match action {
+            Shortcut::NewBank => {
+                let id = self.new_bank("Untitled Question Bank");
+                self.open_bank(&id);
+            }
+            Shortcut::NewExam => {
+                let id = self.new_exam("Untitled Exam");
+                self.open_exam(&id);
+            }
+        }
+    }
+
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         theme::begin_frame(self.settings.dark);
         theme::set_area(ui.max_rect());
@@ -345,7 +391,35 @@ impl App {
             }
             ctx.request_repaint_after(std::time::Duration::from_millis(16));
         }
+        self.handle_shortcuts(&ctx);
         // Sidebar + active screen + shell overlays (import dialog, help, toasts).
         self.draw_screen(&ctx);
+    }
+}
+
+#[cfg(test)]
+mod shortcut_tests {
+    use super::{Screen, Shortcut, shortcut_action};
+
+    #[test]
+    fn ctrl_n_creates_the_right_item_for_the_screen() {
+        assert_eq!(shortcut_action(&Screen::Home, false), Some(Shortcut::NewExam));
+        assert_eq!(shortcut_action(&Screen::Exams, false), Some(Shortcut::NewExam));
+        assert_eq!(shortcut_action(&Screen::Banks, false), Some(Shortcut::NewBank));
+    }
+
+    #[test]
+    fn ctrl_n_does_nothing_elsewhere_or_with_a_draft_open() {
+        for s in [
+            Screen::Welcome,
+            Screen::Imports,
+            Screen::Figures,
+            Screen::Settings,
+            Screen::BankEdit("b".into()),
+            Screen::ExamEdit("e".into()),
+        ] {
+            assert_eq!(shortcut_action(&s, false), None);
+        }
+        assert_eq!(shortcut_action(&Screen::Banks, true), None);
     }
 }

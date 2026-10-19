@@ -81,7 +81,7 @@ fn bank_q(q: &Question, number: u32, image: Option<DocImage>) -> DocQ {
     let mut text = q.stem.trim_end().to_string();
     let mut parts: Vec<String> = vec![meta_line(q)];
     let mut choices: Vec<String> = Vec::new();
-    let mut key = String::new();
+    let key;
     match &q.kind {
         Kind::Mc { answers } => {
             for (i, a) in answers.iter().enumerate() {
@@ -153,6 +153,207 @@ fn bank_q(q: &Question, number: u32, image: Option<DocImage>) -> DocQ {
         text.push_str(&p);
     }
     DocQ { number, text: vec![text], choices, image, key_text: key, rule_lines: 0, no_answer_space: true, points: q.points, ..Default::default() }
+}
+
+/// The bank as CSV (RFC 4180, CRLF): one header row and one row per question, for Excel,
+/// Sheets or Numbers. Math stays as authored (`$...$`); answers are plain text.
+pub fn bank_csv(bank: &QuestionBank) -> String {
+    let mut out = String::from("#,type,points,question,answer,choices,explanation,topics,difficulty\r\n");
+    for (i, q) in bank.questions.iter().enumerate() {
+        let cells = [
+            (i + 1).to_string(),
+            kind_title(q.kind.qkind()).to_string(),
+            q.points.map(num_str).unwrap_or_default(),
+            question_cell(q),
+            answer_cell(&q.kind),
+            choices_cell(&q.kind),
+            q.explanation.as_deref().unwrap_or("").trim().to_string(),
+            q.topics.iter().map(|t| t.trim()).filter(|t| !t.is_empty()).collect::<Vec<_>>().join(", "),
+            diff_word(q).to_string(),
+        ];
+        out.push_str(&cells.iter().map(|c| csv_field(c)).collect::<Vec<_>>().join(","));
+        out.push_str("\r\n");
+    }
+    out
+}
+
+/// `12` for whole numbers, `2.5` otherwise (points read better without a trailing `.0`).
+fn num_str(p: f64) -> String {
+    if p.fract() == 0.0 { format!("{}", p as i64) } else { format!("{p}") }
+}
+
+/// One CSV field, quoted and with doubled quotes only when it needs it.
+fn csv_field(s: &str) -> String {
+    if s.chars().any(|c| matches!(c, ',' | '"' | '\n' | '\r')) {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+/// Lower-case part label (`a.`), as multipart parts are conventionally numbered.
+fn part_letter(i: usize) -> char {
+    char::from(b'a' + (i % 26) as u8)
+}
+
+/// A part stem that already starts with `a.` / `a)` keeps its own label.
+fn own_label(s: &str) -> bool {
+    s.len() > 1 && s.as_bytes()[0].is_ascii_alphabetic() && matches!(s.as_bytes()[1], b'.' | b')')
+}
+
+/// The stem, with multipart part stems appended as `a. ...` lines.
+fn question_cell(q: &Question) -> String {
+    let mut s = q.stem.trim().to_string();
+    if let Kind::Multipart { parts } = &q.kind {
+        for (i, p) in parts.iter().enumerate() {
+            let stem = p.stem.trim();
+            if own_label(stem) {
+                s.push_str(&format!("\n{stem}"));
+            } else {
+                s.push_str(&format!("\n{}. {stem}", part_letter(i)));
+            }
+        }
+    }
+    s
+}
+
+/// The key: correct choice texts, `True`/`False`, pairs, accepted blanks, the sample answer,
+/// or each multipart part's key.
+fn answer_cell(kind: &Kind) -> String {
+    match kind {
+        Kind::Mc { answers } => answers.iter().filter(|a| a.correct).map(|a| a.text.trim()).collect::<Vec<_>>().join(" | "),
+        Kind::Tf { correct } => (if *correct { "True" } else { "False" }).to_string(),
+        Kind::Matching { pairs, .. } => pairs.iter().map(|p| format!("{} → {}", p.left.trim(), p.right.trim())).collect::<Vec<_>>().join(" | "),
+        Kind::Blank { accept } => blank_key(accept),
+        Kind::Short { sample } => sample.trim().to_string(),
+        Kind::Multipart { parts } => parts.iter().enumerate().map(|(i, p)| format!("{}. {}", part_letter(i), part_answer(&p.kind))).collect::<Vec<_>>().join("; "),
+    }
+}
+
+fn part_answer(kind: &PartKind) -> String {
+    match kind {
+        PartKind::Mc { answers } => answers.iter().filter(|a| a.correct).map(|a| a.text.trim()).collect::<Vec<_>>().join(", "),
+        PartKind::Tf { correct } => (if *correct { "True" } else { "False" }).to_string(),
+        PartKind::Short { sample } => sample.trim().to_string(),
+    }
+}
+
+/// Choice texts with their letters (`A. ... | B. ...`), including multipart choice parts.
+fn choices_cell(kind: &Kind) -> String {
+    match kind {
+        Kind::Mc { answers } => answers.iter().enumerate().map(|(i, a)| format!("{}. {}", letter(i), a.text.trim())).collect::<Vec<_>>().join(" | "),
+        Kind::Multipart { parts } => parts
+            .iter()
+            .enumerate()
+            .filter_map(|(pi, p)| match &p.kind {
+                PartKind::Mc { answers } => Some(format!(
+                    "({}) {}",
+                    part_letter(pi),
+                    answers.iter().enumerate().map(|(i, a)| format!("{}. {}", letter(i), a.text.trim())).collect::<Vec<_>>().join(" | ")
+                )),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("; "),
+        _ => String::new(),
+    }
+}
+
+/// Aiken format: only single-answer multiple choice fits, as `question`, lettered choices and
+/// `ANSWER: C`, with a blank line between questions. Returns the text and the number of
+/// questions the format cannot hold.
+pub fn bank_aiken(bank: &QuestionBank) -> (String, usize) {
+    let mut blocks = Vec::new();
+    let mut skipped = 0;
+    for q in &bank.questions {
+        let Kind::Mc { answers } = &q.kind else {
+            skipped += 1;
+            continue;
+        };
+        let correct: Vec<usize> = answers.iter().enumerate().filter(|(_, a)| a.correct).map(|(i, _)| i).collect();
+        if correct.len() != 1 || answers.len() < 2 || answers.len() > 26 {
+            skipped += 1;
+            continue;
+        }
+        let mut b = one_line(&q.stem);
+        for (i, a) in answers.iter().enumerate() {
+            b.push_str(&format!("\n{}. {}", letter(i), one_line(&a.text)));
+        }
+        b.push_str(&format!("\nANSWER: {}", letter(correct[0])));
+        blocks.push(b);
+    }
+    let mut out = blocks.join("\n\n");
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    (out, skipped)
+}
+
+/// Blackboard Learn 7.3+ "Upload Questions" tab-delimited text. Holds single-answer multiple
+/// choice (`MC`), true/false (`TF`), fill in the blank (`FIB`) and short answer (`ESS`);
+/// matching, multipart and multi-answer MC are skipped and counted. Every row pads to the same
+/// number of incorrect-answer columns so the positional Categories/Topics/Feedback fields line
+/// up, and embedded tabs/newlines become spaces.
+pub fn bank_blackboard(bank: &QuestionBank) -> (String, usize) {
+    let mut pad = 0;
+    let mut skipped = 0;
+    for q in &bank.questions {
+        match &q.kind {
+            Kind::Mc { answers } => {
+                let correct = answers.iter().filter(|a| a.correct).count();
+                let wrong = answers.len().saturating_sub(correct);
+                if correct != 1 || wrong > 10 {
+                    skipped += 1;
+                } else {
+                    pad = pad.max(wrong);
+                }
+            }
+            Kind::Tf { .. } | Kind::Blank { .. } | Kind::Short { .. } => {}
+            Kind::Matching { .. } | Kind::Multipart { .. } => skipped += 1,
+        }
+    }
+    let mut rows = Vec::new();
+    for q in &bank.questions {
+        let (kind, correct, wrong): (&str, String, Vec<String>) = match &q.kind {
+            Kind::Mc { answers } => {
+                let good: Vec<&str> = answers.iter().filter(|a| a.correct).map(|a| a.text.trim()).collect();
+                let bad: Vec<String> = answers.iter().filter(|a| !a.correct).map(|a| one_line(&a.text)).collect();
+                if good.len() != 1 || bad.len() > 10 {
+                    continue;
+                }
+                ("MC", one_line(good[0]), bad)
+            }
+            Kind::Tf { correct } => ("TF", (if *correct { "True" } else { "False" }).to_string(), Vec::new()),
+            Kind::Blank { accept } => (
+                "FIB",
+                accept
+                    .iter()
+                    .map(|alts| alts.iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" / "))
+                    .collect::<Vec<_>>()
+                    .join("; "),
+                Vec::new(),
+            ),
+            Kind::Short { sample } => ("ESS", one_line(sample), Vec::new()),
+            _ => continue,
+        };
+        let mut fields = vec![one_line(&q.stem), kind.to_string(), q.points.map(num_str).unwrap_or_default(), correct];
+        fields.extend(wrong);
+        fields.resize(4 + pad, String::new()); // incorrect-answer columns, aligned across rows
+        fields.push(String::new()); // Categories
+        fields.push(q.topics.iter().map(|t| t.trim()).filter(|t| !t.is_empty()).collect::<Vec<_>>().join(", "));
+        fields.push(q.explanation.as_deref().map(one_line).unwrap_or_default());
+        rows.push(fields.join("\t"));
+    }
+    let mut out = rows.join("\n");
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    (out, skipped)
+}
+
+/// One line of plain text: tabs and newlines become single spaces (tab-delimited formats).
+fn one_line(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Questions per type in print order (Test Parrot's: MC, T/F, Matching, Fill, Short, Multipart),
@@ -545,6 +746,96 @@ mod tests {
         // the exporter lays it out
         let pdf = crate::export::render_pdf(&d).unwrap();
         assert!(pdf.starts_with(b"%PDF"));
+    }
+
+    #[test]
+    fn bank_csv_has_one_row_per_question_with_answers_and_choices() {
+        let csv = bank_csv(&bank());
+        // Records end in CRLF; the multipart question's embedded LF stays inside its field.
+        let rows: Vec<&str> = csv.split("\r\n").collect();
+        assert_eq!(rows.len(), 6, "{csv}");
+        assert_eq!(rows[5], "");
+        assert_eq!(rows[0], "#,type,points,question,answer,choices,explanation,topics,difficulty");
+        assert!(rows[1].contains(",Short Answer,"), "{}", rows[1]);
+        assert!(rows[2].contains(",Multiple Choice,"), "{}", rows[2]);
+        assert!(rows[2].contains("A. Ge | B. Ca | C. O | D. C"), "{}", rows[2]);
+        assert!(rows[2].contains(",O,"), "{}", rows[2]);
+        assert!(rows[3].contains("14; 10"), "{}", rows[3]);
+        assert!(rows[4].contains("a. linear; b. False"), "{}", rows[4]);
+    }
+
+    #[test]
+    fn bank_csv_quotes_commas_quotes_and_newlines() {
+        let mut q = make_question(
+            "Pick, \"one\".\nNext line".into(),
+            Kind::Mc { answers: vec![Answer { text: "x, y".into(), correct: true, locked: false }] },
+        );
+        q.explanation = Some("Line one\nLine two".into());
+        let b = QuestionBank { id: "b2".into(), name: "Quotes".into(), questions: vec![q], created: 0, modified: 0, details: Default::default() };
+        let csv = bank_csv(&b);
+        assert!(csv.contains("\"Pick, \"\"one\"\".\nNext line\""), "{csv}");
+        assert!(csv.contains("\"Line one\nLine two\""), "{csv}");
+        assert!(csv.contains("\"x, y\""), "{csv}");
+    }
+
+    #[test]
+    fn empty_bank_csv_is_the_header_only() {
+        let b = QuestionBank { id: "b3".into(), name: "Empty".into(), questions: Vec::new(), created: 0, modified: 0, details: Default::default() };
+        assert_eq!(bank_csv(&b), "#,type,points,question,answer,choices,explanation,topics,difficulty\r\n");
+    }
+
+    #[test]
+    fn aiken_keeps_single_answer_mc_and_counts_the_rest() {
+        let (text, skipped) = bank_aiken(&bank());
+        assert_eq!(skipped, 3, "short, fill and multipart are skipped");
+        assert_eq!(
+            text,
+            "Which of the following elements is the **most** electronegative?\nA. Ge\nB. Ca\nC. O\nD. C\nANSWER: C\n"
+        );
+    }
+
+    #[test]
+    fn aiken_skips_multi_answer_mc() {
+        let q = make_question(
+            "Pick both.".into(),
+            Kind::Mc {
+                answers: vec![
+                    Answer { text: "one".into(), correct: true, locked: false },
+                    Answer { text: "two".into(), correct: true, locked: false },
+                    Answer { text: "three".into(), correct: false, locked: false },
+                ],
+            },
+        );
+        let b = QuestionBank { id: "b4".into(), name: "MA".into(), questions: vec![q], created: 0, modified: 0, details: Default::default() };
+        assert_eq!(bank_aiken(&b), (String::new(), 1));
+    }
+
+    #[test]
+    fn blackboard_rows_are_aligned_tab_delimited_and_skip_unsupported() {
+        let (text, skipped) = bank_blackboard(&bank());
+        assert_eq!(skipped, 1, "multipart is skipped");
+        let rows: Vec<&str> = text.lines().collect();
+        assert_eq!(rows.len(), 3);
+        assert!(rows.iter().all(|r| r.split('\t').count() == rows[0].split('\t').count()), "{text}");
+        let short = rows[0].split('\t').collect::<Vec<_>>();
+        assert_eq!(short[1], "ESS");
+        let mc = rows[1].split('\t').collect::<Vec<_>>();
+        assert_eq!(mc[1], "MC");
+        assert_eq!(mc[3], "O");
+        assert_eq!(&mc[4..7], &["Ge", "Ca", "C"]);
+        let fill = rows[2].split('\t').collect::<Vec<_>>();
+        assert_eq!(fill[1], "FIB");
+        assert_eq!(fill[3], "14; 10");
+    }
+
+    #[test]
+    fn blackboard_flattens_tabs_and_newlines() {
+        let mut q = make_question("Line one\nline\ttwo".into(), Kind::Short { sample: "a\nb".into() });
+        q.explanation = Some("why\nnot".into());
+        let b = QuestionBank { id: "b5".into(), name: "Flatten".into(), questions: vec![q], created: 0, modified: 0, details: Default::default() };
+        let (text, skipped) = bank_blackboard(&b);
+        assert_eq!(skipped, 0);
+        assert_eq!(text, "Line one line two\tESS\t\ta b\t\t\twhy not\n");
     }
 
     #[test]
