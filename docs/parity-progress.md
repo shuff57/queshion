@@ -33,3 +33,15 @@ Baseline on `parity-loop` (from `web-port` b89fea2): 528 unit + 6 integration te
   saves a valid draft on Ctrl/Cmd+Enter; both are suppressed while the equation panel is open.
   The "How it works" sheet lists the shortcuts. Two matrix tests. Native check 0 warnings; wasm
   unchanged. `cargo test --workspace`: 541 passed, 6 integration passed, 0 failed, 3 ignored.
+
+## Complete
+
+- Step 5: final verification. `cargo check --workspace` → 0 warnings. `cargo test --workspace`
+  → 541 unit + 6 integration passed, 0 failed, 3 ignored (baseline 528 + 6; +13 tests from
+  Steps 2a/2b/3/4). `cargo check --target wasm32-unknown-unknown --lib` passes with the same 4
+  pre-existing wasm-only warnings in `ai.rs`, `importui.rs`, `screens.rs` (owned by the
+  web-build session; untouched here). New export/save code goes through
+  `platform::save_path`/`write`; the only `std::fs` in `bankexport.rs` is in tests, and
+  `bankui.rs`'s `std::fs::write` is the pre-existing `VERSHION_BANK_EXPORT_OUT` QA hook. No
+  debug/TODO additions in the diff. All parity leftovers from the audit are closed; the loop
+  is complete and commits only on `parity-loop` (not merged or pushed).
