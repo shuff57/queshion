@@ -212,6 +212,37 @@ pub fn open_path(path: &Path) {
     }
 }
 
+/// The clip that shows how to obtain a key for `provider`, if we have one.
+pub fn help_clip_name(provider: &str) -> Option<&'static str> {
+    match provider {
+        "cloud" => Some("ollama-cloud-api-key"),
+        "openrouter" => Some("openrouter-free-model-router"),
+        _ => None,
+    }
+}
+
+/// Shows the how-to clip for `provider`: an in-page overlay on the web, the system video player
+/// on the desktop (the clips are compiled into the desktop binary; the web build copies them to
+/// `help/` with Trunk).
+pub fn open_help_video(provider: &str) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        crate::helpweb::open(provider);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let Some(name) = help_clip_name(provider) else { return };
+        let bytes: &'static [u8] = match name {
+            "openrouter-free-model-router" => include_bytes!("../assets/help/openrouter-free-model-router.mp4"),
+            _ => include_bytes!("../assets/help/ollama-cloud-api-key.mp4"),
+        };
+        let path = std::env::temp_dir().join(format!("vershion-help-{name}.mp4"));
+        if std::fs::write(&path, bytes).is_ok() {
+            open_path(&path);
+        }
+    }
+}
+
 /// Rasterizes every page of a PDF to PNG with the pure-Rust hayro renderer. Native falls back to
 /// `pdftoppm` for files hayro cannot render.
 pub fn render_pdf_pages(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {

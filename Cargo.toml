@@ -55,7 +55,7 @@ web-sys = { version = "0.3", features = [
     "Blob", "BlobPropertyBag", "Url", "HtmlAnchorElement", "File", "FileList", "FileReader",
     "Navigator", "Storage", "StorageManager", "Event", "EventTarget", "Headers", "Request", "RequestInit",
     "RequestMode", "Response", "ReadableStream", "ReadableStreamDefaultReader", "AbortSignal",
-    "AbortController", "MediaQueryList", "Location", "Crypto", "SubtleCrypto", "Performance",
+    "AbortController", "MediaQueryList", "Location", "Crypto", "SubtleCrypto", "Performance", "Node",
 ] }
 
 [profile.release]

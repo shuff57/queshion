@@ -30,6 +30,8 @@ pub mod figfit;
 pub mod figures;
 pub mod figuresui;
 pub mod fonts;
+#[cfg(target_arch = "wasm32")]
+pub mod helpweb;
 pub mod formats;
 pub mod importui;
 pub mod kit;

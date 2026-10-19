@@ -1095,6 +1095,15 @@ impl crate::App {
                 });
             }
         });
+        if crate::platform::help_clip_name(&cfg.provider).is_some() {
+            ui.horizontal(|ui| {
+                let label =
+                    format!("{}  Watch how to get a key", egui_phosphor::regular::PLAY_CIRCLE);
+                if kit::ghost_button(ui, &label).clicked() {
+                    crate::platform::open_help_video(&cfg.provider);
+                }
+            });
+        }
         if let Some((m, bad)) = &msg {
             let t = if *bad { theme::muted(m.clone()).color(theme::bad()) } else { theme::muted(m.clone()) };
             ui.label(t.size(12.0));

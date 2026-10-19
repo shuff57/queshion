@@ -432,6 +432,13 @@ fn load_fonts() -> FontDefinitions {
         ICON_FAMILY,
         egui_phosphor::bytes::regular::FONT,
     );
+    // Every named family must reach the icon face too, or an icon inside a bold/serif label
+    // renders as tofu.
+    for fonts in defs.families.values_mut() {
+        if !fonts.iter().any(|f| f.as_str() == ICON_FAMILY) {
+            fonts.insert(fonts.len().min(1), ICON_FAMILY.to_string());
+        }
+    }
     defs
 }
 
