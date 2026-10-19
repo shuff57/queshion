@@ -208,7 +208,7 @@ pub fn draw_nav_icon_k(
         NavIcon::Banks => ph::BOOKS,
         NavIcon::Exams => ph::EXAM,
         NavIcon::Import => ph::UPLOAD_SIMPLE,
-        NavIcon::Figures => ph::CHART_LINE,
+        NavIcon::Figures => ph::SHAPES,
         NavIcon::Help => ph::QUESTION,
         NavIcon::Gear => ph::GEAR,
         NavIcon::Pencil => ph::PENCIL_SIMPLE,
