@@ -21,3 +21,9 @@ Baseline on `parity-loop` (from `web-port` b89fea2): 528 unit + 6 integration te
   the toast; a muted line says what each format holds. Four new tests. Native check 0 warnings;
   wasm unchanged (same 4 pre-existing warnings). `cargo test --workspace`: 535 passed,
   6 integration passed, 0 failed, 3 ignored.
+- Step 3: inline equation panel. `EqReq` now carries the anchor (the field frame or preview chip
+  that asked) and the opening frame; `equation_panel` replaces the centered `Modal` with an
+  anchored foreground `egui::Area` clamped by the pure `panel_pos` (flips above/left near the
+  edges). Outside-click cancels except on the opening click; Enter/Esc/buttons unchanged. Four
+  `panel_pos` tests. Native check 0 warnings; wasm unchanged. `cargo test --workspace`:
+  539 passed, 6 integration passed, 0 failed, 3 ignored.
