@@ -1442,8 +1442,35 @@ thread_local! {
     static BANK_EXPORT: std::cell::RefCell<Option<BankExportCache>> = const { std::cell::RefCell::new(None) };
 }
 
+/// Saves one of the plain-text interchange formats, reporting questions the format skipped.
+fn save_bank_text(
+    app: &mut App,
+    bank: &crate::model::QuestionBank,
+    suffix: &str,
+    label: &str,
+    make: fn(&crate::model::QuestionBank) -> (String, usize),
+    close: &mut bool,
+) {
+    let name = format!("{}{suffix}.txt", crate::bankexport::file_stem(&bank.name));
+    let Some(path) = crate::platform::save_path(&name, label, &["txt"]) else { return };
+    let (text, skipped) = make(bank);
+    match crate::platform::write(&path, text.as_bytes()) {
+        Ok(()) => {
+            let note = if skipped > 0 {
+                format!(" ({skipped} question{} skipped)", if skipped == 1 { "" } else { "s" })
+            } else {
+                String::new()
+            };
+            app.toast(format!("Saved {}{note}", path.display()));
+            *close = true;
+        }
+        Err(e) => app.toast_err(format!("Couldn't save: {e}")),
+    }
+}
+
 /// Test Parrot's "Export Question Bank": a preview of the printable bank file (answers
-/// included), then Download PDF, the JSON file, or a spreadsheet-friendly CSV.
+/// included), then Download PDF, the JSON file, a spreadsheet-friendly CSV, or the Aiken /
+/// Blackboard text formats.
 fn draw_bank_export(app: &mut App, ctx: &egui::Context) {
     if let Ok(v) = crate::env_var("VERSHION_BANK_EXPORT") {
         let hid = UiId::new("qs_bank_export_hook");
@@ -1487,6 +1514,8 @@ fn draw_bank_export(app: &mut App, ctx: &egui::Context) {
     let mut save_pdf = false;
     let mut save_json = false;
     let mut save_csv = false;
+    let mut save_aiken = false;
+    let mut save_blackboard = false;
     let modal = egui::Modal::new(UiId::new("qs_bank_export_modal")).show(ctx, |ui| {
         ui.set_width(w);
         ui.label(theme::serif("Export question bank").size(22.0).color(theme::ink()));
@@ -1532,6 +1561,12 @@ fn draw_bank_export(app: &mut App, ctx: &egui::Context) {
             if kit::ghost_button(ui, "Save CSV file…").on_hover_text("One row per question, for Excel, Sheets or Numbers").clicked() {
                 save_csv = true;
             }
+            if kit::ghost_button(ui, "Save Aiken file…").on_hover_text("Aiken text: single-answer multiple choice").clicked() {
+                save_aiken = true;
+            }
+            if kit::ghost_button(ui, "Save Blackboard file…").on_hover_text("Tab-delimited text for Blackboard Learn's Upload Questions").clicked() {
+                save_blackboard = true;
+            }
             if kit::ghost_button(ui, "Save JSON file…").on_hover_text("The bank as a question-bank JSON file (for other apps and backups)").clicked() {
                 save_json = true;
             }
@@ -1545,7 +1580,14 @@ fn draw_bank_export(app: &mut App, ctx: &egui::Context) {
                 }
             });
         });
+        ui.label(theme::muted("Aiken holds single-answer multiple choice; Blackboard holds multiple choice, true/false, fill in the blank and short answer.").size(11.0));
     });
+    if save_aiken {
+        save_bank_text(app, &bank, ".aiken", "Aiken text", crate::bankexport::bank_aiken, &mut close);
+    }
+    if save_blackboard {
+        save_bank_text(app, &bank, ".blackboard", "Blackboard text", crate::bankexport::bank_blackboard, &mut close);
+    }
     if save_csv {
         let path = crate::platform::save_path(
             &format!("{}.csv", crate::bankexport::file_stem(&bank.name)),

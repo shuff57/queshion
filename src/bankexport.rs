@@ -259,6 +259,103 @@ fn choices_cell(kind: &Kind) -> String {
     }
 }
 
+/// Aiken format: only single-answer multiple choice fits, as `question`, lettered choices and
+/// `ANSWER: C`, with a blank line between questions. Returns the text and the number of
+/// questions the format cannot hold.
+pub fn bank_aiken(bank: &QuestionBank) -> (String, usize) {
+    let mut blocks = Vec::new();
+    let mut skipped = 0;
+    for q in &bank.questions {
+        let Kind::Mc { answers } = &q.kind else {
+            skipped += 1;
+            continue;
+        };
+        let correct: Vec<usize> = answers.iter().enumerate().filter(|(_, a)| a.correct).map(|(i, _)| i).collect();
+        if correct.len() != 1 || answers.len() < 2 || answers.len() > 26 {
+            skipped += 1;
+            continue;
+        }
+        let mut b = one_line(&q.stem);
+        for (i, a) in answers.iter().enumerate() {
+            b.push_str(&format!("\n{}. {}", letter(i), one_line(&a.text)));
+        }
+        b.push_str(&format!("\nANSWER: {}", letter(correct[0])));
+        blocks.push(b);
+    }
+    let mut out = blocks.join("\n\n");
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    (out, skipped)
+}
+
+/// Blackboard Learn 7.3+ "Upload Questions" tab-delimited text. Holds single-answer multiple
+/// choice (`MC`), true/false (`TF`), fill in the blank (`FIB`) and short answer (`ESS`);
+/// matching, multipart and multi-answer MC are skipped and counted. Every row pads to the same
+/// number of incorrect-answer columns so the positional Categories/Topics/Feedback fields line
+/// up, and embedded tabs/newlines become spaces.
+pub fn bank_blackboard(bank: &QuestionBank) -> (String, usize) {
+    let mut pad = 0;
+    let mut skipped = 0;
+    for q in &bank.questions {
+        match &q.kind {
+            Kind::Mc { answers } => {
+                let correct = answers.iter().filter(|a| a.correct).count();
+                let wrong = answers.len().saturating_sub(correct);
+                if correct != 1 || wrong > 10 {
+                    skipped += 1;
+                } else {
+                    pad = pad.max(wrong);
+                }
+            }
+            Kind::Tf { .. } | Kind::Blank { .. } | Kind::Short { .. } => {}
+            Kind::Matching { .. } | Kind::Multipart { .. } => skipped += 1,
+        }
+    }
+    let mut rows = Vec::new();
+    for q in &bank.questions {
+        let (kind, correct, wrong): (&str, String, Vec<String>) = match &q.kind {
+            Kind::Mc { answers } => {
+                let good: Vec<&str> = answers.iter().filter(|a| a.correct).map(|a| a.text.trim()).collect();
+                let bad: Vec<String> = answers.iter().filter(|a| !a.correct).map(|a| one_line(&a.text)).collect();
+                if good.len() != 1 || bad.len() > 10 {
+                    continue;
+                }
+                ("MC", one_line(good[0]), bad)
+            }
+            Kind::Tf { correct } => ("TF", (if *correct { "True" } else { "False" }).to_string(), Vec::new()),
+            Kind::Blank { accept } => (
+                "FIB",
+                accept
+                    .iter()
+                    .map(|alts| alts.iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" / "))
+                    .collect::<Vec<_>>()
+                    .join("; "),
+                Vec::new(),
+            ),
+            Kind::Short { sample } => ("ESS", one_line(sample), Vec::new()),
+            _ => continue,
+        };
+        let mut fields = vec![one_line(&q.stem), kind.to_string(), q.points.map(num_str).unwrap_or_default(), correct];
+        fields.extend(wrong);
+        fields.resize(4 + pad, String::new()); // incorrect-answer columns, aligned across rows
+        fields.push(String::new()); // Categories
+        fields.push(q.topics.iter().map(|t| t.trim()).filter(|t| !t.is_empty()).collect::<Vec<_>>().join(", "));
+        fields.push(q.explanation.as_deref().map(one_line).unwrap_or_default());
+        rows.push(fields.join("\t"));
+    }
+    let mut out = rows.join("\n");
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    (out, skipped)
+}
+
+/// One line of plain text: tabs and newlines become single spaces (tab-delimited formats).
+fn one_line(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// Questions per type in print order (Test Parrot's: MC, T/F, Matching, Fill, Short, Multipart),
 /// keeping the bank's own order inside each type.
 pub fn grouped(bank: &QuestionBank) -> Vec<(QKind, Vec<&Question>)> {
@@ -685,6 +782,60 @@ mod tests {
     fn empty_bank_csv_is_the_header_only() {
         let b = QuestionBank { id: "b3".into(), name: "Empty".into(), questions: Vec::new(), created: 0, modified: 0, details: Default::default() };
         assert_eq!(bank_csv(&b), "#,type,points,question,answer,choices,explanation,topics,difficulty\r\n");
+    }
+
+    #[test]
+    fn aiken_keeps_single_answer_mc_and_counts_the_rest() {
+        let (text, skipped) = bank_aiken(&bank());
+        assert_eq!(skipped, 3, "short, fill and multipart are skipped");
+        assert_eq!(
+            text,
+            "Which of the following elements is the **most** electronegative?\nA. Ge\nB. Ca\nC. O\nD. C\nANSWER: C\n"
+        );
+    }
+
+    #[test]
+    fn aiken_skips_multi_answer_mc() {
+        let q = make_question(
+            "Pick both.".into(),
+            Kind::Mc {
+                answers: vec![
+                    Answer { text: "one".into(), correct: true, locked: false },
+                    Answer { text: "two".into(), correct: true, locked: false },
+                    Answer { text: "three".into(), correct: false, locked: false },
+                ],
+            },
+        );
+        let b = QuestionBank { id: "b4".into(), name: "MA".into(), questions: vec![q], created: 0, modified: 0, details: Default::default() };
+        assert_eq!(bank_aiken(&b), (String::new(), 1));
+    }
+
+    #[test]
+    fn blackboard_rows_are_aligned_tab_delimited_and_skip_unsupported() {
+        let (text, skipped) = bank_blackboard(&bank());
+        assert_eq!(skipped, 1, "multipart is skipped");
+        let rows: Vec<&str> = text.lines().collect();
+        assert_eq!(rows.len(), 3);
+        assert!(rows.iter().all(|r| r.split('\t').count() == rows[0].split('\t').count()), "{text}");
+        let short = rows[0].split('\t').collect::<Vec<_>>();
+        assert_eq!(short[1], "ESS");
+        let mc = rows[1].split('\t').collect::<Vec<_>>();
+        assert_eq!(mc[1], "MC");
+        assert_eq!(mc[3], "O");
+        assert_eq!(&mc[4..7], &["Ge", "Ca", "C"]);
+        let fill = rows[2].split('\t').collect::<Vec<_>>();
+        assert_eq!(fill[1], "FIB");
+        assert_eq!(fill[3], "14; 10");
+    }
+
+    #[test]
+    fn blackboard_flattens_tabs_and_newlines() {
+        let mut q = make_question("Line one\nline\ttwo".into(), Kind::Short { sample: "a\nb".into() });
+        q.explanation = Some("why\nnot".into());
+        let b = QuestionBank { id: "b5".into(), name: "Flatten".into(), questions: vec![q], created: 0, modified: 0, details: Default::default() };
+        let (text, skipped) = bank_blackboard(&b);
+        assert_eq!(skipped, 0);
+        assert_eq!(text, "Line one line two\tESS\t\ta b\t\t\twhy not\n");
     }
 
     #[test]
