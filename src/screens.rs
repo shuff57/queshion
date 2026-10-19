@@ -1421,6 +1421,11 @@ impl crate::App {
                     ui.add_space(8.0);
                 }
                 ui.add_space(4.0);
+                ui.label(theme::strong("Keyboard").size(13.5));
+                ui.label(theme::muted(
+                    "Ctrl/Cmd+N — new exam (Home, Exams) or new bank (Banks) · Ctrl/Cmd+Enter — save a question · Esc — cancel a question · Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z — undo/redo an exam · Ctrl/Cmd+E — export an exam",
+                ).size(12.0));
+                ui.add_space(8.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if crate::kit::primary_button(ui, "Got it").clicked() {
                         close = true;

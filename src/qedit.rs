@@ -7,8 +7,8 @@
 use std::collections::HashMap;
 
 use egui::{
-    Align, Button, Color32, CornerRadius, Frame, Key, Layout, Margin, Pos2, Rect, RichText,
-    Sense, Stroke, StrokeKind, TextEdit, Ui, Vec2,
+    Align, Button, Color32, CornerRadius, Frame, Key, KeyboardShortcut, Layout, Margin, Modifiers,
+    Pos2, Rect, RichText, Sense, Stroke, StrokeKind, TextEdit, Ui, Vec2,
 };
 // egui's widget id type vs the store's question id (a String).
 use egui::Id as UiId;
@@ -99,7 +99,7 @@ struct Temp {
     /// Draft text of the "add topic" field.
     topics_text: String,
     /// The open equation request (set by a sigma button, the word-initial '/' key or a click on
-    /// a rendered equation chip); the equation modal reads and clears it.
+    /// a rendered equation chip); the equation panel reads and clears it.
     eq_req: Option<EqReq>,
 }
 
@@ -756,6 +756,18 @@ pub fn draw_inline(
     let ctx = ui.ctx().clone();
     let key = temp_key(&draft.bank_id, draft.qid.as_ref());
     let mut action = QAction::None;
+    // Esc cancels when no text field has focus; Ctrl/Cmd+Enter saves a valid draft. While the
+    // equation panel is open it owns the keyboard.
+    let eq_open = ctx.data(|d| d.get_temp::<Temp>(key).and_then(|t| t.eq_req).is_some());
+    if !eq_open && !ctx.egui_wants_keyboard_input() && ctx.input(|i| i.key_pressed(Key::Escape)) {
+        action = QAction::Cancel;
+    }
+    if !eq_open
+        && ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::Enter)))
+        && draft.validate().is_empty()
+    {
+        action = QAction::Done;
+    }
 
     let total = ui.available_width();
     let gap = 24.0;
