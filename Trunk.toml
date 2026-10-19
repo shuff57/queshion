@@ -7,3 +7,8 @@ filehash = true
 [serve]
 addresses = ["127.0.0.1"]
 port = 8781
+
+# Rust 1.99's wasm output uses bulk-memory / saturating-float ops that the wasm-opt trunk
+# downloads by default (binaryen 123) rejects; pin a release that understands them.
+[tools]
+wasm-opt = "version_133"

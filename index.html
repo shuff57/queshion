@@ -20,7 +20,7 @@
     #vershion_loading {
       position: fixed; inset: 0; z-index: 2;
       display: grid; place-items: center; text-align: center;
-      background: inherit;
+      background: inherit; transition: opacity .35s ease;
     }
     #vershion_loading img {
       width: min(52vw, 340px); height: auto;
@@ -40,6 +40,8 @@
     </div>
   </div>
   <canvas id="vershion_canvas"></canvas>
-  <link data-trunk rel="rust" data-bin="vershion-web" data-wasm-opt="z" data-weak-refs />
+  <link data-trunk rel="rust" data-bin="vershion-web" data-wasm-opt="z"
+        data-wasm-opt-params="--enable-bulk-memory-opt --enable-nontrapping-float-to-int"
+        data-weak-refs />
 </body>
 </html>

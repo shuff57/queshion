@@ -2,5 +2,6 @@
 /dist
 /.playwright-cli
 /.msgbox
+/.wrangler
 
 /Claude outputs/**/.playwright-cli/
