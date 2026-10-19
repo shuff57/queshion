@@ -30,7 +30,12 @@ const TIMEOUT: Duration = Duration::from_secs(300);
 const OPENROUTER_KEY_ENV: &str = "OPENROUTER_API_KEY";
 const CUSTOM_KEY_ENV: &str = "VERSHION_AI_KEY";
 /// Ollama's hosted service: same OpenAI-compatible surface (`/v1`), keyed.
+#[cfg(not(target_arch = "wasm32"))]
 const OLLAMA_CLOUD_BASE: &str = "https://ollama.com/v1";
+/// Browsers cannot call ollama.com directly (it sends no CORS headers). The web build talks to
+/// the bundled relay instead, which forwards `/u/ollama.com/...` to `https://ollama.com/...`.
+#[cfg(target_arch = "wasm32")]
+const OLLAMA_CLOUD_RELAY_BASE: &str = "http://localhost:8189/u/ollama.com/v1";
 const OLLAMA_CLOUD_DEFAULT_MODEL: &str = "gemma4:31b";
 /// Ollama Cloud's key: `OLLAMA_API_KEY`, else the ollama-cloud tool's own credentials file.
 const CLOUD_KEY_ENV: &str = "OLLAMA_API_KEY";
@@ -51,6 +56,36 @@ fn transcription_prompt(hint: &str) -> String {
         return TRANSCRIBE_PROMPT.to_string();
     }
     format!("{TRANSCRIBE_PROMPT}\n\nUser note about this source:\n{hint}")
+}
+
+/// Ollama Cloud's base for this target: direct on the desktop, through the local relay in the
+/// browser.
+fn cloud_base() -> String {
+    #[cfg(target_arch = "wasm32")]
+    {
+        OLLAMA_CLOUD_RELAY_BASE.to_string()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        OLLAMA_CLOUD_BASE.to_string()
+    }
+}
+
+/// The Ollama Cloud key note: the browser goes through the relay; the desktop can also read the
+/// environment and the ollama-cloud credentials file.
+fn cloud_key_help() -> String {
+    #[cfg(target_arch = "wasm32")]
+    {
+        "Ollama Cloud needs an API key. Requests go through the local relay: run \
+         `node tools/relay.js` once and keep it running. The key stays in this browser."
+            .to_string()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        format!(
+            "Ollama Cloud needs an API key. A key saved here is used first, then the {CLOUD_KEY_ENV} environment variable, then ~/{CLOUD_KEY_FILE}."
+        )
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -82,7 +117,7 @@ impl AiCfg {
         };
         let base: String = match provider {
             "openrouter" => OPENROUTER_BASE.to_string(),
-            "cloud" => OLLAMA_CLOUD_BASE.to_string(),
+            "cloud" => cloud_base(),
             "custom" => s.ai_base.trim().trim_end_matches('/').to_string(),
             _ => OLLAMA_DEFAULT_BASE.to_string(),
         };
@@ -97,9 +132,7 @@ impl AiCfg {
             "openrouter" => format!(
                 "OpenRouter needs an API key. A key saved here is used first, otherwise the {OPENROUTER_KEY_ENV} environment variable."
             ),
-            "cloud" => format!(
-                "Ollama Cloud needs an API key. A key saved here is used first, then the {CLOUD_KEY_ENV} environment variable, then ~/{CLOUD_KEY_FILE}."
-            ),
+            "cloud" => cloud_key_help(),
             "custom" => format!(
                 "A custom endpoint may need an API key. A key saved here is used first, otherwise the {CUSTOM_KEY_ENV} environment variable."
             ),
@@ -316,12 +349,24 @@ pub async fn test_connection_async(cfg: &AiCfg) -> Result<(), String> {
         return Err("Set a base URL first.".to_string());
     }
     let url = if cfg.provider == "ollama" { format!("{base}/api/tags") } else { format!("{base}/models") };
-    let status = fetch_status_async(&url, request_key(cfg).as_deref()).await?;
+    let status = fetch_status_async(&url, request_key(cfg).as_deref())
+        .await
+        .map_err(|e| cloud_error_hint(cfg, e))?;
     match status {
         200..=299 => Ok(()),
         401 | 403 => Err("Key rejected (401).".to_string()),
         404 => Err("Reached the server, but it has no /models endpoint (404). The key may still work.".to_string()),
         n => Err(format!("The server answered {n}.")),
+    }
+}
+
+/// Adds the relay instruction when a browser cannot reach Ollama Cloud.
+#[cfg(target_arch = "wasm32")]
+fn cloud_error_hint(cfg: &AiCfg, err: String) -> String {
+    if cfg.provider == "cloud" {
+        format!("{err} If the relay is not running, start it once with `node tools/relay.js`.")
+    } else {
+        err
     }
 }
 
@@ -622,7 +667,9 @@ async fn openai_chat_async(cfg: &AiCfg, prompt: &str, mime: &str, images: &[&[u8
         "messages": [{"role": "user", "content": content}],
     });
     let key = request_key(cfg);
-    let reply = post_json_async(&url, &body, key.as_deref()).await?;
+    let reply = post_json_async(&url, &body, key.as_deref())
+        .await
+        .map_err(|e| cloud_error_hint(cfg, e))?;
     reply
         .pointer("/choices/0/message/content")
         .and_then(Value::as_str)
