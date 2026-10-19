@@ -212,16 +212,48 @@ pub fn open_path(path: &Path) {
     }
 }
 
-/// Rasterizes every page of a PDF to PNG. Native uses `pdftoppm`; the web build swaps in the
-/// pure-Rust hayro renderer.
+/// Rasterizes every page of a PDF to PNG with the pure-Rust hayro renderer. Native falls back to
+/// `pdftoppm` for files hayro cannot render.
 pub fn render_pdf_pages(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        crate::screens::pdf_pages_png(data)
+    match render_with_hayro(data) {
+        Ok(pages) if !pages.is_empty() => Ok(pages),
+        hayro_result => {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                match crate::screens::pdf_pages_png(data) {
+                    Ok(pages) => Ok(pages),
+                    Err(pdftoppm) => hayro_result.map_err(|e| format!("{e} (pdftoppm: {pdftoppm})")),
+                }
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                hayro_result
+            }
+        }
     }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = data;
-        Err("PDF page rendering is not available in this build yet".to_string())
+}
+
+fn render_with_hayro(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {
+    use hayro::hayro_interpret::InterpreterSettings;
+    use hayro::hayro_syntax::Pdf;
+    use hayro::vello_cpu::color::palette::css::WHITE;
+    use hayro::{PixmapSettings, RenderCache, RenderSettings, render};
+    const MAX_PDF_PAGES: usize = 30;
+    const DPI: f32 = 150.0;
+
+    let pdf = Pdf::new(data.to_vec()).map_err(|e| format!("{e:?}"))?;
+    let interpreter = InterpreterSettings::default();
+    let cache = RenderCache::new();
+    let settings = RenderSettings::default();
+    let pixmap = PixmapSettings { x_scale: DPI / 72.0, y_scale: DPI / 72.0, bg_color: WHITE };
+    let mut pages = Vec::new();
+    for page in pdf.pages().iter().take(MAX_PDF_PAGES) {
+        let rendered = render(page, &cache, &interpreter, &settings, &pixmap);
+        pages.push(rendered.into_png().map_err(|e| format!("{e:?}"))?);
+    }
+    if pages.is_empty() {
+        Err("the PDF has no pages".to_string())
+    } else {
+        Ok(pages)
     }
 }
