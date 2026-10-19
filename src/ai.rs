@@ -77,7 +77,8 @@ fn cloud_key_help() -> String {
     #[cfg(target_arch = "wasm32")]
     {
         "Ollama Cloud needs an API key. Requests go through the local relay: run \
-         `node tools/relay.js` once and keep it running. The key stays in this browser."
+         `node tools/relay.js` once and keep it running. The first request asks for local-network \
+         access in your browser; allow it. The key stays in this browser."
             .to_string()
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -364,7 +365,10 @@ pub async fn test_connection_async(cfg: &AiCfg) -> Result<(), String> {
 #[cfg(target_arch = "wasm32")]
 fn cloud_error_hint(cfg: &AiCfg, err: String) -> String {
     if cfg.provider == "cloud" {
-        format!("{err} If the relay is not running, start it once with `node tools/relay.js`.")
+        format!(
+            "{err} If the relay is not running, start it once with `node tools/relay.js`; if the \
+             browser asked for local-network access, choose Allow."
+        )
     } else {
         err
     }

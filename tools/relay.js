@@ -5,7 +5,8 @@
    Page requests look like  http://localhost:8189/u/ollama.com/v1/chat/completions  and are
    forwarded to https://ollama.com/v1/chat/completions. Only ollama.com is allowed. Nothing is
    stored or logged.
-   Environment: PORT (default 8189), UPSTREAM_KEY (used when the page sends no key). */
+   The browser's first request from a public page asks for local-network permission; allow it
+   once. Environment: PORT (default 8189), UPSTREAM_KEY (used when the page sends no key). */
 const http = require('http'), https = require('https');
 const PORT = +(process.env.PORT || 8189), KEY = process.env.UPSTREAM_KEY || '';
 const ALLOW = /^([a-z0-9-]+\.)*ollama\.com$/i;
