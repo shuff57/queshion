@@ -1483,7 +1483,7 @@ impl Workspace {
                                         continue;
                                     }
                                     let old = self.params.0.get(pdefs[i].key).cloned();
-                                    param_control(ui, &pdefs[i], &mut self.params);
+                                    param_control(ui, def.id, &pdefs[i], &mut self.params);
                                     if let Some(old) = old.filter(|o| self.params.0.get(pdefs[i].key) != Some(o)) {
                                         figures::after_panel_change(def.id, pdefs[i].key, &old, &mut self.params);
                                     }
@@ -2045,6 +2045,14 @@ fn swatch(hex: &str) -> egui::Color32 {
     egui::Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)
 }
 
+/// A control's label, with the param's hint on hover (the reference keeps help out of the label).
+fn param_label(ui: &mut Ui, label: &str, hint: &str) {
+    let r = ui.label(theme::muted(label).size(11.0));
+    if !hint.is_empty() {
+        r.on_hover_text(hint);
+    }
+}
+
 /// Control auto-built from one ParamDef.
 /// Hides a text box whose Text / Blank line / None choice isn't on "Text" (the reference only
 /// shows the box when it is needed). Pairs: `k` with `k_mode`, `k_label` with `k_lab`, `k_text` with `k`.
@@ -2170,10 +2178,11 @@ fn segmented(ui: &mut Ui, opts: &[&'static str], cur: &mut String) {
     });
 }
 
-fn param_control(ui: &mut Ui, pd: &ParamDef, p: &mut Params) {
+fn param_control(ui: &mut Ui, fig: &str, pd: &ParamDef, p: &mut Params) {
+    let label = figures::label_for(fig, pd.key, p).unwrap_or(pd.label);
     match &pd.kind {
         Kind::Float { min, max, step } => {
-            ui.label(theme::muted(pd.label).size(11.0));
+            param_label(ui, label, pd.hint);
             let mut v = p.f(pd.key);
             let mut s = egui::Slider::new(&mut v, *min..=*max).clamping(egui::SliderClamping::Always);
             // Ranges spanning orders of magnitude are unusable on a linear slider; a log slider
@@ -2196,7 +2205,7 @@ fn param_control(ui: &mut Ui, pd: &ParamDef, p: &mut Params) {
             let mut v = p.i(pd.key);
             if max - min <= 12 {
                 ui.horizontal(|ui| {
-                    ui.label(theme::muted(pd.label).size(11.0));
+                    param_label(ui, label, pd.hint);
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if ui.add_enabled(v < *max, Button::new("+").min_size(Vec2::splat(22.0))).clicked() {
                             v += 1;
@@ -2211,7 +2220,7 @@ fn param_control(ui: &mut Ui, pd: &ParamDef, p: &mut Params) {
                     p.0.insert(pd.key.to_string(), Value::I(v.clamp(*min, *max)));
                 }
             } else {
-                ui.label(theme::muted(pd.label).size(11.0));
+                param_label(ui, label, pd.hint);
                 if ui.add(egui::Slider::new(&mut v, *min..=*max).clamping(egui::SliderClamping::Always)).changed() {
                     p.0.insert(pd.key.to_string(), Value::I(v));
                 }
@@ -2219,12 +2228,16 @@ fn param_control(ui: &mut Ui, pd: &ParamDef, p: &mut Params) {
         }
         Kind::Bool => {
             let mut v = p.b(pd.key);
-            if ui.checkbox(&mut v, pd.label).changed() {
+            let mut r = ui.checkbox(&mut v, label);
+            if !pd.hint.is_empty() {
+                r = r.on_hover_text(pd.hint);
+            }
+            if r.changed() {
                 p.0.insert(pd.key.to_string(), Value::B(v));
             }
         }
         Kind::Choice(opts) => {
-            ui.label(theme::muted(pd.label).size(11.0));
+            param_label(ui, label, pd.hint);
             let mut cur = p.s(pd.key).to_string();
             if opts.len() <= 4 && opts.iter().map(|o| o.chars().count()).sum::<usize>() <= 30 {
                 segmented(ui, opts, &mut cur);
@@ -2243,14 +2256,14 @@ fn param_control(ui: &mut Ui, pd: &ParamDef, p: &mut Params) {
             }
         }
         Kind::Text => {
-            ui.label(theme::muted(pd.label).size(11.0));
+            param_label(ui, label, pd.hint);
             let mut cur = p.s(pd.key).to_string();
             if ui.add(TextEdit::singleline(&mut cur).desired_width(220.0)).changed() {
                 p.0.insert(pd.key.to_string(), Value::S(cur));
             }
         }
         Kind::Long => {
-            ui.label(theme::muted(pd.label).size(11.0));
+            param_label(ui, label, pd.hint);
             let mut cur = p.s(pd.key).to_string();
             if ui
                 .add(TextEdit::multiline(&mut cur).desired_width(240.0).desired_rows(4).font(egui::TextStyle::Monospace))
@@ -2260,7 +2273,7 @@ fn param_control(ui: &mut Ui, pd: &ParamDef, p: &mut Params) {
             }
         }
         Kind::List => {
-            ui.label(theme::muted(pd.label).size(11.0));
+            param_label(ui, label, pd.hint);
             let (mut items, sep) = list_items(p.s(pd.key));
             let mut changed = false;
             let mut del = None;
@@ -2288,7 +2301,7 @@ fn param_control(ui: &mut Ui, pd: &ParamDef, p: &mut Params) {
             }
         }
         Kind::Color(pal) => {
-            ui.label(theme::muted(pd.label).size(11.0));
+            param_label(ui, label, pd.hint);
             let cur = p.s(pd.key).to_string();
             ui.horizontal_wrapped(|ui| {
                 for hex in pal {

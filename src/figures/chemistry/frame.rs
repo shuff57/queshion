@@ -19,7 +19,8 @@ pub fn title_style(three: bool) -> ParamDef {
     ParamDef::choice("title_style", "Chart title", if three { &TITLE3 } else { &TITLE2 }, "Text")
 }
 
-pub fn answer_param(label: &'static str) -> ParamDef { ParamDef::bool("answer", label, false) }
+/// The "Answer key" switch; `hint` is the old parenthetical, now shown on hover.
+pub fn answer_param(hint: &'static str) -> ParamDef { ParamDef::bool("answer", "Answer key", false).hint(hint) }
 
 /// Height of the band the wrapper adds above the figure for the chart title.
 pub fn title_band(p: &Params) -> f64 {

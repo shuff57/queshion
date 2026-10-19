@@ -97,7 +97,8 @@ fn volume_params() -> Vec<ParamDef> {
         ParamDef::choice("color", "Liquid color", &COLORS, "Gray"),
         ParamDef::float("reading", "Reading (mL)", 0.0, 1000.0, 0.05, 43.6),
         ParamDef::bool("dotted", "Dotted line at the meniscus", false),
-        ParamDef::bool("answer", "Answer key (the reading under the figure)", false),
+        ParamDef::bool("answer", "Answer key", false)
+            .hint("The reading is printed under the figure."),
         ParamDef::text("title", "Chart title text", ""),
         ParamDef::choice("marks", "Smallest marks", &VOL_MARKS, "Automatic"),
         ParamDef::choice("numbered", "Numbered every", &VOL_NUMS, "Automatic"),
@@ -334,7 +335,8 @@ fn syringe_params() -> Vec<ParamDef> {
         ParamDef::choice("size", "Gas syringe size", &["50 cm³", "100 cm³"], "100 cm³"),
         ParamDef::choice("unit", "Unit", &["cm³", "mL"], "cm³"),
         ParamDef::float("volume", "Volume of gas", 0.0, 100.0, 0.1, 43.6),
-        ParamDef::bool("answer", "Answer key (the volume under the figure)", false),
+        ParamDef::bool("answer", "Answer key", false)
+            .hint("The volume is printed under the figure."),
         ParamDef::text("title", "Chart title text", ""),
         magnify::show_param(&MAG3, "Instrument only"),
         magnify::marks_param(),
@@ -409,9 +411,11 @@ fn length_params() -> Vec<ParamDef> {
         ParamDef::float("offset", "Left end at", 0.0, 100.0, 0.01, 0.0),
         ParamDef::choice("object", "Object", &["Marbles", "Rock", "Cube", "Metal cylinder"], "Metal cylinder"),
         ParamDef::bool("dashes", "Dashed lines at its ends", false),
-        ParamDef::bool("answer", "Answer key (the length under the figure)", false),
+        ParamDef::bool("answer", "Answer key", false)
+            .hint("The length is printed under the figure."),
         ParamDef::text("title", "Chart title text", ""),
-        ParamDef::choice("read_to", "Read to (answer key)", &["One estimated digit", "Nearest mark"], "One estimated digit"),
+        ParamDef::choice("read_to", "Read to", &["One estimated digit", "Nearest mark"], "One estimated digit")
+            .hint("How precise the answer key should be."),
         magnify::show_param(&LENGTH_SHOW, "Ruler only"),
         magnify::marks_param(),
         title_style(false),

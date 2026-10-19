@@ -219,7 +219,7 @@ impl Workspace {
                 egui::CollapsingHeader::new(RichText::new("Advanced").size(12.0)).id_salt("ped_advanced").default_open(false).show(ui, |ui| {
                     for key in ["seed", "changes"] {
                         if let Some(pd) = pdefs.iter().find(|d| d.key == key) {
-                            param_control(ui, pd, &mut self.params);
+                            param_control(ui, "pedigree", pd, &mut self.params);
                             ui.add_space(4.0);
                         }
                     }

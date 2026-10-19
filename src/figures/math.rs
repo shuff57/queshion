@@ -1178,7 +1178,7 @@ fn quad_params(id: &str, vals: &[(&'static str, &'static str)]) -> Vec<ParamDef>
         if !inp[i] { continue; }
         let d = vals.iter().find(|x| x.0 == k).map(|x| x.1).unwrap_or("");
         let label = ["Side AB", "Side BC", "Side CD", "Side DA", "Angle A", "Angle B", "Angle C", "Angle D"][i];
-        v.push(ParamDef { key: k, label, kind: Kind::Text, default: Value::S(d.into()) });
+        v.push(ParamDef { key: k, label, hint: "", kind: Kind::Text, default: Value::S(d.into()) });
     }
     label_params(&mut v, &Q_LAB, &Q_TXT, &Q_MARK, false, 4);
     for (k, d) in vals {
@@ -1534,7 +1534,7 @@ pub(crate) const RAY_LINE: [&str; 6] = ["ray1_line", "ray2_line", "ray3_line", "
 pub(crate) fn angles_params() -> Vec<ParamDef> {
     let mut v = vec![];
     for (i, &k) in RAY_V.iter().enumerate().skip(1) {
-        v.push(ParamDef { key: k, label: ["", "Ray 2 direction", "Ray 3 direction", "Ray 4 direction", "Ray 5 direction", "Ray 6 direction"][i], kind: Kind::Text, default: Value::S(if i == 1 { "60".into() } else { String::new() }) });
+        v.push(ParamDef { key: k, label: ["", "Ray 2 direction", "Ray 3 direction", "Ray 4 direction", "Ray 5 direction", "Ray 6 direction"][i], hint: "", kind: Kind::Text, default: Value::S(if i == 1 { "60".into() } else { String::new() }) });
     }
     for i in 0..6 {
         v.push(ParamDef::choice(RAY_STYLE[i], "Line", &STYLES, "Solid"));

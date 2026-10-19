@@ -39,12 +39,16 @@ fn bohr_params() -> Vec<ParamDef> {
         ParamDef::int("charge", "Charge", -8, 8, 0),
         ParamDef::choice("nucleus", "Draw the nucleus as", &["Symbol", "Protons and neutrons", "Blank", "Balls"], "Symbol"),
         ParamDef::choice("placement", "Electron placement", &["Evenly spaced", "Paired"], "Evenly spaced"),
-        ParamDef::bool("empty", "Empty rings (students draw the electrons)", false),
+        ParamDef::bool("empty", "Empty rings", false)
+            .hint("Draw the rings without electrons, for students to draw them."),
         ParamDef::bool("caption", "Caption with element name", false),
         ParamDef::text("title", "Chart title text", ""),
-        ParamDef::bool("gained_lost", "Gained and lost electrons (gained in their own colour, lost as empty spots)", false),
-        ParamDef::int("neutrons", "Neutrons (-1 = from the mass number)", -1, 200, -1),
-        ParamDef::list("shells_custom", "Electrons per shell, n = 1, 2, ... (blank = automatic)", ""),
+        ParamDef::bool("gained_lost", "Gained and lost electrons", false)
+            .hint("Gained electrons in their own colour, lost ones as empty spots where they were."),
+        ParamDef::int("neutrons", "Neutrons", -1, 200, -1)
+            .hint("-1 takes the mass number."),
+        ParamDef::list("shells_custom", "Electrons per shell", "")
+            .hint("n = 1, 2, …; blank fills them automatically."),
         ParamDef::int("shuffle", "Shuffle the nucleus balls (seed)", 0, 999, 0),
         ParamDef::choice("proton_color", "Proton color", &COLORS9, "Red"),
         ParamDef::choice("proton_symbol", "Proton symbol", &["+", "p", "p⁺", "None"], "+"),
@@ -52,9 +56,12 @@ fn bohr_params() -> Vec<ParamDef> {
         ParamDef::choice("neutron_symbol", "Neutron symbol", &["0", "n", "n⁰", "None"], "None"),
         ParamDef::choice("electron_color", "Electron color", &COLORS9, "Blue"),
         ParamDef::choice("electron_symbol", "Electron symbol", &["−", "e", "e⁻", "None"], "None"),
-        ParamDef::bool("key", "Key: list each part drawn as a ball or dot", false),
-        ParamDef::bool("shell_labels", "Shell labels (n = 1, n = 2 ... on each ring)", false),
-        ParamDef::bool("brackets", "Brackets: put an ion in square brackets with its charge", false),
+        ParamDef::bool("key", "Key", false)
+            .hint("List each part drawn as a ball or dot, beside the model."),
+        ParamDef::bool("shell_labels", "Shell labels", false)
+            .hint("Write n = 1, n = 2… on each ring."),
+        ParamDef::bool("brackets", "Brackets", false)
+            .hint("Put an ion in square brackets with its charge at the top right."),
         title_style(false),
     ]
 }

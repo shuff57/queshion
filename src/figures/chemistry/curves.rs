@@ -36,7 +36,8 @@ fn tit_params() -> Vec<ParamDef> {
         ParamDef::float("molarity", "Analyte molarity (M)", 0.001, 2.0, 0.005, 0.1),
         ParamDef::float("volume", "Analyte volume (mL)", 1.0, 200.0, 0.5, 25.0),
         ParamDef::float("titrant", "Titrant molarity (M)", 0.001, 2.0, 0.005, 0.1),
-        ParamDef::float("pk", "pKa (weak acid) or pKb (weak base)", 1.0, 12.0, 0.01, 4.76),
+        ParamDef::float("pk", "pKa", 1.0, 12.0, 0.01, 4.76)
+            .hint("pKb for a weak base."),
         ParamDef::choice("equiv", "Equivalence point", &MARKS, "Dot and lines to the axes"),
         ParamDef::bool("half", "Mark half-equivalence (weak only; same as Half-equivalence point = Dot and lines)", false),
         ParamDef::float("xmax", "x-axis maximum when fitted (mL, 0 = twice the equivalence volume)", 0.0, 1000.0, 1.0, 0.0),
@@ -44,8 +45,9 @@ fn tit_params() -> Vec<ParamDef> {
         ParamDef::text("xlabel", "x-axis title text (blank = automatic)", ""),
         ParamDef::text("eq_label", "Equivalence point label text", "equivalence point"),
         ParamDef::text("half_label", "Half-equivalence label text", "half-equivalence point"),
-        ParamDef::color("curve_color", "Curve colour", &CURVE_COLORS, "#1f5fa8"),
-        ParamDef::choice("common", "Common titration (25.0 mL of 0.100 M with 0.100 M)", &COMMON, "Custom"),
+        ParamDef::color("curve_color", "Curve", &CURVE_COLORS, "#1f5fa8"),
+        ParamDef::choice("common", "Common titration", &COMMON, "Custom")
+            .hint("25.0 mL of 0.100 M, with 0.100 M."),
         ParamDef::choice("source", "Work the curve out from", &["Concentrations", "Key points"], "Concentrations"),
         ParamDef::float("kp_start", "Key points: starting pH", 0.0, 14.0, 0.01, 2.88),
         ParamDef::float("kp_end", "Key points: ending pH", 0.0, 14.0, 0.01, 12.52),
@@ -233,7 +235,8 @@ fn heat_params() -> Vec<ParamDef> {
     let mut v = vec![
         ParamDef::choice("mode", "Heating or cooling", &["Heating", "Cooling"], "Heating"),
         ParamDef::choice("substance", "Substance", &["Water", "Ethanol", "Acetone", "Mercury", "Sodium chloride", "Substance X", "Custom"], "Water"),
-        ParamDef::float("mp", "Custom melting (freezing) point (°C)", -270.0, 3000.0, 1.0, 0.0),
+        ParamDef::float("mp", "Custom melting point (°C)", -270.0, 3000.0, 1.0, 0.0)
+            .hint("The freezing point when cooling."),
         ParamDef::float("bp", "Custom boiling point (°C)", -260.0, 4000.0, 1.0, 100.0),
         ParamDef::float("start", "Starting temperature (°C)", -273.0, 4000.0, 1.0, -20.0),
         ParamDef::float("end", "Ending temperature (°C)", -273.0, 4000.0, 1.0, 120.0),
@@ -244,16 +247,20 @@ fn heat_params() -> Vec<ParamDef> {
         ParamDef::float("t_liquid", "Liquid warms / cools (min)", 0.5, 30.0, 0.5, 5.0),
         ParamDef::float("t_boil", "Boiling / condensing (min)", 0.5, 30.0, 0.5, 8.0),
         ParamDef::float("t_gas", "Gas warms / cools (min)", 0.5, 30.0, 0.5, 2.0),
-        ParamDef::bool("labels", "Labels on the curve (off = none at all)", true),
+        ParamDef::bool("labels", "Labels on the curve", true)
+            .hint("Off draws none at all."),
         ParamDef::text("title", "Chart title text", ""),
         ParamDef::text("ylabel", "y-axis title text", "Temperature (°C)"),
         ParamDef::list("phase_names", "Phase labels (5): solid, melting, liquid, boiling, gas", "solid, solid + liquid, liquid, liquid + gas, gas"),
-        ParamDef::color("curve_color", "Curve colour", &CURVE_COLORS, "#1f5fa8"),
-        ParamDef::bool("supercool", "Supercooled (cooling: the liquid dips below its freezing point first)", false),
+        ParamDef::color("curve_color", "Curve", &CURVE_COLORS, "#1f5fa8"),
+        ParamDef::bool("supercool", "Supercooled", false)
+            .hint("Cooling: the liquid dips below its freezing point first."),
         ParamDef::choice("seg_labels", "Segment labels", &["States", "Blank lines", "None"], "States"),
         ParamDef::choice("plateau_labels", "Plateaus labeled with", &["Both states (Solid + liquid)", "The change (Melting)"], "Both states (Solid + liquid)"),
-        ParamDef::bool("letters", "Letters at the corners (A, B, C...)", false),
-        ParamDef::bool("plateau_dashes", "Dashed lines at the plateaus across to the temperature axis", true),
+        ParamDef::bool("letters", "Letters at the corners", false)
+            .hint("A, B, C… for questions like “What is happening between B and C?”"),
+        ParamDef::bool("plateau_dashes", "Dashed lines at the plateaus", true)
+            .hint("Across to the temperature axis, to read the melting and boiling points."),
         ParamDef::choice("temp_labels", "By the temperature axis", &["Temperatures", "m.p. and b.p.", "Blank lines", "None"], "Temperatures"),
         title_style(true),
         ParamDef::choice("xtitle_style", "x-axis title", &TITLE3, "Text"),

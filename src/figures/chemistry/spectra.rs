@@ -49,11 +49,13 @@ fn line_params() -> Vec<ParamDef> {
         ParamDef::choice("brightness", "Brightness", &["All equal", "Relative"], "All equal"),
         ParamDef::bool("labels", "Label wavelengths", false),
         ParamDef::text("title", "Chart title text", ""),
-        ParamDef::list("custom", "Extra custom row: wavelengths in nm (nm or nm:brightness)", ""),
+        ParamDef::list("custom", "Extra custom row", "")
+            .hint("Wavelengths in nm, or nm:brightness."),
     ];
     for (k, l) in OLD_KEYS { v.push(ParamDef::bool(k, l, k == "hydrogen")); }
     v.extend([
-        ParamDef::list("strips", "Strips, one per row (overrides the ticks above): Hydrogen | Unknown = Hydrogen + Sodium | Element X: 425 510:0.5 630", ""),
+        ParamDef::list("strips", "Strips, one per row", "")
+            .hint("Overrides the ticks above; e.g. Hydrogen | Unknown = Hydrogen + Sodium | Element X: 425 510:0.5 630"),
         ParamDef::choice("label_style", "Labels", &["Names", "Symbols", "Blank", "None"], "Names"),
         ParamDef::float("nm_from", "Wavelength axis from (nm)", 300.0, 900.0, 5.0, 400.0),
         ParamDef::float("nm_to", "Wavelength axis to (nm)", 300.0, 900.0, 5.0, 700.0),
@@ -575,14 +577,17 @@ fn ms_params() -> Vec<ParamDef> {
     let mut v = vec![
         ParamDef::choice("source", "Peaks from", &["Element", "Custom isotopes"], "Element"),
         ParamDef::choice("element", "Element", &names, "Chlorine"),
-        ParamDef::text("custom", "Custom isotopes (mass:abundance %, up to 6)", "35:75.8, 37:24.2"),
+        ParamDef::text("custom", "Custom isotopes", "35:75.8, 37:24.2")
+            .hint("mass:abundance %, up to 6."),
         ParamDef::bool("molecule", "Diatomic molecule (X2)", false),
-        ParamDef::bool("relative", "Peak heights relative to the tallest (off = percent)", true),
+        ParamDef::bool("relative", "Peak heights relative to the tallest", true)
+            .hint("Off uses percent."),
         ParamDef::bool("values", "Abundances over the peaks", false),
         ParamDef::text("title", "Chart title text", ""),
         ParamDef::text("custom_name", "Custom element name", "Element X"),
         ParamDef::bool("show_name", "Element name over the spectrum", true),
-        ParamDef::int("leave_out", "Leave a peak out (0 = none, 1 = lightest, 2 = next...)", 0, 10, 0),
+        ParamDef::int("leave_out", "Leave a peak out", 0, 10, 0)
+            .hint("0 = none, 1 = lightest, 2 = next…"),
         answer_param("Answer key (relative atomic mass, missing peak)"),
         title_style(true),
         ParamDef::choice("xtitle_style", "x-axis title", &TITLE3, "Text"),

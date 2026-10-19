@@ -22,10 +22,13 @@ const PRESETS: [&str; 23] = [
 
 fn params() -> Vec<ParamDef> {
     vec![
-        ParamDef::text("formula", "Formula or name (e.g. H2O, CO2, NH4+, SO4 2-, ethanol)", "H2O"),
-        ParamDef::choice("preset", "Or pick a molecule with more than one central atom (overrides the formula)", &PRESETS, "None (use the formula)"),
+        ParamDef::text("formula", "Formula or name", "H2O")
+            .hint("A formula like H2O, CO2, NH4+ or SO4 2-, or a name like ethanol."),
+        ParamDef::choice("preset", "Or pick from the list", &PRESETS, "None (use the formula)")
+            .hint("Molecules with more than one central atom; overrides the formula."),
         ParamDef::bool("lone", "Show lone pairs", true),
-        ParamDef::bool("formal", "Formal charges (label each atom whose formal charge isn't 0)", false),
+        ParamDef::bool("formal", "Formal charges", false)
+            .hint("Label each atom whose formal charge isn't 0."),
         ParamDef::bool("expand", "Expand the octet to lower formal charges", false),
         ParamDef::text("title", "Chart title text", ""),
         ParamDef::text("tweak", "Changes: b2=3 (bond 2 triple, 0 = none), e1=4 (atom 1 has 4 lone electrons); or click bonds and atoms", ""),
@@ -34,7 +37,8 @@ fn params() -> Vec<ParamDef> {
         ParamDef::choice("resonance", "Resonance structures", &["Show one", "Show all"], "Show one"),
         ParamDef::int("resonance_pick", "Which resonance structure", 1, 6, 1),
         ParamDef::choice("question", "Give students", &["Full structure", "Bonds only", "Skeleton"], "Full structure"),
-        ParamDef::text("central", "Central atom (symbol; blank = the correct one)", ""),
+        ParamDef::text("central", "Central atom", "")
+            .hint("Blank uses the correct one."),
         title_style(false),
         answer_param("Answer key (the full structure, or the mistakes in a changed structure)"),
     ]

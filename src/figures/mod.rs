@@ -52,34 +52,70 @@ pub enum Kind {
 pub struct ParamDef {
     pub key: &'static str,
     pub label: &'static str,
+    /// Help shown on hover, kept out of the label so it stays as short as the reference's.
+    pub hint: &'static str,
     pub kind: Kind,
     pub default: Value,
 }
 
 impl ParamDef {
     pub fn float(key: &'static str, label: &'static str, min: f64, max: f64, step: f64, d: f64) -> Self {
-        Self { key, label, kind: Kind::Float { min, max, step }, default: Value::F(d) }
+        Self { key, label, hint: "", kind: Kind::Float { min, max, step }, default: Value::F(d) }
     }
     pub fn int(key: &'static str, label: &'static str, min: i64, max: i64, d: i64) -> Self {
-        Self { key, label, kind: Kind::Int { min, max }, default: Value::I(d) }
+        Self { key, label, hint: "", kind: Kind::Int { min, max }, default: Value::I(d) }
     }
     pub fn bool(key: &'static str, label: &'static str, d: bool) -> Self {
-        Self { key, label, kind: Kind::Bool, default: Value::B(d) }
+        Self { key, label, hint: "", kind: Kind::Bool, default: Value::B(d) }
     }
     pub fn choice(key: &'static str, label: &'static str, opts: &[&'static str], d: &str) -> Self {
-        Self { key, label, kind: Kind::Choice(opts.to_vec()), default: Value::S(d.into()) }
+        Self { key, label, hint: "", kind: Kind::Choice(opts.to_vec()), default: Value::S(d.into()) }
     }
     pub fn text(key: &'static str, label: &'static str, d: &str) -> Self {
-        Self { key, label, kind: Kind::Text, default: Value::S(d.into()) }
+        Self { key, label, hint: "", kind: Kind::Text, default: Value::S(d.into()) }
     }
     pub fn long(key: &'static str, label: &'static str, d: &str) -> Self {
-        Self { key, label, kind: Kind::Long, default: Value::S(d.into()) }
+        Self { key, label, hint: "", kind: Kind::Long, default: Value::S(d.into()) }
     }
     pub fn list(key: &'static str, label: &'static str, d: &str) -> Self {
-        Self { key, label, kind: Kind::List, default: Value::S(d.into()) }
+        Self { key, label, hint: "", kind: Kind::List, default: Value::S(d.into()) }
     }
     pub fn color(key: &'static str, label: &'static str, palette: &[&'static str], d: &str) -> Self {
-        Self { key, label, kind: Kind::Color(palette.to_vec()), default: Value::S(d.into()) }
+        Self { key, label, hint: "", kind: Kind::Color(palette.to_vec()), default: Value::S(d.into()) }
+    }
+    /// Help shown on hover, e.g. the parenthetical text the reference keeps as hint text.
+    pub fn hint(mut self, hint: &'static str) -> Self {
+        self.hint = hint;
+        self
+    }
+}
+
+/// The label a control shows when the reference changes it with another choice: the titration's
+/// acid/base name, the heating curve's direction. `None` keeps the ParamDef's own label.
+pub fn label_for(fig: &str, key: &str, p: &Params) -> Option<&'static str> {
+    match fig {
+        "titration-curve" => {
+            let base = p.s("kind").starts_with("Strong base") || p.s("kind").starts_with("Weak base");
+            Some(match key {
+                "molarity" => if base { "Base molarity (M)" } else { "Acid molarity (M)" },
+                "volume" => if base { "Base volume (mL)" } else { "Acid volume (mL)" },
+                "titrant" => if base { "HCl molarity (M)" } else { "NaOH molarity (M)" },
+                "pk" => if base { "pKb" } else { "pKa" },
+                _ => return None,
+            })
+        }
+        "heating-cooling-curve" => {
+            let cooling = p.s("mode") == "Cooling";
+            Some(match key {
+                "t_solid" => if cooling { "Solid cools (min)" } else { "Solid warms (min)" },
+                "t_melt" => if cooling { "Freezing (min)" } else { "Melting (min)" },
+                "t_liquid" => if cooling { "Liquid cools (min)" } else { "Liquid warms (min)" },
+                "t_boil" => if cooling { "Condensing (min)" } else { "Boiling (min)" },
+                "t_gas" => if cooling { "Gas cools (min)" } else { "Gas warms (min)" },
+                _ => return None,
+            })
+        }
+        _ => None,
     }
 }
 
@@ -580,6 +616,29 @@ mod tests {
             let svg = (d.render)(&p);
             to_png(&svg, 0.5).unwrap_or_else(|e| panic!("{} failed: {e}", d.id));
         }
+    }
+
+    #[test]
+    fn labels_follow_the_reference_choices() {
+        let d = registry().into_iter().find(|d| d.id == "titration-curve").unwrap();
+        let mut p = Params::defaults(&(d.params)());
+        assert_eq!(label_for(d.id, "molarity", &p), Some("Acid molarity (M)"));
+        assert_eq!(label_for(d.id, "volume", &p), Some("Acid volume (mL)"));
+        assert_eq!(label_for(d.id, "titrant", &p), Some("NaOH molarity (M)"));
+        assert_eq!(label_for(d.id, "pk", &p), Some("pKa"));
+        p.set_s("kind", "Weak base with a strong acid");
+        assert_eq!(label_for(d.id, "molarity", &p), Some("Base molarity (M)"));
+        assert_eq!(label_for(d.id, "volume", &p), Some("Base volume (mL)"));
+        assert_eq!(label_for(d.id, "titrant", &p), Some("HCl molarity (M)"));
+        assert_eq!(label_for(d.id, "pk", &p), Some("pKb"));
+
+        let h = registry().into_iter().find(|d| d.id == "heating-cooling-curve").unwrap();
+        let mut p = Params::defaults(&(h.params)());
+        assert_eq!(label_for(h.id, "t_solid", &p), Some("Solid warms (min)"));
+        assert_eq!(label_for(h.id, "t_melt", &p), Some("Melting (min)"));
+        p.set_s("mode", "Cooling");
+        assert_eq!(label_for(h.id, "t_solid", &p), Some("Solid cools (min)"));
+        assert_eq!(label_for(h.id, "t_melt", &p), Some("Freezing (min)"));
     }
 }
 
