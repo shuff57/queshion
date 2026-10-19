@@ -212,6 +212,20 @@ pub fn open_path(path: &Path) {
     }
 }
 
+/// Opens a web address in the default browser (the web build opens a new tab).
+pub fn open_url(url: &str) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(w) = web_sys::window() {
+            let _ = w.open_with_url_and_target(url, "_blank");
+        }
+    }
+}
+
 /// The clip that shows how to obtain a key for `provider`, if we have one.
 pub fn help_clip_name(provider: &str) -> Option<&'static str> {
     match provider {

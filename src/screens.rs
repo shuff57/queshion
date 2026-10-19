@@ -168,6 +168,49 @@ pub fn chip(ui: &mut egui::Ui, label: &str, color: Color32) {
 
 // ---------- drawn icons (no glyph-font dependency: every shape is painted) ----------
 
+/// A GitHub new-issue link prefilled with the report and the environment.
+fn issue_url(kind: usize, title: &str, desc: &str) -> String {
+    const KINDS: [&str; 3] = ["Bug", "Quirk", "Improvement"];
+    let title = format!("[{}] {}", KINDS[kind.min(2)], title.trim());
+    let desc: String = desc.trim().chars().take(1500).collect();
+    let body = format!(
+        "{desc}\n\n---\n{}\nFiled from verSHion {}.",
+        environment_line(),
+        env!("CARGO_PKG_VERSION")
+    );
+    format!(
+        "https://github.com/shuff57/verSHion/issues/new?title={}&body={}",
+        pct(&title),
+        pct(&body)
+    )
+}
+
+fn environment_line() -> String {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let ua = web_sys::window()
+            .and_then(|w| w.navigator().user_agent().ok())
+            .unwrap_or_default();
+        format!("Browser: {ua}")
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        format!("OS: {} {}", std::env::consts::OS, std::env::consts::ARCH)
+    }
+}
+
+/// Percent-encode for a query string (RFC 3986 unreserved characters stay).
+fn pct(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
 /// Sidebar icons and small chrome glyphs, drawn as vector strokes.
 #[derive(Clone, Copy)]
 pub enum NavIcon {
@@ -1121,6 +1164,113 @@ impl crate::App {
         });
     }
 
+    /// Coffee, the issue list and the report form. The report opens a prefilled GitHub issue;
+    /// nothing is sent from the app and no server secret is involved.
+    fn draw_community(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        use crate::kit;
+        const COFFEE: &str = "https://www.buymeacoffee.com/shuff57";
+        const ISSUES: &str = "https://github.com/shuff57/verSHion/issues";
+        kit::card().inner_margin(Margin::same(18)).show(ui, |ui| {
+            ui.set_min_width(ui.available_width().max(0.0));
+            ui.label(theme::serif("Community").size(18.0));
+            ui.add_space(4.0);
+            ui.label(theme::muted(
+                "verSHion is free. A coffee helps keep it going; bugs and ideas live on GitHub.",
+            ));
+            ui.add_space(10.0);
+            ui.horizontal_wrapped(|ui| {
+                if kit::ghost_button(ui, &format!("{}  Buy me a coffee", egui_phosphor::regular::COFFEE)).clicked() {
+                    crate::platform::open_url(COFFEE);
+                }
+                if kit::ghost_button(ui, &format!("{}  Reported issues", egui_phosphor::regular::LIST_BULLETS)).clicked() {
+                    crate::platform::open_url(ISSUES);
+                }
+                if kit::ghost_button(ui, &format!("{}  Report a bug", egui_phosphor::regular::BUG)).clicked() {
+                    ctx.data_mut(|d| d.insert_temp(egui::Id::new("report_open"), true));
+                }
+            });
+        });
+        ui.add_space(12.0);
+        self.draw_report_dialog(ctx);
+    }
+
+    fn draw_report_dialog(&mut self, ctx: &egui::Context) {
+        use crate::kit;
+        let id_open = egui::Id::new("report_open");
+        let id_kind = egui::Id::new("report_kind");
+        let id_title = egui::Id::new("report_title");
+        let id_desc = egui::Id::new("report_desc");
+        let mut open: bool = ctx.data_mut(|d| d.get_temp(id_open)).unwrap_or(false);
+        if !open {
+            return;
+        }
+        let mut kind: usize = ctx.data_mut(|d| d.get_temp(id_kind)).unwrap_or(0);
+        let mut title: String = ctx.data_mut(|d| d.get_temp(id_title)).unwrap_or_default();
+        let mut desc: String = ctx.data_mut(|d| d.get_temp(id_desc)).unwrap_or_default();
+        const KINDS: [(&str, &str); 3] = [
+            ("Bug", "doesn't work"),
+            ("Quirk", "works, but picky"),
+            ("Improve", "wish it had"),
+        ];
+        let mut close_now = false;
+        egui::Window::new("Report an issue")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.set_min_width(380.0);
+                ui.horizontal(|ui| {
+                    for (i, (label, hint)) in KINDS.iter().enumerate() {
+                        if ui.selectable_label(kind == i, *label).on_hover_text(*hint).clicked() {
+                            kind = i;
+                        }
+                    }
+                });
+                ui.add_space(6.0);
+                ui.label(theme::text("Title"));
+                ui.add(
+                    egui::TextEdit::singleline(&mut title)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("One line: what went wrong?"),
+                );
+                ui.add_space(6.0);
+                ui.label(theme::text("What happened?"));
+                ui.add(
+                    egui::TextEdit::multiline(&mut desc)
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(4)
+                        .hint_text("What did you try, and what happened instead?"),
+                );
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    let ready = !title.trim().is_empty() && !desc.trim().is_empty();
+                    if kit::primary_button(ui, "Open a GitHub issue").clicked() && ready {
+                        crate::platform::open_url(&issue_url(kind, &title, &desc));
+                        close_now = true;
+                        title.clear();
+                        desc.clear();
+                    }
+                    if kit::ghost_button(ui, "Cancel").clicked() {
+                        close_now = true;
+                    }
+                });
+                ui.label(
+                    theme::muted("This opens a prefilled issue on GitHub; nothing is sent from verSHion.")
+                        .size(11.5),
+                );
+            });
+        if close_now {
+            open = false;
+        }
+        ctx.data_mut(|d| {
+            d.insert_temp(id_open, open);
+            d.insert_temp(id_kind, kind);
+            d.insert_temp(id_title, title);
+            d.insert_temp(id_desc, desc);
+        });
+    }
+
     fn draw_ai_key_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         use crate::kit;
         let cfg = crate::ai::AiCfg::from(&self.settings);
@@ -1325,6 +1475,8 @@ impl crate::App {
                         app.save_settings();
                     }
                 });
+                ui.add_space(12.0);
+                app.draw_community(ui, ctx);
                 ui.add_space(16.0);
             });
         });
@@ -2220,6 +2372,13 @@ mod tests {
         // A non-empty bank_id is never touched.
         assert_eq!(exams[0].items[1].bank_id, "other-bank");
         assert_eq!(exams[0].items[1].question_id, "q2"); // ids pass through verbatim
+    }
+
+    #[test]
+    fn issue_links_are_percent_encoded() {
+        let u = issue_url(0, "Caret loss & tabs", "Line one\nLine two");
+        assert!(u.starts_with("https://github.com/shuff57/verSHion/issues/new?title="));
+        assert!(u.contains("%20") && u.contains("%0A") && !u.contains(' '));
     }
 }
 /// Padlock glyph for the dock's "Saved on this computer" note.
