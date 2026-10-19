@@ -2463,10 +2463,10 @@ const NUM_EVERY_LINE: [&str; 5] = ["Every line", "Every 2nd line", "Every 5th li
 fn coordinate_grid_params() -> Vec<ParamDef> {
     vec![
         ParamDef::float("xmin", "x-axis minimum (from)", -1000.0, 1000.0, 1.0, 0.0),
-        ParamDef::float("xmax", "x-axis maximum (to)", -1000.0, 1000.0, 1.0, 10.0),
+        ParamDef::float("xmax", "x-axis maximum (to)", -1000.0, 1000.0, 1.0, 15.0),
         ParamDef::float("xstep", "x-axis step (count by)", 0.05, 180.0, 0.5, 1.0),
         ParamDef::float("ymin", "y-axis minimum (from)", -1000.0, 1000.0, 1.0, 0.0),
-        ParamDef::float("ymax", "y-axis maximum (to)", -1000.0, 1000.0, 1.0, 10.0),
+        ParamDef::float("ymax", "y-axis maximum (to)", -1000.0, 1000.0, 1.0, 15.0),
         ParamDef::float("ystep", "y-axis step (count by)", 0.05, 180.0, 0.5, 1.0),
         ParamDef::int("minor", "Minor gridlines per step (0 = none)", 0, 10, 0),
         ParamDef::bool("numbers", "Number the axes", true),
@@ -4232,17 +4232,17 @@ const BOX_STATS: [(&str, &str); 5] = [("min_lab", "min_label"), ("q1_lab", "q1_l
 
 fn box_plot_params() -> Vec<ParamDef> {
     vec![
-        ParamDef::list("data", "Data set 1", "2, 4, 5, 5, 6, 7, 8, 9, 12"),
+        ParamDef::list("data", "Data set 1", "2, 4, 5, 5, 6, 7, 8, 9, 10"),
         ParamDef::list("summary", "Or five-number summary instead: min, Q1, median, Q3, max", ""),
         ParamDef::text("name1", "Name of set 1", ""),
         ParamDef::list("data2", "Data set 2 (optional, to compare)", ""),
         ParamDef::list("summary2", "Or five-number summary for set 2", ""),
         ParamDef::text("name2", "Name of set 2", ""),
-        ParamDef::bool("values", "Write the five values", true),
+        ParamDef::bool("values", "Write the five values", false),
         ParamDef::bool("outliers", "Mark outliers (beyond 1.5 x IQR)", false),
-        ParamDef::bool("auto", "Choose the number line automatically", true),
+        ParamDef::bool("auto", "Choose the number line automatically", false),
         ParamDef::float("axis_min", "Number line minimum (if not automatic)", -1000.0, 1000.0, 1.0, 0.0),
-        ParamDef::float("axis_max", "Number line maximum (if not automatic)", -1000.0, 1000.0, 1.0, 14.0),
+        ParamDef::float("axis_max", "Number line maximum (if not automatic)", -1000.0, 1000.0, 1.0, 10.0),
         ParamDef::float("axis_step", "Number line step (if not automatic)", 0.05, 100.0, 0.5, 1.0),
         ParamDef::text("title", "Title", ""),
         ParamDef::text("axis_title", "Number line label", ""),
@@ -4896,7 +4896,7 @@ fn composite_params() -> Vec<ParamDef> {
         ParamDef::choice("preset", "Start from", &[COMPOSITE_CUSTOM, "L-shape", "House", "Arch", "T-shape", "Rectangle", "Triangle", "Semicircle", "Circle"], COMPOSITE_CUSTOM),
         ParamDef::long("spec",
             "Pieces separated by ;  rect X Y W H | tri X1 Y1 X2 Y2 X3 Y3 | poly X Y X Y ... | circle CX CY R | semi CX CY R DIR(u/d/l/r bulge) | quarter CX CY R ne/nw/se/sw | dash X1 Y1 X2 Y2 | dim X1 Y1 X2 Y2 TEXT (label drawn to the right of travel, go counterclockwise) | ticks X1 Y1 X2 Y2 N | arrows X1 Y1 X2 Y2 N | text X Y WORDS | ra X Y NE/NW/SE/SW (right angle) | side X1 Y1 X2 Y2 dashed/dotted/hidden thin/thick | angle X Y [ext] [measure] [arcs N] [square] [shade] [| TEXT] | point X Y NAME; end a piece with blue/red/green/yellow to shade it and | TEXT to label it; @DX,DY on a dim, angle, point or text is a dragged label's offset",
-            "rect 0 0 6 4; semi 3 4 3 u; dash 3 4 6 4; text 4.5 4.6 r = 3; dim 0 0 6 0 6 cm; dim 6 0 6 4 4 cm; ra 0 0 NE; ra 6 0 NW"),
+            "rect 0 0 6 4; semi 3 4 3 u; ra 0 0 NE; ra 6 0 NW"),
         ParamDef::bool("shade", "Shade the shape", true),
         ParamDef::color("fill_color", "Shade colour", &SWATCHES, "#e9f1fb"),
         ParamDef::text("unit", "Unit for dims given without text (e.g. cm)", ""),

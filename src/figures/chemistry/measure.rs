@@ -85,7 +85,8 @@ fn scale_ticks_n(d: &mut Doc, v: &Vessel, side_x: f64, dir: f64, label_x: f64, l
         let len = if is_major { 22.0 } else if is_mid { 15.0 } else { 9.0 };
         d.line(side_x, y, side_x + dir * len, y, INK, if is_major { 1.4f64.min(thin * 2.5).max(0.6) } else { thin });
         let idx = (val / num_step).round() as i64;
-        if is_major && numbers && idx % lab_every == 0 { tx(d, label_x, y + 4.0, 12.0, label_anchor, INK, false, &lab(val, num_step)); }
+        // The reference omits the number at the bottom of the scale (0 or -10).
+        if is_major && numbers && idx != 0 && idx % lab_every == 0 { tx(d, label_x, y + 4.0, 12.0, label_anchor, INK, false, &lab(val, num_step)); }
     }
     tx(d, label_x, v.ytop.min(v.ybot) - 36.0, 12.0, label_anchor, INK, true, unit);
 }
@@ -684,7 +685,8 @@ fn temp_render(p: &Params) -> String {
             let md = r5.abs() < 1e-6;
             let l = if mj { 22.0 } else if md { 15.0 } else { 9.0 };
             d.line(cx + 12.0, y(v), cx + 12.0 + l, y(v), INK, if mj { 1.3 } else { 0.8 });
-            if mj { tx(&mut d, cx + 40.0, y(v) + 4.0, 12.0, "start", INK, false, &format!("{}", v.round() as i64)); }
+            // The reference omits the number at the bottom of the scale (-10).
+            if mj && k > 0 { tx(&mut d, cx + 40.0, y(v) + 4.0, 12.0, "start", INK, false, &format!("{}", v.round() as i64)); }
         }
         tx(&mut d, cx + 12.0, ytop - 20.0, 14.0, "start", INK, true, sym);
         // between the ticks and their numbers, so the lens shows both whole

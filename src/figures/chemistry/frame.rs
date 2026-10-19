@@ -233,7 +233,8 @@ pub fn draw_graph(d: &mut Doc, g: &Graph, xt: Option<Option<&str>>, yt: Option<O
     }
     if g.y.every > 0 {
         for (k, &v) in ys.iter().enumerate() {
-            if k % g.y.every == 0 { tx(d, x0 - 9.0, g.py(v) + 5.5, 15.0, "end", INK, true, &tick(v)); }
+            // The reference omits a negative number at the very bottom of the axis.
+            if k % g.y.every == 0 && !(k == 0 && v < 0.0) { tx(d, x0 - 9.0, g.py(v) + 5.5, 15.0, "end", INK, true, &tick(v)); }
         }
     }
     end_marker(d, &g.x.lo, x0, y1, -1.0, 0.0);
