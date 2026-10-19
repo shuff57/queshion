@@ -1,0 +1,30 @@
+{
+  "name": "d1-auth",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Email and password auth for Cloudflare Workers and D1: Argon2id via a pluggable hasher, rotating refresh tokens with a reuse grace window, uniform no-enumeration responses, and pre-hash rate limiting.",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "files": [
+    "src",
+    "migrations",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.0",
+    "@cloudflare/workers-types": "^5.20261019.1",
+    "typescript": "~5.9",
+    "vitest": "~4.1.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "workerd@1.20261006.1": true
+  }
+}

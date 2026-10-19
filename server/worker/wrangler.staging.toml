@@ -1,0 +1,29 @@
+# Staging deploy: separate Worker + D1, log-mode mail, localhost origins. Safe to delete.
+name = "vershion-pool-staging"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["nodejs_compat"]
+# Public URLs off between tests; set workers_dev = true and redeploy to bring staging back.
+workers_dev = false
+preview_urls = false
+
+[[rules]]
+type = "CompiledWasm"
+globs = ["**/*.wasm"]
+fallthrough = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "vershion-pool-staging"
+database_id = "ba6f3a5a-9027-49bd-acc6-41b3ba62138c"
+migrations_dir = "migrations"
+
+[vars]
+# Log-mode mail is only allowed with a localhost APP_URL (src/mail.ts), so links print in `wrangler tail`.
+MAIL_MODE = "log"
+APP_URL = "http://localhost:5173"
+ALLOWED_ORIGINS = "http://localhost:5173"
+ADMIN_EMAIL = "shuff57@gmail.com"
+
+[triggers]
+crons = ["17 * * * *"]

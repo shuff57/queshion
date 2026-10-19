@@ -1,0 +1,29 @@
+name = "vershion-pool"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Argon2id at m=19 MiB needs the paid Workers plan (see docs/phase1-argon2-spike.md).
+
+[[rules]]
+type = "CompiledWasm"
+globs = ["**/*.wasm"]
+fallthrough = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "vershion-pool"
+# Replace with the id from `wrangler d1 create vershion-pool` before the first deploy.
+database_id = "00000000-0000-0000-0000-000000000000"
+# Package migrations (0001-0099) are copied here by scripts/sync-migrations.sh; worker-owned ones
+# start at 0100. npm test checks the copies match the package.
+migrations_dir = "migrations"
+
+[vars]
+ALLOWED_ORIGINS = "https://app.example.org"
+APP_URL = "https://app.example.org"
+
+# Secrets (wrangler secret put): AUTH_SECRET, RESEND_API_KEY. Vars: MAIL_FROM, ADMIN_EMAIL.
+
+[triggers]
+crons = ["17 * * * *"]

@@ -1,0 +1,5 @@
+node_modules/
+.wrangler/
+target/
+share-core/pkg/
+worker/.dev.vars

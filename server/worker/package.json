@@ -1,0 +1,9 @@
+{
+  "name": "vershion-pool-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --no-warnings --test test/worker.test.ts test/admin.test.ts",
+    "typecheck": "../auth/node_modules/.bin/tsc -p tsconfig.json"
+  }
+}
