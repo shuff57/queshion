@@ -2458,13 +2458,13 @@ fn copy_icon(ui: &mut Ui) -> Rect {
     if hot {
         ui.painter().rect_filled(r, CornerRadius::same(5), theme::accent_faded());
     }
-    let s = Stroke::new(1.3, col);
-    let c = r.center();
-    let back = Rect::from_center_size(c + Vec2::new(-1.8, -1.8), Vec2::new(8.0, 9.5));
-    let front = Rect::from_center_size(c + Vec2::new(1.8, 1.8), Vec2::new(8.0, 9.5));
-    ui.painter().rect_stroke(back, CornerRadius::same(1), s, egui::StrokeKind::Middle);
-    ui.painter().rect_filled(front, CornerRadius::same(1), theme::card());
-    ui.painter().rect_stroke(front, CornerRadius::same(1), s, egui::StrokeKind::Middle);
+    ui.painter().text(
+        r.center(),
+        egui::Align2::CENTER_CENTER,
+        egui_phosphor::regular::COPY_SIMPLE,
+        theme::icon_font(14.0),
+        col,
+    );
     resp.on_hover_text("Copy question");
     r
 }
@@ -2505,17 +2505,13 @@ fn pencil_button(ui: &mut Ui) -> egui::Response {
     if resp.hovered() {
         ui.painter().rect_filled(rect, CornerRadius::same(6), theme::hover_bg());
     }
-    let c = rect.center();
-    let s = Stroke::new(1.6, col);
-    // Pencil: a slanted outline from the lower-left tip to the upper-right end, with a cap line.
-    let u = Vec2::new(1.0, -1.0).normalized();
-    let v = Vec2::new(1.0, 1.0).normalized();
-    let tip = c - u * 7.5;
-    let end = c + u * 7.5;
-    let shoulder = tip + u * 3.5;
-    let pts = vec![tip, shoulder + v * 2.6, end + v * 2.6, end - v * 2.6, shoulder - v * 2.6, tip];
-    ui.painter().add(egui::Shape::line(pts, s));
-    ui.painter().line_segment([end - u * 3.0 + v * 2.6, end - u * 3.0 - v * 2.6], s);
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        egui_phosphor::regular::PENCIL_SIMPLE,
+        theme::icon_font(15.0),
+        col,
+    );
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -3153,7 +3149,7 @@ pub fn draw_popover(app: &mut App, ctx: &egui::Context) {
                                 if ui.add(Button::new(if on { label.strong() } else { label }).frame(false)).on_hover_text(&name).clicked() && !on {
                                     *switch = Some(t.clone());
                                 }
-                                if ui.add(Button::new(RichText::new("×").size(12.0).color(theme::muted_col())).frame(false)).on_hover_text(format!("Close {name}")).clicked() {
+                                if ui.add(Button::new(RichText::new(egui_phosphor::regular::X).size(12.0).color(theme::muted_col())).frame(false)).on_hover_text(format!("Close {name}")).clicked() {
                                     *close_tab = Some(t.clone());
                                 }
                             });

@@ -337,6 +337,15 @@ static FONTS: OnceLock<FontDefinitions> = OnceLock::new();
 /// egui font-data key of the symbol fallback face (STIX Two Math).
 const FALLBACK_FACE: &str = "STIXTwoMath-Regular";
 
+/// Named egui family holding the Phosphor icon face.
+pub const ICON_FAMILY: &str = "vs-phosphor";
+
+/// Font for one Phosphor glyph. The icons live in the Private Use Area, so no text face can
+/// shadow them; naming the family keeps them independent of the proportional chain.
+pub fn icon_font(size: f32) -> egui::FontId {
+    egui::FontId::new(size, FontFamily::Name(ICON_FAMILY.into()))
+}
+
 /// Builds the house faces from bytes compiled into the binary. No filesystem access, so the
 /// same faces are available on the desktop, in the browser and inside officecraft.
 fn load_fonts() -> FontDefinitions {
@@ -416,6 +425,13 @@ fn load_fonts() -> FontDefinitions {
     defs.families.insert(fam, fonts);
     let (fam, fonts) = named("vs-sans-italic", vec!["SourceSans3-It", "SourceSans3-Regular"]);
     defs.families.insert(fam, fonts);
+    // Phosphor icons: registered as a named family and as a proportional fallback, so icon
+    // glyphs can also appear in ordinary labels.
+    egui_phosphor::add_font_bytes_to_fonts(
+        &mut defs,
+        ICON_FAMILY,
+        egui_phosphor::bytes::regular::FONT,
+    );
     defs
 }
 

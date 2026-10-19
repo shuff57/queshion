@@ -1019,16 +1019,11 @@ fn icon_circle(ui: &mut egui::Ui, ico: Ico, enabled: bool) -> egui::Response {
         if hov { theme::hover_bg() } else { theme::card() },
         Stroke::new(1.0, if hov { theme::accent_col() } else { theme::border() }),
     );
-    let s = if ico == Ico::Undo { 1.0 } else { -1.0 };
-    let c = rect.center();
-    let pt = |x: f32, y: f32| c + Vec2::new(x * s, y);
-    let w = Stroke::new(1.7, col);
-    p.line_segment([pt(-3.0, -5.5), pt(-7.0, -1.5)], w);
-    p.line_segment([pt(-7.0, -1.5), pt(-3.0, 2.5)], w);
-    p.add(Shape::line(
-        vec![pt(-7.0, -1.5), pt(1.0, -1.5), pt(5.0, 0.5), pt(5.5, 3.0), pt(3.5, 5.5), pt(0.5, 6.0), pt(-2.0, 6.0)],
-        w,
-    ));
+    let glyph = match ico {
+        Ico::Undo => egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
+        Ico::Redo => egui_phosphor::regular::ARROW_CLOCKWISE,
+    };
+    p.text(rect.center(), egui::Align2::CENTER_CENTER, glyph, theme::icon_font(17.0), col);
     resp
 }
 
@@ -3420,7 +3415,7 @@ fn draw_shelf_inner(
                     if r.clicked() {
                         app.panel_bank = Some(b.clone());
                     }
-                    if ui.add(egui::Button::new(RichText::new("×").size(12.0)).frame(false)).on_hover_text("Close this bank").clicked() {
+                    if ui.add(egui::Button::new(RichText::new(egui_phosphor::regular::X).size(12.0)).frame(false)).on_hover_text("Close this bank").clicked() {
                         close = Some(b.clone());
                     }
                 });

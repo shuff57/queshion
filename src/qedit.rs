@@ -481,34 +481,14 @@ fn icon_btn(ui: &mut Ui, ico: Ico, on: bool) -> egui::Response {
     } else {
         theme::muted_col()
     };
-    let s = Stroke::new(1.6, col);
-    let c = rect.center();
-    let d = |x: f32, y: f32| c + Vec2::new(x, y);
-    match ico {
-        Ico::Up => {
-            p.line_segment([d(-4.0, 2.0), d(0.0, -2.0)], s);
-            p.line_segment([d(0.0, -2.0), d(4.0, 2.0)], s);
-        }
-        Ico::Down => {
-            p.line_segment([d(-4.0, -2.0), d(0.0, 2.0)], s);
-            p.line_segment([d(0.0, 2.0), d(4.0, -2.0)], s);
-        }
-        Ico::Close => {
-            p.line_segment([d(-3.5, -3.5), d(3.5, 3.5)], s);
-            p.line_segment([d(-3.5, 3.5), d(3.5, -3.5)], s);
-        }
-        Ico::Lock => {
-            p.rect_stroke(
-                Rect::from_min_size(d(-4.5, -1.0), Vec2::new(9.0, 6.5)),
-                CornerRadius::same(2),
-                s,
-                StrokeKind::Inside,
-            );
-            p.line_segment([d(-2.5, -1.0), d(-2.5, -3.5)], s);
-            p.line_segment([d(-2.5, -3.5), d(2.5, -3.5)], s);
-            p.line_segment([d(2.5, -3.5), d(2.5, -1.0)], s);
-        }
-    }
+    use egui_phosphor::regular as ph;
+    let glyph = match ico {
+        Ico::Up => ph::CARET_UP,
+        Ico::Down => ph::CARET_DOWN,
+        Ico::Lock => ph::LOCK_SIMPLE,
+        Ico::Close => ph::X,
+    };
+    p.text(rect.center(), egui::Align2::CENTER_CENTER, glyph, theme::icon_font(15.0), col);
     resp
 }
 

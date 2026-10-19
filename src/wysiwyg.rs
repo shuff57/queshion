@@ -3681,7 +3681,7 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
                     ui.painter().hline(r.left()..=r.right() - if hot { st.size * 1.4 } else { 0.0 }, y, Stroke::new(1.0, st.color.gamma_multiply(if hot { 0.8 } else { 0.5 })));
                     if hot {
                         let br = Rect::from_center_size(Pos2::new(r.right() - st.size * 0.6, y), Vec2::splat(st.size * 1.0));
-                        let b = ui.put(br, egui::Button::new(RichText::new("×").size(st.size * 0.8)).frame(false)).on_hover_text("Remove this divider");
+                        let b = ui.put(br, egui::Button::new(RichText::new(egui_phosphor::regular::X).size(st.size * 0.8)).frame(false)).on_hover_text("Remove this divider");
                         if b.clicked() {
                             div_act = Some(bl.lines.start);
                         }
@@ -3773,7 +3773,7 @@ pub fn editor(ui: &mut Ui, id: UiId, stem: &mut String, mut o: Opts) -> Out {
                 }
                 if in_group {
                     let br = Rect::from_min_size(Pos2::new(r.right() - 20.0, r.top() + 2.0), Vec2::splat(18.0));
-                    if ui.put(br, egui::Button::new(RichText::new("×").size(12.0)).frame(false)).on_hover_text("Remove this panel").clicked() {
+                    if ui.put(br, egui::Button::new(RichText::new(egui_phosphor::regular::X).size(12.0)).frame(false)).on_hover_text("Remove this panel").clicked() {
                         side_act = Some((bi, SOp::RemovePanel(pi)));
                     }
                 }

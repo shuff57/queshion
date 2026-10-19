@@ -202,89 +202,20 @@ pub fn draw_nav_icon_k(
     c_col: Color32,
     k: f32,
 ) {
-    let w = Stroke::new(1.6, c_col);
-    let p = |dx: f32, dy: f32| c + Vec2::new(dx, dy) * k;
-    match icon {
-        NavIcon::Home => {
-            // roof + walls + door
-            painter.line_segment([p(-6.5, 0.0), p(0.0, -5.5)], w);
-            painter.line_segment([p(0.0, -5.5), p(6.5, 0.0)], w);
-            painter.line_segment([p(-5.0, -1.0), p(-5.0, 6.0)], w);
-            painter.line_segment([p(5.0, -1.0), p(5.0, 6.0)], w);
-            painter.line_segment([p(-5.0, 6.0), p(5.0, 6.0)], w);
-            painter.line_segment([p(-1.8, 6.0), p(-1.8, 1.5)], w);
-            painter.line_segment([p(1.8, 6.0), p(1.8, 1.5)], w);
-        }
-        NavIcon::Banks => {
-            // document with lines
-            painter.add(egui::Shape::rect_filled(
-                Rect::from_min_max(p(-4.5, -6.5), p(4.5, 6.5)),
-                CornerRadius::same(2),
-                c_col.gamma_multiply(0.25),
-            ));
-            painter.rect_stroke(Rect::from_min_max(p(-4.5, -6.5), p(4.5, 6.5)), CornerRadius::same(2), w, StrokeKind::Middle);
-            for dy in [-3.0, -0.5, 2.0, 4.5] {
-                painter.line_segment([p(-2.5, dy), p(2.5, dy)], w);
-            }
-        }
-        NavIcon::Exams => {
-            // stacked sheets
-            painter.rect_stroke(Rect::from_min_max(p(-5.5, -5.5), p(3.0, 4.5)), CornerRadius::same(2), w, StrokeKind::Middle);
-            painter.rect_stroke(Rect::from_min_max(p(-2.5, -3.5), p(5.5, 6.5)), CornerRadius::same(2), Stroke::new(1.6, c_col), StrokeKind::Middle);
-        }
-        NavIcon::Import => {
-            // arrow down into a tray
-            painter.line_segment([p(0.0, -6.0), p(0.0, 2.0)], w);
-            painter.line_segment([p(0.0, 2.0), p(-3.0, -1.0)], w);
-            painter.line_segment([p(0.0, 2.0), p(3.0, -1.0)], w);
-            painter.line_segment([p(-5.5, 3.0), p(-5.5, 5.5)], w);
-            painter.line_segment([p(-5.5, 5.5), p(5.5, 5.5)], w);
-            painter.line_segment([p(5.5, 5.5), p(5.5, 3.0)], w);
-        }
-        NavIcon::Figures => {
-            // 2x2 grid of tiles
-            for (dx, dy) in [(-3.2, -3.2), (3.2, -3.2), (-3.2, 3.2), (3.2, 3.2)] {
-                painter.add(egui::Shape::rect_filled(
-                    Rect::from_min_size(p(dx - 2.2, dy - 2.2), Vec2::new(4.4, 4.4) * k),
-                    CornerRadius::same(1),
-                    c_col.gamma_multiply(0.35),
-                ));
-            }
-        }
-        NavIcon::Help => {
-            painter.circle_stroke(c, 5.5 * k, Stroke::new(1.4, c_col));
-            painter.text(c, egui::Align2::CENTER_CENTER, "?", egui::FontId::proportional(8.5 * k), c_col);
-        }
-        NavIcon::Gear => {
-            // circle + spokes (reads as a gear at this size)
-            painter.circle_stroke(c, 3.2 * k, w);
-            for i in 0..4usize {
-                let a = (i as f32) * std::f32::consts::FRAC_PI_4 + std::f32::consts::FRAC_PI_8;
-                let d = Vec2::new(a.cos(), a.sin());
-                painter.line_segment([c + d * 4.6 * k, c + d * 6.4 * k], w);
-            }
-        }
-        NavIcon::Pencil => {
-            // diagonal pencil: shaft + tip
-            painter.line_segment([p(-4.5, 4.5), p(3.5, -3.5)], w);
-            painter.line_segment([p(3.5, -3.5), p(5.5, -5.5)], w);
-            painter.line_segment([p(-4.5, 4.5), p(-5.5, 5.5)], Stroke::new(2.2, c_col));
-        }
-        NavIcon::Plus => {
-            painter.line_segment([c + Vec2::new(-4.5, 0.0) * k, c + Vec2::new(4.5, 0.0) * k], Stroke::new(1.8, c_col));
-            painter.line_segment([c + Vec2::new(0.0, -4.5) * k, c + Vec2::new(0.0, 4.5) * k], Stroke::new(1.8, c_col));
-        }
-        NavIcon::Info => {
-            painter.circle_stroke(c, 5.5 * k, Stroke::new(1.4, c_col));
-            painter.text(
-                c,
-                egui::Align2::CENTER_CENTER,
-                "i",
-                egui::FontId::proportional(8.5 * k),
-                c_col,
-            );
-        }
-    }
+    use egui_phosphor::regular as ph;
+    let glyph = match icon {
+        NavIcon::Home => ph::HOUSE,
+        NavIcon::Banks => ph::BOOKS,
+        NavIcon::Exams => ph::EXAM,
+        NavIcon::Import => ph::UPLOAD_SIMPLE,
+        NavIcon::Figures => ph::CHART_LINE,
+        NavIcon::Help => ph::QUESTION,
+        NavIcon::Gear => ph::GEAR,
+        NavIcon::Pencil => ph::PENCIL_SIMPLE,
+        NavIcon::Plus => ph::PLUS,
+        NavIcon::Info => ph::INFO,
+    };
+    painter.text(c, egui::Align2::CENTER_CENTER, glyph, theme::icon_font(16.0 * k), c_col);
 }
 
 /// The four how-it-works steps, shared by the welcome page and the help overlay.
@@ -630,19 +561,20 @@ impl crate::App {
         ui.painter().circle_filled(active_c, 12.5, theme::highlighter());
         let ink = theme::on_highlighter();
         let off = theme::dock_text().gamma_multiply(0.75);
-        // sun: core disc + 8 rays
-        let sc = if dark { off } else { ink };
-        ui.painter().circle_filled(sun_c, 3.6, sc);
-        for k in 0..8usize {
-            let a = k as f32 * std::f32::consts::TAU / 8.0;
-            let d = Vec2::new(a.cos(), a.sin());
-            ui.painter().line_segment([sun_c + d * 5.6, sun_c + d * 7.6], Stroke::new(1.3, sc));
-        }
-        // moon: disc with an offset cutout in the active-slot colour
-        let mc = if dark { ink } else { off };
-        ui.painter().circle_filled(moon_c, 6.0, mc);
-        let cut = if dark { theme::highlighter() } else { theme::rail() };
-        ui.painter().circle_filled(moon_c + Vec2::new(3.2, -1.8), 5.2, cut);
+        ui.painter().text(
+            sun_c,
+            egui::Align2::CENTER_CENTER,
+            egui_phosphor::regular::SUN,
+            theme::icon_font(15.0),
+            if dark { off } else { ink },
+        );
+        ui.painter().text(
+            moon_c,
+            egui::Align2::CENTER_CENTER,
+            egui_phosphor::regular::MOON,
+            theme::icon_font(15.0),
+            if dark { ink } else { off },
+        );
         if resp.clicked() {
             let ctx = ui.ctx().clone();
             self.set_dark_mode(!dark, &ctx);
@@ -1360,7 +1292,7 @@ impl crate::App {
                                 });
                                 if ui
                                     .add(
-                                        egui::Button::new(RichText::new("×").size(12.0).color(theme::muted_col()))
+                                        egui::Button::new(RichText::new(egui_phosphor::regular::X).size(12.0).color(theme::muted_col()))
                                             .fill(Color32::TRANSPARENT)
                                             .corner_radius(CornerRadius::same(255)),
                                     )
@@ -1960,10 +1892,13 @@ fn bank_list(ui: &mut egui::Ui, rows: &[&BankRow]) -> Option<Id> {
 
 /// Printer glyph for the last-export strip.
 fn draw_printer_icon(p: &egui::Painter, c: Pos2, col: Color32) {
-    let s = Stroke::new(1.7, col);
-    p.rect_stroke(Rect::from_center_size(c + Vec2::new(0.0, 1.0), Vec2::new(14.0, 7.0)), CornerRadius::same(2), s, StrokeKind::Middle);
-    p.rect_stroke(Rect::from_min_max(c + Vec2::new(-4.0, -7.0), c + Vec2::new(4.0, -2.5)), CornerRadius::same(1), s, StrokeKind::Middle);
-    p.rect_stroke(Rect::from_min_max(c + Vec2::new(-4.0, 2.0), c + Vec2::new(4.0, 8.0)), CornerRadius::same(1), s, StrokeKind::Middle);
+    p.text(
+        c,
+        egui::Align2::CENTER_CENTER,
+        egui_phosphor::regular::PRINTER,
+        theme::icon_font(17.0),
+        col,
+    );
 }
 
 pub(crate) fn remap_empty_bank_ids(exams: &mut [Exam], bank_id: &str) {
@@ -2192,10 +2127,11 @@ mod tests {
 }
 /// Padlock glyph for the dock's "Saved on this computer" note.
 fn draw_lock(painter: &egui::Painter, c: Pos2, col: Color32) {
-    let body = Rect::from_center_size(c + Vec2::new(0.0, 3.0), Vec2::new(14.0, 10.0));
-    painter.rect_stroke(body, CornerRadius::same(2), Stroke::new(1.5, col), StrokeKind::Middle);
-    let sc = Pos2::new(c.x, body.top());
-    painter.line_segment([sc + Vec2::new(-3.5, 0.0), sc + Vec2::new(-3.5, -3.0)], Stroke::new(1.5, col));
-    painter.line_segment([sc + Vec2::new(3.5, 0.0), sc + Vec2::new(3.5, -3.0)], Stroke::new(1.5, col));
-    painter.line_segment([sc + Vec2::new(-3.5, -3.0), sc + Vec2::new(3.5, -3.0)], Stroke::new(1.5, col));
+    painter.text(
+        c,
+        egui::Align2::CENTER_CENTER,
+        egui_phosphor::regular::LOCK_SIMPLE,
+        theme::icon_font(15.0),
+        col,
+    );
 }

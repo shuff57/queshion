@@ -275,7 +275,7 @@ impl Workspace {
                         ped::Role::Blood => {}
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.add(Button::new(RichText::new("×").size(15.0)).frame(false)).on_hover_text(format!("Done changing {name}")).clicked() {
+                        if ui.add(Button::new(RichText::new(egui_phosphor::regular::X).size(15.0)).frame(false)).on_hover_text(format!("Done changing {name}")).clicked() {
                             op = Some("done");
                         }
                     });

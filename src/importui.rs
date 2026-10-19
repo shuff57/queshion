@@ -528,42 +528,16 @@ fn start_next_ai(app: &mut crate::App, st: &mut State, ctx: &egui::Context) {
 // ---------- painter icons ----------
 
 fn paint_icon(p: &Painter, ic: Ic, c: Pos2, col: Color32, k: f32) {
-    let w = Stroke::new(1.6, col);
-    let pt = |x: f32, y: f32| c + Vec2::new(x, y) * k;
-    let line = |pts: &[(f32, f32)]| {
-        p.add(Shape::line(pts.iter().map(|&(x, y)| pt(x, y)).collect(), w));
+    use egui_phosphor::regular as ph;
+    let glyph = match ic {
+        Ic::Upload => ph::UPLOAD_SIMPLE,
+        Ic::File => ph::FILE,
+        Ic::Clip => ph::PAPERCLIP,
+        Ic::Camera => ph::CAMERA,
+        Ic::Sparkle => ph::SPARKLE,
+        Ic::Lock => ph::LOCK_SIMPLE,
     };
-    let closed = |pts: &[(f32, f32)]| {
-        p.add(Shape::closed_line(pts.iter().map(|&(x, y)| pt(x, y)).collect(), w));
-    };
-    let rrect = |x0: f32, y0: f32, x1: f32, y1: f32, r: u8| {
-        p.rect_stroke(Rect::from_min_max(pt(x0, y0), pt(x1, y1)), CornerRadius::same(r), w, StrokeKind::Middle);
-    };
-    match ic {
-        Ic::Upload => {
-            line(&[(0.0, 5.0), (0.0, -7.0)]);
-            line(&[(-4.0, -3.0), (0.0, -7.0), (4.0, -3.0)]);
-            line(&[(-7.0, 3.0), (-7.0, 8.0), (7.0, 8.0), (7.0, 3.0)]);
-        }
-        Ic::File => {
-            line(&[(2.0, -8.0), (-5.0, -8.0), (-5.0, 8.0), (6.0, 8.0), (6.0, -4.0), (2.0, -8.0), (2.0, -4.0), (6.0, -4.0)]);
-        }
-        Ic::Clip => {
-            rrect(-6.0, -5.0, 6.0, 8.0, 2);
-            rrect(-3.0, -8.0, 3.0, -4.0, 1);
-        }
-        Ic::Camera => {
-            line(&[(-8.0, -3.0), (-8.0, 7.0), (8.0, 7.0), (8.0, -3.0), (4.0, -3.0), (2.5, -6.0), (-2.5, -6.0), (-4.0, -3.0), (-8.0, -3.0)]);
-            p.circle_stroke(pt(0.0, 2.0), 3.5 * k, w);
-        }
-        Ic::Sparkle => closed(&[
-            (0.0, -8.0), (1.8, -1.8), (8.0, 0.0), (1.8, 1.8), (0.0, 8.0), (-1.8, 1.8), (-8.0, 0.0), (-1.8, -1.8),
-        ]),
-        Ic::Lock => {
-            rrect(-6.0, -1.0, 6.0, 7.0, 2);
-            line(&[(-3.5, -1.0), (-3.5, -3.5), (-1.8, -5.5), (1.8, -5.5), (3.5, -3.5), (3.5, -1.0)]);
-        }
-    }
+    p.text(c, egui::Align2::CENTER_CENTER, glyph, crate::theme::icon_font(16.0 * k), col);
 }
 
 fn draw_cb(p: &Painter, rect: Rect, on: bool, hot: bool) {

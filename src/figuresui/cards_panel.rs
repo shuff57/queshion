@@ -207,17 +207,17 @@ impl Workspace {
             let name = if lane.label.is_empty() { format!("Sample {}", i + 1) } else { lane.label.clone() };
             item_frame(ui, |ui| {
                 header(ui, &format!("{}. {}", i + 1, if ladder { "Ladder" } else { "Sample" }), |ui| {
-                    if icon(ui, "×", n > 1, &format!("Remove {name}")) {
+                    if icon(ui, egui_phosphor::regular::X, n > 1, &format!("Remove {name}")) {
                         let mut v = lanes.clone();
                         v.remove(i);
                         edit = Some((v, true));
                     }
-                    if icon(ui, "→", i + 1 < n, &format!("Move {name} right")) {
+                    if icon(ui, egui_phosphor::regular::ARROW_RIGHT, i + 1 < n, &format!("Move {name} right")) {
                         let mut v = lanes.clone();
                         v.swap(i, i + 1);
                         edit = Some((v, true));
                     }
-                    if icon(ui, "←", i > 0, &format!("Move {name} left")) {
+                    if icon(ui, egui_phosphor::regular::ARROW_LEFT, i > 0, &format!("Move {name} left")) {
                         let mut v = lanes.clone();
                         v.swap(i, i - 1);
                         edit = Some((v, true));
@@ -311,7 +311,7 @@ impl Workspace {
             let k = |s: &str| format!("f{i}_{s}");
             item_frame(ui, |ui| {
                 header(ui, &format!("Force {i}"), |ui| {
-                    if icon(ui, "×", n > 1, &format!("Remove force {i}")) {
+                    if icon(ui, egui_phosphor::regular::X, n > 1, &format!("Remove force {i}")) {
                         remove = Some(i);
                     }
                 });
@@ -402,13 +402,13 @@ impl Workspace {
                             ui.label(theme::muted(summary.as_str()).size(11.0));
                         });
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if icon(ui, "×", n > 1, &format!("Remove vector {i}")) {
+                            if icon(ui, egui_phosphor::regular::X, n > 1, &format!("Remove vector {i}")) {
                                 remove = Some(i);
                             }
-                            if icon(ui, "↓", i < n, &format!("Move vector {i} later")) {
+                            if icon(ui, egui_phosphor::regular::ARROW_DOWN, i < n, &format!("Move vector {i} later")) {
                                 swap = Some((i, i + 1));
                             }
-                            if icon(ui, "↑", i > 1, &format!("Move vector {i} earlier")) {
+                            if icon(ui, egui_phosphor::regular::ARROW_UP, i > 1, &format!("Move vector {i} earlier")) {
                                 swap = Some((i, i - 1));
                             }
                         });
@@ -505,17 +505,17 @@ impl Workspace {
             let name = if st.name().is_empty() { format!("strip {}", i + 1) } else { st.name().to_string() };
             item_frame(ui, |ui| {
                 header(ui, &format!("{}. {kind}", i + 1), |ui| {
-                    if icon(ui, "×", n > 1, &format!("Remove {name}")) {
+                    if icon(ui, egui_phosphor::regular::X, n > 1, &format!("Remove {name}")) {
                         let mut v = strips.clone();
                         v.remove(i);
                         edit = Some((v, true));
                     }
-                    if icon(ui, "↓", i + 1 < n, &format!("Move {name} down")) {
+                    if icon(ui, egui_phosphor::regular::ARROW_DOWN, i + 1 < n, &format!("Move {name} down")) {
                         let mut v = strips.clone();
                         v.swap(i, i + 1);
                         edit = Some((v, true));
                     }
-                    if icon(ui, "↑", i > 0, &format!("Move {name} up")) {
+                    if icon(ui, egui_phosphor::regular::ARROW_UP, i > 0, &format!("Move {name} up")) {
                         let mut v = strips.clone();
                         v.swap(i, i - 1);
                         edit = Some((v, true));
@@ -653,7 +653,7 @@ impl Workspace {
             let title = format!("{} {}", atoms::kind_noun(&self.params, i), pos + 1);
             item_frame(ui, |ui| {
                 header(ui, &title, |ui| {
-                    if icon(ui, "×", shown.len() > 1, &format!("Remove {title}")) {
+                    if icon(ui, egui_phosphor::regular::X, shown.len() > 1, &format!("Remove {title}")) {
                         remove = Some(i);
                     }
                 });

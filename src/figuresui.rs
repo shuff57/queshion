@@ -1614,7 +1614,7 @@ impl Workspace {
                                 {
                                     self.row_colour(ui, ck, &pal);
                                 }
-                                if ui.add(Button::new(theme::muted("×").size(13.0)).frame(false)).on_hover_text("Remove this row").clicked() {
+                                if ui.add(Button::new(theme::muted(egui_phosphor::regular::X).size(13.0)).frame(false)).on_hover_text("Remove this row").clicked() {
                                     remove = Some(i);
                                 }
                             });
@@ -1656,7 +1656,7 @@ impl Workspace {
                                 {
                                     self.row_colour(ui, ck, &pal);
                                 }
-                                if ui.add(Button::new(theme::muted("×").size(13.0)).frame(false)).on_hover_text("Clear this row").clicked() {
+                                if ui.add(Button::new(theme::muted(egui_phosphor::regular::X).size(13.0)).frame(false)).on_hover_text("Clear this row").clicked() {
                                     self.params.0.insert(sl.value_key.to_string(), Value::S(String::new()));
                                 }
                             });
@@ -3610,16 +3610,16 @@ mod tests {
         use crate::figures::biology::gel;
         let (ctx, mut ws) = open_tall("gel-electrophoresis");
         assert_eq!(gel::current_setup(&ws.params), Some("Crime scene"));
-        assert_eq!(count_named(&ctx, &mut ws, "←"), 5, "one card per lane");
+        assert_eq!(count_named(&ctx, &mut ws, egui_phosphor::regular::ARROW_LEFT), 5, "one card per lane");
         let before = ws.params.clone();
         click_nth(&ctx, &mut ws, "+ Ladder", 0);
         let lanes = gel::lane_cards(&ws.params);
         assert_eq!(lanes.len(), 6);
         assert_eq!(lanes[5], gel::LaneCard::ladder());
         assert_eq!(gel::current_setup(&ws.params), None, "editing a setup's lanes copies them into the text");
-        click_nth(&ctx, &mut ws, "→", 0); // Ladder moves right of Crime scene
+        click_nth(&ctx, &mut ws, egui_phosphor::regular::ARROW_RIGHT, 0); // Ladder moves right of Crime scene
         assert_eq!(gel::lane_cards(&ws.params)[1].label, "Ladder");
-        click_nth(&ctx, &mut ws, "×", 0); // remove the first lane (now Crime scene)
+        click_nth(&ctx, &mut ws, egui_phosphor::regular::X, 0); // remove the first lane (now Crime scene)
         let lanes = gel::lane_cards(&ws.params);
         assert_eq!(lanes.iter().map(|l| l.label.as_str()).collect::<Vec<_>>(), ["Ladder", "Suspect 1", "Suspect 2", "Suspect 3", "Ladder"]);
         for _ in 0..3 {
@@ -3663,7 +3663,7 @@ mod tests {
         assert_eq!(ws.params.f("f1_ang"), 180.0);
         click_nth(&ctx, &mut ws, "+ Friction", 0);
         assert_eq!((ws.params.i("n"), ws.params.s("f3_lab")), (3, "F_f"));
-        click_nth(&ctx, &mut ws, "×", 0); // delete force 1: the others move up
+        click_nth(&ctx, &mut ws, egui_phosphor::regular::X, 0); // delete force 1: the others move up
         assert_eq!((ws.params.i("n"), ws.params.s("f1_lab"), ws.params.s("f2_lab")), (2, "F_N", "F_f"));
         ws.step_history(true);
         assert_eq!((ws.params.i("n"), ws.params.s("f1_lab")), (3, "F_g"));
@@ -3685,9 +3685,9 @@ mod tests {
         let (ctx, mut ws) = open_tall("vector-diagram");
         click_nth(&ctx, &mut ws, "+ Add a vector", 0);
         assert_eq!(ws.params.i("n"), 3);
-        click_nth(&ctx, &mut ws, "↓", 0); // A after B
+        click_nth(&ctx, &mut ws, egui_phosphor::regular::ARROW_DOWN, 0); // A after B
         assert_eq!((ws.params.s("v1_lab"), ws.params.s("v2_lab")), ("B", "A"));
-        click_nth(&ctx, &mut ws, "×", 1); // remove the second (A)
+        click_nth(&ctx, &mut ws, egui_phosphor::regular::X, 1); // remove the second (A)
         assert_eq!((ws.params.i("n"), ws.params.s("v1_lab"), ws.params.s("v2_lab")), (2, "B", "C"));
     }
 
@@ -3722,7 +3722,7 @@ mod tests {
         assert!(matches!(&strip_cards(&ws.params)[0], C::Own { name, lines } if name == "Hydrogen" && lines.starts_with("410.2")));
         click_nth(&ctx, &mut ws, "+ Mixture", 0);
         assert_eq!(strip_cards(&ws.params).len(), 5);
-        click_nth(&ctx, &mut ws, "↑", 1); // Helium above the edited hydrogen (strip 1's own ↑)
+        click_nth(&ctx, &mut ws, egui_phosphor::regular::ARROW_UP, 1); // Helium above the edited hydrogen (strip 1's own ↑)
         assert_eq!(strip_cards(&ws.params)[0], C::Element("Helium".into()));
         // an old figure
         let def = &reg()[ws.sel.unwrap()];
@@ -3750,7 +3750,7 @@ mod tests {
         assert_eq!(ws.params.s("c_shape"), "Pair");
         assert_eq!(atoms::kind_noun(&ws.params, 2), "Molecule");
         assert_eq!(count_named(&ctx, &mut ws, "XL"), 4, "a molecule has Center and Outer sizes");
-        click_nth(&ctx, &mut ws, "×", 0);
+        click_nth(&ctx, &mut ws, egui_phosphor::regular::X, 0);
         assert_eq!(ws.params.s("b_shape"), "Pair");
         assert!(!atoms::kind_used(&ws.params, 2));
         // a kind set to none keeps its card until removed
