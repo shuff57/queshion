@@ -41,6 +41,7 @@ pub mod platform;
 pub mod qedit;
 pub mod richtext;
 pub mod screens;
+pub mod share;
 pub mod store;
 pub mod theme;
 pub mod time;

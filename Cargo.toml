@@ -14,6 +14,21 @@ path = "src/main.rs"
 name = "vershion-web"
 path = "src/web_main.rs"
 
+# Shared pool (src/share): how a release is built.
+# - The pool server is fixed when the app is built:
+#     VERSHION_POOL_URL=https://api.example.org cargo build --release
+#     VERSHION_POOL_URL=https://api.example.org trunk build --release   (web)
+#   build.rs refuses an invalid address (https only; http://localhost only in debug builds).
+# - Without it a release build has sharing switched off ("not set up"): no password page at all.
+# - Typing a server address in the app exists only in debug builds, or with the feature below.
+[features]
+# Development only: typed pool server addresses in a release build. OFF by default; never ship
+# with it (anyone at the keyboard could point the app at their own server).
+pool-custom-server = []
+
+[build-dependencies]
+url = "2"   # build.rs checks VERSHION_POOL_URL
+
 [dependencies]
 egui = "0.36"
 log = "0.4"
@@ -36,11 +51,19 @@ resvg = { version = "0.45", default-features = false, features = ["text", "syste
 ttf-parser = "0.25"  # already in the tree via resvg/fontdb; PDF font metrics + subsetting (src/fonts.rs)
 flate2 = "1"         # already in the tree via zip/png; FlateDecode for embedded PDF fonts
 egui-phosphor = { version = "0.14", default-features = false, features = ["regular"] }
+# Shared-pool client (src/share): secrets are wiped from memory when dropped; the server address is parsed strictly.
+zeroize = "1"
+url = "2"
+idna = "1"   # already in the tree via url; shows an IDN host in Unicode beside its punycode
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11", "links"] }
 rfd = "0.17"
-ureq = "3"
+ureq = { version = "3", features = ["platform-verifier"] }
+# Shared-pool refresh and device tokens live in the OS keychain (src/share/vault.rs): macOS Keychain,
+# Windows Credential Manager, or a Secret Service on Linux (GNOME Keyring, KWallet). The Linux store
+# is the pure-Rust zbus client, so building needs no libdbus headers; running needs a Secret Service.
+keyring = { version = "3", features = ["apple-native", "windows-native", "async-secret-service", "async-io", "crypto-rust"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # getrandom (pulled in by the dependency graph) needs its JS backend on wasm32-unknown-unknown.
@@ -56,6 +79,7 @@ web-sys = { version = "0.3", features = [
     "Navigator", "Storage", "StorageManager", "Event", "EventTarget", "Headers", "Request", "RequestInit",
     "RequestMode", "Response", "ReadableStream", "ReadableStreamDefaultReader", "AbortSignal",
     "AbortController", "MediaQueryList", "Location", "Crypto", "SubtleCrypto", "Performance", "Node",
+    "RequestCredentials", "RequestRedirect", "History",
 ] }
 
 [profile.release]

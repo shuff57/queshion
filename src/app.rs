@@ -103,6 +103,8 @@ pub struct App {
     pub import_name: String,
     /// Figures screen + insert-figure modal state.
     pub figs: figuresui::FigUi,
+    /// Shared-pool Account window (`share`). Closed until opened; until then it does no I/O.
+    pub account: crate::share::AccountUi,
     /// QA hook: scripted input (VERSHION_SCRIPT), see `raw_input_hook`.
     pub qa_steps: Vec<String>,
     /// QA hook: VERSHION_SHOT=<file.png> saves a screenshot of this window's own contents and exits.
@@ -180,6 +182,7 @@ impl App {
             ai_hint: String::new(),
             import_name: String::new(),
             figs: Default::default(),
+            account: Default::default(),
             qa_shot: crate::env_var("VERSHION_SHOT").ok().map(|p| (p, 0)),
             qa_steps: crate::env_var("VERSHION_SCRIPT")
                 .map(|v| v.split(';').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect())
@@ -187,6 +190,12 @@ impl App {
             qa_frame: 0,
         };
         let mut app = app; // non-mut unless the capture hook below needs it
+        // Opened from a mailed link (/account/verify#token=..., reset, enrol): straight to it.
+        #[cfg(target_arch = "wasm32")]
+        if let Some(link) = crate::share::take_web_deep_link() {
+            app.screen = Screen::Settings;
+            app.account.open_link(link);
+        }
         // Screen-capture/test hook: VERSHION_SCREEN opens a given screen on startup.
         if let Ok(s) = crate::env_var("VERSHION_SCREEN") {
             app.screen = match s.trim() {
@@ -196,6 +205,11 @@ impl App {
                 "imports" => Screen::Imports,
                 "figures" => Screen::Figures,
                 "settings" => Screen::Settings,
+                // The Account window over Settings (QA entry until Settings has its own button).
+                "account" => {
+                    app.account.open();
+                    Screen::Settings
+                }
                 "bank" => app
                     .store
                     .banks
@@ -394,6 +408,8 @@ impl App {
         self.handle_shortcuts(&ctx);
         // Sidebar + active screen + shell overlays (import dialog, help, toasts).
         self.draw_screen(&ctx);
+        // The Account window, over whatever screen is open; returns at once while closed.
+        self.account.show(&ctx);
     }
 }
 
