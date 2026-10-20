@@ -14,6 +14,7 @@ mod census;
 pub mod chart;
 pub mod chemistry;
 pub mod composite;
+pub mod computing;
 pub mod data;
 pub mod faq;
 pub mod interact;
@@ -316,6 +317,7 @@ pub fn registry() -> Vec<FigureDef> {
     v.extend(chemistry::defs());
     v.extend(math::defs());
     v.extend(stats::defs());
+    v.extend(computing::defs());
     v
 }
 
@@ -541,6 +543,7 @@ pub fn examples_for(id: &str) -> Vec<Example> {
         .or_else(|| chemistry::examples(id))
         .or_else(|| math::examples(id))
         .or_else(|| stats::examples(id))
+        .or_else(|| computing::examples(id))
         .unwrap_or_default()
 }
 

@@ -65,6 +65,7 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "histogram" => HISTOGRAM,
         "two-way-table" => TWO_WAY_TABLE,
         "stem-and-leaf" => STEM_AND_LEAF,
+        "logic-circuit" => LOGIC_CIRCUIT,
         "dot-plot" => DOT_PLOT,
         "normal-curve" => NORMAL_CURVE,
         "scatterplot" => SCATTERPLOT,
@@ -1322,6 +1323,33 @@ const NORMAL_CURVE: &[Faq] = &[
     Faq {
         q: "How is the area found?",
         a: "The area under the whole curve is 1, so the shaded area is the probability. It is computed exactly from the normal distribution function, not read off a table, so it can differ from a table value in the last digit.",
+    },
+];
+
+const LOGIC_CIRCUIT: &[Faq] = &[
+    Faq {
+        q: "How do I write a circuit?",
+        a: "One item per line. List the inputs with in A, B. Write each gate as a name, an equals sign and the gate with what it reads, such as g1 = AND(A, B). Mark an output with out Q = g1. Gates can read inputs or other gates, in any order. Add @x,y to a line to place that part yourself.",
+    },
+    Faq {
+        q: "Can I type a boolean expression instead?",
+        a: "Yes. Choose Boolean expression under Build the circuit from and type Q = (A OR B) AND NOT C. Use the words AND, OR, XOR, NOT or the symbols & | ^ !. Names that are never on the left of an equals sign become the inputs, and a line without an equals sign becomes an output named Q.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The circuit and the table's inputs stay; the output column, the expression and the values inside the circuit are hidden. Student + key saves both versions.",
+    },
+    Faq {
+        q: "How do the wires light up?",
+        a: "Type 0s and 1s under Light up the inputs, one for each input in order, such as 101. Wires carrying 1 turn green (thick in Print style) and wires carrying 0 turn grey (thin and dashed in Print). The matching row of the table is marked. With answers off only the input wires show, so students trace the rest.",
+    },
+    Faq {
+        q: "Why does it say my circuit has a loop?",
+        a: "A gate cannot read its own output, directly or through other gates. This figure draws combinational circuits, where every output depends only on the inputs. Check that no gate is listed as an input to something it feeds.",
+    },
+    Faq {
+        q: "Why is the truth table missing?",
+        a: "A table has one row for every combination of inputs, so it is limited to 5 inputs (32 rows). A circuit with more inputs still draws; turn the table off to hide the note.",
     },
 ];
 

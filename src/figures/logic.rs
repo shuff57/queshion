@@ -19,6 +19,9 @@ pub const MAX_NAME: usize = 12;
 /// A truth table past this many inputs is not a printable figure (2^5 = 32 rows).
 pub const MAX_TABLE_INPUTS: usize = 5;
 
+/// Grid points a level-skipping wire passes through; see [`Circuit::layout`].
+pub type Routes = HashMap<(usize, usize), Vec<(f64, f64)>>;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Gate {
     And,
@@ -355,9 +358,12 @@ impl Circuit {
 
     /// Where each node and output sits, in grid units: the spec's `@x,y` where given, else by
     /// level (inputs at 0, each gate one past the deepest thing it reads, outputs last) with the
-    /// rows ordered to keep wires short.
-    pub fn layout(&self) -> (Vec<(f64, f64)>, Vec<(f64, f64)>) {
+    /// rows ordered to keep wires short. The third result is, for a wire that skips levels, the
+    /// grid points it passes through (keyed by the reading node, or `nodes.len() + k` for output
+    /// `k`, and the input pin), so it can be routed between the gates rather than through them.
+    pub fn layout(&self) -> (Vec<(f64, f64)>, Vec<(f64, f64)>, Routes) {
         let n = self.nodes.len();
+        let m = self.outputs.len();
         let mut level = vec![0usize; n];
         for &g in &self.order {
             if let Kind::Gate(_, a) = &self.nodes[g].kind {
@@ -366,28 +372,76 @@ impl Circuit {
         }
         let deepest = self.outputs.iter().map(|o| level[o.src]).chain(level.iter().copied()).max().unwrap_or(0);
         let out_level = deepest + 1;
-        let mut rows = vec![0.0f64; n];
-        let mut by_level: Vec<Vec<usize>> = vec![Vec::new(); deepest + 1];
-        for i in 0..n {
-            by_level[level[i]].push(i);
-        }
-        for lvl in 0..by_level.len() {
-            if lvl > 0 {
-                let key = |i: usize| -> f64 {
-                    match &self.nodes[i].kind {
-                        Kind::Gate(_, a) if !a.is_empty() => a.iter().map(|p| rows[*p]).sum::<f64>() / a.len() as f64,
-                        _ => 0.0,
-                    }
-                };
-                by_level[lvl].sort_by(|a, b| key(*a).partial_cmp(&key(*b)).unwrap_or(std::cmp::Ordering::Equal));
+        // items: nodes, then outputs, then one dummy per level a long wire crosses
+        let mut item_level: Vec<usize> = level.clone();
+        item_level.extend(std::iter::repeat(out_level).take(m));
+        let mut parents: Vec<Vec<usize>> = (0..n + m)
+            .map(|i| match (i < n).then(|| &self.nodes[i].kind) {
+                Some(Kind::Gate(_, a)) => a.clone(),
+                Some(Kind::Input) => Vec::new(),
+                None => vec![self.outputs[i - n].src],
+            })
+            .collect();
+        let mut chains: Vec<((usize, usize), Vec<usize>)> = Vec::new();
+        for c in 0..n + m {
+            for k in 0..parents[c].len() {
+                let src = parents[c][k];
+                let mut prev = src;
+                let mut chain = Vec::new();
+                for l in item_level[src] + 1..item_level[c] {
+                    item_level.push(l);
+                    parents.push(vec![prev]);
+                    prev = item_level.len() - 1;
+                    chain.push(prev);
+                }
+                parents[c][k] = prev;
+                if !chain.is_empty() {
+                    chains.push(((c, k), chain));
+                }
             }
-            for (r, i) in by_level[lvl].iter().enumerate() {
-                rows[*i] = r as f64;
+        }
+        let total = item_level.len();
+        let mut by_level: Vec<Vec<usize>> = vec![Vec::new(); out_level + 1];
+        for i in 0..total {
+            by_level[item_level[i]].push(i);
+        }
+        let widest = by_level.iter().map(Vec::len).max().unwrap_or(1) as f64;
+        let mut rows = vec![0.0f64; total];
+        let place = |lvl: &Vec<usize>, rows: &mut Vec<f64>| {
+            let off = (widest - lvl.len() as f64) / 2.0;
+            for (r, i) in lvl.iter().enumerate() {
+                rows[*i] = r as f64 + off;
+            }
+        };
+        for lvl in &by_level {
+            place(lvl, &mut rows);
+        }
+        let mut children: Vec<Vec<usize>> = vec![Vec::new(); total];
+        for (c, ps) in parents.iter().enumerate() {
+            for p in ps {
+                children[*p].push(c);
+            }
+        }
+        let avg = |ids: &[usize], rows: &[f64]| ids.iter().map(|i| rows[*i]).sum::<f64>() / ids.len().max(1) as f64;
+        // inputs and outputs keep the order they were written in; the levels between them are
+        // sorted by where their neighbours sit, down, up, then down again
+        for sweep in 0..3 {
+            let order: Vec<usize> = if sweep == 1 { (1..=deepest).rev().collect() } else { (1..=deepest).collect() };
+            for lvl in order {
+                let mut items = by_level[lvl].clone();
+                let key = |i: usize, rows: &[f64]| if sweep == 1 { avg(&children[i], rows) } else { avg(&parents[i], rows) };
+                let keys: Vec<f64> = items.iter().map(|i| key(*i, &rows)).collect();
+                let mut idx: Vec<usize> = (0..items.len()).collect();
+                idx.sort_by(|a, b| keys[*a].partial_cmp(&keys[*b]).unwrap_or(std::cmp::Ordering::Equal));
+                items = idx.into_iter().map(|i| items[i]).collect();
+                place(&items, &mut rows);
+                by_level[lvl] = items;
             }
         }
         let node_pos = (0..n).map(|i| self.nodes[i].pos.unwrap_or((level[i] as f64, rows[i]))).collect();
-        let out_pos = self.outputs.iter().enumerate().map(|(k, o)| o.pos.unwrap_or((out_level as f64, rows[o.src].max(0.0) + if self.outputs.iter().take(k).any(|p| p.src == o.src) { 0.5 } else { 0.0 }))).collect();
-        (node_pos, out_pos)
+        let out_pos = (0..m).map(|k| self.outputs[k].pos.unwrap_or((out_level as f64, rows[n + k]))).collect();
+        let routes = chains.into_iter().map(|(key, ch)| (key, ch.into_iter().map(|d| (item_level[d] as f64, rows[d])).collect())).collect();
+        (node_pos, out_pos, routes)
     }
 
     /// A circuit for boolean expressions, one per line as `Q = A AND (B OR NOT C)` (a line with
@@ -830,10 +884,25 @@ mod tests {
     #[test]
     fn layout_levels_and_overrides() {
         let c = Circuit::parse("in A, B\ng1 = AND(A, B)\ng2 = NOT(g1) @ 9,9\nout Q = g2").unwrap();
-        let (n, o) = c.layout();
+        let (n, o, _) = c.layout();
         assert_eq!(n[0].0, 0.0);
         assert_eq!(n[2].0, 1.0);
         assert_eq!(n[3], (9.0, 9.0), "the spec's position wins");
         assert!(o[0].0 > n[2].0);
+    }
+
+    #[test]
+    fn a_wire_that_skips_levels_is_routed_through_its_own_row() {
+        // Cout needs the adder's second level; Sum is ready earlier, so its wire to the outputs skips one
+        let c = Circuit::parse("in A, B, C\nx = XOR(A, B)\na = AND(A, B)\nb = AND(x, C)\ns = XOR(x, C)\nco = OR(a, b)\nout Sum = s\nout Cout = co").unwrap();
+        let (n, o, routes) = c.layout();
+        assert_eq!(n.len(), c.nodes.len());
+        assert!(!routes.is_empty(), "a is read two levels later, so it passes the middle column");
+        // no gate or dummy shares a spot with another in its column
+        let mut spots: Vec<(i64, i64)> = n.iter().chain(o.iter()).chain(routes.values().flatten()).map(|p| (p.0 as i64, (p.1 * 100.0) as i64)).collect();
+        let before = spots.len();
+        spots.sort();
+        spots.dedup();
+        assert_eq!(spots.len(), before, "{spots:?}");
     }
 }

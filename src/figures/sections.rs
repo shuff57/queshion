@@ -465,10 +465,19 @@ static TWO_WAY_TABLE: [RefSection; 4] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static LOGIC_CIRCUIT: [RefSection; 5] = [
+    s("Circuit", &["source", "spec", "expr", "symbols"], "List the inputs, then the gates, then the outputs, one per line. Or type a boolean expression and the gates are drawn for you."),
+    s("Truth table and answers", &["table", "show_expr", "show_answers"], "Turn off Show answers for a student copy: the output column, the expression and the values inside the circuit are hidden."),
+    s("Try the inputs", &["try"], "Type 0s and 1s, one per input, to light up the wires and mark that row of the table."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
         "histogram" => &HISTOGRAM,
+        "logic-circuit" => &LOGIC_CIRCUIT,
         "two-way-table" => &TWO_WAY_TABLE,
         "stem-and-leaf" => &STEM_AND_LEAF,
         "dot-plot" => &DOT_PLOT,

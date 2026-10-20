@@ -3832,7 +3832,7 @@ impl crate::App {
                     ui,
                     &["Home", "Figures"],
                     "Figures",
-                    Some("Physics, biology, chemistry and math diagrams you can tune, export, or attach to a question."),
+                    Some("Physics, biology, chemistry, math and computing diagrams you can tune, export, or attach to a question."),
                 );
                 ui.add_space(12.0);
             }
