@@ -62,6 +62,12 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "cone" => CONE,
         "sphere" => SPHERE,
         "box-plot" => BOX_PLOT,
+        "histogram" => HISTOGRAM,
+        "two-way-table" => TWO_WAY_TABLE,
+        "stem-and-leaf" => STEM_AND_LEAF,
+        "dot-plot" => DOT_PLOT,
+        "normal-curve" => NORMAL_CURVE,
+        "scatterplot" => SCATTERPLOT,
         "mapping-diagram" => MAPPING_DIAGRAM,
         "ruler-reading" => RULER_READING,
         _ => &[],
@@ -1245,3 +1251,141 @@ mod tests {
         assert!(faq_for("nope").is_empty());
     }
 }
+
+const HISTOGRAM: &[Faq] = &[
+    Faq {
+        q: "How do I get a student copy to draw on?",
+        a: "Turn off Show answers. The bars and values disappear and the axes, gridlines and scale stay, so students build the histogram from the data. Student + key saves both versions together.",
+    },
+    Faq {
+        q: "Which bin does a value on an edge go in?",
+        a: "Choose with \"A value on a bin edge goes\". By default 20 in the bins 10-20 and 20-30 goes in 20-30 (the bin to its right). Pick the left option to put it in 10-20 instead.",
+    },
+    Faq {
+        q: "Should I use frequency, relative frequency or density?",
+        a: "Frequency counts the values in each bin. Relative frequency shows each bin's share of all the values. Density divides that share by the bin width, so the bars' areas add to 1; use it whenever the bins are not all the same width.",
+    },
+    Faq {
+        q: "How do I paste data from a spreadsheet?",
+        a: "Copy a column, click in the Data box and paste. When you click away the numbers are tidied into a list. Open CSV reads a file, and Generate makes sample data from a seed.",
+    },
+    Faq {
+        q: "Can I print it in black and white?",
+        a: "Set Style to Print. The bars are filled with hatching instead of colour, so they still read on a black-and-white copy.",
+    },
+];
+
+const SCATTERPLOT: &[Faq] = &[
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The points stay and the line of best fit, its equation and r are hidden, so students draw their own line and find r. Student + key saves both versions.",
+    },
+    Faq {
+        q: "How do I enter the pairs?",
+        a: "Type one x, y pair per line, or copy two columns from a spreadsheet and paste them in. A header row is skipped. Open CSV reads a file, and Generate makes pairs around a line you choose, from a seed.",
+    },
+    Faq {
+        q: "What does the line of best fit mean?",
+        a: "It is the least-squares line: the straight line that makes the squared vertical gaps from the points as small as possible. Its slope says how much y changes for each 1 in x.",
+    },
+    Faq {
+        q: "What does r tell me?",
+        a: "The correlation r runs from \u{2212}1 to 1. Near 1 the points rise along a line, near \u{2212}1 they fall along one, and near 0 there is no straight-line pattern. It is not shown when every y is the same.",
+    },
+    Faq {
+        q: "Can I print it in black and white?",
+        a: "Set Style to Print. The line is drawn dashed in black so it still stands out on a black-and-white copy.",
+    },
+];
+
+const NORMAL_CURVE: &[Faq] = &[
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The curve and the shaded region stay and the probability is hidden, so students find the area. Student + key saves both versions.",
+    },
+    Faq {
+        q: "What is the 68-95-99.7 rule?",
+        a: "About 68% of a normal distribution lies within 1 standard deviation of the mean, about 95% within 2 and about 99.7% within 3. Shade Between with bounds at the mean plus and minus 1, 2 or 3 standard deviations to see each.",
+    },
+    Faq {
+        q: "Should I give the bounds as values or z-scores?",
+        a: "Use x values for a real measurement such as an exam score, and z-scores for a standard normal question. A z-score is the number of standard deviations a value is above (positive) or below (negative) the mean.",
+    },
+    Faq {
+        q: "What do Below, Above, Between and Outside shade?",
+        a: "Below shades everything left of the upper bound, Above everything right of the lower bound, Between the part between the two bounds, and Outside both tails beyond them.",
+    },
+    Faq {
+        q: "How is the area found?",
+        a: "The area under the whole curve is 1, so the shaded area is the probability. It is computed exactly from the normal distribution function, not read off a table, so it can differ from a table value in the last digit.",
+    },
+];
+
+const DOT_PLOT: &[Faq] = &[
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The dots and the mean and median marks are hidden and the labelled number line stays, so students plot the data themselves. Student + key saves both versions.",
+    },
+    Faq {
+        q: "My values are all different, so nothing stacks. What do I do?",
+        a: "Set Group size, for example 2 to put values within 1 of each other in one stack. Leave it at 0 for exact values, which suits whole-number data such as counts or shoe sizes.",
+    },
+    Faq {
+        q: "Mean or median?",
+        a: "Mark either or both. The mean is the balance point of the dots and is pulled toward a few very high or low values; the median is the middle value and is not. Seeing them apart is a good way to show skew.",
+    },
+    Faq {
+        q: "How do I paste data from a spreadsheet?",
+        a: "Copy a column, click in the Numbers box and paste. When you click away the numbers are tidied into a list. Open CSV reads a file, and Generate makes sample data from a seed.",
+    },
+    Faq {
+        q: "Can I print it in black and white?",
+        a: "Set Style to Print. The dots are filled grey with a black outline so they read on a black-and-white copy.",
+    },
+];
+
+const STEM_AND_LEAF: &[Faq] = &[
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The stems, the bar and the key stay and the leaves are hidden, so students fill them in. Student + key saves both versions.",
+    },
+    Faq {
+        q: "What is the leaf unit?",
+        a: "It is the place value of a leaf. With a leaf unit of 1, the number 63 is stem 6 and leaf 3. With 0.1, the number 6.3 is stem 6 and leaf 3. Auto picks the smallest unit that gives about a dozen stems. Values are rounded to the leaf unit.",
+    },
+    Faq {
+        q: "When should I split the stems?",
+        a: "When one stem has so many leaves that the plot looks like a single long row. Splitting puts leaves 0 to 4 and leaves 5 to 9 of each stem on two rows, which shows the shape more clearly.",
+    },
+    Faq {
+        q: "Why is there a stem with no leaves?",
+        a: "An empty stem is a gap in the data. It is kept on purpose, because the gap is part of the shape, just as a gap would be in a dot plot or histogram.",
+    },
+    Faq {
+        q: "How are negative numbers shown?",
+        a: "Negative stems have a minus sign, and the stems run from the most negative up through -0 and 0. A leaf belongs to its stem's number, so -3 | 2 means -32, and the leaves on a negative stem go from the lowest value to the highest.",
+    },
+];
+
+const TWO_WAY_TABLE: &[Faq] = &[
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. By default the row totals, column totals and grand total are left as empty boxes. Use Blank for students to leave some counts empty as well, or instead. Student + key saves both versions, with the answers in bold on the key.",
+    },
+    Faq {
+        q: "How do I enter the counts?",
+        a: "Type the row names and column names separated by commas, then one line of counts per row. The table is as big as the names you give. Counts left out are 0.",
+    },
+    Faq {
+        q: "Which cells are left blank?",
+        a: "The blanks are taken along the table's diagonals, so they do not all land in one row or column. Change How many cells to leave more or fewer.",
+    },
+    Faq {
+        q: "Can I show percentages?",
+        a: "Not yet. The table shows counts and their totals. Type percentages as the counts if you want a table of percentages; the totals add them up.",
+    },
+    Faq {
+        q: "Can I print it in black and white?",
+        a: "Set Style to Print. The shaded header, side and total cells become light grey.",
+    },
+];

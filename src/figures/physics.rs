@@ -187,7 +187,7 @@ mod tests {
                         p.0.insert(pd.key.into(), Value::B(true));
                         check(&d, &p, "sweep");
                     }
-                    Kind::Text | Kind::Long | Kind::List | Kind::Color(_) => {
+                    Kind::Text | Kind::Long | Kind::List | Kind::Data { .. } | Kind::Color(_) => {
                         let mut p = base.clone();
                         p.0.insert(pd.key.into(), Value::S(String::new()));
                         check(&d, &p, "sweep");

@@ -112,6 +112,8 @@ fn describe_param(d: &ParamDef) -> String {
         Kind::Text => ("text", String::new()),
         Kind::Long => ("multi-line text", String::new()),
         Kind::List => ("list text", String::new()),
+        Kind::Data { columns: 1 } => ("numbers text", "comma separated".to_string()),
+        Kind::Data { .. } => ("pairs text", "one x, y per line".to_string()),
         Kind::Color(opts) => ("color", opts.join(" | ")),
     };
     let default = match &d.default {

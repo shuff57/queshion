@@ -419,9 +419,60 @@ static FIG_49: [RefSection; 7] = [
     s("Grid", &["grid", "minor"], ""),
 ];
 
+/// Statistics figures (original designs, not mirrored from a reference page).
+static HISTOGRAM: [RefSection; 5] = [
+    s("Data", &["data"], "Type or paste numbers, open a CSV, or generate sample data from a seed."),
+    s("Bins", &["auto_bins", "bin_width", "bin_start", "closed"], ""),
+    s("Bars", &["measure", "auto_y", "y_max", "values", "show_answers"], "Turn off Show answers for a student copy: the bars and values are hidden and the axes stay."),
+    s("Labels and text", &["title", "x_title", "y_title"], ""),
+    s("Appearance", &["style", "label_size", "grid"], ""),
+];
+
+static SCATTERPLOT: [RefSection; 4] = [
+    s("Data", &["pts"], "Type or paste x, y pairs (two columns from a spreadsheet work), open a CSV, or generate sample data from a seed."),
+    s("Line of best fit", &["fit", "eq", "rval", "show_answers"], "Turn off Show answers for a student copy: the line, equation and r are hidden and the points stay."),
+    s("Labels and text", &["title", "x_title", "y_title"], ""),
+    s("Appearance", &["point_size", "style", "label_size", "grid"], ""),
+];
+
+static NORMAL_CURVE: [RefSection; 4] = [
+    s("Distribution", &["mean", "sd"], ""),
+    s("Shaded region", &["region", "by", "a", "b", "show_prob", "show_answers"], "Turn off Show answers for a student copy: the shaded region stays and the probability is hidden."),
+    s("Labels and text", &["title", "x_title", "ticks"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static DOT_PLOT: [RefSection; 5] = [
+    s("Data", &["data", "group"], "Type or paste numbers, open a CSV, or generate sample data from a seed. Grouping rounds values so close ones share a stack."),
+    s("Number line", &["axis_auto", "axis_min", "axis_max", "axis_step"], ""),
+    s("Dots and marks", &["dot_size", "marks", "show_answers"], "Turn off Show answers for a student copy: the dots and marks are hidden and the number line stays."),
+    s("Labels and text", &["title", "x_title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static STEM_AND_LEAF: [RefSection; 4] = [
+    s("Data", &["data", "leaf_unit", "split", "order"], "Type or paste numbers, open a CSV, or generate sample data from a seed. Each number is rounded to the leaf unit."),
+    s("Key and answers", &["key", "show_answers"], "Turn off Show answers for a student copy: the leaves are hidden and the stems and key stay."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["label_size"], ""),
+];
+
+static TWO_WAY_TABLE: [RefSection; 4] = [
+    s("Table", &["row_labels", "col_labels", "cells", "row_title", "col_title"], "Name the rows and columns, then type the counts one line per row. The totals are worked out for you."),
+    s("Student copy", &["blank", "blank_count", "show_answers"], "Turn off Show answers for a student copy: the chosen boxes are left empty. Show answers fills them in, in bold."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
+        "histogram" => &HISTOGRAM,
+        "two-way-table" => &TWO_WAY_TABLE,
+        "stem-and-leaf" => &STEM_AND_LEAF,
+        "dot-plot" => &DOT_PLOT,
+        "normal-curve" => &NORMAL_CURVE,
+        "scatterplot" => &SCATTERPLOT,
         "bohr-model" => &FIG_1,
         "box-plot" => &FIG_2,
         "circuit-diagram" => &FIG_3,

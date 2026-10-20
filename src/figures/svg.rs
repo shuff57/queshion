@@ -10,6 +10,8 @@ pub fn esc(s: &str) -> String {
 impl Doc {
     pub fn new(w: f64, h: f64) -> Self { Doc { w, h, body: String::new() } }
     pub fn raw(&mut self, s: &str) -> &mut Self { self.body.push_str(s); self }
+    /// Shared `<defs>` (the print patterns of [`Fills`]); drawn before everything that uses them.
+    pub fn defs(&mut self, s: &str) -> &mut Self { if !s.is_empty() { let _ = write!(self.body, "<defs>{s}</defs>"); } self }
     pub fn line(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, stroke: &str, sw: f64) -> &mut Self {
         let _ = write!(self.body, r#"<line x1="{x1:.2}" y1="{y1:.2}" x2="{x2:.2}" y2="{y2:.2}" stroke="{stroke}" stroke-width="{sw}" stroke-linecap="round"/>"#);
         self
@@ -114,6 +116,56 @@ pub fn scale_text(svg: &str, f: f64) -> String {
     out
 }
 
+/// The `style` param of the figures that draw filled series (bars, regions, categories): Colour
+/// for the screen, Print for black-and-white exams (hatch patterns instead of colour fills).
+pub fn style_param() -> super::ParamDef {
+    super::ParamDef::choice("style", "Style", &["Colour", "Print"], "Colour").hint("Print swaps colour fills for hatching that survives a black-and-white copy")
+}
+
+const SERIES_COLOURS: [&str; 6] = ["#4f7cd4", "#e0803c", "#4aa36b", "#c9494f", "#8a62c4", "#d6b23a"];
+
+/// Fills for series 0, 1, 2 ... in the figure's chosen style. Call [`Fills::defs`] once (through
+/// [`Doc::defs`]) before using [`Fills::series`] in Print style.
+#[derive(Clone, Copy, Debug)]
+pub struct Fills { print: bool }
+
+impl Fills {
+    pub fn new(p: &super::Params) -> Self { Fills { print: p.s("style") == "Print" } }
+    pub fn is_print(&self) -> bool { self.print }
+    /// The `fill` for series `i` (wraps after six): a colour, or a pattern reference in Print.
+    pub fn series(&self, i: usize) -> String {
+        if self.print { format!("url(#vs-hatch{})", i % 6) } else { SERIES_COLOURS[i % 6].to_string() }
+    }
+    /// The same series as a stroke colour for lines: black in Print (the dash style tells them
+    /// apart, see [`Fills::dash`]), the series colour otherwise.
+    pub fn line(&self, i: usize) -> &'static str {
+        if self.print { "#000" } else { SERIES_COLOURS[i % 6] }
+    }
+    /// `stroke-dasharray` value that tells line series apart in Print; empty in Colour.
+    pub fn dash(&self, i: usize) -> &'static str {
+        if !self.print { return ""; }
+        ["", "6 3", "2 3", "8 3 2 3", "1 4", "10 4"][i % 6]
+    }
+    /// The pattern definitions for Print style; empty in Colour.
+    pub fn defs(&self) -> String {
+        if !self.print { return String::new(); }
+        let line = |a: &str| format!(r##"<path d="{a}" stroke="#000" stroke-width="1" fill="none"/>"##);
+        let pats: [(&str, String); 6] = [
+            ("<rect width=\"8\" height=\"8\" fill=\"#d9d9d9\"/>", String::new()),
+            ("", line("M-2,2 l4,-4 M0,8 l8,-8 M6,10 l4,-4")),
+            ("", format!("{}{}", line("M-2,2 l4,-4 M0,8 l8,-8 M6,10 l4,-4"), line("M-2,6 l4,4 M0,0 l8,8 M6,-2 l4,4"))),
+            ("", r##"<circle cx="2" cy="2" r="1.1" fill="#000"/><circle cx="6" cy="6" r="1.1" fill="#000"/>"##.to_string()),
+            ("", line("M0,2 h8 M0,6 h8")),
+            ("", line("M2,0 v8 M6,0 v8")),
+        ];
+        let mut out = String::new();
+        for (i, (bg, fg)) in pats.iter().enumerate() {
+            out.push_str(&format!(r##"<pattern id="vs-hatch{i}" width="8" height="8" patternUnits="userSpaceOnUse"><rect width="8" height="8" fill="#fff"/>{bg}{fg}</pattern>"##));
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,5 +188,36 @@ mod tests {
         assert_eq!(label_factor("Large"), 1.4);
         assert_eq!(label_factor("Medium"), 1.0);
         assert_eq!(label_factor("Small"), 0.8);
+    }
+    #[test]
+    fn fills_are_colour_or_pattern_by_style() {
+        let defs = [style_param()];
+        let mut p = super::super::Params::defaults(&defs);
+        let c = Fills::new(&p);
+        assert!(!c.is_print() && c.series(1).starts_with('#') && c.defs().is_empty() && c.dash(2).is_empty());
+        p.set_s("style", "Print");
+        let pr = Fills::new(&p);
+        assert!(pr.is_print() && pr.series(7) == "url(#vs-hatch1)" && pr.line(3) == "#000");
+        assert_eq!(pr.defs().matches("<pattern").count(), 6);
+        let dashes: std::collections::BTreeSet<_> = (0..6).map(|i| pr.dash(i)).collect();
+        assert_eq!(dashes.len(), 6, "every line series has its own dash");
+    }
+
+    #[test]
+    fn print_style_renders_black_and_white_only() {
+        let mut p = super::super::Params::defaults(&[style_param()]);
+        p.set_s("style", "Print");
+        let f = Fills::new(&p);
+        let mut d = Doc::new(60.0, 20.0);
+        d.defs(&f.defs());
+        for i in 0..6 { d.rect(i as f64 * 10.0, 0.0, 10.0, 20.0, &f.series(i), "#000", 1.0); }
+        let png = super::super::to_png(&d.finish(), 1.0).expect("patterns rasterize");
+        let img = image::load_from_memory(&png).unwrap().to_rgba8();
+        let mut dark = 0;
+        for px in img.pixels() {
+            assert!(px[0] == px[1] && px[1] == px[2], "grey only, got {px:?}");
+            if px[0] < 128 { dark += 1; }
+        }
+        assert!(dark > 50, "hatching actually drew ({dark} dark pixels)");
     }
 }

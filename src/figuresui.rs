@@ -24,6 +24,7 @@ mod cards_panel;
 mod chem_shell;
 mod lucide;
 mod composite_canvas;
+mod data_entry;
 mod pedigree_panel;
 
 const DEBOUNCE: Duration = Duration::from_millis(150);
@@ -73,14 +74,26 @@ fn demo_defs() -> Vec<FigureDef> {
         d.text(200.0, 200.0, 18.0, "middle", p.s("label"));
         d.finish()
     }
-    vec![FigureDef {
-        id: "demo-shapes",
-        subject: Subject::Math,
-        title: "Demo shapes",
-        blurb: "Test-only demo figure.",
-        params,
-        render,
-    }]
+    // a Computing figure on the shared pieces: Kind::Data, the style switch and show_answers
+    fn data_params() -> Vec<ParamDef> {
+        vec![ParamDef::data("data", "Data", 1, "3, 5, 8"), ParamDef::data("pts", "Points", 2, "1, 2\n3, 4"), figures::svg::style_param(), figures::answers_param()]
+    }
+    fn data_render(p: &Params) -> String {
+        let fills = figures::svg::Fills::new(p);
+        let mut d = figures::svg::Doc::new(300.0, 200.0);
+        d.defs(&fills.defs());
+        for (i, v) in figures::data::numbers(p.s("data")).iter().enumerate() {
+            d.rect(20.0 + i as f64 * 24.0, 180.0 - v * 8.0, 20.0, v * 8.0, &fills.series(i), "#000", 1.0);
+        }
+        if p.b(figures::SHOW_ANSWERS) {
+            d.text(150.0, 20.0, 14.0, "middle", "ANSWER");
+        }
+        d.finish()
+    }
+    vec![
+        FigureDef { id: "demo-shapes", subject: Subject::Math, title: "Demo shapes", blurb: "Test-only demo figure.", params, render },
+        FigureDef { id: "demo-data", subject: Subject::Computing, title: "Demo data", blurb: "Test-only data figure.", params: data_params, render: data_render },
+    ]
 }
 
 fn find_def(id: &str) -> Option<(usize, &'static FigureDef)> {
@@ -839,7 +852,8 @@ impl Workspace {
             if tab(ui, "All", self.subject.is_none()) {
                 self.subject = None;
             }
-            for s in Subject::ALL {
+            // a subject with no figures yet (Computing, until its first figure lands) shows no tab
+            for s in Subject::ALL.into_iter().filter(|s| reg().iter().any(|d| figures::listed_under(d, *s))) {
                 if tab(ui, s.name(), self.subject == Some(s)) {
                     self.subject = Some(s);
                 }
@@ -1251,6 +1265,9 @@ impl Workspace {
             }
             if have_svg && ghost(ui, "Export SVG").clicked() {
                 act = self.export(true);
+            }
+            if self.has_answers() && ghost(ui, "Student + key").on_hover_text("Save the student copy (answers hidden) and the answer key side by side").clicked() {
+                act = self.export_pair(false);
             }
             if ghost(ui, "Copy PNG").clicked() {
                 act = match self.output().ok().and_then(|o| color_image(&o.png)) {
@@ -2677,6 +2694,37 @@ impl Workspace {
         });
     }
 
+    /// Whether the open figure has a `show_answers` switch (so "Student + key" applies).
+    fn has_answers(&self) -> bool {
+        self.sel.is_some_and(|i| figures::hides_answers(&(reg()[i].params)()))
+    }
+
+    /// Saves the student copy where the user chooses and the answer key beside it
+    /// (`name-student.png` / `name-key.png`).
+    fn export_pair(&self, svg: bool) -> Act {
+        let Some(si) = self.sel else { return Act::None };
+        let def = &reg()[si];
+        let Some((student, key)) = figures::answer_pair(def, &self.params) else {
+            return Act::Toast("This figure has no answers to hide".into(), true);
+        };
+        let (ext, label) = if svg { ("svg", "SVG") } else { ("png", "PNG") };
+        let bytes = |s: &str| -> Result<Vec<u8>, String> {
+            if svg { Ok(s.as_bytes().to_vec()) } else { flatten_white(&figures::to_png(s, 2.0)?) }
+        };
+        let (sb, kb) = match (bytes(&student), bytes(&key)) {
+            (Ok(a), Ok(b)) => (a, b),
+            (Err(e), _) | (_, Err(e)) => return Act::Toast(format!("Couldn't render the figure: {e}"), true),
+        };
+        let Some(spath) = crate::platform::save_path(&format!("{}-student.{ext}", def.id), label, &[ext]) else {
+            return Act::None;
+        };
+        let kpath = figures::key_path(&spath);
+        match crate::platform::write(&spath, &sb).and_then(|()| crate::platform::write(&kpath, &kb)) {
+            Ok(()) => Act::Toast(format!("Exported {} and {}", spath.display(), kpath.display()), false),
+            Err(e) => Act::Toast(format!("Export failed: {e}"), true),
+        }
+    }
+
     fn export(&self, svg: bool) -> Act {
         let out = match self.output() {
             Ok(o) => o,
@@ -3644,6 +3692,7 @@ fn param_control_inner(ui: &mut Ui, fig: &str, pd: &ParamDef, p: &mut Params) {
                 p.0.insert(pd.key.to_string(), Value::S(cur));
             }
         }
+        Kind::Data { columns } => data_entry::data_control(ui, fig, pd, *columns, label, p),
         Kind::List => {
             param_label(ui, label, pd.hint);
             let (mut items, sep) = list_items(p.s(pd.key));
@@ -4080,6 +4129,35 @@ mod tests {
             assert!(ws.shown.is_some(), "{} did not render", d.id);
             assert!(ws.canvas.0 > 50.0, "{} canvas unknown", d.id);
         }
+    }
+
+    /// The Computing demo uses Kind::Data, style and show_answers: it opens in the generic (unskinned)
+    /// workspace, its data box and Generate popover draw, and the pair export differs as expected.
+    #[test]
+    fn computing_demo_uses_the_shared_pieces() {
+        let (i, def) = find_def("demo-data").unwrap();
+        assert_eq!(def.subject, Subject::Computing);
+        let mut ws = Workspace::new(false);
+        ws.select(i);
+        let ctx = egui::Context::default();
+        theme::setup(&ctx);
+        assert!(!ws.chem_open(), "Computing has no reference skin");
+        for _ in 0..3 {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let _ = ws.show(ui);
+            });
+            out.textures_delta.clear();
+        }
+        assert!(ws.shown.is_some());
+        // a spreadsheet column stored raw reads back; the tidy form is what the box writes on blur
+        ws.params.set_s("data", "2\n4\n6");
+        assert_eq!(figures::data::numbers(ws.params.s("data")), vec![2.0, 4.0, 6.0]);
+        let (student, key) = figures::answer_pair(def, &ws.params).unwrap();
+        assert!(!student.contains("ANSWER") && key.contains("ANSWER"));
+        ws.params.set_s("style", "Print");
+        let (print, _) = figures::answer_pair(def, &ws.params).unwrap();
+        assert!(print.contains("vs-hatch0") && !print.contains("#4f7cd4"));
+        assert!(figures::to_png(&print, 1.0).is_ok());
     }
 
     #[test]
