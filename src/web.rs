@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use eframe::egui;
+use vershion::fonts::Face;
 use wasm_bindgen::JsCast as _;
 
 const CANVAS_ID: &str = "vershion_canvas";
@@ -31,6 +32,10 @@ pub fn start() {
             return;
         };
 
+        // The faces the wasm does not compile in, requested now so they download while storage
+        // opens (index.html preloads them alongside the wasm).
+        let fonts = fetch_fonts();
+
         let repaint: Rc<dyn Fn()> = Rc::new(|| {
             CTX.with(|c| {
                 if let Some(ctx) = &*c.borrow() {
@@ -48,6 +53,11 @@ pub fn start() {
             }
         };
         vershion::store::init(Box::new(backend));
+
+        // Every font consumer (egui, PDF metrics, resvg, the PDF writer) reads its faces from
+        // here on, so they are installed before the app exists; any that did not arrive are drawn
+        // with compiled-in stand-ins for the whole session.
+        install_fonts(fonts.await);
 
         let result = eframe::WebRunner::new()
             .start(
@@ -73,6 +83,61 @@ pub fn start() {
             }
         }
     });
+}
+
+/// Longest the start waits for the fetched faces; past it the app starts with stand-ins.
+const FONT_WAIT_MS: i32 = 15_000;
+
+/// Starts fetching every face the wasm does not compile in (`fonts/<file>`, copied there by
+/// Trunk) and returns a future of those that arrived within [`FONT_WAIT_MS`].
+fn fetch_fonts() -> impl std::future::Future<Output = Vec<(Face, Vec<u8>)>> {
+    let got: Rc<RefCell<Vec<(Face, Vec<u8>)>>> = Rc::default();
+    let pending = js_sys::Array::new();
+    for &face in Face::ALL.iter().filter(|f| f.compiled_in().is_none()) {
+        let got = got.clone();
+        pending.push(&wasm_bindgen_futures::future_to_promise(async move {
+            let url = format!("fonts/{}", face.file());
+            match fetch_bytes(&url).await {
+                Ok(bytes) => got.borrow_mut().push((face, bytes)),
+                Err(e) => log::warn!("verSHion: font {url} not loaded ({e}); using a stand-in"),
+            }
+            Ok(wasm_bindgen::JsValue::UNDEFINED)
+        }));
+    }
+    async move {
+        if let Some(window) = web_sys::window() {
+            let timeout = js_sys::Promise::new(&mut |resolve, _| {
+                let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, FONT_WAIT_MS);
+            });
+            let all = js_sys::Promise::all(&pending);
+            let _ = wasm_bindgen_futures::JsFuture::from(js_sys::Promise::race(&js_sys::Array::of2(&all, &timeout))).await;
+        }
+        std::mem::take(&mut *got.borrow_mut())
+    }
+}
+
+async fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
+    use wasm_bindgen_futures::JsFuture;
+    let err = |e: wasm_bindgen::JsValue| e.as_string().unwrap_or_else(|| format!("{e:?}"));
+    let window = web_sys::window().ok_or("no window")?;
+    let resp: web_sys::Response = JsFuture::from(window.fetch_with_str(url)).await.map_err(err)?.dyn_into().map_err(err)?;
+    if !resp.ok() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    let buf = JsFuture::from(resp.array_buffer().map_err(err)?).await.map_err(err)?;
+    Ok(js_sys::Uint8Array::new(&buf).to_vec())
+}
+
+fn install_fonts(fetched: Vec<(Face, Vec<u8>)>) {
+    let used = vershion::fonts::install_fetched(fetched);
+    let missing: Vec<&str> = Face::ALL
+        .iter()
+        .filter(|f| f.compiled_in().is_none() && !used.contains(f))
+        .map(|f| f.file())
+        .collect();
+    if !missing.is_empty() {
+        log::warn!("verSHion: drawing with stand-in faces for {}", missing.join(", "));
+    }
 }
 
 /// Holds the loading screen until its animation reaches the end of the cycle it is in, then fades

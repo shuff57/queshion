@@ -1,48 +1,187 @@
-//! The print serif: Source Serif 4 (Adobe, SIL Open Font License 1.1, see
-//! `assets/fonts/OFL-SourceSerif4.txt` and `docs/fonts.md`) in its four real faces.
+//! The bundled faces (`assets/fonts`, SIL Open Font License 1.1, see the `OFL-*.txt` files there
+//! and `docs/fonts.md`), and the PDF metrics of the print serif, Source Serif 4, in its four
+//! real faces.
 //!
-//! The faces are compiled into the binary so the PDF export (which must not touch the file
-//! system), the page preview and the card thumbnails always use the same outlines and the
-//! same advance widths. The PDF writer measures text with [`FaceMetrics::widths`] (WinAnsi
-//! byte -> advance in 1/1000 em, read from the font's own `hmtx` through its `cmap`) and
-//! writes the very same numbers into the font's `/Widths` array, so line breaking and
-//! drawing can never disagree. [`subset`] keeps only the glyphs a document uses.
+//! Natively every face is compiled into the binary, so the app and the embedded officecraft tab
+//! need no filesystem access for fonts. The web build compiles in only the faces marked `embed`
+//! in [`Face`] (the four Source Serif 4 faces, which equaSHion compiles in anyway, and the UI's
+//! Source Sans 3 Regular) and fetches the rest from `fonts/` next to index.html before the app
+//! starts (`src/web.rs`, [`install_fetched`]). A face that did not arrive is drawn with a
+//! compiled-in stand-in ([`Face::stand_in`]), so no consumer ever sees empty bytes, and the set
+//! is fixed the first time any face is read, so the PDF metrics and subsets, egui and resvg all
+//! see the same bytes for the whole session (docs/progress.md, "web fonts").
+//!
+//! The PDF export (which must not touch the file system), the page preview and the card
+//! thumbnails always use the same outlines and the same advance widths. The PDF writer
+//! measures text with [`FaceMetrics::widths`] (WinAnsi byte -> advance in 1/1000 em, read from
+//! the font's own `hmtx` through its `cmap`) and writes the very same numbers into the font's
+//! `/Widths` array, so line breaking and drawing can never disagree. [`subset`] keeps only the
+//! glyphs a document uses.
 
 use std::sync::OnceLock;
 
-pub static SERIF_REGULAR: &[u8] = include_bytes!("../assets/fonts/SourceSerif4-Regular.ttf");
-pub static SERIF_BOLD: &[u8] = include_bytes!("../assets/fonts/SourceSerif4-Bold.ttf");
-pub static SERIF_ITALIC: &[u8] = include_bytes!("../assets/fonts/SourceSerif4-It.ttf");
-pub static SERIF_BOLD_ITALIC: &[u8] = include_bytes!("../assets/fonts/SourceSerif4-BoldIt.ttf");
-/// The print mono for `` `code` `` spans: Liberation Mono Regular 2.1.5 (SIL OFL 1.1, see
-/// `assets/fonts/OFL-LiberationMono.txt`), metric-compatible with Courier New, the face the
-/// DOCX names, so PDF and Word lines measure alike.
-/// Liberation Sans Regular and Bold (SIL OFL 1.1, `assets/fonts/OFL-LiberationSans.txt`),
-/// metric-compatible with Arial: the chemistry figure SVGs ask for Arial, and the browser has
-/// no system fonts, so text measures like the reference's.
-pub static LIBERATION_SANS_REGULAR: &[u8] = include_bytes!("../assets/fonts/LiberationSans-Regular.ttf");
-pub static LIBERATION_SANS_BOLD: &[u8] = include_bytes!("../assets/fonts/LiberationSans-Bold.ttf");
-/// Liberation Serif Regular and Italic, subset to Latin (SIL OFL 1.1, `assets/fonts/OFL-LiberationSerif.txt`),
-/// metric-compatible with Times New Roman: the biology figure SVGs set genotypes in
-/// "Georgia, 'Times New Roman', Times, serif", which the reference's browser draws in this face.
-pub static LIBERATION_SERIF_REGULAR: &[u8] = include_bytes!("../assets/fonts/LiberationSerif-Regular.ttf");
-pub static LIBERATION_SERIF_ITALIC: &[u8] = include_bytes!("../assets/fonts/LiberationSerif-Italic.ttf");
-pub static LIBERATION_SERIF_BOLD: &[u8] = include_bytes!("../assets/fonts/LiberationSerif-Bold.ttf");
-pub static NOTO_REGULAR: &[u8] = include_bytes!("../assets/fonts/NotoSans-Regular.ttf");
-pub static NOTO_SEMIBOLD: &[u8] = include_bytes!("../assets/fonts/NotoSans-SemiBold.ttf");
-pub static NOTO_MEDIUM: &[u8] = include_bytes!("../assets/fonts/NotoSans-Medium.ttf");
-pub static NOTO_EXTRABOLD: &[u8] = include_bytes!("../assets/fonts/NotoSans-ExtraBold.ttf");
-pub static NOTO_BOLD: &[u8] = include_bytes!("../assets/fonts/NotoSans-Bold.ttf");
-pub static MONO_REGULAR: &[u8] = include_bytes!("../assets/fonts/LiberationMono-Regular.ttf");
+/// The bytes of a face the web build fetches instead of compiling in: compiled in natively.
+#[cfg(not(target_arch = "wasm32"))]
+macro_rules! unless_web {
+    ($file:literal) => {
+        Some(include_bytes!(concat!("../assets/fonts/", $file)) as &'static [u8])
+    };
+}
+#[cfg(target_arch = "wasm32")]
+macro_rules! unless_web {
+    ($file:literal) => {
+        None
+    };
+}
 
-/// UI faces (Source Sans 3, SIL OFL 1.1). Compiled in so the app, the web build and the
-/// embedded officecraft tab all get identical typography with no filesystem access.
-pub static SANS_REGULAR: &[u8] = include_bytes!("../assets/fonts/SourceSans3-Regular.ttf");
-pub static SANS_ITALIC: &[u8] = include_bytes!("../assets/fonts/SourceSans3-It.ttf");
-pub static SANS_SEMIBOLD: &[u8] = include_bytes!("../assets/fonts/SourceSans3-Semibold.ttf");
-pub static SANS_BOLD: &[u8] = include_bytes!("../assets/fonts/SourceSans3-Bold.ttf");
-/// The semibold print face used by headings; the other four serif faces are above.
-pub static SERIF_SEMIBOLD: &[u8] = include_bytes!("../assets/fonts/SourceSerif4-Semibold.ttf");
+/// Declares [`Face`]: each face's file in `assets/fonts` and whether the web build compiles it
+/// in (`embed`) or fetches it at startup (`fetch`).
+macro_rules! bundled_faces {
+    ($($(#[$doc:meta])* $face:ident = $file:literal, $web:ident;)*) => {
+        /// One bundled face (a file in `assets/fonts`).
+        #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+        pub enum Face {
+            $($(#[$doc])* $face,)*
+        }
+
+        impl Face {
+            pub const ALL: &'static [Face] = &[$(Face::$face),*];
+
+            /// File name in `assets/fonts` (on the web: under `fonts/` next to index.html).
+            pub const fn file(self) -> &'static str {
+                match self {
+                    $(Face::$face => $file,)*
+                }
+            }
+
+            /// The web build fetches this face at startup instead of compiling it in.
+            pub const fn web_fetched(self) -> bool {
+                match self {
+                    $(Face::$face => bundled_faces!(@fetched $web),)*
+                }
+            }
+
+            /// The bytes compiled into this binary: every face natively; on the web only the
+            /// faces that are not [`web_fetched`](Face::web_fetched).
+            pub fn compiled_in(self) -> Option<&'static [u8]> {
+                match self {
+                    $(Face::$face => bundled_faces!(@bytes $web $file),)*
+                }
+            }
+        }
+    };
+    (@fetched embed) => { false };
+    (@fetched fetch) => { true };
+    (@bytes embed $file:literal) => { Some(include_bytes!(concat!("../assets/fonts/", $file)) as &'static [u8]) };
+    (@bytes fetch $file:literal) => { unless_web!($file) };
+}
+
+bundled_faces! {
+    /// Source Serif 4, the print serif (four real faces plus the headings' semibold). The web
+    /// build embeds the four: equaSHion compiles the very same files in for its equations, and the
+    /// linker keeps one copy, so they cost nothing.
+    SerifRegular = "SourceSerif4-Regular.ttf", embed;
+    SerifBold = "SourceSerif4-Bold.ttf", embed;
+    SerifItalic = "SourceSerif4-It.ttf", embed;
+    SerifBoldItalic = "SourceSerif4-BoldIt.ttf", embed;
+    /// The semibold print face used by headings.
+    SerifSemibold = "SourceSerif4-Semibold.ttf", fetch;
+    /// UI faces (Source Sans 3). Regular is the app's text face, so the web build embeds it: the
+    /// stand-in for every sans face that does not arrive.
+    SansRegular = "SourceSans3-Regular.ttf", embed;
+    SansItalic = "SourceSans3-It.ttf", fetch;
+    SansSemibold = "SourceSans3-Semibold.ttf", fetch;
+    SansBold = "SourceSans3-Bold.ttf", fetch;
+    /// The print mono for `` `code` `` spans: Liberation Mono Regular 2.1.5
+    /// (`OFL-LiberationMono.txt`), metric-compatible with Courier New, the face the DOCX names,
+    /// so PDF and Word lines measure alike.
+    Mono = "LiberationMono-Regular.ttf", fetch;
+    /// Liberation Sans Regular and Bold (`OFL-LiberationSans.txt`), metric-compatible with
+    /// Arial: the chemistry figure SVGs ask for Arial, and the browser has no system fonts, so
+    /// text measures like the reference's.
+    LiberationSansRegular = "LiberationSans-Regular.ttf", fetch;
+    LiberationSansBold = "LiberationSans-Bold.ttf", fetch;
+    /// Liberation Serif, subset to Latin (`OFL-LiberationSerif.txt`), metric-compatible with
+    /// Times New Roman: the biology figure SVGs set genotypes in "Georgia, 'Times New Roman',
+    /// Times, serif", which the reference's browser draws in this face.
+    LiberationSerifRegular = "LiberationSerif-Regular.ttf", fetch;
+    LiberationSerifItalic = "LiberationSerif-Italic.ttf", fetch;
+    LiberationSerifBold = "LiberationSerif-Bold.ttf", fetch;
+    /// Noto Sans (subset, `OFL-NotoSans.txt`): the chemistry page skin's sans.
+    NotoRegular = "NotoSans-Regular.ttf", fetch;
+    NotoMedium = "NotoSans-Medium.ttf", fetch;
+    NotoSemibold = "NotoSans-SemiBold.ttf", fetch;
+    NotoBold = "NotoSans-Bold.ttf", fetch;
+    NotoExtraBold = "NotoSans-ExtraBold.ttf", fetch;
+}
+
+impl Face {
+    /// The compiled-in face drawn in this one's place when the web build could not fetch it
+    /// (itself for a compiled-in face).
+    pub const fn stand_in(self) -> Face {
+        match self {
+            Face::SerifSemibold | Face::LiberationSerifBold => Face::SerifBold,
+            Face::LiberationSerifItalic => Face::SerifItalic,
+            Face::Mono | Face::LiberationSerifRegular => Face::SerifRegular,
+            Face::SansItalic
+            | Face::SansSemibold
+            | Face::SansBold
+            | Face::LiberationSansRegular
+            | Face::LiberationSansBold
+            | Face::NotoRegular
+            | Face::NotoMedium
+            | Face::NotoSemibold
+            | Face::NotoBold
+            | Face::NotoExtraBold => Face::SansRegular,
+            Face::SerifRegular | Face::SerifBold | Face::SerifItalic | Face::SerifBoldItalic | Face::SansRegular => self,
+        }
+    }
+
+    /// This face's bytes; `None` only on the web, for a face that was not fetched.
+    pub fn loaded(self) -> Option<&'static [u8]> {
+        self.compiled_in().or_else(|| fetched(self))
+    }
+
+    /// This face's bytes, or (on the web, when it was not fetched) its stand-in's.
+    pub fn bytes(self) -> &'static [u8] {
+        match self.loaded() {
+            Some(b) => b,
+            None => self.stand_in().compiled_in().unwrap_or_default(),
+        }
+    }
+}
+
+/// Faces fetched at startup (web build), fixed once anything reads a face.
+static FETCHED: OnceLock<Vec<(Face, &'static [u8])>> = OnceLock::new();
+
+fn fetched(face: Face) -> Option<&'static [u8]> {
+    FETCHED.get_or_init(Vec::new).iter().find(|(f, _)| *f == face).map(|(_, b)| *b)
+}
+
+/// Bytes that can stand for `face`: a font that parses (not, say, the HTML page a static host
+/// serves for a missing file).
+fn usable(bytes: &[u8]) -> bool {
+    ttf_parser::Face::parse(bytes, 0).is_ok()
+}
+
+/// Web build: hands over the faces fetched at startup (`src/web.rs`). Only the first call
+/// before anything has read a face takes effect; bytes that do not parse as a font and faces
+/// that are compiled in anyway are dropped. Returns the faces that are now in use from the
+/// fetch, so the caller can report what is missing.
+pub fn install_fetched(faces: Vec<(Face, Vec<u8>)>) -> Vec<Face> {
+    let mut list: Vec<(Face, &'static [u8])> = Vec::new();
+    for (face, bytes) in faces {
+        if face.compiled_in().is_none() && usable(&bytes) && !list.iter().any(|(f, _)| *f == face) {
+            // Fonts live as long as the program; leaking gives the `'static` bytes egui wants.
+            list.push((face, Box::leak(bytes.into_boxed_slice())));
+        }
+    }
+    let used: Vec<Face> = list.iter().map(|(f, _)| *f).collect();
+    match FETCHED.set(list) {
+        Ok(()) => used,
+        Err(_) => Vec::new(),
+    }
+}
 
 /// The family name the faces carry in their `name` table (used by SVG `font-family`).
 pub const SERIF_FAMILY: &str = "Source Serif 4";
@@ -68,14 +207,17 @@ impl Style {
             (true, true) => Style::BoldItalic,
         }
     }
-    pub fn bytes(self) -> &'static [u8] {
+    pub fn face(self) -> Face {
         match self {
-            Style::Regular => SERIF_REGULAR,
-            Style::Bold => SERIF_BOLD,
-            Style::Italic => SERIF_ITALIC,
-            Style::BoldItalic => SERIF_BOLD_ITALIC,
-            Style::Mono => MONO_REGULAR,
+            Style::Regular => Face::SerifRegular,
+            Style::Bold => Face::SerifBold,
+            Style::Italic => Face::SerifItalic,
+            Style::BoldItalic => Face::SerifBoldItalic,
+            Style::Mono => Face::Mono,
         }
+    }
+    pub fn bytes(self) -> &'static [u8] {
+        self.face().bytes()
     }
     pub fn bold(self) -> bool {
         matches!(self, Style::Bold | Style::BoldItalic)
@@ -544,7 +686,7 @@ mod tests {
         let mut used = [false; 256];
         b"let x = 1;".iter().for_each(|&b| used[b as usize] = true);
         let sub = subset(Style::Mono, &used);
-        assert!(sub.len() < MONO_REGULAR.len() / 3);
+        assert!(sub.len() < Face::Mono.bytes().len() / 3);
         let f = ttf_parser::Face::parse(&sub, 0).expect("mono subset parses");
         assert!(f.glyph_bounding_box(f.glyph_index('x').unwrap()).is_some());
         assert_eq!(checksum(&sub), 0xB1B0_AFBA);
@@ -570,6 +712,49 @@ mod tests {
             assert!(f.glyph_bounding_box(z).is_none(), "{s:?} unused glyph emptied");
             assert_eq!(checksum(&sub), 0xB1B0_AFBA, "whole-font checksum");
         }
+    }
+
+    #[test]
+    fn every_face_is_its_file_in_assets() {
+        for &f in Face::ALL {
+            let on_disk = std::fs::read(format!("{}/assets/fonts/{}", env!("CARGO_MANIFEST_DIR"), f.file())).unwrap();
+            assert!(f.compiled_in() == Some(on_disk.as_slice()), "{f:?} is not {}", f.file());
+            assert_eq!(f.bytes(), f.loaded().unwrap(), "{f:?}: natively every face is compiled in");
+            assert!(usable(f.bytes()), "{f:?} parses");
+        }
+    }
+
+    /// The web build must always have something to draw with: a fetched face stands in with a
+    /// compiled-in one, and the faces it compiles in are the ones the first frame needs.
+    #[test]
+    fn web_stand_ins_are_compiled_in() {
+        for &f in Face::ALL {
+            assert!(!f.stand_in().web_fetched(), "{f:?} stands in with a face the web build fetches");
+            assert_eq!(f.stand_in() == f, !f.web_fetched(), "{f:?}");
+        }
+        for f in [Face::SansRegular, Face::SerifRegular, Face::SerifItalic, Face::SerifBold, Face::SerifBoldItalic] {
+            assert!(!f.web_fetched(), "{f:?} must be compiled into the web build");
+        }
+    }
+
+    /// The faces the web build fetches are copied next to index.html and preloaded, so their
+    /// download runs alongside the wasm's; the compiled-in ones are not preloaded.
+    #[test]
+    fn index_html_ships_and_preloads_the_fetched_faces() {
+        let html = include_str!("../index.html");
+        assert!(html.contains(r#"<link data-trunk rel="copy-dir" href="assets/fonts" data-target-path="fonts" />"#));
+        for &f in Face::ALL {
+            let preload = format!(r#"<link rel="preload" href="fonts/{}" as="fetch" crossorigin />"#, f.file());
+            assert_eq!(html.contains(&preload), f.web_fetched(), "{f:?}: {preload}");
+        }
+        assert_eq!(html.matches(r#"rel="preload" href="fonts/"#).count(), Face::ALL.iter().filter(|f| f.web_fetched()).count());
+    }
+
+    #[test]
+    fn only_real_fonts_are_taken_from_a_fetch() {
+        assert!(!usable(b"<!doctype html><html><body>Not found</body></html>"));
+        assert!(!usable(&[]));
+        assert!(usable(Face::NotoBold.bytes()));
     }
 
     #[test]

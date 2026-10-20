@@ -16,6 +16,24 @@
   <meta name="theme-color" content="#2F5D46" />
   <link data-trunk rel="copy-file" href="assets/loading-logo.svg" />
   <link data-trunk rel="copy-dir" href="assets/help" data-target-path="help" />
+  <!-- Faces the wasm does not compile in (src/fonts.rs, `fetch`): fetched before the app starts,
+       preloaded so they download alongside the wasm. Keep in step with src/fonts.rs (a test checks). -->
+  <link data-trunk rel="copy-dir" href="assets/fonts" data-target-path="fonts" />
+  <link rel="preload" href="fonts/SourceSerif4-Semibold.ttf" as="fetch" crossorigin />
+  <link rel="preload" href="fonts/SourceSans3-It.ttf" as="fetch" crossorigin />
+  <link rel="preload" href="fonts/SourceSans3-Semibold.ttf" as="fetch" crossorigin />
+  <link rel="preload" href="fonts/SourceSans3-Bold.ttf" as="fetch" crossorigin />
+  <link rel="preload" href="fonts/LiberationMono-Regular.ttf" as="fetch" crossorigin />
+  <link rel="preload" href="fonts/LiberationSans-Regular.ttf" as="fetch" crossorigin />
+  <link rel="preload" href="fonts/LiberationSans-Bold.ttf" as="fetch" crossorigin />
+  <link rel="preload" href="fonts/LiberationSerif-Regular.ttf" as="fetch" crossorigin />
+  <link rel="preload" href="fonts/LiberationSerif-Italic.ttf" as="fetch" crossorigin />
+  <link rel="preload" href="fonts/LiberationSerif-Bold.ttf" as="fetch" crossorigin />
+  <link rel="preload" href="fonts/NotoSans-Regular.ttf" as="fetch" crossorigin />
+  <link rel="preload" href="fonts/NotoSans-Medium.ttf" as="fetch" crossorigin />
+  <link rel="preload" href="fonts/NotoSans-SemiBold.ttf" as="fetch" crossorigin />
+  <link rel="preload" href="fonts/NotoSans-Bold.ttf" as="fetch" crossorigin />
+  <link rel="preload" href="fonts/NotoSans-ExtraBold.ttf" as="fetch" crossorigin />
   <style>
     :root { color-scheme: light dark; }
     html, body { margin: 0; height: 100%; overflow: hidden; }

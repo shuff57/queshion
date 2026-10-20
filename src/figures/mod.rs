@@ -584,27 +584,32 @@ pub(crate) fn fontdb() -> std::sync::Arc<resvg::usvg::fontdb::Database> {
         // The house sans and mono, plus the math fallback. The browser has no system fonts,
         // and figure SVGs ask for Noto/Liberation/DejaVu/sans-serif; the generic mappings below
         // make those resolve to the bundled faces so numbers and axis titles still draw.
-        for bytes in [
-            crate::fonts::SANS_REGULAR,
-            crate::fonts::SANS_ITALIC,
-            crate::fonts::SANS_SEMIBOLD,
-            crate::fonts::SANS_BOLD,
-            crate::fonts::SERIF_SEMIBOLD,
-            crate::fonts::MONO_REGULAR,
-            crate::fonts::LIBERATION_SANS_REGULAR,
-            crate::fonts::LIBERATION_SANS_BOLD,
-            crate::fonts::LIBERATION_SERIF_REGULAR,
-            crate::fonts::LIBERATION_SERIF_ITALIC,
-            crate::fonts::LIBERATION_SERIF_BOLD,
+        // A face the web build could not fetch is left out: its text falls back to the
+        // generic family, which is always compiled in.
+        use crate::fonts::Face;
+        for face in [
+            Face::SansRegular,
+            Face::SansItalic,
+            Face::SansSemibold,
+            Face::SansBold,
+            Face::SerifSemibold,
+            Face::Mono,
+            Face::LiberationSansRegular,
+            Face::LiberationSansBold,
+            Face::LiberationSerifRegular,
+            Face::LiberationSerifItalic,
+            Face::LiberationSerifBold,
         ] {
-            db.load_font_data(bytes.to_vec());
+            if let Some(bytes) = face.loaded() {
+                db.load_font_data(bytes.to_vec());
+            }
         }
         if let Some(b) = crate::fonts::fallback_bytes() {
             db.load_font_data(b.to_vec());
         }
         db.set_sans_serif_family("Source Sans 3");
         db.set_serif_family("Source Serif 4");
-        db.set_monospace_family("Liberation Mono");
+        db.set_monospace_family(if Face::Mono.loaded().is_some() { "Liberation Mono" } else { "Source Sans 3" });
         std::sync::Arc::new(db)
     })
     .clone()

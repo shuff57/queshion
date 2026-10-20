@@ -431,31 +431,35 @@ pub fn icon_font(size: f32) -> egui::FontId {
     egui::FontId::new(size, FontFamily::Name(ICON_FAMILY.into()))
 }
 
-/// Builds the house faces from bytes compiled into the binary. No filesystem access, so the
-/// same faces are available on the desktop, in the browser and inside officecraft.
+/// Builds the house faces from the bundled bytes (src/fonts.rs: compiled in natively; on the web
+/// partly fetched before the app starts). No filesystem access, so the same faces are available
+/// on the desktop, in the browser and inside officecraft.
 fn load_fonts() -> FontDefinitions {
+    use crate::fonts::Face;
     let mut defs = FontDefinitions::default();
-    let put = |defs: &mut FontDefinitions, name: &str, bytes: &'static [u8]| {
+    // A face the web build could not fetch is registered under its own name with its
+    // stand-in's bytes (`Face::bytes`), so every family below keeps its order.
+    let put = |defs: &mut FontDefinitions, name: &str, face: Face| {
         defs.font_data
-            .insert(name.to_string(), Arc::new(FontData::from_static(bytes)));
+            .insert(name.to_string(), Arc::new(FontData::from_static(face.bytes())));
     };
 
-    put(&mut defs, "SourceSans3-Regular", crate::fonts::SANS_REGULAR);
-    put(&mut defs, "SourceSans3-It", crate::fonts::SANS_ITALIC);
-    put(&mut defs, "SourceSans3-Semibold", crate::fonts::SANS_SEMIBOLD);
-    put(&mut defs, "SourceSans3-Bold", crate::fonts::SANS_BOLD);
-    put(&mut defs, "NotoSans-Regular", crate::fonts::NOTO_REGULAR);
-    put(&mut defs, "NotoSans-SemiBold", crate::fonts::NOTO_SEMIBOLD);
-    put(&mut defs, "NotoSans-Bold", crate::fonts::NOTO_BOLD);
-    put(&mut defs, "NotoSans-Medium", crate::fonts::NOTO_MEDIUM);
-    put(&mut defs, "NotoSans-ExtraBold", crate::fonts::NOTO_EXTRABOLD);
-    // The print serif comes from the binary (src/fonts.rs): the page preview, the card
-    // thumbnails and the PDF all use the very same faces.
-    put(&mut defs, "SourceSerif4-Regular", crate::fonts::SERIF_REGULAR);
-    put(&mut defs, "SourceSerif4-Bold", crate::fonts::SERIF_BOLD);
-    put(&mut defs, "SourceSerif4-It", crate::fonts::SERIF_ITALIC);
-    put(&mut defs, "SourceSerif4-BoldIt", crate::fonts::SERIF_BOLD_ITALIC);
-    put(&mut defs, "SourceSerif4-Semibold", crate::fonts::SERIF_SEMIBOLD);
+    put(&mut defs, "SourceSans3-Regular", Face::SansRegular);
+    put(&mut defs, "SourceSans3-It", Face::SansItalic);
+    put(&mut defs, "SourceSans3-Semibold", Face::SansSemibold);
+    put(&mut defs, "SourceSans3-Bold", Face::SansBold);
+    put(&mut defs, "NotoSans-Regular", Face::NotoRegular);
+    put(&mut defs, "NotoSans-SemiBold", Face::NotoSemibold);
+    put(&mut defs, "NotoSans-Bold", Face::NotoBold);
+    put(&mut defs, "NotoSans-Medium", Face::NotoMedium);
+    put(&mut defs, "NotoSans-ExtraBold", Face::NotoExtraBold);
+    // The print serif (src/fonts.rs): the page preview, the card thumbnails and the PDF all use
+    // the very same faces.
+    put(&mut defs, "SourceSerif4-Regular", Face::SerifRegular);
+    put(&mut defs, "SourceSerif4-Bold", Face::SerifBold);
+    put(&mut defs, "SourceSerif4-It", Face::SerifItalic);
+    put(&mut defs, "SourceSerif4-BoldIt", Face::SerifBoldItalic);
+    put(&mut defs, "SourceSerif4-Semibold", Face::SerifSemibold);
     // STIX Two Math (OFL; the bytes equaSHion already compiles in) right behind the house
     // faces, for symbols they lack (⇒ ∈ ∠ ⊥ ...): the same fallback the PDF prints with.
     if let Some(b) = crate::fonts::fallback_bytes() {
