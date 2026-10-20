@@ -683,6 +683,9 @@ impl Workspace {
                 Err(e) => Act::Toast(e, true),
             };
         }
+        if self.has_answers() && ui.button("Student + key").on_hover_text("Save the student copy (answers hidden) and the answer key side by side").clicked() {
+            *act = self.export_pair(false);
+        }
         if super::chip_handles(ui, !self.hide_handles) {
             self.hide_handles = !self.hide_handles;
         }

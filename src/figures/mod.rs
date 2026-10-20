@@ -256,6 +256,45 @@ pub fn listed_under(def: &FigureDef, s: Subject) -> bool {
     def.subject == s || also_listed(def.id).contains(&s)
 }
 
+/// Reserved param key of a figure that can hide its answers (a filled-in table, a computed value).
+pub const SHOW_ANSWERS: &str = "show_answers";
+
+/// The standard `show_answers` switch. A figure opts in by listing this in its params and drawing
+/// its answer-bearing parts only while `p.b(SHOW_ANSWERS)`; the preview toggle is the generic
+/// switch control, and "Student + key" exports both versions.
+pub fn answers_param() -> ParamDef {
+    ParamDef::bool(SHOW_ANSWERS, "Show answers", true).hint("Turn off for the student copy; Student + key exports both")
+}
+
+/// Whether a figure's params include the `show_answers` switch.
+pub fn hides_answers(defs: &[ParamDef]) -> bool {
+    defs.iter().any(|d| d.key == SHOW_ANSWERS && matches!(d.kind, Kind::Bool))
+}
+
+/// The figure drawn twice: `(student, key)`, answers hidden then shown. None when the figure has
+/// no `show_answers` switch. Every other param is left as the user set it.
+pub fn answer_pair(def: &FigureDef, p: &Params) -> Option<(String, String)> {
+    if !hides_answers(&(def.params)()) {
+        return None;
+    }
+    let (mut student, mut key) = (p.clone(), p.clone());
+    student.set_b(SHOW_ANSWERS, false);
+    key.set_b(SHOW_ANSWERS, true);
+    Some(((def.render)(&student), (def.render)(&key)))
+}
+
+/// Where the key goes when the student copy is saved at `student`: a trailing `-student` in the
+/// file name becomes `-key`, otherwise `-key` is added before the extension.
+pub fn key_path(student: &std::path::Path) -> std::path::PathBuf {
+    let stem = student.file_stem().and_then(|s| s.to_str()).unwrap_or("figure");
+    let base = stem.strip_suffix("-student").unwrap_or(stem);
+    let name = match student.extension().and_then(|e| e.to_str()) {
+        Some(ext) => format!("{base}-key.{ext}"),
+        None => format!("{base}-key"),
+    };
+    student.with_file_name(name)
+}
+
 pub fn registry() -> Vec<FigureDef> {
     let mut v = Vec::new();
     v.extend(physics::defs());
@@ -788,5 +827,42 @@ mod tests {
         assert_eq!(label_for(h.id, "t_solid", &p), Some("Solid cools (min)"));
         assert_eq!(label_for(h.id, "t_melt", &p), Some("Freezing (min)"));
     }
-}
+    fn answered_params() -> Vec<ParamDef> {
+        vec![ParamDef::int("n", "N", 1, 9, 3), answers_param()]
+    }
+    fn answered_render(p: &Params) -> String {
+        format!("<svg>{}{}</svg>", p.i("n"), if p.b(SHOW_ANSWERS) { " ANSWER" } else { "" })
+    }
+    fn answered_def() -> FigureDef {
+        FigureDef { id: "t", subject: Subject::Computing, title: "T", blurb: "", params: answered_params, render: answered_render }
+    }
 
+    #[test]
+    fn answer_pair_hides_then_shows_and_keeps_other_params() {
+        let def = answered_def();
+        let mut p = Params::defaults(&answered_params());
+        p.set_i("n", 7);
+        p.set_b(SHOW_ANSWERS, true);
+        let (student, key) = answer_pair(&def, &p).expect("opted in");
+        assert_eq!(student, "<svg>7</svg>");
+        assert_eq!(key, "<svg>7 ANSWER</svg>");
+        // the user's own switch is not touched
+        assert!(p.b(SHOW_ANSWERS));
+    }
+
+    #[test]
+    fn answer_pair_is_none_without_the_switch() {
+        let fig = registry().into_iter().next().unwrap();
+        assert!(!hides_answers(&(fig.params)()));
+        assert!(answer_pair(&fig, &Params::defaults(&(fig.params)())).is_none());
+        assert!(hides_answers(&answered_params()));
+    }
+
+    #[test]
+    fn key_path_follows_the_student_name() {
+        use std::path::Path;
+        assert_eq!(key_path(Path::new("/x/ledger-student.png")), Path::new("/x/ledger-key.png"));
+        assert_eq!(key_path(Path::new("/x/quiz1.svg")), Path::new("/x/quiz1-key.svg"));
+        assert_eq!(key_path(Path::new("/x/plain")), Path::new("/x/plain-key"));
+    }
+}

@@ -1249,6 +1249,9 @@ impl Workspace {
             if have_svg && ghost(ui, "Export SVG").clicked() {
                 act = self.export(true);
             }
+            if self.has_answers() && ghost(ui, "Student + key").on_hover_text("Save the student copy (answers hidden) and the answer key side by side").clicked() {
+                act = self.export_pair(false);
+            }
             if ghost(ui, "Copy PNG").clicked() {
                 act = match self.output().ok().and_then(|o| color_image(&o.png)) {
                     Some(ci) => {
@@ -2672,6 +2675,37 @@ impl Workspace {
                 }
             });
         });
+    }
+
+    /// Whether the open figure has a `show_answers` switch (so "Student + key" applies).
+    fn has_answers(&self) -> bool {
+        self.sel.is_some_and(|i| figures::hides_answers(&(reg()[i].params)()))
+    }
+
+    /// Saves the student copy where the user chooses and the answer key beside it
+    /// (`name-student.png` / `name-key.png`).
+    fn export_pair(&self, svg: bool) -> Act {
+        let Some(si) = self.sel else { return Act::None };
+        let def = &reg()[si];
+        let Some((student, key)) = figures::answer_pair(def, &self.params) else {
+            return Act::Toast("This figure has no answers to hide".into(), true);
+        };
+        let (ext, label) = if svg { ("svg", "SVG") } else { ("png", "PNG") };
+        let bytes = |s: &str| -> Result<Vec<u8>, String> {
+            if svg { Ok(s.as_bytes().to_vec()) } else { flatten_white(&figures::to_png(s, 2.0)?) }
+        };
+        let (sb, kb) = match (bytes(&student), bytes(&key)) {
+            (Ok(a), Ok(b)) => (a, b),
+            (Err(e), _) | (_, Err(e)) => return Act::Toast(format!("Couldn't render the figure: {e}"), true),
+        };
+        let Some(spath) = crate::platform::save_path(&format!("{}-student.{ext}", def.id), label, &[ext]) else {
+            return Act::None;
+        };
+        let kpath = figures::key_path(&spath);
+        match crate::platform::write(&spath, &sb).and_then(|()| crate::platform::write(&kpath, &kb)) {
+            Ok(()) => Act::Toast(format!("Exported {} and {}", spath.display(), kpath.display()), false),
+            Err(e) => Act::Toast(format!("Export failed: {e}"), true),
+        }
     }
 
     fn export(&self, svg: bool) -> Act {
