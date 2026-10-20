@@ -11,6 +11,7 @@ pub mod biology;
 pub mod cards;
 #[cfg(test)]
 mod census;
+pub mod chart;
 pub mod chemistry;
 pub mod composite;
 pub mod data;
@@ -27,6 +28,7 @@ pub mod sections;
 pub mod share;
 pub mod spec;
 pub mod start;
+pub mod stats;
 pub mod svg;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -309,6 +311,7 @@ pub fn registry() -> Vec<FigureDef> {
     v.extend(biology::defs());
     v.extend(chemistry::defs());
     v.extend(math::defs());
+    v.extend(stats::defs());
     v
 }
 
@@ -533,6 +536,7 @@ pub fn examples_for(id: &str) -> Vec<Example> {
         .or_else(|| biology::examples(id))
         .or_else(|| chemistry::examples(id))
         .or_else(|| math::examples(id))
+        .or_else(|| stats::examples(id))
         .unwrap_or_default()
 }
 

@@ -127,7 +127,7 @@ pub fn relevant(fig: &str, key: &str, p: &Params) -> bool {
         ("particle-diagram", "state2" | "lab_before" | "lab_after") => p.s("boxes") == "Before and after",
         ("lewis-structures", "lone" | "expand" | "resonance" | "resonance_pick") => super::chemistry::lewis_relevant(key, p),
         ("ph-reading", "places" | "meter") => p.s("instrument") == "Digital meter",
-        _ => true,
+        _ => super::stats::relevant(fig, key, p),
     }
 }
 

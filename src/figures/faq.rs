@@ -62,6 +62,7 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "cone" => CONE,
         "sphere" => SPHERE,
         "box-plot" => BOX_PLOT,
+        "histogram" => HISTOGRAM,
         "mapping-diagram" => MAPPING_DIAGRAM,
         "ruler-reading" => RULER_READING,
         _ => &[],
@@ -1245,3 +1246,26 @@ mod tests {
         assert!(faq_for("nope").is_empty());
     }
 }
+
+const HISTOGRAM: &[Faq] = &[
+    Faq {
+        q: "How do I get a student copy to draw on?",
+        a: "Turn off Show answers. The bars and values disappear and the axes, gridlines and scale stay, so students build the histogram from the data. Student + key saves both versions together.",
+    },
+    Faq {
+        q: "Which bin does a value on an edge go in?",
+        a: "Choose with \"A value on a bin edge goes\". By default 20 in the bins 10-20 and 20-30 goes in 20-30 (the bin to its right). Pick the left option to put it in 10-20 instead.",
+    },
+    Faq {
+        q: "Should I use frequency, relative frequency or density?",
+        a: "Frequency counts the values in each bin. Relative frequency shows each bin's share of all the values. Density divides that share by the bin width, so the bars' areas add to 1; use it whenever the bins are not all the same width.",
+    },
+    Faq {
+        q: "How do I paste data from a spreadsheet?",
+        a: "Copy a column, click in the Data box and paste. When you click away the numbers are tidied into a list. Open CSV reads a file, and Generate makes sample data from a seed.",
+    },
+    Faq {
+        q: "Can I print it in black and white?",
+        a: "Set Style to Print. The bars are filled with hatching instead of colour, so they still read on a black-and-white copy.",
+    },
+];

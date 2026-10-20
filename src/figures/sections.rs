@@ -419,9 +419,19 @@ static FIG_49: [RefSection; 7] = [
     s("Grid", &["grid", "minor"], ""),
 ];
 
+/// Statistics figures (original designs, not mirrored from a reference page).
+static HISTOGRAM: [RefSection; 5] = [
+    s("Data", &["data"], "Type or paste numbers, open a CSV, or generate sample data from a seed."),
+    s("Bins", &["auto_bins", "bin_width", "bin_start", "closed"], ""),
+    s("Bars", &["measure", "auto_y", "y_max", "values", "show_answers"], "Turn off Show answers for a student copy: the bars and values are hidden and the axes stay."),
+    s("Labels and text", &["title", "x_title", "y_title"], ""),
+    s("Appearance", &["style", "label_size", "grid"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
+        "histogram" => &HISTOGRAM,
         "bohr-model" => &FIG_1,
         "box-plot" => &FIG_2,
         "circuit-diagram" => &FIG_3,
