@@ -63,6 +63,7 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "sphere" => SPHERE,
         "box-plot" => BOX_PLOT,
         "histogram" => HISTOGRAM,
+        "stem-and-leaf" => STEM_AND_LEAF,
         "dot-plot" => DOT_PLOT,
         "normal-curve" => NORMAL_CURVE,
         "scatterplot" => SCATTERPLOT,
@@ -1339,5 +1340,28 @@ const DOT_PLOT: &[Faq] = &[
     Faq {
         q: "Can I print it in black and white?",
         a: "Set Style to Print. The dots are filled grey with a black outline so they read on a black-and-white copy.",
+    },
+];
+
+const STEM_AND_LEAF: &[Faq] = &[
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The stems, the bar and the key stay and the leaves are hidden, so students fill them in. Student + key saves both versions.",
+    },
+    Faq {
+        q: "What is the leaf unit?",
+        a: "It is the place value of a leaf. With a leaf unit of 1, the number 63 is stem 6 and leaf 3. With 0.1, the number 6.3 is stem 6 and leaf 3. Auto picks the smallest unit that gives about a dozen stems. Values are rounded to the leaf unit.",
+    },
+    Faq {
+        q: "When should I split the stems?",
+        a: "When one stem has so many leaves that the plot looks like a single long row. Splitting puts leaves 0 to 4 and leaves 5 to 9 of each stem on two rows, which shows the shape more clearly.",
+    },
+    Faq {
+        q: "Why is there a stem with no leaves?",
+        a: "An empty stem is a gap in the data. It is kept on purpose, because the gap is part of the shape, just as a gap would be in a dot plot or histogram.",
+    },
+    Faq {
+        q: "How are negative numbers shown?",
+        a: "Negative stems have a minus sign, and the stems run from the most negative up through -0 and 0. A leaf belongs to its stem's number, so -3 | 2 means -32, and the leaves on a negative stem go from the lowest value to the highest.",
     },
 ];

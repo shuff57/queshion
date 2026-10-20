@@ -450,10 +450,18 @@ static DOT_PLOT: [RefSection; 5] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static STEM_AND_LEAF: [RefSection; 4] = [
+    s("Data", &["data", "leaf_unit", "split", "order"], "Type or paste numbers, open a CSV, or generate sample data from a seed. Each number is rounded to the leaf unit."),
+    s("Key and answers", &["key", "show_answers"], "Turn off Show answers for a student copy: the leaves are hidden and the stems and key stay."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
         "histogram" => &HISTOGRAM,
+        "stem-and-leaf" => &STEM_AND_LEAF,
         "dot-plot" => &DOT_PLOT,
         "normal-curve" => &NORMAL_CURVE,
         "scatterplot" => &SCATTERPLOT,
