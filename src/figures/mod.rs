@@ -216,12 +216,12 @@ impl FigureDef {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Subject { Physics, Biology, Chemistry, Math }
+pub enum Subject { Physics, Biology, Chemistry, Math, Computing }
 
 impl Subject {
-    pub const ALL: [Subject; 4] = [Subject::Physics, Subject::Biology, Subject::Chemistry, Subject::Math];
+    pub const ALL: [Subject; 5] = [Subject::Physics, Subject::Biology, Subject::Chemistry, Subject::Math, Subject::Computing];
     pub fn name(self) -> &'static str {
-        match self { Subject::Physics => "Physics", Subject::Biology => "Biology", Subject::Chemistry => "Chemistry", Subject::Math => "Math" }
+        match self { Subject::Physics => "Physics", Subject::Biology => "Biology", Subject::Chemistry => "Chemistry", Subject::Math => "Math", Subject::Computing => "Computing" }
     }
 }
 

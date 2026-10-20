@@ -838,7 +838,8 @@ impl Workspace {
             if tab(ui, "All", self.subject.is_none()) {
                 self.subject = None;
             }
-            for s in Subject::ALL {
+            // a subject with no figures yet (Computing, until its first figure lands) shows no tab
+            for s in Subject::ALL.into_iter().filter(|s| reg().iter().any(|d| d.subject == *s)) {
                 if tab(ui, s.name(), self.subject == Some(s)) {
                     self.subject = Some(s);
                 }
