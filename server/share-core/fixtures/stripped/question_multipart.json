@@ -1,0 +1,62 @@
+{
+  "question": {
+    "created": 1760000000000,
+    "difficulty": null,
+    "explanation": null,
+    "figure": null,
+    "id": "q00701a2b3c",
+    "image": null,
+    "keyless": true,
+    "kind": {
+      "Multipart": {
+        "parts": [
+          {
+            "kind": {
+              "Mc": {
+                "answers": [
+                  {
+                    "correct": false,
+                    "locked": false,
+                    "text": "negative"
+                  },
+                  {
+                    "correct": false,
+                    "locked": false,
+                    "text": "zero"
+                  },
+                  {
+                    "correct": false,
+                    "locked": false,
+                    "text": "maximum"
+                  }
+                ]
+              }
+            },
+            "stem": "At the top, its velocity is:"
+          },
+          {
+            "kind": {
+              "Tf": {
+                "correct": false
+              }
+            },
+            "stem": "Its acceleration at the top is zero."
+          },
+          {
+            "kind": {
+              "Short": {
+                "sample": ""
+              }
+            },
+            "stem": "Why?"
+          }
+        ]
+      }
+    },
+    "modified": 1760000100000,
+    "points": 1.0,
+    "stem": "A ball is thrown straight up.",
+    "topics": []
+  },
+  "schema_version": 2
+}

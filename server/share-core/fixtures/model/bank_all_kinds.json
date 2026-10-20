@@ -1,0 +1,281 @@
+{
+  "id": "b00101a2b3c",
+  "name": "Unit 3: Cells and Space",
+  "questions": [
+    {
+      "id": "q00101a2b3c",
+      "stem": "Which planet is closest to the Sun?\n\n**Hint:** think *small*.",
+      "kind": {
+        "Mc": {
+          "answers": [
+            {
+              "text": "Venus",
+              "correct": false,
+              "locked": false
+            },
+            {
+              "text": "Mercury",
+              "correct": true,
+              "locked": false
+            },
+            {
+              "text": "Mars",
+              "correct": false,
+              "locked": false
+            },
+            {
+              "text": "None of these",
+              "correct": false,
+              "locked": true
+            }
+          ]
+        }
+      },
+      "points": 2.0,
+      "difficulty": "Medium",
+      "topics": [
+        "Planets",
+        "Solar system"
+      ],
+      "image": null,
+      "explanation": "Mercury orbits at about 0.39 AU.",
+      "figure": null,
+      "created": 1760000000000,
+      "modified": 1760000100000
+    },
+    {
+      "id": "q00201a2b3c",
+      "stem": "Select every gas giant.",
+      "kind": {
+        "Mc": {
+          "answers": [
+            {
+              "text": "A. Jupiter",
+              "correct": true,
+              "locked": false
+            },
+            {
+              "text": "B. Earth",
+              "correct": false,
+              "locked": false
+            },
+            {
+              "text": "C. Saturn",
+              "correct": true,
+              "locked": false
+            },
+            {
+              "text": "D. Mars",
+              "correct": false,
+              "locked": false
+            }
+          ]
+        }
+      },
+      "points": 1.0,
+      "difficulty": "High",
+      "topics": [],
+      "image": null,
+      "explanation": null,
+      "figure": null,
+      "created": 1760000000000,
+      "modified": 1760000100000
+    },
+    {
+      "id": "q00301a2b3c",
+      "stem": "Water boils at 100 °C at sea level.",
+      "kind": {
+        "Tf": {
+          "correct": true
+        }
+      },
+      "points": null,
+      "difficulty": null,
+      "topics": [],
+      "image": null,
+      "explanation": "At 1 atm.",
+      "figure": null,
+      "created": 1760000000000,
+      "modified": 1760000100000
+    },
+    {
+      "id": "q00401a2b3c",
+      "stem": "Match each organelle to its job.",
+      "kind": {
+        "Matching": {
+          "pairs": [
+            {
+              "left": "Mitochondrion",
+              "right": "Makes ATP"
+            },
+            {
+              "left": "Ribosome",
+              "right": "Builds proteins"
+            },
+            {
+              "left": "Chloroplast",
+              "right": "Makes ATP"
+            }
+          ],
+          "distractors": [
+            "Stores DNA",
+            "Digests waste"
+          ]
+        }
+      },
+      "points": 1.0,
+      "difficulty": "Low",
+      "topics": [],
+      "image": null,
+      "explanation": null,
+      "figure": null,
+      "created": 1760000000000,
+      "modified": 1760000100000
+    },
+    {
+      "id": "q00501a2b3c",
+      "stem": "The powerhouse of the cell is the ___; it makes ___.",
+      "kind": {
+        "Blank": {
+          "accept": [
+            [
+              "mitochondrion",
+              "mitochondria"
+            ],
+            [
+              "ATP"
+            ]
+          ]
+        }
+      },
+      "points": 1.0,
+      "difficulty": null,
+      "topics": [],
+      "image": null,
+      "explanation": null,
+      "figure": null,
+      "created": 1760000000000,
+      "modified": 1760000100000
+    },
+    {
+      "id": "q00601a2b3c",
+      "stem": "Explain why the sky is blue.",
+      "kind": {
+        "Short": {
+          "sample": "Rayleigh scattering of shorter wavelengths."
+        }
+      },
+      "points": 1.0,
+      "difficulty": null,
+      "topics": [
+        "Optics"
+      ],
+      "image": null,
+      "explanation": null,
+      "figure": null,
+      "created": 1760000000000,
+      "modified": 1760000100000
+    },
+    {
+      "id": "q00701a2b3c",
+      "stem": "A ball is thrown straight up.",
+      "kind": {
+        "Multipart": {
+          "parts": [
+            {
+              "stem": "At the top, its velocity is:",
+              "kind": {
+                "Mc": {
+                  "answers": [
+                    {
+                      "text": "zero",
+                      "correct": true,
+                      "locked": false
+                    },
+                    {
+                      "text": "maximum",
+                      "correct": false,
+                      "locked": false
+                    },
+                    {
+                      "text": "negative",
+                      "correct": false,
+                      "locked": false
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "stem": "Its acceleration at the top is zero.",
+              "kind": {
+                "Tf": {
+                  "correct": false
+                }
+              }
+            },
+            {
+              "stem": "Why?",
+              "kind": {
+                "Short": {
+                  "sample": "Gravity still acts: a = -g."
+                }
+              }
+            }
+          ]
+        }
+      },
+      "points": 1.0,
+      "difficulty": null,
+      "topics": [],
+      "image": null,
+      "explanation": null,
+      "figure": null,
+      "created": 1760000000000,
+      "modified": 1760000100000
+    },
+    {
+      "id": "q00801a2b3c",
+      "stem": "What volume does the micropipette read?",
+      "kind": {
+        "Short": {
+          "sample": "15.7 µL"
+        }
+      },
+      "points": 1.0,
+      "difficulty": null,
+      "topics": [],
+      "image": {
+        "file": "media/3f2a9c0b1d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8.png",
+        "width": 640,
+        "height": 480
+      },
+      "explanation": "Read the three digits on the display.",
+      "figure": {
+        "id": "micropipette-reading",
+        "params": {
+          "answer": false,
+          "answer_text": "",
+          "color": true,
+          "decimal_line": true,
+          "shape": "Long body, short shaft",
+          "size": "20 µL",
+          "size_label": true,
+          "tip": true,
+          "title": "",
+          "volume": 15.7
+        }
+      },
+      "created": 1760000000000,
+      "modified": 1760000100000
+    }
+  ],
+  "created": 1760000000000,
+  "modified": 1760000200000,
+  "details": {
+    "description": "Mixed review.\nAll kinds.",
+    "author": "A. Teacher",
+    "license_name": "CC BY 4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/"
+  }
+}

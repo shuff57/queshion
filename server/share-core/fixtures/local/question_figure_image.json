@@ -1,0 +1,21 @@
+{
+  "question": {
+    "created": 1760000000000,
+    "difficulty": null,
+    "explanation": "No answer key: this question was imported without its key. Add the correct answers before printing a key.",
+    "figure": null,
+    "id": "q00801a2b3c",
+    "image": null,
+    "keyless": true,
+    "kind": {
+      "Short": {
+        "sample": ""
+      }
+    },
+    "modified": 1760000100000,
+    "points": 1.0,
+    "stem": "What volume does the micropipette read?",
+    "topics": []
+  },
+  "schema_version": 2
+}

@@ -1,0 +1,34 @@
+{
+  "id": "q00401a2b3c",
+  "stem": "Match each organelle to its job.",
+  "kind": {
+    "Matching": {
+      "pairs": [
+        {
+          "left": "Mitochondrion",
+          "right": "Makes ATP"
+        },
+        {
+          "left": "Ribosome",
+          "right": "Builds proteins"
+        },
+        {
+          "left": "Chloroplast",
+          "right": "Makes ATP"
+        }
+      ],
+      "distractors": [
+        "Stores DNA",
+        "Digests waste"
+      ]
+    }
+  },
+  "points": 1.0,
+  "difficulty": "Low",
+  "topics": [],
+  "image": null,
+  "explanation": null,
+  "figure": null,
+  "created": 1760000000000,
+  "modified": 1760000100000
+}

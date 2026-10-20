@@ -92,6 +92,11 @@ async function sendRaw(env: MailEnv, to: string, subject: string, text: string):
   if (!res.ok) throw new Error(`mail provider answered ${res.status}`);
 }
 
+/** One plain-text mail to one address (pool notices: takedowns, counter-notice forwarding). */
+export function sendPlain(env: MailEnv, to: string, subject: string, text: string): Promise<void> {
+  return sendRaw(env, to, subject, text);
+}
+
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /** Log mode prints live tokens, so it refuses to run unless the app is plainly a local dev build. */

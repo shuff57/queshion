@@ -1,9 +1,9 @@
 [package]
 name = "share-core"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
-description = "Shared logic for the verSHion pool: password hashing now, strip/hash/validation in phase 2."
+description = "Shared logic for the verSHion pool: password hashing, and validation, stripping, canonicalisation and hashing of shared questions."
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -12,7 +12,27 @@ crate-type = ["cdylib", "rlib"]
 argon2 = { version = "0.6", default-features = false, features = ["alloc", "password-hash"] }
 wasm-bindgen = "=0.2.128"
 getrandom = { version = "0.2", features = ["js"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = { version = "0.10", default-features = false }
+rand_chacha = { version = "0.3", default-features = false }
+rand_core = { version = "0.6", default-features = false }
+# Pinned exactly: the character rules and NFC depend on these tables, and the app (native) and
+# the Worker (this crate as wasm) must apply the same ones. `tests/unicode_canary.rs` fails when
+# a bump changes the Unicode version.
+unicode-normalization = "=0.1.25"
+unicode-general-category = "=1.1.0"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# The wasm entry points take a `Uint8Array` and refuse anything else (`expected_bytes`).
+js-sys = "0.3"
+
+[features]
+# Exports `strip_with_seed` (explicit shuffle seed) from the wasm build, for the Node fixture check.
+# Never enable it for the Worker's build.
+test-seed = []
 
 [profile.release]
 opt-level = "s"
 lto = true
+codegen-units = 1

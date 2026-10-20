@@ -5,6 +5,16 @@ compatibility_flags = ["nodejs_compat"]
 
 # Argon2id at m=19 MiB needs the paid Workers plan (see docs/phase1-argon2-spike.md).
 
+# Served only on the custom domain's route (add a [[routes]] entry before the first deploy): no
+# public *.workers.dev address and no preview URLs that would bypass it.
+workers_dev = false
+preview_urls = false
+
+# share-core's wasm is built here, release and without test features, and its exports checked
+# (a package exporting strip_with_seed is refused before anything is bundled).
+[build]
+command = "sh ../share-core/scripts/build-wasm.sh"
+
 [[rules]]
 type = "CompiledWasm"
 globs = ["**/*.wasm"]
@@ -18,6 +28,13 @@ database_id = "00000000-0000-0000-0000-000000000000"
 # Package migrations (0001-0099) are copied here by scripts/sync-migrations.sh; worker-owned ones
 # start at 0100. npm test checks the copies match the package.
 migrations_dir = "migrations"
+
+# Pool bodies (items/), quarantine (quarantine/) and images (blobs/). Private: never a public bucket,
+# custom domain or presigned URL; everything is served through the Worker (docs/shared-pool.md
+# "Blob rules"). Create it with `wrangler r2 bucket create vershion-pool` before the first deploy.
+[[r2_buckets]]
+binding = "POOL"
+bucket_name = "vershion-pool"
 
 [vars]
 ALLOWED_ORIGINS = "https://app.example.org"

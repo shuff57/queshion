@@ -1,0 +1,8 @@
+# share-core is built natively (the app's tests) and as wasm (the Worker). The character rules
+# also use Rust's own Unicode tables (`char::is_whitespace`, `is_alphabetic`, `to_lowercase`,
+# `is_uppercase`), which change with the compiler: pin it, and `tests/unicode_canary.rs` checks
+# a fixed corpus against those functions. Bump deliberately, with the canary.
+[toolchain]
+channel = "1.99.0"
+targets = ["wasm32-unknown-unknown"]
+components = ["clippy"]

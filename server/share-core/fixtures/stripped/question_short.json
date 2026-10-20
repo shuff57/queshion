@@ -1,0 +1,23 @@
+{
+  "question": {
+    "created": 1760000000000,
+    "difficulty": null,
+    "explanation": null,
+    "figure": null,
+    "id": "q00601a2b3c",
+    "image": null,
+    "keyless": true,
+    "kind": {
+      "Short": {
+        "sample": ""
+      }
+    },
+    "modified": 1760000100000,
+    "points": 1.0,
+    "stem": "Explain why the sky is blue.",
+    "topics": [
+      "Optics"
+    ]
+  },
+  "schema_version": 2
+}

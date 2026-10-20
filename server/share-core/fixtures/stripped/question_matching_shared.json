@@ -1,0 +1,39 @@
+{
+  "question": {
+    "created": 1760000000000,
+    "difficulty": null,
+    "explanation": null,
+    "figure": null,
+    "id": "q00901a2b3c",
+    "image": null,
+    "keyless": true,
+    "kind": {
+      "Matching": {
+        "distractors": [
+          "Bird",
+          "Mammal",
+          "Amphibian"
+        ],
+        "pairs": [
+          {
+            "left": "Dog",
+            "right": ""
+          },
+          {
+            "left": "Cat",
+            "right": ""
+          },
+          {
+            "left": "Frog",
+            "right": ""
+          }
+        ]
+      }
+    },
+    "modified": 1760000100000,
+    "points": 1.0,
+    "stem": "Match each animal to its class.",
+    "topics": []
+  },
+  "schema_version": 2
+}

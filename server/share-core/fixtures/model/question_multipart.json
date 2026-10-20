@@ -1,0 +1,58 @@
+{
+  "id": "q00701a2b3c",
+  "stem": "A ball is thrown straight up.",
+  "kind": {
+    "Multipart": {
+      "parts": [
+        {
+          "stem": "At the top, its velocity is:",
+          "kind": {
+            "Mc": {
+              "answers": [
+                {
+                  "text": "zero",
+                  "correct": true,
+                  "locked": false
+                },
+                {
+                  "text": "maximum",
+                  "correct": false,
+                  "locked": false
+                },
+                {
+                  "text": "negative",
+                  "correct": false,
+                  "locked": false
+                }
+              ]
+            }
+          }
+        },
+        {
+          "stem": "Its acceleration at the top is zero.",
+          "kind": {
+            "Tf": {
+              "correct": false
+            }
+          }
+        },
+        {
+          "stem": "Why?",
+          "kind": {
+            "Short": {
+              "sample": "Gravity still acts: a = -g."
+            }
+          }
+        }
+      ]
+    }
+  },
+  "points": 1.0,
+  "difficulty": null,
+  "topics": [],
+  "image": null,
+  "explanation": null,
+  "figure": null,
+  "created": 1760000000000,
+  "modified": 1760000100000
+}

@@ -1,0 +1,25 @@
+{
+  "id": "q00501a2b3c",
+  "stem": "The powerhouse of the cell is the ___; it makes ___.",
+  "kind": {
+    "Blank": {
+      "accept": [
+        [
+          "mitochondrion",
+          "mitochondria"
+        ],
+        [
+          "ATP"
+        ]
+      ]
+    }
+  },
+  "points": 1.0,
+  "difficulty": null,
+  "topics": [],
+  "image": null,
+  "explanation": null,
+  "figure": null,
+  "created": 1760000000000,
+  "modified": 1760000100000
+}

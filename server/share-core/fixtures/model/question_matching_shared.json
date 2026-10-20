@@ -1,0 +1,34 @@
+{
+  "id": "q00901a2b3c",
+  "stem": "Match each animal to its class.",
+  "kind": {
+    "Matching": {
+      "pairs": [
+        {
+          "left": "Dog",
+          "right": "Mammal"
+        },
+        {
+          "left": "Cat",
+          "right": "Mammal"
+        },
+        {
+          "left": "Frog",
+          "right": "Amphibian"
+        }
+      ],
+      "distractors": [
+        "Mammal",
+        "Bird"
+      ]
+    }
+  },
+  "points": 1.0,
+  "difficulty": null,
+  "topics": [],
+  "image": null,
+  "explanation": null,
+  "figure": null,
+  "created": 1760000000000,
+  "modified": 1760000100000
+}

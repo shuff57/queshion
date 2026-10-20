@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --experimental-strip-types --no-warnings --test test/worker.test.ts test/admin.test.ts",
+    "test": "node --experimental-strip-types --no-warnings --test test/worker.test.ts test/admin.test.ts test/share-core-guard.test.ts test/pool/*.test.ts",
     "typecheck": "../auth/node_modules/.bin/tsc -p tsconfig.json"
   }
 }

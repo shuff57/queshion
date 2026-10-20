@@ -1,0 +1,40 @@
+{
+  "question": {
+    "created": 1760000000000,
+    "difficulty": "Low",
+    "explanation": null,
+    "figure": null,
+    "id": "q00401a2b3c",
+    "image": null,
+    "keyless": true,
+    "kind": {
+      "Matching": {
+        "distractors": [
+          "Stores DNA",
+          "Digests waste",
+          "Builds proteins",
+          "Makes ATP"
+        ],
+        "pairs": [
+          {
+            "left": "Mitochondrion",
+            "right": ""
+          },
+          {
+            "left": "Ribosome",
+            "right": ""
+          },
+          {
+            "left": "Chloroplast",
+            "right": ""
+          }
+        ]
+      }
+    },
+    "modified": 1760000100000,
+    "points": 1.0,
+    "stem": "Match each organelle to its job.",
+    "topics": []
+  },
+  "schema_version": 2
+}

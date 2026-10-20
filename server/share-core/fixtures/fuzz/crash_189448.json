@@ -1,0 +1,39 @@
+{"schema_version":2,"question":{
+  "id": "q00201a2b3c",
+  "stem": "Select every gas giant.",
+  "kind": {
+    "Mc": {
+      "answers": [
+        {
+          "text": "A. Jupiter",
+          "correct": true,
+          "locked": false
+        },
+        {
+          "text": "B. Earth",
+          "correc1e308t": false,
+          "locked": false
+        },
+        {
+          "text": "C. Saturn",
+          "correct": true,
+          "locked": false
+        },
+        {
+          "text": "D. Mars",
+          "correct": false,
+          "locked": false
+        }
+      ]
+    }
+  },
+  "points": 1.0,
+  "difficulty": "High",
+"keyless":true,  "topics": [],
+  "image": null,
+  "explanation": null,
+  "figure": null,
+  "created": 1760000000000,
+  "modified": 1760000100000
+}
+}

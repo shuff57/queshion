@@ -1,0 +1,41 @@
+{
+  "id": "q00101a2b3c",
+  "stem": "Which planet is closest to the Sun?\n\n**Hint:** think *small*.",
+  "kind": {
+    "Mc": {
+      "answers": [
+        {
+          "text": "Venus",
+          "correct": false,
+          "locked": false
+        },
+        {
+          "text": "Mercury",
+          "correct": true,
+          "locked": false
+        },
+        {
+          "text": "Mars",
+          "correct": false,
+          "locked": false
+        },
+        {
+          "text": "None of these",
+          "correct": false,
+          "locked": true
+        }
+      ]
+    }
+  },
+  "points": 2.0,
+  "difficulty": "Medium",
+  "topics": [
+    "Planets",
+    "Solar system"
+  ],
+  "image": null,
+  "explanation": "Mercury orbits at about 0.39 AU.",
+  "figure": null,
+  "created": 1760000000000,
+  "modified": 1760000100000
+}

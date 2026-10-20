@@ -1,0 +1,19 @@
+{
+  "id": "q00601a2b3c",
+  "stem": "Explain why the sky is blue.",
+  "kind": {
+    "Short": {
+      "sample": "Rayleigh scattering of shorter wavelengths."
+    }
+  },
+  "points": 1.0,
+  "difficulty": null,
+  "topics": [
+    "Optics"
+  ],
+  "image": null,
+  "explanation": null,
+  "figure": null,
+  "created": 1760000000000,
+  "modified": 1760000100000
+}

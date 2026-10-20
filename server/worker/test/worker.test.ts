@@ -27,16 +27,20 @@ test("other modes do not need a local APP_URL", () => {
   assert.doesNotThrow(() => makeMailer({ APP_URL: "https://app.example.org" }));
 });
 
-test("onDelete cleanup is loud until phase 2", () => {
+test("onDelete returns the pool cleanup statements (no longer a logging stub)", () => {
+  const prepared: string[] = [];
+  const db = { prepare: (sql: string) => ({ bind: () => (prepared.push(sql), {}) }) } as unknown as D1Database;
   const errs: string[] = [];
   const orig = console.error;
   console.error = (m: string) => void errs.push(m);
   try {
-    assert.deepEqual(onDeleteContent("u1", 0), []);
+    assert.ok(onDeleteContent(db, "u1", 0).length >= 5);
   } finally {
     console.error = orig;
   }
-  assert.match(errs[0]!, /PHASE 2 TODO/);
+  assert.deepEqual(errs, []);
+  assert.ok(prepared.some((s) => /removed_reason = 'account_deleted'/.test(s)));
+  assert.ok(prepared.some((s) => /UPDATE reports SET reporter_id = NULL/.test(s)));
 });
 
 test("every mail kind renders, including device enrolment", async () => {

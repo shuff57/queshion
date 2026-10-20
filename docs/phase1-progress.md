@@ -770,3 +770,41 @@ and 3.)
    registrable domain as the API, and not on a shared-hosting suffix (`*.pages.dev`,
    `*.github.io`, ...): mailed links from a host the client doesn't consider the API's own site
    are refused.
+
+## Phase 2 spec revision, 2026-10-19
+
+Spec-fix step of the phase 2 loop: `docs/shared-pool.md` rewritten after a critic review of its
+phase 2 sections (5 blockers, 12 majors). Docs only; no code changed.
+
+- **Rewritten sections:** Stack (separate search D1), share-core, Trust levels (content follows the
+  author's standing), Sharing model (item vs publish, per-version license and attestation, explicit
+  license choice, server-assigned `qid`, `match_hash`), the stripped form (figure always removed,
+  image only on a tick, letter labels, order-preserved acknowledgement, keyless sentinel), Import
+  (attribution chain with `modified`, atomic import, client revalidation and figure clamping,
+  duplicates, update notices, schema versions), new Images section, Discovery (phase 2 browse,
+  phase 4 search re-checked in the main DB), Reports, new Takedown/DMCA section, Limits and daily
+  caps, Data model (phase 1 tables as migrated, phase 2 tables), Publish order (publish_id, CAS),
+  Blob rules, Caching, API, Build order, Open questions.
+- **Verified against code/docs:** pipette `volume`/`answer`/`answer_text`, Lewis `tweak`, pedigree
+  `genotypes` (B1); `Params::normalize` clamps but keeps unknown keys and does not cap text;
+  pre-lettered choices are a `layout::DocQ` print convention and the importers strip letters, so
+  letter stripping is defensive; real table names `approval_requests`, `auth_audit`; worker
+  migrations `0102+`, auth package `0006+`; Cloudflare D1 docs confirm export refuses databases
+  with virtual tables; 17 USC 512 (c)(1)(C), (c)(3)(A), (g)(2)-(3), (i)(1)(A) wording checked;
+  ASVS 5.0 V5 ids checked.
+- **Code changes the spec now implies (not made):** `server/worker/src/index.ts` passes no
+  `onRestore`; the auth package has no hook on revoke-teacher (the spec avoids needing one by joining
+  author standing on every read); `cleanup.ts` hooks still log TODOs.
+
+### Owner decisions folded into the spec, 2026-10-19
+
+- Decided and recorded in `docs/shared-pool.md`: separate search D1; the pool accepts still PNG,
+  JPEG, GIF and WebP (per-format server rules, client re-encode with the `image` crate, animated
+  sources share their first frame with a notice); 14-day undo for item deletion (privacy and DMCA
+  items keep their own rules); 30-day quarantine, 3 strikes in a rolling 12 months, the daily caps,
+  200 MB quota, report threshold 3, CC-BY first with nothing preselected.
+- New first phase-2 task: fix `src/store.rs` (`imagesize` WebP branch, `sniff_ext` RIFF check,
+  `put_image` validates before writing), with tests.
+- Before public launch (owner, not a build blocker): DMCA designated agent and counsel review.
+- Still open, each with a default the build uses: mail provider, standards lists, exam sharing,
+  admin console form, approval rule, hosting, production API URL, keyless sentinel wording.

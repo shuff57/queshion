@@ -1,9 +1,14 @@
 // verSHion pool API Worker. Phase 1: accounts and auth, via the generic package in ../auth.
+// Phase 2: the shared pool (src/pool/), with share-core's wasm behind one adapter (src/pool/core.ts).
 import wasm from "../../share-core/pkg/share_core_bg.wasm";
 import { argon2id, initSync } from "../../share-core/pkg/share_core.js";
-import { cleanText, createAuth, InputError, type Argon2idHasher, type Auth, type Principal } from "../../auth/src/index.js";
+import * as shareCore from "../../share-core/pkg/share_core.js";
+import { assertProductionShareCore } from "./share-core-guard.js";
+import { cleanText, createAuth, D1RateLimitStore, InputError, ipBucket, type Argon2idHasher, type Auth, type Principal } from "../../auth/src/index.js";
 import { staffDomainLabels, staffDomainRoutes } from "./admin.js";
-import { onDeleteContent, onSuspendContent } from "./cleanup.js";
+import { onDeleteContent, onRestoreContent, onSuspendContent } from "./cleanup.js";
+import { createPool, makeCore, POOL_METHODS, type Pool, type ShareCoreExports } from "./pool/index.ts";
+import { poolNotifier } from "./poolmail.ts";
 import { adminAlert, makeMailer, queueReminder, type MailEnv } from "./mail.js";
 import { flushNoticeBacklog, noticeNewApplication } from "./notices.js";
 
@@ -15,19 +20,27 @@ export interface Env extends MailEnv {
   ALLOWED_ORIGINS: string;
   /** "1" sends the admin a daily approval digest even when nothing is overdue. */
   APPROVAL_DIGEST?: string;
+  /** R2 bucket for publish bodies, quarantine and images (wrangler.toml [[r2_buckets]] binding "POOL"). */
+  POOL?: R2Bucket;
 }
 
 /** The trust levels of docs/shared-pool.md, lowest first. */
 export const TRUST = ["unverified", "pending", "teacher", "admin"] as const;
 export type Trust = (typeof TRUST)[number];
 
+// Refuse to start with a test build of share-core (it would export a caller-seeded strip).
+assertProductionShareCore(shareCore);
+
 let wasmReady = false;
+function ensureWasm(): void {
+  if (!wasmReady) {
+    initSync({ module: wasm });
+    wasmReady = true;
+  }
+}
 const shareCoreHasher: Argon2idHasher = {
   argon2id(password, salt, p) {
-    if (!wasmReady) {
-      initSync({ module: wasm });
-      wasmReady = true;
-    }
+    ensureWasm();
     return argon2id(password, salt, p.m, p.t, p.p);
   },
 };
@@ -44,14 +57,36 @@ function profile(body: Record<string, unknown>) {
   return { displayName: name, profile: { school, adult_school_employee_at: new Date().toISOString() } };
 }
 
-function auth(env: Env): Auth {
+const origins = (env: Env) => env.ALLOWED_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean);
+
+/** The pool and the auth package, wired together: the pool authenticates through auth, and its admin routes sit behind auth's admin guard. */
+function build(env: Env, ctx?: ExecutionContext): { a: Auth; pool: Pool } {
+  ensureWasm();
+  let a: Auth | null = null;
+  const pool = createPool({
+    db: env.DB,
+    r2: env.POOL,
+    core: makeCore(shareCore as unknown as ShareCoreExports),
+    secret: env.AUTH_SECRET,
+    allowedOrigins: origins(env),
+    authenticate: (req) => a!.authenticate(req),
+    rateStore: new D1RateLimitStore(env.DB),
+    ipBucket: (ip) => ipBucket(ip),
+    notify: poolNotifier(env),
+    background: (p) => ctx?.waitUntil(p),
+  });
+  a = auth(env, pool);
+  return { a, pool };
+}
+
+function auth(env: Env, pool: Pool): Auth {
   const mailer = makeMailer(env);
   return createAuth({
     db: env.DB,
     hasher: shareCoreHasher,
     mailer,
     secret: env.AUTH_SECRET,
-    allowedOrigins: env.ALLOWED_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean),
+    allowedOrigins: origins(env),
     issuer: "vershion-pool",
     audience: "vershion-pool",
     argon2: { m: 19456, t: 2, p: 1 }, // docs/phase1-argon2-spike.md
@@ -59,8 +94,8 @@ function auth(env: Env): Auth {
     profile,
     // Every verified account lands in the admin queue and the admin is emailed (no automatic promotion).
     onVerified: async (userId) => void (await noticeNewApplication(env, userId)),
-    // Logs loudly until phase 2 adds the content tables (see cleanup.ts).
-    onDelete: onDeleteContent,
+    // The author's pool items are removed at once and purged after 14 days (cleanup.ts).
+    onDelete: (userId, now) => onDeleteContent(env.DB, userId, now),
     // Never-confirmed accounts are removed after a week, freeing a squatted address.
     purgeUnverifiedAfterSeconds: 7 * 86400,
     onRefreshReuse: (e) => console.warn(`auth alert: ${e.type} user=${e.userId} family=${e.sessionFamily}`),
@@ -79,8 +114,9 @@ function auth(env: Env): Auth {
       onQueueReminder: (e) => queueReminder(env, e),
       onAdminAlert: (e) => adminAlert(env, e),
       twoPersonAdminSuspension: true,
-      onSuspend: onSuspendContent,
-      routes: staffDomainRoutes(env.DB),
+      onSuspend: (userId, now) => onSuspendContent(env.DB, userId, now),
+      onRestore: (userId, now) => onRestoreContent(env.DB, userId, now),
+      routes: [...staffDomainRoutes(env.DB), ...pool.adminRoutes],
     },
   });
 }
@@ -95,22 +131,26 @@ export async function requireTrust(a: Auth, req: Request, min: Trust): Promise<P
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const a = auth(env);
+    const { a, pool } = build(env, ctx);
     const handled = await a.handle(req, ctx);
     if (handled) return handled;
-    const pre = a.preflight(req, "GET, POST, PUT, DELETE");
+    const pre = a.preflight(req, POOL_METHODS);
     if (pre) return pre;
+    const pooled = await pool.handle(req);
+    if (pooled) return a.withCors(req, pooled);
     return a.withCors(req, Response.json({ error: "not_found" }, { status: 404, headers: { "Cache-Control": "no-store" } }));
   },
 
-  async scheduled(c: ScheduledController, env: Env): Promise<void> {
-    const a = auth(env);
-    // Hourly: the summary for sign-up notices over the budget.
+  async scheduled(c: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    const { a, pool } = build(env, ctx);
+    // Hourly: the summary for sign-up notices over the budget, and the pool's GC.
     await flushNoticeBacklog(env, c.scheduledTime);
+    await pool.hourly();
     // Daily (04:xx UTC): purge, and escalate an overdue queue or send the digest.
     if (new Date(c.scheduledTime).getUTCHours() === 4) {
       await a.purgeExpired();
       await a.reviewReminders();
+      await pool.daily();
     }
   },
 } satisfies ExportedHandler<Env>;

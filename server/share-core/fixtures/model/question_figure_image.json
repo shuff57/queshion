@@ -1,0 +1,35 @@
+{
+  "id": "q00801a2b3c",
+  "stem": "What volume does the micropipette read?",
+  "kind": {
+    "Short": {
+      "sample": "15.7 µL"
+    }
+  },
+  "points": 1.0,
+  "difficulty": null,
+  "topics": [],
+  "image": {
+    "file": "media/3f2a9c0b1d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8.png",
+    "width": 640,
+    "height": 480
+  },
+  "explanation": "Read the three digits on the display.",
+  "figure": {
+    "id": "micropipette-reading",
+    "params": {
+      "answer": false,
+      "answer_text": "",
+      "color": true,
+      "decimal_line": true,
+      "shape": "Long body, short shaft",
+      "size": "20 µL",
+      "size_label": true,
+      "tip": true,
+      "title": "",
+      "volume": 15.7
+    }
+  },
+  "created": 1760000000000,
+  "modified": 1760000100000
+}
