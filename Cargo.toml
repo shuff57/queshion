@@ -87,6 +87,12 @@ web-sys = { version = "0.3", features = [
     "RequestCredentials", "RequestRedirect", "History",
 ] }
 
+# Size first: Cloudflare Pages rejects any file over 25 MiB, and the web build's wasm is one file.
+# Measured on the wasm after wasm-opt -Oz: thin LTO + opt-level 3 gave 27.3 MiB, this 19.9 MiB;
+# opt-level "z" came out larger (20.4 MiB).
 [profile.release]
 strip = true
-lto = "thin"
+lto = "fat"
+opt-level = "s"
+codegen-units = 1
+panic = "abort"
