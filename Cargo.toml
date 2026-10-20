@@ -98,3 +98,32 @@ lto = "fat"
 opt-level = "s"
 codegen-units = 1
 panic = "abort"
+
+# opt-level "z" shrinks some crates' wasm and grows others', so it is set per package (measured
+# on the wasm after wasm-opt, against everything at "s"): verSHion's own code -1.0 MiB, the
+# equaSHion crates -0.07 MiB, hayro -0.12 MiB. Every other dependency at "z" came out 1.85 MiB
+# larger, so they stay at "s". egui/epaint at "z" would save another 0.19 MiB but they run every
+# frame, so they stay at "s" too.
+[profile.release.package.vershion]
+opt-level = "z"
+strip = true  # restated: with only opt-level here, the linked binaries kept their symbol names
+[profile.release.package.equashion-math]
+opt-level = "z"
+[profile.release.package.equashion-layout]
+opt-level = "z"
+[profile.release.package.equashion-render]
+opt-level = "z"
+[profile.release.package.equashion-font]
+opt-level = "z"
+[profile.release.package.equashion-egui]
+opt-level = "z"
+[profile.release.package.hayro]
+opt-level = "z"
+[profile.release.package.hayro-interpret]
+opt-level = "z"
+[profile.release.package.hayro-syntax]
+opt-level = "z"
+[profile.release.package.hayro-jbig2]
+opt-level = "z"
+[profile.release.package.hayro-jpeg2000]
+opt-level = "z"
