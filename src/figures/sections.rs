@@ -39,11 +39,12 @@ static FIG_2: [RefSection; 4] = [
     s("More options", &["label_size"], ""),
 ];
 
-static FIG_3: [RefSection; 7] = [
+static FIG_3: [RefSection; 8] = [
     s("Circuit", &["layout", "n"], "Leave a name empty to number it automatically."),
     items("Resistor"),
     s("Cell or battery", &["cell", "cell_name_mode", "cell_name", "cell_val_mode", "cell_val", "polarity"], ""),
     s("Switch and meters", &["switch", "ammeter", "amm_read_mode", "amm_read", "voltmeter", "vm_read_mode", "vm_read"], ""),
+    s("Work out the circuit", &["solve", "show_answers"], "Type values such as 12 V for the battery and 4 Ω for each part. Meter readings are filled in from the circuit; turn off Show answers for a student copy with blank lines."),
     s("Symbols", &["style"], ""),
     s("Chart title", &["title_mode", "title"], ""),
     s("Figure", &["mirror", "color"], ""),

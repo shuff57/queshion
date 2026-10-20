@@ -2,6 +2,7 @@
 use super::*;
 
 mod handles;
+mod circuit_solve;
 mod common;
 mod graphs;
 mod instr;

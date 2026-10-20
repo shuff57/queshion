@@ -266,6 +266,10 @@ const WAVES: &[Faq] = &[
 
 const CIRCUIT_DIAGRAM: &[Faq] = &[
     Faq {
+        q: "Can the figure work out the current and voltages, and make a worksheet from it?",
+        a: "Yes. Type numbers for the battery and each part (12 V, 4 Ω, 4.7 kΩ) and set Work out the circuit to Fill meter readings or Readings and results. It handles series, parallel and an open switch; a part typed as a symbol such as R cannot be worked out, so that reading keeps your text. Turn off Show answers for a student copy: the worked-out values become blank lines, and Student + key saves both.",
+    },
+    Faq {
         q: "How can I turn a circuit into a problem for students?",
         a: "Give some values, like the battery voltage and resistances, and leave others unknown: a blank ammeter reading, a resistor labeled x, or a voltmeter whose reading students must find.",
     },

@@ -1,6 +1,7 @@
 //! Instrument-style figures: spring scale and circuit diagram.
 use super::common::*;
-use crate::figures::{FigureDef, ParamDef, Params, Subject};
+use super::circuit_solve::{fmt_qty, parse_qty, solve, Solved};
+use crate::figures::{answers_param, FigureDef, ParamDef, Params, Subject, SHOW_ANSWERS};
 
 // ---------------------------------------------------------------- spring scale
 
@@ -254,6 +255,8 @@ fn circuit_params() -> Vec<ParamDef> {
     v.push(ParamDef::choice("voltmeter", "Voltmeter", &["None", "Across the battery", "Across component 1", "Across component 2", "Across component 3", "Across component 4"], "None"));
     v.push(ParamDef::choice("vm_read_mode", "Voltmeter reading shows", &LABEL_MODES, "None"));
     v.push(ParamDef::text("vm_read", "Voltmeter reading", "4 V"));
+    v.push(ParamDef::choice("solve", "Work out the circuit", &["Off", "Fill meter readings", "Readings and results"], "Off").hint("Reads the battery and component values and works out the current and voltages. Needs numbers such as 12 V and 4 Ω"));
+    v.push(answers_param().hint("Off turns the worked-out values into blank lines for students; Student + key exports both"));
     v.push(ParamDef::choice("style", "Symbol style", &["US (zigzag resistor)", "IEC (box resistor)"], "US (zigzag resistor)"));
     v.push(ParamDef::choice("title_mode", "Chart title shows", &LABEL_MODES, "Text"));
     v.push(ParamDef::text("title", "Chart title", ""));
@@ -300,7 +303,8 @@ pub(super) fn circuit_layout(p: &Params) -> CLay {
     let mut comps = vec![];
     let (rx, w);
     if parallel {
-        let pitch = if vm_part.is_some() { 175.0 } else { 125.0 };
+        // solved readings run longer ("12 V"), so the voltmeter needs more room beside it
+        let pitch = if vm_part.is_some() { if p.s("solve") == "Off" { 175.0 } else { 230.0 } } else { 125.0 };
         for i in 0..n {
             let len: f64 = if bulb(i) { 44.0 } else { 64.0 };
             comps.push((240.0 + pitch * i as f64, (top_y + bot_y) / 2.0, len));
@@ -414,8 +418,9 @@ fn meter(g: &mut G, cx: f64, cy: f64, letter: &str, c: &str) {
 }
 
 /// The voltmeter's reading, written to the right of the meter.
-fn vm_reading(g: &mut G, p: &Params, x: f64, y: f64) {
-    let rd = lab_mode(p, "vm_read", "vm_read_mode");
+fn vm_reading(g: &mut G, p: &Params, solved: &Option<Solved>, part: Option<usize>, x: f64, y: f64) {
+    let computed = solved.as_ref().map(|s| match part { Some(k) => s.v.get(k).copied().flatten(), None => s.v_batt });
+    let rd = reading(p, "vm_read", "vm_read_mode", computed.map(|c| c), "V");
     clabel(g, x + 24.0, y + 8.0, "start", &rd, 21.0, UPRIGHT);
 }
 
@@ -452,9 +457,39 @@ pub(super) fn comp_name(p: &Params, i: usize, n: usize) -> String {
     }
 }
 
+/// The circuit worked out from the typed values, when "Work out the circuit" is on.
+pub(super) fn circuit_solved(p: &Params, n: usize) -> Option<Solved> {
+    if p.s("solve") == "Off" { return None; }
+    let r: Vec<Option<f64>> = (0..n).map(|i| parse_qty(p.s(RK[i][4]))).collect();
+    Some(solve(parse_qty(p.s("cell_val")), &r, p.s("layout") == "In parallel", p.s("switch") == "Open"))
+}
+
+/// A meter's reading label: the typed text, or with the circuit worked out the computed value
+/// (a blank line for students when answers are off; the typed text when it cannot be computed).
+fn reading(p: &Params, text_key: &str, mode_key: &str, computed: Option<Option<f64>>, unit: &str) -> String {
+    let typed = lab_mode(p, text_key, mode_key);
+    let Some(val) = computed else { return typed };
+    if p.s(mode_key) != "Text" { return typed; }
+    if !p.b(SHOW_ANSWERS) { return String::new(); }
+    val.map(|v| fmt_qty(v, unit)).unwrap_or(typed)
+}
+
+/// Rows of the results block under the circuit: (left label, value, right label, value).
+fn results_rows(p: &Params, n: usize, s: &Solved) -> Vec<[(String, Option<f64>, &'static str); 2]> {
+    let _ = p;
+    let mut rows = vec![[("R_eq".to_string(), s.r_eq, "Ω"), ("I".to_string(), s.i_total, "A")]];
+    for k in 0..n {
+        rows.push([(format!("V_{}", k + 1), s.v[k], "V"), (format!("I_{}", k + 1), s.i[k], "A")]);
+    }
+    rows
+}
+
 fn circuit_render(p: &Params) -> String {
     let l = circuit_layout(p);
-    let mut g = G::new(l.w, l.h, p.b("mirror"));
+    let solved = circuit_solved(p, l.n);
+    let table = solved.as_ref().filter(|_| p.s("solve") == "Readings and results").map(|s| results_rows(p, l.n, s));
+    let extra = table.as_ref().map_or(0.0, |r| 24.0 + 34.0 * r.len() as f64);
+    let mut g = G::new(l.w, l.h + extra, p.b("mirror"));
     let cc = if p.b("color") { "#1d4ed8" } else { INK };
     let iec = p.s("style").starts_with("IEC");
     let (top_y, bot_y, lx, rx) = (l.top_y, l.bot_y, l.lx, l.rx);
@@ -494,7 +529,7 @@ fn circuit_render(p: &Params) -> String {
     // ammeter and switch (top wire in series, left wire in parallel)
     if let Some((x, y)) = l.amm {
         meter(&mut g, x, y, "A", cc);
-        let rd = lab_mode(p, "amm_read", "amm_read_mode");
+        let rd = reading(p, "amm_read", "amm_read_mode", solved.as_ref().map(|s| s.i_total), "A");
         if l.parallel { left_gaps.push((y - 17.0, y + 17.0)); clabel(&mut g, x + 24.0, y + 8.0, "start", &rd, 21.0, UPRIGHT); }
         else { top_gaps.push((x - 17.0, x + 17.0)); clabel(&mut g, x, y + 44.0, "middle", &rd, 21.0, UPRIGHT); }
     }
@@ -547,7 +582,7 @@ fn circuit_render(p: &Params) -> String {
         g.polyline(&[(lx, ya), (vx, ya), (vx, ym - 17.0)], INK, SW);
         g.polyline(&[(vx, ym + 17.0), (vx, yb), (lx, yb)], INK, SW);
         meter(&mut g, vx, ym, "V", cc);
-        vm_reading(&mut g, p, vx, ym);
+        vm_reading(&mut g, p, &solved, None, vx, ym);
         dot(&mut g, lx, ya);
         dot(&mut g, lx, yb);
     } else if let Some(k) = l.vm_part {
@@ -557,7 +592,7 @@ fn circuit_render(p: &Params) -> String {
             g.polyline(&[(cx, ya), (vx, ya), (vx, cy - 17.0)], INK, SW);
             g.polyline(&[(vx, cy + 17.0), (vx, yb), (cx, yb)], INK, SW);
             meter(&mut g, vx, cy, "V", cc);
-            vm_reading(&mut g, p, vx, cy);
+            vm_reading(&mut g, p, &solved, Some(k), vx, cy);
             dot(&mut g, cx, ya);
             dot(&mut g, cx, yb);
         } else {
@@ -565,9 +600,23 @@ fn circuit_render(p: &Params) -> String {
             g.polyline(&[(xa, top_y), (xa, vy), (cx - 17.0, vy)], INK, SW);
             g.polyline(&[(cx + 17.0, vy), (xb, vy), (xb, top_y)], INK, SW);
             meter(&mut g, cx, vy, "V", cc);
-            vm_reading(&mut g, p, cx, vy);
+            vm_reading(&mut g, p, &solved, Some(k), cx, vy);
             dot(&mut g, xa, top_y);
             dot(&mut g, xb, top_y);
+        }
+    }
+    if let Some(rows) = table {
+        let show = p.b(SHOW_ANSWERS);
+        let y0 = l.h + 6.0;
+        g.line(40.0, y0, l.w - 40.0, y0, INK, 1.2);
+        for (r, row) in rows.iter().enumerate() {
+            let y = y0 + 34.0 + 34.0 * r as f64;
+            for (c, (name, val, unit)) in row.iter().enumerate() {
+                let x = 70.0 + c as f64 * (l.w - 140.0) / 2.0;
+                g.tex(x, y, 22.0, "start", &format!("{name} ="), ITALIC);
+                let text = if !show { String::new() } else { val.map(|v| fmt_qty(v, unit)).unwrap_or_else(|| "?".into()) };
+                clabel(&mut g, x + 76.0, y, "start", &text, 21.0, UPRIGHT);
+            }
         }
     }
     g.finish()

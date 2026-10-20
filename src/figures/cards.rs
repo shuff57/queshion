@@ -126,6 +126,7 @@ pub fn relevant(fig: &str, key: &str, p: &Params) -> bool {
         ("predator-prey", "alpha" | "beta" | "gamma" | "delta") => p.s("source").starts_with("Model rates"),
         ("particle-diagram", "state2" | "lab_before" | "lab_after") => p.s("boxes") == "Before and after",
         ("lewis-structures", "lone" | "expand" | "resonance" | "resonance_pick") => super::chemistry::lewis_relevant(key, p),
+        ("circuit-diagram", "show_answers") => p.s("solve") != "Off",
         ("ph-reading", "places" | "meter") => p.s("instrument") == "Digital meter",
         _ => super::stats::relevant(fig, key, p),
     }
