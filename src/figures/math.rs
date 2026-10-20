@@ -157,7 +157,7 @@ fn mlabel_svg(x: f64, y: f64, size: f64, s: &str, unit: &str) -> String {
         if upright { body.push_str(&e); } else { body.push_str(&format!(r#"<tspan font-style="italic">{e}</tspan>"#)); }
         i = j;
     }
-    format!(r##"<text x="{x:.2}" y="{:.2}" font-size="{size:.1}" text-anchor="middle" font-family="{MSERIF}" fill="#000">{body}</text>"##, y + size * 0.34)
+    format!(r##"<text x="{x:.2}" y="{:.2}" font-size="{size:.1}" text-anchor="middle" font-family="{MSERIF}" fill="#111827" stroke="#fff" stroke-width="{:.1}" stroke-linejoin="round" paint-order="stroke">{body}</text>"##, y + size * 0.34, size * 0.2)
 }
 
 /// Label-size toolbar setting (Large / Medium / Small) as a font scale.
@@ -386,7 +386,14 @@ fn draw_poly_inner(s: PolySpec, dec: i64, unit: &str) -> String {
             let mut b = (u.0 + wv.0, u.1 + wv.1);
             let bl = (b.0 * b.0 + b.1 * b.1).sqrt();
             if bl < 1e-6 { b = (-u.1, u.0); } else { b = (b.0 / bl, b.1 / bl); }
-            let r = ar + 6.0 + 0.5 * (tw(&t, asz) * 0.85 * b.0.abs() + asz * b.1.abs()) + (40.0 - ang).max(0.0) * 0.5;
+            let mut r = ar + 6.0 + 0.5 * (tw(&t, asz) * 0.85 * b.0.abs() + asz * b.1.abs()) + (40.0 - ang).max(0.0) * 0.5;
+            // in a narrow wedge the reference sits the value clear of both rays (24 degrees: about
+            // 0.19 of the base out from the corner), not on top of the nearer one
+            let half = (ang / 2.0).to_radians();
+            if half.sin() > 0.05 {
+                let (hw, hh) = (0.5 * tw(&t, asz) * 0.85, asz * 0.36);
+                r = r.max((hh * half.cos() + hw * half.sin() + 6.5 * (asz / 17.0)) / half.sin());
+            }
             mlabel_id(&mut doc, &format!("a{i}"), v.0 + b.0 * r, v.1 + b.1 * r, asz, &t, unit);
         }
     }
@@ -880,6 +887,7 @@ pub(crate) fn flat_skin_summary(id: &str, title: &str, p: &Params) -> Option<Str
             if p.b("right") { parts.push("right-angle marks".into()); }
             Some(parts.join(" \u{b7} "))
         }
+        "Heights" if id == "triangle" => Some(p.s("height").to_string()),
         "Position" => {
             let b = p.s("bottom").trim();
             let mut parts = vec![if b.is_empty() || b.starts_with("None") { "standing upright".to_string() } else { format!("{} at the bottom", b.split(',').next().unwrap_or(b)) }];
@@ -893,10 +901,10 @@ pub(crate) fn flat_skin_summary(id: &str, title: &str, p: &Params) -> Option<Str
 
 fn shared_tail(v: &mut Vec<ParamDef>, right_default: bool, vertices: bool) {
     v.extend([
-        ParamDef::bool("right", "Right-angle squares at 90\u{b0} angles and where heights meet a side", right_default),
-        ParamDef::bool("vertices", "Corner letters", vertices),
         ParamDef::text("unit", "Unit (e.g. cm)", ""),
         ParamDef::int("dec", "Round to (decimal places)", 0, 3, 1),
+        ParamDef::bool("right", "Right-angle squares at 90\u{b0} angles and where heights meet a side", right_default),
+        ParamDef::bool("vertices", "Corner letters", vertices),
         ParamDef::float("rotate", "Turn (degrees)", -180.0, 180.0, 1.0, 0.0),
         ParamDef::color("fill", "Fill colour", &["#e9f1fb", "#fdf0d5", "#e3f4e1", "#fbe3e3", "#efe5f7", "#ffffff"], "#e9f1fb"),
         ParamDef::bool("flip", "Flip (mirror left to right)", false),
@@ -3255,17 +3263,8 @@ fn sput(d: &mut Doc, id: &str, x: f64, y: f64, text: &str, size: f64) { sput_k(d
 /// `sput` with the baseline `k` em below the label's centre (the reference sets it 0.24 em below).
 fn sput_k(d: &mut Doc, id: &str, x: f64, y: f64, text: &str, size: f64, k: f64) {
     let style = if is_var(text) { r#" font-style="italic""# } else { "" };
-    let t = format!(r##"<text x="{x:.2}" y="{:.2}" font-size="{size}" text-anchor="middle" font-family="{SERIF}"{style} fill="#000" stroke="#fff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">{}</text>"##, y + size * k, super::svg::esc(text));
+    let t = format!(r##"<text x="{x:.2}" y="{:.2}" font-size="{size}" text-anchor="middle" font-family="{SERIF}"{style} fill="#111827" stroke="#fff" stroke-width="{}" stroke-linejoin="round" paint-order="stroke">{}</text>"##, y + size * k, size * 0.2, super::svg::esc(text));
     if id.is_empty() { d.raw(&t); } else { d.raw(&super::labels::wrap(id, (x, y), super::labels::text_half(text, size), &t)); }
-}
-/// Label beside screen segment a-b at fraction t, on the side away from `center`.
-fn sbeside(d: &mut Doc, id: &str, a: Pt, b: Pt, t: f64, center: Pt, text: &str, size: f64) {
-    let m = (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t);
-    let u = unit_v(a, b);
-    let mut n = (-u.1, u.0);
-    if n.0 * (m.0 - center.0) + n.1 * (m.1 - center.1) < 0.0 { n = (-n.0, -n.1); }
-    let off = 7.0 + 0.5 * (stw(text, size) * n.0.abs() + size * 0.9 * n.1.abs());
-    sput(d, id, m.0 + n.0 * off, m.1 + n.1 * off, text, size);
 }
 /// Medium 20, Large 28, Small 16: the reference's solid label sizes (in its own drawing units).
 fn lsz3(p: &Params) -> f64 { match p.s("label_size") { "Large" => 28.0, "Small" => 16.0, _ => 20.0 } }
@@ -3862,7 +3861,7 @@ fn mpts(m: &Map, pts: &[Pt]) -> Vec<Pt> { pts.iter().map(|q| m.p(*q)).collect() 
 
 fn round_common() -> Vec<ParamDef> {
     vec![
-        ParamDef::float("view", "View elevation (degrees above the horizon)", 8.0, 60.0, 1.0, 22.0),
+        ParamDef::float("view", "View elevation (degrees above the horizon)", 8.0, 60.0, 0.1, 20.7),
         ParamDef::bool("hidden", "Show hidden edges (dashed)", true),
         ParamDef::bool("right", "Right-angle squares", true),
         ParamDef::text("unit", "Unit", "cm"),
@@ -3900,27 +3899,30 @@ fn round_label_params() -> [ParamDef; 5] {
 /// The diameter line is drawn (its label is shown) instead of / as well as the radius.
 fn diam_shown(p: &Params) -> bool { diam_text(p, 1.0).is_some() }
 
-/// Radius (or diameter) across the circle centred at model point o. `solid`: drawn as a solid
-/// line (sphere); otherwise dashed. `above`: label above the line.
-fn base_measure(d: &mut Doc, m: &Map, o: Pt, r: f64, p: &Params, solid: bool, above: bool) {
-    let fs = lsz(p);
+/// Radius (or diameter) across the circle centred at model point o, drawn as the reference does:
+/// 1.6 px line (solid on a top face or a sphere, dashed on a base), a dot at the centre for a
+/// radius, the label 20 units clear above or below it. `dir` is the side the radius line runs
+/// to (+1 right, -1 left).
+fn base_measure(d: &mut Doc, m: &Map, o: Pt, r: f64, p: &Params, solid: bool, above: bool, dir: f64) {
+    let fs = lsz3(p);
     let c = m.p(o);
-    let dash = if solid { "none" } else { "6 4" };
+    let dash = if solid { "none" } else { "6 5" };
     let rt = if p.b("give_d") { None } else { mtext(p, "r", "Measure", r, false) };
     let dt = diam_text(p, 2.0 * r);
     // nothing is drawn across the circle when neither label prints (as the reference)
     if rt.is_none() && dt.is_none() { return; }
     let diam = dt.is_some();
-    let rb = m.p((o.0 + r, o.1));
-    let (a, b) = if diam { (m.p((o.0 - r, o.1)), rb) } else { (c, rb) };
-    if solid { d.line(a.0, a.1, b.0, b.1, INK, 2.0); } else { dline(d, a, b, "#444", 1.5, dash); }
-    let off = if above { -fs * 0.85 } else { fs * 0.85 };
-    if let Some(s) = dt { sput(d, "d", (a.0 + b.0) / 2.0, c.1 + off, &s, fs); }
+    let rb = m.p((o.0 + dir * r, o.1));
+    let (a, b) = if diam { (m.p((o.0 - r, o.1)), m.p((o.0 + r, o.1))) } else { (c, rb) };
+    dline(d, a, b, INK, 1.6, dash);
+    let away = if above { 100.0 } else { -100.0 };
+    let mid = ((a.0 + b.0) / 2.0, c.1);
+    if let Some(s) = dt { sbeside_r(d, "d", a, b, 0.5, (mid.0, mid.1 + away), &s, fs); }
     if let Some(s) = rt {
         // with the diameter also labelled, the radius sits on the other side of the line
-        let y = if diam { c.1 - off } else { c.1 + off };
-        sput(d, "r", (c.0 + rb.0) / 2.0, y, &s, fs);
-        d.circle(c.0, c.1, 2.8, INK, INK, 1.0);
+        let side = if diam { -away } else { away };
+        sbeside_r(d, "r", c, rb, 0.5, (mid.0, mid.1 + side), &s, fs);
+        d.circle(c.0, c.1, 3.0, INK, INK, 1.0);
     }
 }
 
@@ -3930,7 +3932,7 @@ fn cylinder_params() -> Vec<ParamDef> {
         ParamDef::float("lean", "Lean of the top when oblique", -20.0, 20.0, 0.5, 2.0),
         ParamDef::float("radius", "Radius", 0.5, 50.0, 0.5, 3.0),
         ParamDef::float("height", "Height", 0.5, 50.0, 0.5, 4.0),
-        ParamDef::bool("show_height", "Draw the height", true),
+        ParamDef::bool("show_height", "Draw the height", false),
     ];
     v.extend(round_common());
     v.extend(round_label_params());
@@ -3946,46 +3948,61 @@ fn cylinder_params() -> Vec<ParamDef> {
     v
 }
 
+/// Tangent points of a round solid's silhouette: the base ellipse's parameter (radians) whose
+/// tangent runs along the base-to-top translation `(lean, h)`; the other tangent is `+ PI`.
+fn tangent_t(s: f64, lean: f64, h: f64) -> f64 { (-s * lean).atan2(h) }
+
 fn cylinder_render(p: &Params) -> String {
     let oblique = p.s("stands") == "Oblique";
     let (r, h) = (solid_r(p), edge_height(p, oblique));
-    let (s, c) = (p.f("view").to_radians().sin(), p.f("view").to_radians().cos());
+    let s = p.f("view").to_radians().sin();
     let lean = if oblique { p.f("lean") } else { 0.0 };
-    let ht = h * c;
     let mut all = ell(0.0, 0.0, r, r * s, 0.0, 360.0);
-    all.extend(ell(lean, ht, r, r * s, 0.0, 360.0));
-    let m = Map::fit(&all, 480.0, 360.0, 70.0, 48.0);
-    let mut d = new_doc(480.0, 360.0);
-    let fs = lsz(p);
-    let mut body = ell(0.0, 0.0, r, r * s, 180.0, 360.0);
-    body.extend(ell(lean, ht, r, r * s, 360.0, 180.0));
+    all.extend(ell(lean, h, r, r * s, 0.0, 360.0));
+    // the reference draws a solid at a fixed 420 x 300 limit, no fill, 2.4 outline
+    let m = Map::fit_at(&all, 420.0, 300.0, 70.0, 40.0);
+    let mut d = new_doc(560.0, 380.0);
+    let fs = lsz3(p);
+    let t0 = tangent_t(s, lean, h);
+    let t0d = t0.to_degrees();
+    let tp = |t: f64, cx: f64, cy: f64| (cx + r * t.cos(), cy + r * s * t.sin());
+    let (lb, rb) = (tp(t0 + std::f64::consts::PI, 0.0, 0.0), tp(t0, 0.0, 0.0));
+    let (lt, rt) = (tp(t0 + std::f64::consts::PI, lean, h), tp(t0, lean, h));
+    let (l0, l1, r0, r1) = (m.p(lb), m.p(lt), m.p(rb), m.p(rt));
+    // tinted faces (White shading, the opening state, turns them white); the outline is unfilled
+    let mut body = ell(0.0, 0.0, r, r * s, t0d + 180.0, t0d + 360.0);
+    body.extend(ell(lean, h, r, r * s, t0d + 360.0, t0d + 180.0));
     d.poly(&mpts(&m, &body), "#d9e7f6", "none", 0.0);
-    d.poly(&mpts(&m, &ell(lean, ht, r, r * s, 0.0, 360.0)), "#f4f9ff", INK, 2.2);
-    let (l0, l1, r0, r1) = (m.p((-r, 0.0)), m.p((lean - r, ht)), m.p((r, 0.0)), m.p((lean + r, ht)));
-    d.line(l0.0, l0.1, l1.0, l1.1, INK, 2.2);
-    d.line(r0.0, r0.1, r1.0, r1.1, INK, 2.2);
-    d.polyline(&mpts(&m, &ell(0.0, 0.0, r, r * s, 180.0, 360.0)), INK, 2.2);
-    if p.b("hidden") { dpoly(&mut d, &mpts(&m, &ell(0.0, 0.0, r, r * s, 0.0, 180.0)), "#555", 1.4, "6 4"); }
-    base_measure(&mut d, &m, (0.0, 0.0), r, p, false, false);
+    if p.b("hidden") { dpoly(&mut d, &mpts(&m, &ell(0.0, 0.0, r, r * s, t0d, t0d + 180.0)), INK, 1.6, "6 5"); }
+    // the radius runs across the top face, away from the lean
+    let dir: f64 = if lean > 0.0 { -1.0 } else { 1.0 };
+    let tc = m.p((lean, h));
+    let foot = m.p((lean, 0.0));
+    let base_c = m.p((0.0, 0.0));
+    let center = m.p((lean / 2.0, h / 2.0));
+    let draw_h = oblique || p.b("show_height");
     let htxt = mtext(p, "h", "Measure", h, false);
-    let center = m.p((lean / 2.0, ht / 2.0));
-    if p.b("show_height") {
-        let (t, b) = (m.p((lean, ht)), m.p((lean, 0.0)));
-        dline(&mut d, t, b, "#444", 1.5, "6 4");
-        d.circle(t.0, t.1, 2.8, INK, INK, 1.0);
-        if let Some(txt) = htxt { sput(&mut d, "h", t.0 - 10.0 - stw(&txt, fs) / 2.0, (t.1 + b.1) / 2.0, &txt, fs); }
-        if lean.abs() > 1e-9 { dline(&mut d, m.p((0.0, 0.0)), b, "#444", 1.5, "6 4"); }
-        if p.b("right") && !diam_shown(p) { square_mark(&mut d, b, (b.0, b.1 - 10.0), (b.0 + 10.0, b.1), 10.0); }
-    } else if let Some(txt) = htxt {
-        sbeside(&mut d, "h", r0, r1, 0.5, center, &txt, fs);
+    if draw_h {
+        dline(&mut d, tc, foot, INK, 1.6, "6 5");
+        if lean.abs() > 1e-9 { dline(&mut d, base_c, foot, INK, 1.6, "6 5"); }
+        if p.b("right") && !diam_shown(p) {
+            let toward = if lean.abs() > 1e-9 { base_c } else { (foot.0 + 10.0, foot.1) };
+            square_mark(&mut d, foot, (foot.0, foot.1 - 10.0), toward, 12.0);
+        }
+        if let Some(txt) = &htxt { sbeside_r(&mut d, "h", foot, tc, 0.5, (tc.0 - dir * 100.0, tc.1), txt, fs); }
     }
+    d.poly(&mpts(&m, &ell(lean, h, r, r * s, 0.0, 360.0)), "#f4f9ff", INK, 2.4);
+    d.line(l0.0, l0.1, l1.0, l1.1, INK, 2.4);
+    d.line(r0.0, r0.1, r1.0, r1.1, INK, 2.4);
+    d.polyline(&mpts(&m, &ell(0.0, 0.0, r, r * s, t0d + 180.0, t0d + 360.0)), INK, 2.4);
+    base_measure(&mut d, &m, (lean, h), r, p, true, true, dir);
+    if !draw_h && let Some(txt) = &htxt { sbeside_r(&mut d, "h", r0, r1, 0.5, center, txt, fs); }
     if lean.abs() > 1e-9 {
         if let Some(txt) = mtext(p, "lean", "None", lean.abs(), false) {
-            let (a, b) = (m.p((0.0, 0.0)), m.p((lean, 0.0)));
-            sput(&mut d, "lean", (a.0 + b.0) / 2.0, a.1 - fs * 0.85, &txt, fs);
+            sbeside_r(&mut d, "lean", base_c, foot, 0.5, ((base_c.0 + foot.0) / 2.0, base_c.1 - 100.0), &txt, fs);
         }
         let side = if lean > 0.0 { (r0, r1) } else { (l0, l1) };
-        if let Some(txt) = tlabel(p, "edge", "edge", "None", (h * h + lean * lean).sqrt()) { sbeside(&mut d, "edge", side.0, side.1, 0.5, center, &txt, fs); }
+        if let Some(txt) = tlabel(p, "edge", "edge", "None", (h * h + lean * lean).sqrt()) { sbeside_r(&mut d, "edge", side.0, side.1, 0.5, center, &txt, fs); }
     }
     d.finish()
 }
@@ -4024,9 +4041,9 @@ fn cone_params() -> Vec<ParamDef> {
 fn cone_render(p: &Params) -> String {
     let r = solid_r(p);
     let h = cone_height(p);
-    let (s, c) = (p.f("view").to_radians().sin(), p.f("view").to_radians().cos());
+    let s = p.f("view").to_radians().sin();
     let lean = if p.s("stands") == "Oblique" { p.f("lean") } else { 0.0 };
-    let apex = (lean, h * c);
+    let apex = (lean, h);
     // tangents from apex to base ellipse
     let pp = (apex.0, apex.1 / s);
     let dd = (pp.0 * pp.0 + pp.1 * pp.1).sqrt().max(r * 1.001);
@@ -4038,48 +4055,48 @@ fn cone_render(p: &Params) -> String {
     let (pl, pr) = (tp(tl), tp(tr));
     let mut all = ell(0.0, 0.0, r, r * s, 0.0, 360.0);
     all.push(apex);
-    let m = Map::fit(&all, 480.0, 360.0, 70.0, 48.0);
-    let mut d = new_doc(480.0, 360.0);
-    let fs = lsz(p);
+    let m = Map::fit_at(&all, 420.0, 300.0, 70.0, 40.0);
+    let mut d = new_doc(560.0, 380.0);
+    let fs = lsz3(p);
     let (a0, a1) = (tl.to_degrees().rem_euclid(360.0), tr.to_degrees().rem_euclid(360.0));
     let (front0, front1) = (a0, if a1 < a0 { a1 + 360.0 } else { a1 });
     let front = ell(0.0, 0.0, r, r * s, front0, front1);
-    let mut body = vec![apex, pl];
+    // tinted face (White shading, the opening state, turns it white); the outline is unfilled
+    let mut body = vec![apex];
     body.extend(front.iter().copied());
-    body.push(pr);
     d.poly(&mpts(&m, &body), "#d9e7f6", "none", 0.0);
-    d.line(m.p(apex).0, m.p(apex).1, m.p(pl).0, m.p(pl).1, INK, 2.2);
-    d.line(m.p(apex).0, m.p(apex).1, m.p(pr).0, m.p(pr).1, INK, 2.2);
-    d.polyline(&mpts(&m, &front), INK, 2.2);
     if p.b("hidden") {
         let back = ell(0.0, 0.0, r, r * s, front1, front0 + 360.0);
-        dpoly(&mut d, &mpts(&m, &back), "#555", 1.4, "6 4");
+        dpoly(&mut d, &mpts(&m, &back), INK, 1.6, "6 5");
     }
-    base_measure(&mut d, &m, (0.0, 0.0), r, p, false, false);
+    let (ap, bc, foot) = (m.p(apex), m.p((0.0, 0.0)), m.p((lean, 0.0)));
+    // the radius runs along the base, away from the lean
+    let dir: f64 = if lean > 0.0 { -1.0 } else { 1.0 };
     if p.b("show_height") {
-        let (t, b) = (m.p(apex), m.p((lean, 0.0)));
-        dline(&mut d, t, b, "#444", 1.5, "6 4");
-        if let Some(txt) = mtext(p, "h", "Measure", h, false) { sput(&mut d, "h", t.0 - 10.0 - stw(&txt, fs) / 2.0, (t.1 + b.1) / 2.0 - 8.0, &txt, fs); }
-        if lean.abs() > 1e-9 { dline(&mut d, m.p((0.0, 0.0)), b, "#444", 1.5, "6 4"); }
-        if p.b("right") && !diam_shown(p) && lean.abs() < 1e-9 { square_mark(&mut d, b, (b.0, b.1 - 10.0), (b.0 + 10.0, b.1), 10.0); }
-        if lean.abs() > 1e-9 {
-            if p.b("right") { square_mark(&mut d, b, (b.0, b.1 - 10.0), (b.0 - lean.signum() * 10.0, b.1), 10.0); }
-            if let Some(txt) = mtext(p, "lean", "None", lean.abs(), false) {
-                let a = m.p((0.0, 0.0));
-                sput(&mut d, "lean", (a.0 + b.0) / 2.0, a.1 - fs * 0.8, &txt, fs);
-            }
+        dline(&mut d, ap, foot, INK, 1.6, "6 5");
+        if lean.abs() > 1e-9 { dline(&mut d, bc, foot, INK, 1.6, "6 5"); }
+        if p.b("right") && !diam_shown(p) {
+            let toward = if lean.abs() > 1e-9 { bc } else { (foot.0 + 10.0, foot.1) };
+            square_mark(&mut d, foot, (foot.0, foot.1 - 10.0), toward, 12.0);
+        }
+        if let Some(txt) = mtext(p, "h", "Measure", h, false) { sbeside_r(&mut d, "h", foot, ap, 0.5, (ap.0 - dir * 100.0, ap.1), &txt, fs); }
+        if lean.abs() > 1e-9 && let Some(txt) = mtext(p, "lean", "None", lean.abs(), false) {
+            sbeside_r(&mut d, "lean", bc, foot, 0.5, ((bc.0 + foot.0) / 2.0, bc.1 - 100.0), &txt, fs);
         }
     }
+    d.line(ap.0, ap.1, m.p(pl).0, m.p(pl).1, INK, 2.4);
+    d.line(ap.0, ap.1, m.p(pr).0, m.p(pr).1, INK, 2.4);
+    d.polyline(&mpts(&m, &front), INK, 2.4);
+    base_measure(&mut d, &m, (0.0, 0.0), r, p, false, false, dir);
     let sl = ((r - lean).powi(2) + h * h).sqrt();
     // an oblique cone has no slant height to give (its slant edge is always worked out)
     let ltxt = if lean.abs() > 1e-9 { mtext(p, "l", "None", sl, false) } else { tlabel(p, "l", "slant", "None", sl) };
     if let Some(txt) = ltxt {
-        let (a, b) = (m.p(apex), m.p(pr));
-        sbeside(&mut d, "l", a, b, 0.5, m.p((lean * 0.5, h * c * 0.4)), &txt, fs);
+        let (a, b) = (ap, m.p(pr));
+        sbeside_r(&mut d, "l", a, b, 0.5, m.p((lean * 0.5, h * 0.4)), &txt, fs);
     }
     d.finish()
 }
-
 fn sphere_params() -> Vec<ParamDef> {
     let mut v = vec![
         ParamDef::choice("draw", "Draw", &["A whole sphere", "A hemisphere"], "A whole sphere"),
@@ -4096,7 +4113,6 @@ fn sphere_render(p: &Params) -> String {
     let s = p.f("view").to_radians().sin();
     let half = p.s("draw") == "A hemisphere";
     let bowl = half && p.s("face") == "Up, like a bowl";
-    let (w, h) = (480.0, 360.0);
     let all = if bowl {
         let mut a = ell(0.0, 0.0, r, r * s, 0.0, 360.0);
         a.extend(ell(0.0, 0.0, r, r, 180.0, 360.0));
@@ -4106,24 +4122,24 @@ fn sphere_render(p: &Params) -> String {
         a.extend(ell(0.0, 0.0, r, r * s, 180.0, 360.0));
         a
     } else { ell(0.0, 0.0, r, r, 0.0, 360.0) };
-    let m = Map::fit(&all, w, h, 90.0, 50.0);
-    let mut d = new_doc(w, h);
+    let m = Map::fit_at(&all, 420.0, 300.0, 70.0, 40.0);
+    let mut d = new_doc(560.0, 380.0);
     if bowl {
         let mut sil = ell(0.0, 0.0, r, r, 180.0, 360.0);
         sil.extend(ell(0.0, 0.0, r, r * s, 0.0, 180.0));
-        d.poly(&mpts(&m, &sil), "#e3eef9", INK, 2.2);
-        d.poly(&mpts(&m, &ell(0.0, 0.0, r, r * s, 0.0, 360.0)), "#f4f9ff", INK, 2.2);
+        d.poly(&mpts(&m, &sil), "#e3eef9", INK, 2.4);
+        d.poly(&mpts(&m, &ell(0.0, 0.0, r, r * s, 0.0, 360.0)), "#f4f9ff", INK, 2.4);
     } else if half {
         let mut sil = ell(0.0, 0.0, r, r, 0.0, 180.0);
         sil.extend(ell(0.0, 0.0, r, r * s, 180.0, 360.0));
-        d.poly(&mpts(&m, &sil), "#e3eef9", INK, 2.2);
-        if p.b("hidden") { dpoly(&mut d, &mpts(&m, &ell(0.0, 0.0, r, r * s, 0.0, 180.0)), "#555", 1.4, "6 4"); }
+        d.poly(&mpts(&m, &sil), "#e3eef9", INK, 2.4);
+        if p.b("hidden") { dpoly(&mut d, &mpts(&m, &ell(0.0, 0.0, r, r * s, 0.0, 180.0)), INK, 1.6, "6 5"); }
     } else {
-        d.poly(&mpts(&m, &ell(0.0, 0.0, r, r, 0.0, 360.0)), "#e3eef9", INK, 2.2);
-        d.polyline(&mpts(&m, &ell(0.0, 0.0, r, r * s, 180.0, 360.0)), "#333", 1.4);
-        if p.b("hidden") { dpoly(&mut d, &mpts(&m, &ell(0.0, 0.0, r, r * s, 0.0, 180.0)), "#555", 1.4, "6 4"); }
+        d.poly(&mpts(&m, &ell(0.0, 0.0, r, r, 0.0, 360.0)), "#e3eef9", INK, 2.4);
+        d.polyline(&mpts(&m, &ell(0.0, 0.0, r, r * s, 180.0, 360.0)), INK, 2.4);
+        if p.b("hidden") { dpoly(&mut d, &mpts(&m, &ell(0.0, 0.0, r, r * s, 0.0, 180.0)), INK, 1.6, "6 5"); }
     }
-    base_measure(&mut d, &m, (0.0, 0.0), r, p, true, true);
+    base_measure(&mut d, &m, (0.0, 0.0), r, p, true, true, 1.0);
     d.finish()
 }
 

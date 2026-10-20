@@ -97,7 +97,10 @@ def main():
             if args.labels:
                 rtext = {t for t in rt if not re.fullmatch(r"-?\d+(\.\d+)?", t.strip())}
                 vtext = {t for t in vt if not re.fullmatch(r"-?\d+(\.\d+)?", t.strip())}
-                entry["ref_text_missing"] = sorted(rtext - vtext)
+                # The reference puts a value and its unit/degree sign in separate text
+                # nodes ("24" and "°"); we use one node ("24°"). Not a visible difference,
+                # so a reference token is present when it is a substring of any of our nodes.
+                entry["ref_text_missing"] = sorted(t for t in rtext - vtext if not any(t.strip() in v for v in vt))
             report[f"{subject}/{slug}"] = entry
             if rn == vn and not entry.get("ref_text_missing"):
                 print(f"  ok   {slug}")

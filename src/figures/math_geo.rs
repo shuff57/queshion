@@ -421,17 +421,15 @@ fn round_solid(id: &str, p: &Params, _cyl: bool) -> Option<Vec<Handle>> {
     let fm = Fm::of(id, p)?;
     let r = super::math::solid_r(p);
     let h = if id == "cone" { cone_height(p) } else { edge_height(p, p.s("stands") == "Oblique") };
-    let c = p.f("view").to_radians().cos();
     let lean = if p.s("stands") == "Oblique" { p.f("lean") } else { 0.0 };
-    let top = fm.scr((lean, h * c));
+    let top = fm.scr((lean, h));
     let rad = fm.scr((r, 0.0));
     let cone = id == "cone";
     Some(vec![
         Handle::knob(rad, "Drag to change the radius", move |p, s| super::math::set_solid_r(p, fm.mdl(s).0)).with_cursor(Cursor::ResizeH),
         Handle::knob(top, "Drag to change the height (and lean if oblique)", move |p, s| {
             let m = fm.mdl(s);
-            let c = p.f("view").to_radians().cos().max(0.1);
-            let h = m.1 / c;
+            let h = m.1;
             let oblique = p.s("stands") == "Oblique";
             if oblique { p.set_f("lean", m.0); }
             if cone && !oblique && typed(p, "slant").is_some() {

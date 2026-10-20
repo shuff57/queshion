@@ -124,11 +124,9 @@ fn math_unit(id: &str) -> f64 {
         "rectangle" => 0.87,
         "kite" => 0.90,
         "regular-polygon" => 0.91,
-        "angles" => 0.605,
+        "angles" => 0.55,
         "prism" | "pyramid" => 1.0,
-        "cylinder" | "sphere" => 0.88,
-        "cone" => 0.92,
-        _ => 1.0,
+                _ => 1.0,
     }
 }
 
@@ -138,8 +136,11 @@ fn math_view(content: Option<[f64; 4]>, id: &str, (cw, ch): (f64, f64)) -> [f64;
     if math_whole(id) { return [0.0, 0.0, cw, ch]; }
     // the reference grows prism and pyramid by 12 around the drawing's lines and label origins,
     // not around their ink: less above (the stroke is inked), more below (the label's descent)
-    if let (Some(b), "prism" | "pyramid") = (content, id) {
-        let (l, t, r, bt) = (12.0, 10.8, 12.0, 16.0);
+    if let (Some(b), "prism" | "pyramid" | "cylinder" | "cone" | "sphere") = (content, id) {
+        // round solids carry no label below the drawing: 10.8 (the grown bounds less the stroke) on
+        // every side, 12 to 12.5 past a label or a dashed line's end on the right; the cone's bounds
+        // are taken from its arcs' end points, so they stop short of the ellipse's extremes
+        let (l, t, r, bt) = match id { "cylinder" => (10.8, 10.8, 12.5, 10.8), "cone" => (4.4, 10.8, 12.0, -0.7), "sphere" => (10.8, 10.8, 10.8, 10.8), _ => (12.0, 10.8, 12.0, 16.0) };
         return [(b[0] - l).max(0.0), (b[1] - t).max(0.0), (b[2] + r).min(cw), (b[3] + bt).min(ch)];
     }
     view_box_padded(content, (cw, ch), Some(math_pad(id)))
@@ -1140,8 +1141,11 @@ impl Workspace {
                 // 16 px of padding, under the toolbar
                 let id = reg()[i].id;
                 let v = math_view(self.content, id, (cw, ch));
-                let k = ((cw_card as f64 - 34.0) / (v[2] - v[0]).max(1.0)).min(1.0 / math_unit(id));
-                card_h = ((v[3] - v[1]) * k + 32.0 + if ctx.content_rect().width() < 500.0 { 47.5 } else { 54.0 } + 2.0 + if math_whole(id) || ctx.content_rect().width() >= 500.0 { 0.0 } else { 2.5 }) as f32;
+                let narrow = ctx.content_rect().width() < 500.0;
+                // phone: the reference's svg is the card's width less 16 px a side, its sheet the svg plus
+                // 32 under a 48.6 px toolbar
+                let k = ((cw_card as f64 - if narrow && !math_whole(id) { 32.0 } else { 34.0 }) / (v[2] - v[0]).max(1.0)).min(1.0 / math_unit(id));
+                card_h = ((v[3] - v[1]) * k + 32.0 + if !narrow { 54.0 + 2.0 } else if math_whole(id) { 47.5 + 2.0 } else { 48.6 }) as f32;
             }
             if let Some(i) = self.sel.filter(|&i| matches!(reg()[i].subject, figures::Subject::Chemistry | figures::Subject::Biology)) {
                 if chem_whole(reg()[i].id) && skin {
@@ -3247,6 +3251,61 @@ fn param_control(ui: &mut Ui, fig: &str, pd: &ParamDef, p: &mut Params) {
     ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("pop_label_tight"), 0.0_f32));
 }
 
+/// The reference's Labels card sets the unit and the rounding with two selects (Unit: None, cm, m,
+/// mm, in, ft, yd, units, Other...; Round to: Whole numbers, Tenths, Hundredths), where the
+/// parameters themselves are a free text and a count of decimal places.
+fn math_unit_dec(ui: &mut Ui, fig: &str, pd: &ParamDef, p: &mut Params, label: &str) {
+    const UNITS: [&str; 7] = ["cm", "m", "mm", "in", "ft", "yd", "units"];
+    param_label(ui, label, "");
+    if pd.key == "dec" {
+        let names = ["Whole numbers", "Tenths", "Hundredths", "Thousandths"];
+        let mut cur = p.i("dec").clamp(0, 3);
+        ComboBox::from_id_salt(("math_dec", fig)).selected_text(names[cur as usize]).width(200.0).show_ui(ui, |ui| {
+            for (i, n) in names.iter().enumerate().take(3) {
+                ui.selectable_value(&mut cur, i as i64, *n);
+            }
+        });
+        if cur != p.i("dec") {
+            p.set_i("dec", cur);
+        }
+        return;
+    }
+    let other_id = egui::Id::new(("math_unit_other", fig));
+    let unit = p.s("unit").trim().to_string();
+    let other = ui.ctx().data(|d| d.get_temp::<bool>(other_id)).unwrap_or(false) || (!unit.is_empty() && !UNITS.contains(&unit.as_str()));
+    let shown = if other { "Other\u{2026}".to_string() } else if unit.is_empty() { "None".to_string() } else { unit.clone() };
+    let mut pick: Option<String> = None;
+    ComboBox::from_id_salt(("math_unit", fig)).selected_text(shown.clone()).width(200.0).show_ui(ui, |ui| {
+        if ui.selectable_label(shown == "None", "None").clicked() {
+            pick = Some(String::new());
+        }
+        for u in UNITS {
+            if ui.selectable_label(shown == u, u).clicked() {
+                pick = Some(u.to_string());
+            }
+        }
+        if ui.selectable_label(other, "Other\u{2026}").clicked() {
+            pick = Some("\u{0}".to_string());
+        }
+    });
+    match pick.as_deref() {
+        Some("\u{0}") => {
+            ui.ctx().data_mut(|d| d.insert_temp(other_id, true));
+        }
+        Some(u) => {
+            ui.ctx().data_mut(|d| d.insert_temp(other_id, false));
+            p.set_s("unit", u);
+        }
+        None => {}
+    }
+    if other {
+        let mut cur = p.s("unit").to_string();
+        if ui.add(TextEdit::singleline(&mut cur).desired_width(200.0).hint_text("e.g. km")).changed() {
+            p.set_s("unit", &cur);
+        }
+    }
+}
+
 fn param_control_inner(ui: &mut Ui, fig: &str, pd: &ParamDef, p: &mut Params) {
     let tight: f32 = if fig == "population-growth" && theme::chem_skin() {
         match pd.key {
@@ -3274,6 +3333,10 @@ fn param_control_inner(ui: &mut Ui, fig: &str, pd: &ParamDef, p: &mut Params) {
             phenotype_rows(ui, pd, p, &genes);
             return;
         }
+    }
+    if matches!(fig, "triangle" | "rectangle" | "parallelogram" | "trapezoid" | "kite" | "regular-polygon") && matches!(pd.key, "unit" | "dec") {
+        math_unit_dec(ui, fig, pd, p, label);
+        return;
     }
     match &pd.kind {
         Kind::Float { min, max, .. } if theme::chem_skin() && figures::random_key(fig) == Some(pd.key) => {

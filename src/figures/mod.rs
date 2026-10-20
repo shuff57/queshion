@@ -115,6 +115,9 @@ pub fn dynamic_label(fig: &str, key: &str, p: &Params) -> Option<String> {
 
 pub fn label_for(fig: &str, key: &str, p: &Params) -> Option<&'static str> {
     match fig {
+        // the reference's Labels card: two selects and one checkbox
+        "triangle" | "rectangle" | "parallelogram" | "trapezoid" | "kite" | "regular-polygon" if matches!(key, "unit" | "dec") => Some(if key == "unit" { "Unit" } else { "Round to" }),
+        "triangle" | "rectangle" | "parallelogram" | "trapezoid" | "kite" if key == "right" => Some("Right-angle squares"),
         "titration-curve" => {
             let base = p.s("kind").starts_with("Strong base") || p.s("kind").starts_with("Weak base");
             Some(match key {
