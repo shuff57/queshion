@@ -435,10 +435,18 @@ static SCATTERPLOT: [RefSection; 4] = [
     s("Appearance", &["point_size", "style", "label_size", "grid"], ""),
 ];
 
+static NORMAL_CURVE: [RefSection; 4] = [
+    s("Distribution", &["mean", "sd"], ""),
+    s("Shaded region", &["region", "by", "a", "b", "show_prob", "show_answers"], "Turn off Show answers for a student copy: the shaded region stays and the probability is hidden."),
+    s("Labels and text", &["title", "x_title", "ticks"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
         "histogram" => &HISTOGRAM,
+        "normal-curve" => &NORMAL_CURVE,
         "scatterplot" => &SCATTERPLOT,
         "bohr-model" => &FIG_1,
         "box-plot" => &FIG_2,

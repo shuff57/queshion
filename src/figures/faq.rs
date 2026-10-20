@@ -63,6 +63,7 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "sphere" => SPHERE,
         "box-plot" => BOX_PLOT,
         "histogram" => HISTOGRAM,
+        "normal-curve" => NORMAL_CURVE,
         "scatterplot" => SCATTERPLOT,
         "mapping-diagram" => MAPPING_DIAGRAM,
         "ruler-reading" => RULER_READING,
@@ -1291,5 +1292,28 @@ const SCATTERPLOT: &[Faq] = &[
     Faq {
         q: "Can I print it in black and white?",
         a: "Set Style to Print. The line is drawn dashed in black so it still stands out on a black-and-white copy.",
+    },
+];
+
+const NORMAL_CURVE: &[Faq] = &[
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The curve and the shaded region stay and the probability is hidden, so students find the area. Student + key saves both versions.",
+    },
+    Faq {
+        q: "What is the 68-95-99.7 rule?",
+        a: "About 68% of a normal distribution lies within 1 standard deviation of the mean, about 95% within 2 and about 99.7% within 3. Shade Between with bounds at the mean plus and minus 1, 2 or 3 standard deviations to see each.",
+    },
+    Faq {
+        q: "Should I give the bounds as values or z-scores?",
+        a: "Use x values for a real measurement such as an exam score, and z-scores for a standard normal question. A z-score is the number of standard deviations a value is above (positive) or below (negative) the mean.",
+    },
+    Faq {
+        q: "What do Below, Above, Between and Outside shade?",
+        a: "Below shades everything left of the upper bound, Above everything right of the lower bound, Between the part between the two bounds, and Outside both tails beyond them.",
+    },
+    Faq {
+        q: "How is the area found?",
+        a: "The area under the whole curve is 1, so the shaded area is the probability. It is computed exactly from the normal distribution function, not read off a table, so it can differ from a table value in the last digit.",
     },
 ];

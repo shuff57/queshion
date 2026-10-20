@@ -50,6 +50,13 @@ pub fn nice_step(range: f64, target: f64) -> f64 {
 
 /// A number as short axis text (no trailing zeros, a true minus sign).
 pub fn fmt(v: f64) -> String {
+    if !v.is_finite() {
+        return "?".into();
+    }
+    // past 1e15 the rounding below would overflow (and the digits are noise anyway)
+    if v.abs() >= 1e15 {
+        return format!("{v:e}").replace('-', "\u{2212}");
+    }
     let s = super::data::fmt_num((v * 1e9).round() / 1e9);
     s.replace('-', "\u{2212}")
 }
@@ -151,6 +158,17 @@ mod tests {
         assert!(ticks(0.0, f64::INFINITY, 1.0).is_empty());
         assert!(ticks(0.0, 1.0, 0.0).is_empty());
         assert_eq!(ticks(-1.0, 1.0, 1.0)[0].1, "\u{2212}1");
+    }
+
+    #[test]
+    fn fmt_survives_huge_and_odd_values() {
+        assert_eq!(fmt(1e300), "1e300");
+        assert_eq!(fmt(-2.5e20), "\u{2212}2.5e20");
+        assert_eq!(fmt(f64::INFINITY), "?");
+        assert_eq!(fmt(f64::NAN), "?");
+        assert_eq!(fmt(0.1 + 0.2), "0.3");
+        assert_eq!(fmt(-0.0), "0");
+        assert_eq!(fmt(999999999999999.0), "999999999999999");
     }
 
     #[test]
