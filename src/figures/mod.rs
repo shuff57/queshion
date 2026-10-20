@@ -20,6 +20,7 @@ pub mod interact;
 pub mod items;
 pub mod labels;
 pub mod layout;
+pub mod logic;
 pub mod math;
 pub mod math_geo;
 pub mod math_plot;
