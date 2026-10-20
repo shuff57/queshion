@@ -31,7 +31,7 @@ fn item_noun(fig: &str, letters: &str) -> &'static str {
 }
 
 fn is_text_like(pd: &ParamDef) -> bool {
-    matches!(pd.kind, Kind::Text | Kind::Long | Kind::List)
+    matches!(pd.kind, Kind::Text | Kind::Long | Kind::List | Kind::Data { .. })
 }
 
 fn plain_section(pd: &ParamDef) -> &'static str {
@@ -43,7 +43,7 @@ fn plain_section(pd: &ParamDef) -> &'static str {
             if has(&["answer", "blank", "hidden", "hide"]) { "Question mode" } else { "Show and hide" }
         }
         Kind::Color(_) => "Appearance",
-        Kind::Text | Kind::Long | Kind::List => {
+        Kind::Text | Kind::Long | Kind::List | Kind::Data { .. } => {
             if has(&["title", "xt", "yt", "label", "lab", "name", "caption", "question", "unit", "census", "organism", "prey", "pred", "inequality"]) {
                 "Labels and text"
             } else {

@@ -13,6 +13,7 @@ pub mod cards;
 mod census;
 pub mod chemistry;
 pub mod composite;
+pub mod data;
 pub mod faq;
 pub mod interact;
 pub mod items;
@@ -44,6 +45,10 @@ pub enum Kind {
     /// Comma/semicolon separated list edited as rows (data tables, point lists). Stored as the
     /// same string the generator already parses, so saved specs stay compatible.
     List,
+    /// Numbers a teacher types, pastes from a spreadsheet, opens from a CSV file or generates
+    /// from a seed (see `data`). Stored as the canonical text of `data::canonical`: `columns` 1
+    /// is `2, 4, 5`, 2 is one `x, y` row per line.
+    Data { columns: usize },
     /// Colour from a small palette of `#rrggbb` swatches (stored as the hex string).
     Color(Vec<&'static str>),
 }
@@ -79,6 +84,9 @@ impl ParamDef {
     }
     pub fn list(key: &'static str, label: &'static str, d: &str) -> Self {
         Self { key, label, hint: "", kind: Kind::List, default: Value::S(d.into()) }
+    }
+    pub fn data(key: &'static str, label: &'static str, columns: usize, d: &str) -> Self {
+        Self { key, label, hint: "", kind: Kind::Data { columns }, default: Value::S(d.into()) }
     }
     pub fn color(key: &'static str, label: &'static str, palette: &[&'static str], d: &str) -> Self {
         Self { key, label, hint: "", kind: Kind::Color(palette.to_vec()), default: Value::S(d.into()) }

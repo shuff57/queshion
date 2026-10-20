@@ -35,6 +35,8 @@ fn param_help(def: &FigureDef) -> String {
                 Kind::Text => "text".into(),
                 Kind::Long => "multi-line text".into(),
                 Kind::List => "list as text".into(),
+                Kind::Data { columns: 1 } => "numbers as text, comma separated".into(),
+                Kind::Data { .. } => "x, y rows as text, one pair per line".into(),
                 Kind::Color(o) => format!("colour, one of {}", o.join(", ")),
             };
             format!("- {} ({kind}; default {default}): {}", p.key, p.label)

@@ -215,7 +215,7 @@ fn declared() -> share_core::Declared {
                     FKind::Bool => share_core::ParamKind::Bool,
                     FKind::Choice(o) => share_core::ParamKind::Choice { options: o.iter().map(|s| s.to_string()).collect(), default: default_s },
                     FKind::Text => share_core::ParamKind::Text,
-                    FKind::Long | FKind::List => share_core::ParamKind::Long,
+                    FKind::Long | FKind::List | FKind::Data { .. } => share_core::ParamKind::Long,
                     FKind::Color(p) => share_core::ParamKind::Color { palette: p.iter().map(|s| s.to_string()).collect(), default: default_s },
                 };
                 share_core::ParamSpec { key: d.key.to_string(), kind }

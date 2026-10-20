@@ -24,6 +24,7 @@ mod cards_panel;
 mod chem_shell;
 mod lucide;
 mod composite_canvas;
+mod data_entry;
 mod pedigree_panel;
 
 const DEBOUNCE: Duration = Duration::from_millis(150);
@@ -73,14 +74,26 @@ fn demo_defs() -> Vec<FigureDef> {
         d.text(200.0, 200.0, 18.0, "middle", p.s("label"));
         d.finish()
     }
-    vec![FigureDef {
-        id: "demo-shapes",
-        subject: Subject::Math,
-        title: "Demo shapes",
-        blurb: "Test-only demo figure.",
-        params,
-        render,
-    }]
+    // a Computing figure on the shared pieces: Kind::Data, the style switch and show_answers
+    fn data_params() -> Vec<ParamDef> {
+        vec![ParamDef::data("data", "Data", 1, "3, 5, 8"), ParamDef::data("pts", "Points", 2, "1, 2\n3, 4"), figures::svg::style_param(), figures::answers_param()]
+    }
+    fn data_render(p: &Params) -> String {
+        let fills = figures::svg::Fills::new(p);
+        let mut d = figures::svg::Doc::new(300.0, 200.0);
+        d.defs(&fills.defs());
+        for (i, v) in figures::data::numbers(p.s("data")).iter().enumerate() {
+            d.rect(20.0 + i as f64 * 24.0, 180.0 - v * 8.0, 20.0, v * 8.0, &fills.series(i), "#000", 1.0);
+        }
+        if p.b(figures::SHOW_ANSWERS) {
+            d.text(150.0, 20.0, 14.0, "middle", "ANSWER");
+        }
+        d.finish()
+    }
+    vec![
+        FigureDef { id: "demo-shapes", subject: Subject::Math, title: "Demo shapes", blurb: "Test-only demo figure.", params, render },
+        FigureDef { id: "demo-data", subject: Subject::Computing, title: "Demo data", blurb: "Test-only data figure.", params: data_params, render: data_render },
+    ]
 }
 
 fn find_def(id: &str) -> Option<(usize, &'static FigureDef)> {
@@ -839,7 +852,7 @@ impl Workspace {
                 self.subject = None;
             }
             // a subject with no figures yet (Computing, until its first figure lands) shows no tab
-            for s in Subject::ALL.into_iter().filter(|s| reg().iter().any(|d| d.subject == *s)) {
+            for s in Subject::ALL.into_iter().filter(|s| reg().iter().any(|d| figures::listed_under(d, *s))) {
                 if tab(ui, s.name(), self.subject == Some(s)) {
                     self.subject = Some(s);
                 }
@@ -3616,6 +3629,7 @@ fn param_control_inner(ui: &mut Ui, fig: &str, pd: &ParamDef, p: &mut Params) {
                 p.0.insert(pd.key.to_string(), Value::S(cur));
             }
         }
+        Kind::Data { columns } => data_entry::data_control(ui, fig, pd, *columns, label, p),
         Kind::List => {
             param_label(ui, label, pd.hint);
             let (mut items, sep) = list_items(p.s(pd.key));
@@ -4052,6 +4066,35 @@ mod tests {
             assert!(ws.shown.is_some(), "{} did not render", d.id);
             assert!(ws.canvas.0 > 50.0, "{} canvas unknown", d.id);
         }
+    }
+
+    /// The Computing demo uses Kind::Data, style and show_answers: it opens in the generic (unskinned)
+    /// workspace, its data box and Generate popover draw, and the pair export differs as expected.
+    #[test]
+    fn computing_demo_uses_the_shared_pieces() {
+        let (i, def) = find_def("demo-data").unwrap();
+        assert_eq!(def.subject, Subject::Computing);
+        let mut ws = Workspace::new(false);
+        ws.select(i);
+        let ctx = egui::Context::default();
+        theme::setup(&ctx);
+        assert!(!ws.chem_open(), "Computing has no reference skin");
+        for _ in 0..3 {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let _ = ws.show(ui);
+            });
+            out.textures_delta.clear();
+        }
+        assert!(ws.shown.is_some());
+        // a spreadsheet column stored raw reads back; the tidy form is what the box writes on blur
+        ws.params.set_s("data", "2\n4\n6");
+        assert_eq!(figures::data::numbers(ws.params.s("data")), vec![2.0, 4.0, 6.0]);
+        let (student, key) = figures::answer_pair(def, &ws.params).unwrap();
+        assert!(!student.contains("ANSWER") && key.contains("ANSWER"));
+        ws.params.set_s("style", "Print");
+        let (print, _) = figures::answer_pair(def, &ws.params).unwrap();
+        assert!(print.contains("vs-hatch0") && !print.contains("#4f7cd4"));
+        assert!(figures::to_png(&print, 1.0).is_ok());
     }
 
     #[test]
