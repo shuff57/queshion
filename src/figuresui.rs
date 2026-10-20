@@ -25,6 +25,8 @@ mod chem_shell;
 mod lucide;
 mod composite_canvas;
 mod data_entry;
+#[cfg(test)]
+mod ui_test;
 mod pedigree_panel;
 
 const DEBOUNCE: Duration = Duration::from_millis(150);

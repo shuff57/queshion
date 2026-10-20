@@ -155,3 +155,77 @@ pub fn data_control(ui: &mut Ui, fig: &str, pd: &ParamDef, columns: usize, label
         p.0.insert(pd.key.to_string(), Value::S(s));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui_kittest::kittest::Queryable;
+    use egui_kittest::Harness;
+
+    fn def(columns: usize) -> ParamDef {
+        ParamDef::data("pts", "Numbers", columns, "")
+    }
+
+    fn harness(columns: usize, start: &str) -> Harness<'static, Params> {
+        let mut p = Params::defaults(&[def(columns)]);
+        p.set_s("pts", start);
+        crate::figuresui::ui_test::harness(move |ui, p: &mut Params| data_control(ui, "t", &def(columns), columns, "Numbers", p), p)
+    }
+
+    #[test]
+    fn typing_numbers_updates_the_value_and_the_count() {
+        let mut h = harness(1, "");
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).focus();
+        h.run();
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("4, 5, 6");
+        h.run();
+        assert_eq!(h.state().s("pts"), "4, 5, 6");
+        assert!(h.query_by_label_contains("3 values").is_some());
+    }
+
+    #[test]
+    fn a_spreadsheet_paste_is_tidied_when_the_box_is_left() {
+        let mut h = harness(2, "");
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).focus();
+        h.run();
+        h.event(egui::Event::Paste("x\ty\n1\t2\n3\t4\n".into()));
+        h.run();
+        // leave the box: the paste is rewritten to the canonical text (header dropped)
+        h.get_by_label("Clear").focus();
+        h.run();
+        h.run();
+        let got = h.state().s("pts").to_string();
+        assert_eq!(got, data::canonical("x\ty\n1\t2\n3\t4\n", 2).unwrap());
+        assert!(!got.contains('x') && got.contains("1") && got.contains("4"), "{got:?}");
+        assert!(h.query_by_label_contains("2 points").is_some() || h.query_by_label_contains("2 ").is_some());
+    }
+
+    #[test]
+    fn clear_empties_the_box() {
+        let mut h = harness(1, "1, 2, 3");
+        h.get_by_label("Clear").click();
+        h.run();
+        assert_eq!(h.state().s("pts"), "");
+    }
+
+    #[test]
+    fn generate_makes_the_asked_number_of_values() {
+        let mut h = harness(1, "");
+        h.get_by_label("Generate…").click();
+        h.run();
+        h.get_by_label("Make data").click();
+        h.run();
+        let n = data::numbers(h.state().s("pts")).len();
+        assert_eq!(n, 30, "the popover's default is 30 values: {:?}", h.state().s("pts"));
+    }
+
+    #[test]
+    fn generating_pairs_for_two_columns() {
+        let mut h = harness(2, "");
+        h.get_by_label("Generate…").click();
+        h.run();
+        h.get_by_label("Make data").click();
+        h.run();
+        assert_eq!(data::pairs(h.state().s("pts")).len(), 30);
+    }
+}
