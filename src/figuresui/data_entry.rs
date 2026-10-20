@@ -44,7 +44,12 @@ pub fn data_control(ui: &mut Ui, fig: &str, pd: &ParamDef, columns: usize, label
     let mut set: Option<String> = None;
 
     let hint = if columns <= 1 { "Type or paste numbers" } else { "Paste two columns (x, y)" };
-    let r = ui.add(TextEdit::multiline(&mut text).id(id).desired_width(f32::INFINITY).desired_rows(4).hint_text(hint).font(egui::TextStyle::Monospace));
+    // the box scrolls inside a fixed height, so 500 generated rows do not stretch the whole panel
+    let r = egui::ScrollArea::vertical()
+        .id_salt(id.with("scroll"))
+        .max_height(130.0)
+        .show(ui, |ui| ui.add(TextEdit::multiline(&mut text).id(id).desired_width(f32::INFINITY).desired_rows(4).hint_text(hint).font(egui::TextStyle::Monospace)))
+        .inner;
     if r.changed() {
         set = Some(text.clone());
     }

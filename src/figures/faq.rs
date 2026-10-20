@@ -63,6 +63,7 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "sphere" => SPHERE,
         "box-plot" => BOX_PLOT,
         "histogram" => HISTOGRAM,
+        "scatterplot" => SCATTERPLOT,
         "mapping-diagram" => MAPPING_DIAGRAM,
         "ruler-reading" => RULER_READING,
         _ => &[],
@@ -1267,5 +1268,28 @@ const HISTOGRAM: &[Faq] = &[
     Faq {
         q: "Can I print it in black and white?",
         a: "Set Style to Print. The bars are filled with hatching instead of colour, so they still read on a black-and-white copy.",
+    },
+];
+
+const SCATTERPLOT: &[Faq] = &[
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The points stay and the line of best fit, its equation and r are hidden, so students draw their own line and find r. Student + key saves both versions.",
+    },
+    Faq {
+        q: "How do I enter the pairs?",
+        a: "Type one x, y pair per line, or copy two columns from a spreadsheet and paste them in. A header row is skipped. Open CSV reads a file, and Generate makes pairs around a line you choose, from a seed.",
+    },
+    Faq {
+        q: "What does the line of best fit mean?",
+        a: "It is the least-squares line: the straight line that makes the squared vertical gaps from the points as small as possible. Its slope says how much y changes for each 1 in x.",
+    },
+    Faq {
+        q: "What does r tell me?",
+        a: "The correlation r runs from \u{2212}1 to 1. Near 1 the points rise along a line, near \u{2212}1 they fall along one, and near 0 there is no straight-line pattern. It is not shown when every y is the same.",
+    },
+    Faq {
+        q: "Can I print it in black and white?",
+        a: "Set Style to Print. The line is drawn dashed in black so it still stands out on a black-and-white copy.",
     },
 ];

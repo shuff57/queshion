@@ -428,10 +428,18 @@ static HISTOGRAM: [RefSection; 5] = [
     s("Appearance", &["style", "label_size", "grid"], ""),
 ];
 
+static SCATTERPLOT: [RefSection; 4] = [
+    s("Data", &["pts"], "Type or paste x, y pairs (two columns from a spreadsheet work), open a CSV, or generate sample data from a seed."),
+    s("Line of best fit", &["fit", "eq", "rval", "show_answers"], "Turn off Show answers for a student copy: the line, equation and r are hidden and the points stay."),
+    s("Labels and text", &["title", "x_title", "y_title"], ""),
+    s("Appearance", &["point_size", "style", "label_size", "grid"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
         "histogram" => &HISTOGRAM,
+        "scatterplot" => &SCATTERPLOT,
         "bohr-model" => &FIG_1,
         "box-plot" => &FIG_2,
         "circuit-diagram" => &FIG_3,

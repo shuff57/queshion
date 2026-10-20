@@ -36,13 +36,17 @@ fn as_number(cell: &str) -> Option<f64> {
     let c = cell.trim();
     // a percent sign from a spreadsheet is not part of the value
     let c = c.trim_end_matches('%');
-    c.parse::<f64>().ok().filter(|v| v.is_finite())
+    c.parse::<f64>().ok().filter(|v| v.is_finite() && v.abs() <= MAX_ABS)
 }
 
 /// The cells of `text` as rows: lines split at tabs, commas/semicolons or spaces.
 pub fn parse_table(text: &str) -> Vec<Vec<String>> {
     text.lines().map(str::trim).filter(|l| !l.is_empty()).map(split_line).collect()
 }
+
+/// Largest magnitude read as a number. Beyond this a value is junk for any figure (and would
+/// overflow the axis arithmetic), so it is skipped like a word.
+pub const MAX_ABS: f64 = 1e12;
 
 /// Most rows kept from one paste or file; the rest are dropped (a figure of more points than this
 /// is unreadable, and a huge paste must not freeze the preview).
@@ -253,6 +257,14 @@ mod tests {
         assert_eq!(r.skipped, 2);
         assert_eq!(summary("Score\n10\n12", 1), "2 values (1 skipped: not numbers)");
         assert_eq!(summary("7", 1), "1 value");
+    }
+
+    #[test]
+    fn absurd_magnitudes_are_skipped_like_words() {
+        let r = read("1, 1e308, -1e13, 2, 1e12", 1);
+        assert_eq!(r.rows, vec![vec![1.0], vec![2.0], vec![1e12]]);
+        assert_eq!(r.skipped, 2);
+        assert!(pairs("1e300, 1\n2, 3").len() == 1);
     }
 
     #[test]

@@ -7,8 +7,10 @@ use super::data;
 use super::svg::{self, Doc, Fills};
 use super::{answers_param, Example, FigureDef, ParamDef, Params, Subject, Value};
 
+mod scatter;
+
 pub fn defs() -> Vec<FigureDef> {
-    vec![FigureDef {
+    vec![scatter::def(), FigureDef {
         id: "histogram",
         subject: Subject::Math,
         title: "Histogram",
@@ -16,6 +18,9 @@ pub fn defs() -> Vec<FigureDef> {
         params: histogram_params,
         render: histogram_render,
     }]
+    .into_iter()
+    .rev()
+    .collect()
 }
 
 /// Params that only matter in some states of the figure.
@@ -23,7 +28,7 @@ pub fn relevant(fig: &str, key: &str, p: &Params) -> bool {
     match (fig, key) {
         ("histogram", "bin_width" | "bin_start") => !p.b("auto_bins"),
         ("histogram", "y_max") => !p.b("auto_y"),
-        _ => true,
+        _ => scatter::relevant(fig, key, p),
     }
 }
 
@@ -41,7 +46,7 @@ pub fn examples(id: &str) -> Option<Vec<Example>> {
             },
             Example { name: "Relative frequency", params: vec![("measure", s("Relative frequency")), ("values", Value::B(true))] },
         ],
-        _ => return None,
+        _ => return scatter::examples(id),
     })
 }
 
