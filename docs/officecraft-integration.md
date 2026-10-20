@@ -210,7 +210,7 @@ newer shell's `Cargo.lock`:
 | image | 0.25.10 | 0.25.10 | same (features union). |
 | flate2, ureq, rfd | 1.1.10, 3.4.2, 0.17.2 | same | same. |
 | sha2 | **0.10.9** | **0.11.0** (gridcraft-model, lopdf, ed25519) | two copies (+digest/block-buffer 0.10). Bump verSHion to 0.11 (`Sha256::digest` API unchanged; `format!("{hash:x}")` needs checking). |
-| equashion-* | **path** `../equaSHion` (HEAD `3d3b840`) | **git** `shuff57/equaSHion?rev=3d3b840` **and** a second copy from `shuff57/viSHual` (its vendored `equashion/`) | Same revision. Path source ≠ git source, so as-is verSHion would add a **third** copy. Switch verSHion to the same git rev (or let the shell `[patch]` it). |
+| equashion-* | **git** `shuff57/equaSHion?rev=3d3b840` (was a `../equaSHion` path until cfb72bc) | **git** `shuff57/equaSHion?rev=3d3b840` **and** a second copy from `shuff57/viSHual` (its vendored `equashion/`) | Same revision and same git source as the shell's first copy, so they unify. The viSHual vendored copy is still a separate source (or let the shell `[patch]` it). |
 | verSHion-only | `fontdb`, `fontconfig-parser`, `slotmap`, `unicode-vo`, `generic-array` | - | small. |
 
 Patch-level drifts (`serde_json` 1.0.151/154, `syn`, `uuid`, ...) resolve to one version in the
