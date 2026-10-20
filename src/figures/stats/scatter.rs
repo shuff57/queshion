@@ -119,20 +119,9 @@ pub fn equation(f: &Fit) -> String {
     s
 }
 
-/// A padded axis range with a nice step: the data's min and max rounded out to the step, with a
-/// little air so a point never sits on the frame.
+/// The scatterplot's axes: about six intervals, padded (see `chart::axis_range`).
 pub fn axis_range(lo: f64, hi: f64) -> (f64, f64, f64) {
-    let (lo, hi) = if hi > lo { (lo, hi) } else { (lo - 1.0, hi + 1.0) };
-    let step = chart::nice_step(hi - lo, 6.0);
-    let mut a = (lo / step - 1e-9).floor() * step;
-    let mut b = (hi / step + 1e-9).ceil() * step;
-    if lo - a < 0.1 * step {
-        a -= step;
-    }
-    if b - hi < 0.1 * step {
-        b += step;
-    }
-    (a, b, step)
+    chart::axis_range(lo, hi, 6.0)
 }
 
 /// The part of the line y = m x + b inside the box, if any (Liang-Barsky on y).

@@ -63,6 +63,7 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "sphere" => SPHERE,
         "box-plot" => BOX_PLOT,
         "histogram" => HISTOGRAM,
+        "dot-plot" => DOT_PLOT,
         "normal-curve" => NORMAL_CURVE,
         "scatterplot" => SCATTERPLOT,
         "mapping-diagram" => MAPPING_DIAGRAM,
@@ -1315,5 +1316,28 @@ const NORMAL_CURVE: &[Faq] = &[
     Faq {
         q: "How is the area found?",
         a: "The area under the whole curve is 1, so the shaded area is the probability. It is computed exactly from the normal distribution function, not read off a table, so it can differ from a table value in the last digit.",
+    },
+];
+
+const DOT_PLOT: &[Faq] = &[
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The dots and the mean and median marks are hidden and the labelled number line stays, so students plot the data themselves. Student + key saves both versions.",
+    },
+    Faq {
+        q: "My values are all different, so nothing stacks. What do I do?",
+        a: "Set Group size, for example 2 to put values within 1 of each other in one stack. Leave it at 0 for exact values, which suits whole-number data such as counts or shoe sizes.",
+    },
+    Faq {
+        q: "Mean or median?",
+        a: "Mark either or both. The mean is the balance point of the dots and is pulled toward a few very high or low values; the median is the middle value and is not. Seeing them apart is a good way to show skew.",
+    },
+    Faq {
+        q: "How do I paste data from a spreadsheet?",
+        a: "Copy a column, click in the Numbers box and paste. When you click away the numbers are tidied into a list. Open CSV reads a file, and Generate makes sample data from a seed.",
+    },
+    Faq {
+        q: "Can I print it in black and white?",
+        a: "Set Style to Print. The dots are filled grey with a black outline so they read on a black-and-white copy.",
     },
 ];

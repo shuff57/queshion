@@ -71,6 +71,22 @@ pub fn ticks(lo: f64, hi: f64, step: f64) -> Vec<Tick> {
     (k0..=k1.min(k0 + 400)).map(|k| (k as f64 * step, fmt(k as f64 * step))).collect()
 }
 
+/// A padded axis range with a nice step: the data's min and max rounded out to the step (about
+/// `target` intervals across), with a little air so a point never sits on the frame.
+pub fn axis_range(lo: f64, hi: f64, target: f64) -> (f64, f64, f64) {
+    let (lo, hi) = if hi > lo { (lo, hi) } else { (lo - 1.0, hi + 1.0) };
+    let step = nice_step(hi - lo, target);
+    let mut a = (lo / step - 1e-9).floor() * step;
+    let mut b = (hi / step + 1e-9).ceil() * step;
+    if lo - a < 0.1 * step {
+        a -= step;
+    }
+    if b - hi < 0.1 * step {
+        b += step;
+    }
+    (a, b, step)
+}
+
 /// Text rotated a quarter turn counter-clockwise about (x, y), centred (for y-axis titles).
 pub fn vtext(d: &mut Doc, x: f64, y: f64, size: f64, s: &str) {
     d.raw(&format!(

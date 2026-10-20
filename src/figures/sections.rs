@@ -442,10 +442,19 @@ static NORMAL_CURVE: [RefSection; 4] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static DOT_PLOT: [RefSection; 5] = [
+    s("Data", &["data", "group"], "Type or paste numbers, open a CSV, or generate sample data from a seed. Grouping rounds values so close ones share a stack."),
+    s("Number line", &["axis_auto", "axis_min", "axis_max", "axis_step"], ""),
+    s("Dots and marks", &["dot_size", "marks", "show_answers"], "Turn off Show answers for a student copy: the dots and marks are hidden and the number line stays."),
+    s("Labels and text", &["title", "x_title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
         "histogram" => &HISTOGRAM,
+        "dot-plot" => &DOT_PLOT,
         "normal-curve" => &NORMAL_CURVE,
         "scatterplot" => &SCATTERPLOT,
         "bohr-model" => &FIG_1,
