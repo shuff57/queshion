@@ -457,10 +457,18 @@ static STEM_AND_LEAF: [RefSection; 4] = [
     s("Appearance", &["label_size"], ""),
 ];
 
+static TWO_WAY_TABLE: [RefSection; 4] = [
+    s("Table", &["row_labels", "col_labels", "cells", "row_title", "col_title"], "Name the rows and columns, then type the counts one line per row. The totals are worked out for you."),
+    s("Student copy", &["blank", "blank_count", "show_answers"], "Turn off Show answers for a student copy: the chosen boxes are left empty. Show answers fills them in, in bold."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
         "histogram" => &HISTOGRAM,
+        "two-way-table" => &TWO_WAY_TABLE,
         "stem-and-leaf" => &STEM_AND_LEAF,
         "dot-plot" => &DOT_PLOT,
         "normal-curve" => &NORMAL_CURVE,

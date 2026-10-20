@@ -63,6 +63,7 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "sphere" => SPHERE,
         "box-plot" => BOX_PLOT,
         "histogram" => HISTOGRAM,
+        "two-way-table" => TWO_WAY_TABLE,
         "stem-and-leaf" => STEM_AND_LEAF,
         "dot-plot" => DOT_PLOT,
         "normal-curve" => NORMAL_CURVE,
@@ -1363,5 +1364,28 @@ const STEM_AND_LEAF: &[Faq] = &[
     Faq {
         q: "How are negative numbers shown?",
         a: "Negative stems have a minus sign, and the stems run from the most negative up through -0 and 0. A leaf belongs to its stem's number, so -3 | 2 means -32, and the leaves on a negative stem go from the lowest value to the highest.",
+    },
+];
+
+const TWO_WAY_TABLE: &[Faq] = &[
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. By default the row totals, column totals and grand total are left as empty boxes. Use Blank for students to leave some counts empty as well, or instead. Student + key saves both versions, with the answers in bold on the key.",
+    },
+    Faq {
+        q: "How do I enter the counts?",
+        a: "Type the row names and column names separated by commas, then one line of counts per row. The table is as big as the names you give. Counts left out are 0.",
+    },
+    Faq {
+        q: "Which cells are left blank?",
+        a: "The blanks are taken along the table's diagonals, so they do not all land in one row or column. Change How many cells to leave more or fewer.",
+    },
+    Faq {
+        q: "Can I show percentages?",
+        a: "Not yet. The table shows counts and their totals. Type percentages as the counts if you want a table of percentages; the totals add them up.",
+    },
+    Faq {
+        q: "Can I print it in black and white?",
+        a: "Set Style to Print. The shaded header, side and total cells become light grey.",
     },
 ];
