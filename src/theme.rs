@@ -431,6 +431,27 @@ pub fn icon_font(size: f32) -> egui::FontId {
     egui::FontId::new(size, FontFamily::Name(ICON_FAMILY.into()))
 }
 
+// The Phosphor icons the app draws, cut from the full regular face at compile time (that face
+// holds ~1 500 icons and weighs 477 KiB). Code keeps naming icons `egui_phosphor::regular::X`
+// (or `ph::X`); an icon missing here draws as an empty box, and the test
+// `every_phosphor_icon_used_is_in_the_subset` fails until it is added.
+egui_phosphor::subset! {
+    pub mod icons {
+        use regular::{
+            ARROW_CLOCKWISE, ARROW_COUNTER_CLOCKWISE, ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT, ARROW_UP,
+            ARROW_UP_RIGHT, ARROW_U_UP_LEFT, ARROW_U_UP_RIGHT, ATOM, BEZIER_CURVE, BOOKMARK_SIMPLE,
+            BOOKS, BUG, CAMERA, CARET_DOWN, CARET_RIGHT, CARET_UP, CHART_BAR, CHART_LINE,
+            CHART_LINE_UP, CHART_SCATTER, COFFEE, COPY, COPY_SIMPLE, DNA, DROP, ENVELOPE_SIMPLE,
+            EXAM, EXPORT, EYE, FILE, FILE_ARROW_DOWN, FLASK, GEAR, GRID_FOUR, GRID_NINE, HOUSE,
+            IMAGE, IMAGES, INFO, KEY, LIST_BULLETS, LOCK_SIMPLE, MAGNIFYING_GLASS, MAP_PIN, MOON,
+            PALETTE, PAPERCLIP, PENCIL_SIMPLE, PENCIL_SIMPLE_LINE, PLAY_CIRCLE, PLUS, PRINTER,
+            PROHIBIT, QUESTION, ROWS, RULER, SELECTION, SHAPES, SLIDERS_HORIZONTAL, SPARKLE, SUN,
+            TABLE, TAG, TEXT_AA, TEXT_H, TEXT_T, THERMOMETER, TRASH, TREE_STRUCTURE,
+            UPLOAD_SIMPLE, WAVE_SINE, X,
+        };
+    }
+}
+
 /// Builds the house faces from the bundled bytes (src/fonts.rs: compiled in natively; on the web
 /// partly fetched before the app starts). No filesystem access, so the same faces are available
 /// on the desktop, in the browser and inside officecraft.
@@ -532,11 +553,7 @@ fn load_fonts() -> FontDefinitions {
     defs.families.insert(fam, fonts);
     // Phosphor icons: registered as a named family and as a proportional fallback, so icon
     // glyphs can also appear in ordinary labels.
-    egui_phosphor::add_font_bytes_to_fonts(
-        &mut defs,
-        ICON_FAMILY,
-        egui_phosphor::bytes::regular::FONT,
-    );
+    egui_phosphor::add_font_bytes_to_fonts(&mut defs, ICON_FAMILY, &icons::regular::FONT);
     // Every named family must reach the icon face too, or an icon inside a bold/serif label
     // renders as tofu.
     for fonts in defs.families.values_mut() {
@@ -663,5 +680,53 @@ mod tests {
         }
         let prop = &defs.families[&FontFamily::Proportional];
         assert_eq!(prop.first().map(String::as_str), Some("SourceSans3-Regular"));
+    }
+
+    /// Every Phosphor icon the code names (`egui_phosphor::regular::X`, or `ph::X` where a file
+    /// aliases `egui_phosphor::regular as ph`) must be in the compile-time subset (`icons`), or it
+    /// would draw as an empty box.
+    #[test]
+    fn every_phosphor_icon_used_is_in_the_subset() {
+        fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for e in std::fs::read_dir(dir).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    rust_files(&p, out);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    out.push(p);
+                }
+            }
+        }
+        let names_after = |src: &str, prefix: &str| -> Vec<String> {
+            src.match_indices(prefix)
+                .filter(|(i, _)| *i == 0 || !src[..*i].ends_with(|c: char| c.is_alphanumeric() || c == '_'))
+                .map(|(i, _)| src[i + prefix.len()..].chars().take_while(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || *c == '_').collect::<String>())
+                .filter(|n| n.starts_with(|c: char| c.is_ascii_uppercase()))
+                .collect()
+        };
+        let this = include_str!("theme.rs");
+        let list_at = this.find("use regular::{").unwrap();
+        let list = &this[list_at + "use regular::{".len()..];
+        let subset: Vec<&str> = list[..list.find('}').unwrap()].split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+        assert!(subset.len() > 50, "{subset:?}");
+        let mut files = Vec::new();
+        rust_files(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut files);
+        let mut used = std::collections::BTreeSet::new();
+        for f in &files {
+            let src = std::fs::read_to_string(f).unwrap();
+            used.extend(names_after(&src, "egui_phosphor::regular::"));
+            if src.contains("egui_phosphor::regular as ph") {
+                used.extend(names_after(&src, "ph::"));
+            }
+        }
+        assert!(used.contains("HOUSE") && used.contains("TRASH"), "{used:?}");
+        let missing: Vec<&String> = used.iter().filter(|n| !subset.contains(&n.as_str())).collect();
+        assert!(missing.is_empty(), "add these to theme::icons: {missing:?}");
+        // The subset really holds a glyph for each icon.
+        let face = ttf_parser::Face::parse(&icons::regular::FONT, 0).unwrap();
+        for icon in [icons::regular::HOUSE, icons::regular::X, icons::regular::WAVE_SINE] {
+            let c = icon.chars().next().unwrap();
+            assert!(face.glyph_index(c).is_some_and(|g| face.glyph_bounding_box(g).is_some()), "{c:?}");
+        }
     }
 }

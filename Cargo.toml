@@ -50,7 +50,9 @@ equashion-font = { git = "https://github.com/shuff57/equaSHion", rev = "3d3b840c
 resvg = { version = "0.45", default-features = false, features = ["text", "system-fonts"] }
 ttf-parser = "0.25"  # already in the tree via resvg/fontdb; PDF font metrics + subsetting (src/fonts.rs)
 flate2 = "1"         # already in the tree via zip/png; FlateDecode for embedded PDF fonts
-egui-phosphor = { version = "0.14", default-features = false, features = ["regular"] }
+# "subset" cuts the icon face down to the icons the app uses (theme::icons) at compile time; it
+# turns on every variant's constants, but only the subset's bytes reach the binary.
+egui-phosphor = { version = "0.14", default-features = false, features = ["regular", "subset"] }
 # Shared-pool client (src/share): secrets are wiped from memory when dropped; the server address is parsed strictly.
 zeroize = "1"
 url = "2"
