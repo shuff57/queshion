@@ -29,6 +29,10 @@ pub fn label_name(ctx: &egui::Context, text: &str, size: f32) -> RichText {
     t.family(if chem_page(ctx) || ctx.data(|d| d.get_temp::<bool>(egui::Id::new("bio_skin_page"))).unwrap_or(false) { theme::semibold_family() } else { theme::bold_family() })
 }
 
+/// The reference sites' page skins (top header instead of the rail, subject home pages) are off:
+/// a figure picked on the unified Figures tab opens in the app's own editor. Flip to bring them back.
+pub const SITE_SKINS: bool = false;
+
 pub fn skinned(s: figures::Subject) -> bool {
     matches!(s, figures::Subject::Chemistry | figures::Subject::Biology | figures::Subject::Math | figures::Subject::Physics)
 }
@@ -571,7 +575,7 @@ impl crate::App {
 impl Workspace {
     /// The chemistry skin applies to a generated chemistry figure in the standalone (non-modal) view.
     pub(super) fn chem_open(&self) -> bool {
-        !self.modal && self.imp.is_none() && self.sel.is_some_and(|i| skinned(super::reg()[i].subject) && super::reg()[i].id != "composite-shape")
+        SITE_SKINS && !self.modal && self.imp.is_none() && self.sel.is_some_and(|i| skinned(super::reg()[i].subject) && super::reg()[i].id != "composite-shape")
     }
 
     /// The subject whose page skin is showing (chemistry or biology), if any.
@@ -1295,7 +1299,7 @@ pub fn segmented_track(ui: &mut Ui, opts: &[&'static str], cur: &mut String) {
 impl Workspace {
     /// The Chemistry tab of the figure list wears the chemistry site's home page.
     pub(super) fn chem_list(&self) -> bool {
-        !self.modal && self.sel.is_none() && self.imp.is_none() && self.subject.is_some_and(skinned)
+        SITE_SKINS && !self.modal && self.sel.is_none() && self.imp.is_none() && self.subject.is_some_and(skinned)
     }
 
     /// The reference's home page: a centred 888 px column with the hero, a search box and a
