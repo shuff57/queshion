@@ -42,11 +42,11 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 sha2 = "0.10"
 zip = { version = "3", default-features = false, features = ["deflate"] }
 roxmltree = "0.20"  # already in the tree via resvg/usvg; DOM reader for Moodle XML, QTI and .xlsx
-equashion-math = { path = "../equaSHion/crates/math" }
-equashion-layout = { path = "../equaSHion/crates/layout", features = ["extra-fonts"] }
-equashion-render = { path = "../equaSHion/crates/render", features = ["raster", "extra-fonts"] }
-equashion-egui = { path = "../equaSHion/crates/egui" }
-equashion-font = { path = "../equaSHion/crates/font" }  # already in the tree via equashion-layout; its bundled STIX Two Math is the PDF's fallback face (src/fonts.rs)
+equashion-math = { git = "https://github.com/shuff57/equaSHion", rev = "3d3b840c65d7b6e0e7933c6cd95e171384fdfb54" }
+equashion-layout = { git = "https://github.com/shuff57/equaSHion", rev = "3d3b840c65d7b6e0e7933c6cd95e171384fdfb54", features = ["extra-fonts"] }
+equashion-render = { git = "https://github.com/shuff57/equaSHion", rev = "3d3b840c65d7b6e0e7933c6cd95e171384fdfb54", features = ["raster", "extra-fonts"] }
+equashion-egui = { git = "https://github.com/shuff57/equaSHion", rev = "3d3b840c65d7b6e0e7933c6cd95e171384fdfb54" }
+equashion-font = { git = "https://github.com/shuff57/equaSHion", rev = "3d3b840c65d7b6e0e7933c6cd95e171384fdfb54" }  # already in the tree via equashion-layout; its bundled STIX Two Math is the PDF's fallback face (src/fonts.rs)
 resvg = { version = "0.45", default-features = false, features = ["text", "system-fonts"] }
 ttf-parser = "0.25"  # already in the tree via resvg/fontdb; PDF font metrics + subsetting (src/fonts.rs)
 flate2 = "1"         # already in the tree via zip/png; FlateDecode for embedded PDF fonts
