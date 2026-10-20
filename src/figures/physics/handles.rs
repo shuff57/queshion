@@ -355,8 +355,8 @@ fn waves(p: &Params, size: (f64, f64)) -> Vec<Handle> {
         out.push(lab(m, (px(wl / 4.0) + 14.0, (py(0.0) + py(a)) / 2.0 - 8.0), 30.0, "amp_lab"));
         let (s, e) = if wl * 1.25 <= xmax.min(wl * p.f("cycles")) + 1e-9 { (wl / 4.0, wl * 1.25) } else { (0.0, wl) };
         out.push(lab(m, ((px(s) + px(e)) / 2.0, py(a) - 22.0 - 12.0), 36.0, "wl_lab"));
-        out.push(lab(m, (x0 + w / 2.0, y0 + h + 30.0), 200.0, "xt"));
-        out.push(Handle::label(m.p((x0 - 52.0, y0 + h / 2.0)), (24.0, 120.0), "yt", "Double-click to edit the axis title"));
+        out.push(lab(m, (x0 + w / 2.0, y0 + h + 20.0), 200.0, "xt"));
+        out.push(Handle::label(m.p((x0 - 40.0, y0 + h / 2.0)), (24.0, 120.0), "yt", "Double-click to edit the axis title"));
     } else if let Some((by, bh)) = l.strip {
         let ax = l.sx;
         let (x0, w, xmin, xmax) = (ax.x0, ax.w, ax.xmin, ax.xmax);

@@ -7,10 +7,10 @@ use super::*;
 mod handles;
 pub mod gel;
 pub mod pedigree;
-mod pipette;
+pub mod pipette;
 mod plot;
 pub mod popdyn;
-mod punnett;
+pub mod punnett;
 
 /// Direct-manipulation handles for this subject's figures (None = not one of ours).
 /// "Start from an example" entries for this subject's figures.
@@ -71,7 +71,7 @@ pub fn defs() -> Vec<FigureDef> {
             id: "population-growth",
             subject: Subject::Biology,
             title: "Population Growth",
-            blurb: "Graph exponential, logistic, overshoot or boom-and-crash growth, with growth-rate panels and census points.",
+            blurb: "J- and S-shaped growth curves, as numbers or per capita rates.",
             params: || with_ls(popdyn::growth_params()),
             render: |p| svg::with_label_size(popdyn::growth_render(p), p),
         },
@@ -79,7 +79,7 @@ pub fn defs() -> Vec<FigureDef> {
             id: "punnett-square",
             subject: Subject::Biology,
             title: "Punnett Square",
-            blurb: "Cross two parents (monohybrid, dihybrid or X-linked) and get the grid, shading and genotype and phenotype ratios.",
+            blurb: "Any cross from Tt × Tt to X-linked, filled in or left for students.",
             params: || with_ls(punnett::params()),
             render: |p| svg::with_label_size(punnett::render(p), p),
         },
@@ -87,15 +87,15 @@ pub fn defs() -> Vec<FigureDef> {
             id: "pedigree",
             subject: Subject::Biology,
             title: "Pedigree",
-            blurb: "Generate a family tree for a chosen inheritance pattern, with affected and carrier symbols, numbering and a key.",
+            blurb: "A random family for any inheritance mode, or one you change by hand.",
             params: pedigree::params,
             render: pedigree::render,
         },
         FigureDef {
             id: "predator-prey",
             subject: Subject::Biology,
-            title: "Predator-Prey Cycles",
-            blurb: "Lotka-Volterra population cycles for a predator and its prey, over time or as a phase plot.",
+            title: "Predator\u{2013}Prey Cycles",
+            blurb: "Predator and prey populations rising and falling out of step.",
             params: || with_ls(popdyn::pp_params()),
             render: |p| svg::with_label_size(popdyn::pp_render(p), p),
         },
@@ -103,7 +103,7 @@ pub fn defs() -> Vec<FigureDef> {
             id: "gel-electrophoresis",
             subject: Subject::Biology,
             title: "Gel Electrophoresis",
-            blurb: "Lay out DNA ladders and sample lanes on an agarose gel, positioned by fragment size.",
+            blurb: "An agarose gel with a DNA ladder and the band sizes you type.",
             params: gel::params,
             render: gel::render,
         },
@@ -111,7 +111,7 @@ pub fn defs() -> Vec<FigureDef> {
             id: "micropipette-reading",
             subject: Subject::Biology,
             title: "Micropipette Reading",
-            blurb: "A micropipette whose digital display reads a chosen volume, for practice reading the dial.",
+            blurb: "A micropipette’s volume display, set to the volume you type.",
             params: pipette::params,
             render: pipette::render,
         },

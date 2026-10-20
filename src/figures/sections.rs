@@ -61,10 +61,11 @@ static FIG_5: [RefSection; 5] = [
     s("Labels", &["h_lab", "h_label", "l_lab", "l_label", "lean_lab", "lean_label", "r_lab", "r_label", "d_lab", "d_label", "label_offsets"], "Drag any label on the figure to move it."),
 ];
 
-static FIG_6: [RefSection; 3] = [
+static FIG_6: [RefSection; 4] = [
     s("Titles", &["title", "equations", "eq_labels", "title_mode", "xtitle_mode", "xtitle", "ytitle_mode", "ytitle"], ""),
-    s("x-axis", &["xmin", "xmax", "xstep", "ymin", "ymax", "ystep", "numbers", "arrows", "square", "xlabel", "ylabel", "points", "pt_color", "xnum", "ynum", "xunits"], ""),
-    s("Grid", &["minor", "grid", "line_width", "shading", "asymptotes", "endpoints", "pt_style", "pt_label"], ""),
+    s("x-axis", &["xmin", "xmax", "xstep", "numbers", "arrows", "square", "xlabel", "xnum", "xunits"], ""),
+    s("y-axis", &["ymin", "ymax", "ystep", "ylabel", "ynum"], ""),
+    s("Grid", &["minor", "grid", "line_width", "shading", "asymptotes", "endpoints", "points", "pt_color", "pt_style", "pt_label"], ""),
 ];
 
 static FIG_7: [RefSection; 5] = [
@@ -91,10 +92,10 @@ static FIG_9: [RefSection; 5] = [
 ];
 
 static FIG_10: [RefSection; 4] = [
-    s("Lanes", &["lanes", "lane_names", "lane_labels", "lane_numbers"], ""),
+    s("Lanes", &["lanes"], ""),
     s("Gel", &["setup", "agarose", "look", "ruler"], ""),
-    s("Labels", &["sizes", "electrodes", "answer", "ladder_sizes", "size_units", "electrode_style", "answer_kind"], ""),
-    s("Chart title and answer key", &["title", "band_height", "run_length"], ""),
+    s("Labels", &["lane_names", "lane_labels", "lane_numbers", "sizes", "ladder_sizes", "size_units", "electrodes", "electrode_style"], ""),
+    s("Chart title and answer key", &["title", "answer", "answer_kind", "band_height", "run_length"], ""),
 ];
 
 static FIG_11: [RefSection; 7] = [
@@ -103,7 +104,7 @@ static FIG_11: [RefSection; 7] = [
     s("Titles", &["mode", "substance", "mp", "bp", "start", "end", "title"], ""),
     s("x-axis", &["xtitle_style", "xtitle", "xaxis_fit", "xaxis"], ""),
     s("y-axis", &["ylabel", "ytitle_style"], ""),
-    s("More options", &["title_style", "xaxis_from", "xaxis_to", "xaxis_by", "xaxis_num", "xaxis_lab", "xaxis_lab_text", "xaxis_lo", "xaxis_hi", "yaxis_from", "yaxis_to", "yaxis_by", "yaxis_num", "yaxis_lab", "yaxis_lab_text", "yaxis_lo", "yaxis_hi"], ""),
+    s("More options", &["label_size", "title_style", "xaxis_from", "xaxis_to", "xaxis_by", "xaxis_num", "xaxis_lab", "xaxis_lab_text", "xaxis_lo", "xaxis_hi", "yaxis_from", "yaxis_to", "yaxis_by", "yaxis_num", "yaxis_lab", "yaxis_lab_text", "yaxis_lo", "yaxis_hi"], ""),
     s("Grid", &["minor_grid"], ""),
 ];
 
@@ -135,12 +136,12 @@ static FIG_14: [RefSection; 6] = [
 ];
 
 static FIG_15: [RefSection; 6] = [
-    s("Structure", &["formula", "preset", "lone", "formal", "expand"], "Built around O as the central atom."),
-    s("Look", &["shape", "bond_style"], ""),
-    s("Changes", &["central"], "Make a wrong structure for a “find the mistake” question. Click an atom or bond in the figure, or type the change below."),
-    s("Title and answer key", &["title", "tweak", "resonance", "resonance_pick"], ""),
+    s("Structure", &["formula", "preset"], "Built around O as the central atom."),
+    s("Look", &["shape", "bond_style", "formal"], ""),
     s("Question", &["question"], ""),
-    s("More options", &["title_style", "answer"], ""),
+    s("Changes", &["central", "tweak"], "Make a wrong structure for a \u{201c}find the mistake\u{201d} question. Click an atom or bond in the figure, or change one below."),
+    s("Title and answer key", &["title_style", "title", "answer"], ""),
+    s("More options", &["lone", "expand", "resonance", "resonance_pick"], ""),
 ];
 
 static FIG_16: [RefSection; 6] = [
@@ -167,12 +168,12 @@ static FIG_18: [RefSection; 5] = [
 ];
 
 static FIG_19: [RefSection; 7] = [
-    s("Peaks", &["values"], ""),
-    s("For the student", &["element", "custom", "custom_name", "show_name", "leave_out"], ""),
-    s("Titles", &["title", "xtitle_style", "xtitle", "ytitle_style", "ytitle"], ""),
-    s("x-axis", &["source", "xaxis_fit"], ""),
-    s("Isotopes", &["molecule", "relative"], ""),
-    s("More options", &["answer", "title_style", "xaxis_from", "xaxis_to", "xaxis_by", "xaxis_num", "xaxis_lab", "xaxis_lab_text", "xaxis_lo", "xaxis_hi", "yaxis_from", "yaxis_to", "yaxis_by", "yaxis_num", "yaxis_lab", "yaxis_lab_text", "yaxis_lo", "yaxis_hi"], ""),
+    s("Isotopes", &["source", "element", "custom", "molecule"], ""),
+    s("Peaks", &["relative", "values"], ""),
+    s("For the student", &["show_name", "custom_name", "leave_out", "answer"], ""),
+    s("Titles", &["title_style", "title", "xtitle_style", "xtitle", "ytitle_style", "ytitle"], ""),
+    s("x-axis", &["xaxis_fit", "xaxis_from", "xaxis_to", "xaxis_by", "xaxis_num", "xaxis_lab", "xaxis_lab_text", "xaxis_lo", "xaxis_hi"], ""),
+    s("y-axis", &["yaxis_from", "yaxis_to", "yaxis_by", "yaxis_num", "yaxis_lab", "yaxis_lab_text", "yaxis_lo", "yaxis_hi"], ""),
     s("Grid", &["minor_grid"], ""),
 ];
 
@@ -196,14 +197,13 @@ static FIG_22: [RefSection; 1] = [
     s("Line", &["min", "max", "step", "label_every", "minor", "numbers", "arrows", "inequality", "points", "label", "ineq_color", "pt_color", "step_text", "frac_style", "inequality2", "pt_values"], ""),
 ];
 
-static FIG_23: [RefSection; 7] = [
-    s("Atom or ion", &["charge"], ""),
+static FIG_23: [RefSection; 6] = [
+    s("Atom or ion", &["element", "charge"], ""),
     s("Configuration", &["order", "exceptions"], ""),
-    s("Look", &["element", "layout", "shorthand", "arrows", "orbitals", "edits"], ""),
+    s("Look", &["layout", "shorthand", "arrows", "orbitals", "edits"], ""),
     s("For the student", &["blank", "config", "caption", "config_blank", "symbol_style", "sublabels"], ""),
     s("Changes", &["extra_empty"], "Click an orbital to change its electrons, for a “which rule is broken?” question."),
-    s("Title and answer key", &["title"], ""),
-    s("More options", &["title_style", "answer"], ""),
+    s("Title and answer key", &["title", "title_style", "answer"], ""),
 ];
 
 static FIG_24: [RefSection; 2] = [
@@ -242,13 +242,12 @@ static FIG_28: [RefSection; 4] = [
     s("More options", &["answer", "title_style"], ""),
 ];
 
-static FIG_29: [RefSection; 6] = [
-    s("Energy axis", &["units", "gridlines"], ""),
-    s("Peaks", &["labels", "counts", "source", "custom", "drawn", "sublabel_style", "energies"], ""),
-    s("For the student", &["names", "numbered"], "The answer key always names the element and its configuration."),
-    s("Title and answer key", &["title", "compare", "scale"], ""),
-    s("Element", &["element"], ""),
-    s("More options", &["title_style", "answer"], ""),
+static FIG_29: [RefSection; 5] = [
+    s("Element", &["element", "compare"], ""),
+    s("Energy axis", &["scale", "units", "gridlines"], ""),
+    s("Peaks", &["drawn", "sublabel_style", "labels", "counts", "source", "custom", "energies"], ""),
+    s("For the student", &["names", "numbered"], ""),
+    s("Title and answer key", &["title", "title_style", "answer"], ""),
 ];
 
 static FIG_30: [RefSection; 9] = [
@@ -297,7 +296,7 @@ static FIG_34: [RefSection; 4] = [
 ];
 
 static FIG_35: [RefSection; 5] = [
-    s("Phenotypes", &["phenotypes"], ""),
+    s("Phenotypes", &["phenotypes"], "Names for what each allele looks like, for the summary, key and cells."),
     s("Square", &["cross", "dominance", "parents", "filled", "parent_labels", "blank_parents", "blank_gametes", "cells", "blank_cells", "cell_phenotype"], ""),
     s("Shading", &["shading", "shade_style", "shade_color"], ""),
     s("Ratios", &["geno_ratio", "geno_ratio_style", "pheno_ratio", "pheno_ratio_style", "ratio_form", "sex_split"], "Genotypes and phenotypes under the square."),
@@ -356,14 +355,15 @@ static FIG_42: [RefSection; 5] = [
     s("Magnifier", &["mag_show", "mag_marks"], ""),
 ];
 
-static FIG_43: [RefSection; 7] = [
-    s("Marked points", &["equiv", "half", "eq_label", "half_label", "eq_label_style", "half_mark", "half_label_style"], ""),
-    s("Curve", &["curve_color", "common", "source", "kp_start", "kp_end", "kp_veq", "kp_eqph"], ""),
-    s("Titles", &["title", "xlabel", "xtitle_style", "ytitle_style", "ytitle"], ""),
-    s("x-axis", &["xmax", "xaxis_fit"], ""),
-    s("Titration", &["kind", "molarity", "volume", "titrant", "pk"], ""),
-    s("More options", &["answer", "title_style", "xaxis_from", "xaxis_to", "xaxis_by", "xaxis_num", "xaxis_lab", "xaxis_lab_text", "xaxis_lo", "xaxis_hi", "yaxis_from", "yaxis_to", "yaxis_by", "yaxis_num", "yaxis_lab", "yaxis_lab_text", "yaxis_lo", "yaxis_hi"], ""),
+static FIG_43: [RefSection; 8] = [
+    s("Titration", &["kind", "common", "source", "molarity", "volume", "titrant", "pk", "kp_start", "kp_end", "kp_veq", "kp_eqph"], ""),
+    s("Marked points", &["equiv", "eq_label_style", "eq_label", "half_mark", "half_label_style", "half_label", "half"], ""),
+    s("Curve", &["curve_color"], ""),
+    s("Titles", &["title_style", "title", "xtitle_style", "xlabel", "ytitle_style", "ytitle"], ""),
+    s("x-axis", &["xaxis_from", "xaxis_to", "xaxis_by", "xaxis_num", "xaxis_lab", "xaxis_lab_text", "xaxis_lo", "xaxis_hi"], ""),
+    s("y-axis", &["yaxis_from", "yaxis_to", "yaxis_by", "yaxis_num", "yaxis_lab", "yaxis_lab_text", "yaxis_lo", "yaxis_hi"], ""),
     s("Grid", &["minor_grid"], ""),
+    s("More options", &["answer", "label_size", "xaxis_fit", "xmax"], ""),
 ];
 
 static FIG_44: [RefSection; 6] = [
@@ -377,9 +377,9 @@ static FIG_44: [RefSection; 6] = [
 
 static FIG_45: [RefSection; 4] = [
     s("Heights", &["name_a", "name_b", "name_c", "m_a", "m_b", "m_c", "m_ab", "m_bc", "m_ca", "other", "height"], ""),
+    s("Labels", &["a_lab", "a_label", "a_arcs", "b_lab", "b_label", "b_arcs", "c_lab", "c_label", "c_arcs", "ab_lab", "ab_label", "bc_lab", "bc_label", "ca_lab", "ca_label", "height_label", "label_offsets"], "Drag any label on the figure to move it."),
     s("Position", &["bottom", "rotate"], ""),
     s("More options", &["ab_ticks", "bc_ticks", "ca_ticks", "right", "vertices", "unit", "dec", "fill", "flip", "label_size", "line_style", "height_text"], ""),
-    s("Labels", &["a_lab", "a_label", "a_arcs", "b_lab", "b_label", "b_arcs", "c_lab", "c_label", "c_arcs", "ab_lab", "ab_label", "bc_lab", "bc_label", "ca_lab", "ca_label", "height_label", "label_offsets"], "Drag any label on the figure to move it."),
 ];
 
 static FIG_46: [RefSection; 4] = [
@@ -483,6 +483,8 @@ pub fn live_help(fig: &str, title: &str, help: &str, p: &super::Params) -> Strin
         return h;
     }
     match (fig, title) {
+        ("micropipette-reading", "Micropipette") => super::biology::pipette::notes(p).0,
+        ("micropipette-reading", "Reading") => super::biology::pipette::notes(p).1,
         ("spring-scale", "Reading") => {
             let cap = p.s("cap").trim_end_matches(" N").trim().parse::<f64>().unwrap_or(10.0);
             format!("From 0 to {} N, to 2 decimal places.", super::chemistry::num(cap, if cap.fract() == 0.0 { 0 } else { 1 }))

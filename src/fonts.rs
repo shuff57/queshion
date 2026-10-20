@@ -17,6 +17,22 @@ pub static SERIF_BOLD_ITALIC: &[u8] = include_bytes!("../assets/fonts/SourceSeri
 /// The print mono for `` `code` `` spans: Liberation Mono Regular 2.1.5 (SIL OFL 1.1, see
 /// `assets/fonts/OFL-LiberationMono.txt`), metric-compatible with Courier New, the face the
 /// DOCX names, so PDF and Word lines measure alike.
+/// Liberation Sans Regular and Bold (SIL OFL 1.1, `assets/fonts/OFL-LiberationSans.txt`),
+/// metric-compatible with Arial: the chemistry figure SVGs ask for Arial, and the browser has
+/// no system fonts, so text measures like the reference's.
+pub static LIBERATION_SANS_REGULAR: &[u8] = include_bytes!("../assets/fonts/LiberationSans-Regular.ttf");
+pub static LIBERATION_SANS_BOLD: &[u8] = include_bytes!("../assets/fonts/LiberationSans-Bold.ttf");
+/// Liberation Serif Regular and Italic, subset to Latin (SIL OFL 1.1, `assets/fonts/OFL-LiberationSerif.txt`),
+/// metric-compatible with Times New Roman: the biology figure SVGs set genotypes in
+/// "Georgia, 'Times New Roman', Times, serif", which the reference's browser draws in this face.
+pub static LIBERATION_SERIF_REGULAR: &[u8] = include_bytes!("../assets/fonts/LiberationSerif-Regular.ttf");
+pub static LIBERATION_SERIF_ITALIC: &[u8] = include_bytes!("../assets/fonts/LiberationSerif-Italic.ttf");
+pub static LIBERATION_SERIF_BOLD: &[u8] = include_bytes!("../assets/fonts/LiberationSerif-Bold.ttf");
+pub static NOTO_REGULAR: &[u8] = include_bytes!("../assets/fonts/NotoSans-Regular.ttf");
+pub static NOTO_SEMIBOLD: &[u8] = include_bytes!("../assets/fonts/NotoSans-SemiBold.ttf");
+pub static NOTO_MEDIUM: &[u8] = include_bytes!("../assets/fonts/NotoSans-Medium.ttf");
+pub static NOTO_EXTRABOLD: &[u8] = include_bytes!("../assets/fonts/NotoSans-ExtraBold.ttf");
+pub static NOTO_BOLD: &[u8] = include_bytes!("../assets/fonts/NotoSans-Bold.ttf");
 pub static MONO_REGULAR: &[u8] = include_bytes!("../assets/fonts/LiberationMono-Regular.ttf");
 
 /// UI faces (Source Sans 3, SIL OFL 1.1). Compiled in so the app, the web build and the

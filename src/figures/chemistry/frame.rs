@@ -22,12 +22,19 @@ pub fn title_style(three: bool) -> ParamDef {
 /// The "Answer key" switch; `hint` is the old parenthetical, now shown on hover.
 pub fn answer_param(hint: &'static str) -> ParamDef { ParamDef::bool("answer", "Answer key", false).hint(hint) }
 
-/// Height of the band the wrapper adds above the figure for the chart title.
+/// The three chart pages (heating curve, titration curve, mass spectrum) have separate axis
+/// titles and lay their chart title and answer key out on their own scale.
+fn chart_style(p: &Params) -> bool { p.0.contains_key("xtitle_style") }
+
+/// Height of the band the wrapper adds above the figure for the chart title: 40 px on the
+/// instrument pages, 36.4 on the chart pages (22 and 22.4 px bold type).
 pub fn title_band(p: &Params) -> f64 {
+    // the mass spectrum's band is 4 px shorter than the other two charts'
+    let band = if p.0.contains_key("leave_out") { 32.4 } else if chart_style(p) { 36.4 } else { 40.0 };
     match p.s("title_style") {
         "None" => 0.0,
-        "Blank line" => 44.0,
-        _ => if p.s("title").trim().is_empty() { 0.0 } else { 44.0 },
+        "Blank line" => band,
+        _ => if p.s("title").trim().is_empty() { 0.0 } else { band },
     }
 }
 
@@ -39,32 +46,35 @@ fn fit_font(s: &str, base: f64, w: f64) -> f64 {
 
 /// Adds the chart-title band (from `title_style` + `title`) and the answer-key lines under the
 /// figure. Content is only shifted down (never sideways), so handles shift by `title_band`.
-pub fn wrap(p: &Params, svg: String, footer: &[String]) -> String {
+pub fn wrap(p: &Params, svg: String, footer: &[String]) -> String { wrap_at(p, svg, footer, None) }
+
+/// `wrap` for the chart pages: `cx` is the middle of the plot, where the reference centres the
+/// chart title.
+pub fn wrap_at(p: &Params, svg: String, footer: &[String], cx: Option<f64>) -> String {
     let top = title_band(p);
     let foot: Vec<&String> = footer.iter().filter(|s| !s.trim().is_empty()).collect();
     if top == 0.0 && foot.is_empty() {
         return svg;
     }
+    let chart = chart_style(p);
     let (w, h) = crate::figures::svg_size(&svg);
     let marker = r##"fill="#fff"/>"##;
     let Some(i) = svg.find(marker) else { return svg };
     let body = &svg[i + marker.len()..svg.len().saturating_sub(6)];
-    let fh = if foot.is_empty() { 0.0 } else { 14.0 + 26.0 * foot.len() as f64 };
+    // answer lines: 18 px type in a 36 px band (15.4 px in 22.4 on the chart pages)
+    let (fsize, pitch, base) = if chart { (15.4, 22.4, 8.4) } else { (18.0, 36.0, 10.0) };
+    let fh = pitch * foot.len() as f64;
     let nh = h + top + fh;
     let mut d = Doc::new(w, nh);
-    if top > 0.0 {
-        if p.s("title_style") == "Blank line" {
-            let lw = (w * 0.55).min(320.0);
-            d.line(w / 2.0 - lw / 2.0, 32.0, w / 2.0 + lw / 2.0, 32.0, INK, 1.4);
-        } else {
-            let t = p.s("title").trim();
-            tx(&mut d, w / 2.0, 29.0, fit_font(t, 20.0, w), "middle", INK, true, t);
-        }
+    if top > 0.0 && p.s("title_style") != "Blank line" {
+        let t = p.s("title").trim();
+        let (size, y) = if chart { (22.4, 36.4) } else { (22.0, 38.0) };
+        tx(&mut d, cx.filter(|_| chart).unwrap_or(w / 2.0), y, fit_font(t, size, w), "middle", INK, true, t);
     }
     d.raw(&format!(r#"<g transform="translate(0 {top})">{body}</g>"#));
     for (k, line) in foot.iter().enumerate() {
-        let y = h + top + 4.0 + 26.0 * (k as f64 + 0.75);
-        tx(&mut d, w / 2.0, y, fit_font(line, 17.0, w), "middle", INK, false, line);
+        let y = h + top + base + pitch * k as f64;
+        tx(&mut d, w / 2.0, y, fit_font(line, fsize, w), "middle", INK, false, line);
     }
     d.finish()
 }
@@ -162,7 +172,7 @@ pub fn nice(range: f64, n: f64) -> f64 {
 }
 
 #[derive(Clone, Debug)]
-pub struct Graph { pub x: Axis, pub y: Axis, pub minor: usize, pub x0: f64, pub x1: f64, pub y0: f64, pub y1: f64 }
+pub struct Graph { pub x: Axis, pub y: Axis, pub minor: usize, pub x0: f64, pub x1: f64, pub y0: f64, pub y1: f64, pub w: f64, pub h: f64, pub lf: f64 }
 
 impl Graph {
     pub fn px(&self, v: f64) -> f64 { self.x0 + (v - self.x.from) / (self.x.to - self.x.from) * (self.x1 - self.x0) }
@@ -180,14 +190,26 @@ pub fn axis_title<'a>(p: &'a Params, style_key: &str, text: &'a str) -> Option<O
     }
 }
 
-/// Plot rectangle for a canvas `w`×`h`, leaving room for numbers and the axis titles.
-pub fn plot_rect(w: f64, h: f64, x: &Axis, y: &Axis, has_xt: bool, has_yt: bool, top_extra: f64) -> (f64, f64, f64, f64) {
-    let ywide = y.lines().iter().map(|v| tick(*v).len()).max().unwrap_or(2) as f64;
-    let left = 16.0 + if has_yt { 34.0 } else { 0.0 } + if y.every > 0 { ywide * 9.5 + 12.0 } else { 6.0 };
-    let right = 26.0 + if x.lab.is_some() { 8.0 + x.lab.as_ref().map_or(0, |s| s.chars().count()) as f64 * 9.0 } else { 0.0 };
-    let top = 24.0 + top_extra + if y.lab.is_some() { 22.0 } else { 0.0 };
-    let bottom = 14.0 + if x.every > 0 { 26.0 } else { 6.0 } + if has_xt { 36.0 } else { 0.0 };
-    (left, w - right, top, h - bottom)
+/// Side of one grid cell in the reference's line graphs (px): the plot is `cells x 32` wide and
+/// tall, so a graph's size follows its axis ranges instead of being squeezed into a fixed canvas.
+pub const CELL: f64 = 32.0;
+
+/// Plot rectangle and canvas size, laid out like the reference: every grid cell `CELL` px square,
+/// the canvas just big enough to hold the plot, its numbers and the axis titles. Returns
+/// `((x0, x1, y0, y1), (w, h))`.
+pub fn plot_rect(x: &Axis, y: &Axis, has_xt: bool, has_yt: bool, top_extra: f64, lf: f64) -> ((f64, f64, f64, f64), (f64, f64)) {
+    let cells = |a: &Axis| ((a.to - a.from) / a.by + 1e-6).floor().max(1.0);
+    // very dense axes shrink the cell so the plot stays about 1600 px at most
+    let cw = CELL.min(1600.0 / cells(x));
+    let ch = CELL.min(1600.0 / cells(y));
+    let ywide = y.lines().iter().enumerate().filter(|(k, _)| y.every > 0 && k % y.every == 0).map(|(_, v)| tick(*v).chars().count()).max().unwrap_or(2) as f64;
+    let left = if y.every > 0 { 22.0 + 8.4 * ywide.max(2.0) * lf } else { 11.2 } + if has_yt { 28.8 + 16.8 * (lf - 1.0) } else { 0.0 };
+    let right = 22.4 + 8.4 * (lf - 1.0) + if x.lab.is_some() { 8.0 + x.lab.as_ref().map_or(0, |s| s.chars().count()) as f64 * 9.0 } else { 0.0 };
+    let top = 14.0 + top_extra + if y.lab.is_some() { 22.0 } else { 0.0 };
+    let bottom = 8.0 + if x.every > 0 { 28.0 + 14.0 * (lf - 1.0) } else { 6.0 } + if has_xt { 30.8 + 16.8 * (lf - 1.0) } else { 0.0 };
+    let (x0, y0) = (left, top);
+    let (x1, y1) = (x0 + cells(x) * cw, y0 + cells(y) * ch);
+    ((x0, x1, y0, y1), (x1 + right, y1 + bottom))
 }
 
 fn end_marker(d: &mut Doc, kind: &str, x: f64, y: f64, ux: f64, uy: f64) {
@@ -222,19 +244,30 @@ pub fn draw_graph(d: &mut Doc, g: &Graph, xt: Option<Option<&str>>, yt: Option<O
             for k in 1..g.minor { let v = w[0] + (w[1] - w[0]) * k as f64 / g.minor as f64; d.line(x0, g.py(v), x1, g.py(v), "#c4c4c4", 0.6); }
         }
     }
-    for &v in &xs { d.line(g.px(v), y0, g.px(v), y1, "#2b2b2b", 1.1); }
-    for &v in &ys { d.line(x0, g.py(v), x1, g.py(v), "#2b2b2b", 1.1); }
-    d.line(x0, y1, x1, y1, INK, 2.6);
-    d.line(x0, y0, x0, y1, INK, 2.6);
+    // hairlines drawn without anti-aliasing stay solid at any zoom, as the reference's do
+    d.raw(r#"<g shape-rendering="crispEdges">"#);
+    for &v in &xs { d.line(g.px(v), y0, g.px(v), y1, "#111", 1.0); }
+    for &v in &ys { d.line(x0, g.py(v), x1, g.py(v), "#111", 1.0); }
+    d.raw("</g>");
+    d.line(x0, y1, x1, y1, INK, 2.4);
+    d.line(x0, y0, x0, y1, INK, 2.4);
     if g.x.every > 0 {
         for (k, &v) in xs.iter().enumerate() {
-            if k % g.x.every == 0 { tx(d, g.px(v), y1 + 24.0, 15.0, "middle", INK, true, &tick(v)); }
+            if k % g.x.every == 0 {
+                // the reference hangs the first number left of the corner instead of centring it
+                if k == 0 { tx(d, x0 - 8.0, y1 + 20.0 + 14.0 * (g.lf - 1.0), 14.0, "end", INK, true, &tick(v).replace('-', "\u{2212}")); } else { tx(d, g.px(v), y1 + 20.0 + 14.0 * (g.lf - 1.0), 14.0, "middle", INK, true, &tick(v).replace('-', "\u{2212}")); }
+            }
         }
     }
     if g.y.every > 0 {
         for (k, &v) in ys.iter().enumerate() {
-            // The reference omits a negative number at the very bottom of the axis.
-            if k % g.y.every == 0 && !(k == 0 && v < 0.0) { tx(d, x0 - 9.0, g.py(v) + 5.5, 15.0, "end", INK, true, &tick(v)); }
+            if k % g.y.every != 0 { continue; }
+            if k == 0 {
+                // the bottom number sits just above the axis; it is dropped when the x-axis "0" shares the corner
+                if !(v == 0.0 && g.x.from == 0.0) { tx(d, x0 - 6.0, g.py(v) - 5.0, 14.0, "end", INK, true, &tick(v).replace('-', "\u{2212}")); }
+            } else {
+                tx(d, x0 - 6.0, g.py(v) + 4.9, 14.0, "end", INK, true, &tick(v).replace('-', "\u{2212}"));
+            }
         }
     }
     end_marker(d, &g.x.lo, x0, y1, -1.0, 0.0);
@@ -245,16 +278,18 @@ pub fn draw_graph(d: &mut Doc, g: &Graph, xt: Option<Option<&str>>, yt: Option<O
     if let Some(l) = &g.x.lab { tx(d, x1 + xpad, y1 + 5.5, 16.0, "start", INK, true, l); }
     let ypad = if g.y.hi == "None" { 10.0 } else { 22.0 };
     if let Some(l) = &g.y.lab { tx(d, x0, y0 - ypad, 16.0, "middle", INK, true, l); }
-    let numh = if g.x.every > 0 { 26.0 } else { 4.0 };
+    let numh = if g.x.every > 0 { 28.0 + 14.0 * (g.lf - 1.0) } else { 6.0 };
     match xt {
-        Some(Some(t)) => { tx(d, (x0 + x1) / 2.0, y1 + numh + 34.0, 17.0, "middle", INK, true, t); }
-        Some(None) => { let lw = ((x1 - x0) * 0.5).min(260.0); d.line((x0 + x1) / 2.0 - lw / 2.0, y1 + numh + 34.0, (x0 + x1) / 2.0 + lw / 2.0, y1 + numh + 34.0, INK, 1.3); }
+        Some(Some(t)) => { tx(d, (x0 + x1) / 2.0, y1 + numh + 16.8 * g.lf, 16.8, "middle", INK, true, t); }
+        Some(None) => { let lw = ((x1 - x0) * 0.5).min(260.0); d.line((x0 + x1) / 2.0 - lw / 2.0, y1 + numh + 16.0 * g.lf, (x0 + x1) / 2.0 + lw / 2.0, y1 + numh + 16.0 * g.lf, INK, 1.3); }
         None => {}
     }
-    let ywide = ys.iter().map(|v| tick(*v).len()).max().unwrap_or(2) as f64;
-    let yx = x0 - if g.y.every > 0 { ywide * 9.5 + 22.0 } else { 14.0 } - 8.0;
+    let ywide = ys.iter().enumerate().filter(|(k, _)| g.y.every > 0 && k % g.y.every == 0).map(|(_, v)| tick(*v).chars().count()).max().unwrap_or(2) as f64;
+    // the reference centres the title on this x (dominant-baseline central); ours sets the
+    // baseline, so it is shifted by half the cap height
+    let yx = if g.y.every > 0 { x0 - 41.0 - 21.0 * (g.lf - 1.0) - 8.4 * g.lf * (ywide.max(2.0) - 2.0) + 5.9 * g.lf } else { x0 - 14.0 + 4.6 };
     match yt {
-        Some(Some(t)) => { d.raw(&format!(r##"<text x="{yx:.2}" y="{:.2}" font-size="17" text-anchor="middle" font-family="{FONT}" font-weight="bold" fill="{INK}" transform="rotate(-90 {yx:.2} {:.2})">{}</text>"##, (y0 + y1) / 2.0, (y0 + y1) / 2.0, crate::figures::svg::esc(t))); }
+        Some(Some(t)) => { d.raw(&format!(r##"<text x="{yx:.2}" y="{:.2}" font-size="16.8" text-anchor="middle" font-family="{FONT}" font-weight="bold" fill="{INK}" transform="rotate(-90 {yx:.2} {:.2})">{}</text>"##, (y0 + y1) / 2.0, (y0 + y1) / 2.0, crate::figures::svg::esc(t))); }
         Some(None) => { let lh = ((y1 - y0) * 0.5).min(220.0); d.line(yx - 5.0, (y0 + y1) / 2.0 - lh / 2.0, yx - 5.0, (y0 + y1) / 2.0 + lh / 2.0, INK, 1.3); }
         None => {}
     }

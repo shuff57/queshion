@@ -131,13 +131,17 @@ impl Workspace {
         let hand = ped::hand_changed(&self.params);
         let labels = ped::labels(&self.params);
         let family_before = self.params.s("family").to_string();
+        let skin = theme::chem_skin();
         Frame::new()
             .fill(theme::card())
             .stroke(Stroke::new(1.0, theme::border()))
             .corner_radius(CornerRadius::same(12))
-            .inner_margin(Margin::same(10))
+            .inner_margin(if skin { Margin::symmetric(18, 0) } else { Margin::same(10) })
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
+                if skin {
+                    return self.pedigree_card_skin(ui, def.id, &pdefs, &fam, &labels, hand, &family_before);
+                }
                 crate::kit::small_caps(ui, "Family");
                 let sub = if hand {
                     format!("Changed by hand, {}", ped::mode_name(&self.params))
@@ -229,19 +233,156 @@ impl Workspace {
         ui.add_space(8.0);
     }
 
+    /// The biology page's Family card: icon heading with the setup summary, 40 px selects, 39 px
+    /// switches side by side, a full-width New pedigree button and the Change someone select.
+    #[allow(clippy::too_many_arguments)]
+    fn pedigree_card_skin(&mut self, ui: &mut Ui, fig: &str, pdefs: &[ParamDef], fam: &ped::Family, labels: &[String], hand: bool, family_before: &str) {
+        let noto = || egui::FontFamily::Name("vs-noto".into());
+        ui.spacing_mut().item_spacing.y = 5.0;
+        ui.add_space(14.5);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        // the reference's heading: an 18 px git-fork glyph, 8 px gap, 16.8 px bold title in a
+        // 20.16 px row, then the 13.76 px summary in a 19.95 px row 2.4 px below
+        let sub = if hand { format!("Changed by hand, {}", ped::mode_name(&self.params)) } else { format!("{}, {} generations", self.params.s("inherit"), self.params.i("gens")) };
+        let w = ui.available_width();
+        let (hr, _) = ui.allocate_exact_size(Vec2::new(w, 20.16), egui::Sense::hover());
+        lucide::paint(ui.painter(), egui::Rect::from_min_size(hr.min + Vec2::new(0.0, 1.0), Vec2::splat(18.0)), theme::ink(), lucide::GIT_FORK);
+        ui.painter().text(egui::Pos2::new(hr.min.x + 26.0, hr.center().y), egui::Align2::LEFT_CENTER, "Family", egui::FontId::new(16.8, theme::bold_family()), theme::ink());
+        ui.add_space(2.4);
+        let (sr, _) = ui.allocate_exact_size(Vec2::new(w, 19.95), egui::Sense::hover());
+        ui.painter().text(egui::Pos2::new(sr.min.x, sr.center().y), egui::Align2::LEFT_CENTER, sub, egui::FontId::new(13.76, noto()), theme::muted_col());
+        ui.add_space(11.5);
+        ui.spacing_mut().item_spacing.y = 5.0;
+        self.classic_combo(ui, fig);
+        if self.params.s("family") != family_before {
+            self.ped_sel = None;
+        }
+
+        // Inheritance: a family changed by hand is shaded again to fit
+        ui.add_space(21.0);
+        param_label(ui, "Inheritance", "");
+        let modes: Vec<&'static str> = pdefs.iter().find(|d| d.key == "inherit").and_then(|d| if let Kind::Choice(o) = &d.kind { Some(o.clone()) } else { None }).unwrap_or_default();
+        let cur = self.params.s("inherit").to_string();
+        let mut pick: Option<&'static str> = None;
+        ui.scope(|ui| {
+            ui.spacing_mut().button_padding = Vec2::new(15.0, 9.5);
+            ui.spacing_mut().interact_size.y = 39.5;
+            let w = ui.available_width();
+            ComboBox::from_id_salt("ped_inherit")
+                .icon(chem_shell::select_chevron)
+                .selected_text(RichText::new(cur.as_str()).size(15.2).family(noto()))
+                .width(w)
+                .show_ui(ui, |ui| {
+                    for m in &modes {
+                        if ui.selectable_label(cur == *m, *m).clicked() && cur != *m {
+                            pick = Some(m);
+                        }
+                    }
+                });
+        });
+        if let Some(m) = pick {
+            let mut p = self.params.clone();
+            p.set_s("inherit", m);
+            ped::reshade_params(&mut p);
+            self.set_params_with_history(p);
+        }
+        ui.add_space(20.0);
+
+        // Generations and family size start a random family again
+        let mut setup: Option<(&str, Value)> = None;
+        let total = ui.available_width();
+        let gens_w = 88.0_f32.min(total * 0.3);
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 12.0;
+            ui.allocate_ui_with_layout(Vec2::new(gens_w, 70.0), Layout::top_down(Align::Min), |ui| {
+                ui.set_width(gens_w);
+                param_label(ui, "Generations", "");
+                let mut g = self.params.i("gens").clamp(2, 4).to_string();
+                let before = g.clone();
+                chem_shell::segmented_track(ui, &["2", "3", "4"], &mut g);
+                if g != before {
+                    setup = Some(("gens", Value::I(g.parse().unwrap_or(3))));
+                }
+            });
+            let rest = (total - gens_w - 12.0).max(60.0);
+            ui.allocate_ui_with_layout(Vec2::new(rest, 70.0), Layout::top_down(Align::Min), |ui| {
+                ui.set_width(rest);
+                param_label(ui, "Family size", "");
+                let mut c = self.params.s("size").to_string();
+                if !["Small", "Medium", "Large"].contains(&c.as_str()) {
+                    c = "Medium".into();
+                }
+                let before = c.clone();
+                chem_shell::segmented_track(ui, &["Small", "Medium", "Large"], &mut c);
+                if c != before {
+                    setup = Some(("size", Value::S(c)));
+                }
+            });
+        });
+        if let Some((k, v)) = setup {
+            let mut p = self.params.clone();
+            p.0.insert(k.to_string(), v);
+            ped::drop_hand_changes(&mut p);
+            self.set_params_with_history(p);
+            self.ped_sel = None;
+        }
+        ui.add_space(22.0);
+        // the reference's button leads with a white dice icon (16 px, 7 px before the label)
+        let sp = ui.painter().layout_no_wrap(" ".into(), egui::FontId::new(16.0, theme::bold_family()), egui::Color32::WHITE).size().x.max(1.0);
+        let lw = ui.painter().layout_no_wrap("New pedigree".into(), egui::FontId::new(16.0, theme::bold_family()), egui::Color32::WHITE).size().x;
+        let pad = ((23.0 / sp).round() as usize).max(1);
+        let lead = " ".repeat(pad);
+        let nb = Button::new(RichText::new(format!("{lead}New pedigree")).size(16.0).family(theme::bold_family()).color(egui::Color32::WHITE)).fill(theme::accent_col()).corner_radius(CornerRadius::same(10));
+        let nresp = ui.add_sized(Vec2::new(ui.available_width(), 43.4), nb);
+        let group_w = pad as f32 * sp + lw;
+        let icx = nresp.rect.center().x - group_w / 2.0 + 8.0;
+        lucide::paint(ui.painter(), egui::Rect::from_center_size(egui::Pos2::new(icx, nresp.rect.center().y), Vec2::splat(16.0)), egui::Color32::WHITE, lucide::DICES);
+        if nresp.on_hover_text("Draw a new random family (drops changes made by hand)").clicked() {
+            let mut p = self.params.clone();
+            ped::new_pedigree(&mut p, (random_seed() % 9999) as i64 + 1);
+            self.set_params_with_history(p);
+            self.ped_sel = None;
+        }
+        if hand {
+            ui.add_space(4.0);
+            ui.label(theme::muted("Changed by hand. New pedigree, or a change of generations or size, starts a random family; changing the inheritance shades this one again to fit it.").size(13.0));
+        }
+        ui.add_space(5.0);
+        match self.ped_sel {
+            Some(i) => self.person_panel(ui, i, fam, labels),
+            None => self.change_someone(ui, labels),
+        }
+        ui.add_space(18.0);
+    }
+
     /// "Change someone": pick a person without clicking the figure.
     fn change_someone(&mut self, ui: &mut Ui, labels: &[String]) {
-        ui.label(theme::muted("Change someone").size(11.0));
+        let skin = theme::chem_skin();
+        if skin {
+            param_label(ui, "Change someone", "");
+        } else {
+            ui.label(theme::muted("Change someone").size(11.0));
+        }
         let (_, _, whos) = ped::people_of(&self.params);
         let mut order: Vec<usize> = (0..whos.len()).collect();
         order.sort_by_key(|&i| (whos[i].gi, whos[i].num));
         let mut pick = None;
-        ComboBox::from_id_salt("ped_change_someone").selected_text("Click them in the pedigree, or pick here").width(ui.available_width().min(260.0)).show_ui(ui, |ui| {
-            for i in order {
-                if ui.selectable_label(false, label_of(labels, i)).clicked() {
-                    pick = Some(i);
-                }
+        ui.scope(|ui| {
+            let mut cb = ComboBox::from_id_salt("ped_change_someone").width(if skin { ui.available_width() } else { ui.available_width().min(260.0) });
+            if skin {
+                ui.spacing_mut().button_padding = Vec2::new(15.0, 9.5);
+                ui.spacing_mut().interact_size.y = 39.5;
+                cb = cb.icon(chem_shell::select_chevron).width(ui.available_width()).selected_text(RichText::new("Click them in the pedigree, or pick here").size(15.2).family(egui::FontFamily::Name("vs-noto".into())));
+            } else {
+                cb = cb.selected_text("Click them in the pedigree, or pick here");
             }
+            cb.show_ui(ui, |ui| {
+                for i in order {
+                    if ui.selectable_label(false, label_of(labels, i)).clicked() {
+                        pick = Some(i);
+                    }
+                }
+            });
         });
         if pick.is_some() {
             self.ped_sel = pick;

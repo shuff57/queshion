@@ -550,6 +550,338 @@ pub fn ask_images(images: &[&[u8]], cfg: &AiCfg, prompt: &str, temp: f64) -> Res
     }
 }
 
+// ---------- Find models ----------
+//
+// "Find models" keeps what this account can use to read a picture. Ollama Cloud and custom
+// endpoints: each listed model gets a tiny image and a one-word reply limit, and only the ones that
+// answer stay (a free account is refused with 402 on paid models, text-only models refuse the
+// image). Local Ollama is not pinged, since that would load every installed model; its own
+// `capabilities` say who can see. OpenRouter lists its input modalities, so it is not pinged either.
+
+/// One model a server lists. `vision` is `Some` when the listing itself says.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ModelInfo {
+    pub id: String,
+    pub vision: Option<bool>,
+}
+
+/// What Find models learned.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Checked {
+    /// Models to offer, in the order listed.
+    pub ok: Vec<String>,
+    /// Models left out and why.
+    pub left_out: Vec<(String, String)>,
+    /// How many the server listed.
+    pub total: usize,
+}
+
+/// Models past this many are not pinged one by one (a long public list would be slow and rude).
+const PROBE_LIMIT: usize = 40;
+
+/// Ids from a listing, with OpenRouter's `architecture.input_modalities` read as the vision flag.
+pub fn parse_model_info(provider: &str, v: &Value) -> Vec<ModelInfo> {
+    let modal = |id: &str| -> Option<bool> {
+        let row = v["data"].as_array()?.iter().find(|m| m.get("id").and_then(Value::as_str) == Some(id))?;
+        let mods = row.pointer("/architecture/input_modalities")?.as_array()?;
+        Some(mods.iter().any(|m| m.as_str() == Some("image")))
+    };
+    parse_models(provider, v)
+        .into_iter()
+        .map(|id| {
+            let vision = if provider == "openrouter" { modal(&id) } else { None };
+            ModelInfo { id, vision }
+        })
+        .collect()
+}
+
+/// A small picture with something in it, for the ping.
+fn probe_png() -> &'static [u8] {
+    static P: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    P.get_or_init(|| {
+        let mut img = image::RgbImage::from_pixel(64, 64, image::Rgb([255, 255, 255]));
+        for y in 16..48 {
+            for x in 16..48 {
+                img.put_pixel(x, y, image::Rgb([40, 40, 40]));
+            }
+        }
+        let mut out = Vec::new();
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+            .expect("encode the probe picture");
+        out
+    })
+}
+
+/// The ping: the model's chat endpoint, one picture, a reply of a few tokens at most.
+fn probe_request(cfg: &AiCfg, model: &str) -> (String, Value) {
+    let base = cfg.base.trim_end_matches('/');
+    let png = base64_encode(probe_png());
+    let prompt = "Reply with the single word OK.";
+    if cfg.provider == "ollama" {
+        let body = json!({
+            "model": model,
+            "messages": [{"role": "user", "content": prompt, "images": [png]}],
+            "stream": false,
+            "options": {"num_predict": 8},
+        });
+        (format!("{base}/api/chat"), body)
+    } else {
+        let body = json!({
+            "model": model,
+            "stream": false,
+            "max_tokens": 8,
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": format!("data:image/png;base64,{png}")}},
+            ]}],
+        });
+        (format!("{base}/chat/completions"), body)
+    }
+}
+
+/// A few words for why a ping failed, from `post_json`'s "<url> answered <status>: <message>".
+pub fn why_not(err: &str) -> String {
+    let (status, msg) = match err.split_once(" answered ") {
+        Some((_, rest)) => match rest.split_once(": ") {
+            Some((s, m)) => (s.trim().parse::<u16>().unwrap_or(0), m),
+            None => (rest.trim().parse::<u16>().unwrap_or(0), ""),
+        },
+        None => (0, err),
+    };
+    let low = msg.to_ascii_lowercase();
+    match status {
+        401 => "key refused".to_string(),
+        402 => "not on your plan".to_string(),
+        403 if low.contains("rolled out") || low.contains("not yet available") => "not available yet".to_string(),
+        403 => "not available to you".to_string(),
+        400 if low.contains("image") => "text only".to_string(),
+        400 => "not a chat model".to_string(),
+        404 => "not found".to_string(),
+        429 => "busy, try again".to_string(),
+        0 => "no answer".to_string(),
+        s => format!("error {s}"),
+    }
+}
+
+/// Folds ping results into what to offer. `results` is in listing order.
+fn assemble_checked(total: usize, results: Vec<(String, Result<(), String>)>) -> Checked {
+    let mut c = Checked { total, ..Default::default() };
+    for (id, r) in results {
+        match r {
+            Ok(()) => c.ok.push(id),
+            Err(e) => c.left_out.push((id, why_not(&e))),
+        }
+    }
+    c
+}
+
+/// The line under the picker: how many answered and what was left out.
+pub fn checked_note(c: &Checked) -> String {
+    let mut note = format!(
+        "{} of {} models can read images with your account{}",
+        c.ok.len(),
+        c.total,
+        if c.ok.len() == c.total { ". All are listed." } else { ". Only those are listed." }
+    );
+    if !c.left_out.is_empty() {
+        let shown: Vec<String> = c.left_out.iter().take(4).map(|(id, why)| format!("{id} ({why})")).collect();
+        note.push_str(&format!(" Left out: {}", shown.join(", ")));
+        if c.left_out.len() > 4 {
+            note.push_str(&format!(" and {} more", c.left_out.len() - 4));
+        }
+        note.push('.');
+    }
+    note
+}
+
+/// The answer to "Find models" when nothing could be kept (usually a wrong key or no connection):
+/// the picker keeps its old list rather than going empty.
+fn nothing_answered(total: usize, left_out: &[(String, String)]) -> String {
+    let refused = left_out.iter().any(|(_, w)| w == "key refused");
+    let tail = if refused { ", and the server refused the key. Check the API key." } else { ". Check the key and the connection." };
+    format!("None of the {total} models answered{tail}")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn list_models_json(cfg: &AiCfg) -> Result<Value, String> {
+    let base = cfg.base.trim_end_matches('/');
+    if base.is_empty() {
+        return Err("Set a base URL first.".to_string());
+    }
+    let url = if cfg.provider == "ollama" { format!("{base}/api/tags") } else { format!("{base}/models") };
+    let mut req = agent().get(&url);
+    if let Some(k) = request_key(cfg) {
+        req = req.header("Authorization", &format!("Bearer {k}"));
+    }
+    let mut resp = req.call().map_err(|_| format!("Can't reach {base}."))?;
+    let status = resp.status().as_u16();
+    let text = resp.body_mut().read_to_string().map_err(|e| format!("Bad reply from {base}: {e}"))?;
+    if !(200..300).contains(&status) {
+        return Err(format!("The server answered {status}."));
+    }
+    serde_json::from_str(&text).map_err(|e| format!("{base} did not answer with JSON ({e})"))
+}
+
+/// Local Ollama: does `/api/show` list `vision` among the model's capabilities? `None` when the
+/// server is too old to say.
+fn show_vision(shown: &Value) -> Option<bool> {
+    let caps = shown.get("capabilities")?.as_array()?;
+    Some(caps.iter().any(|c| c.as_str() == Some("vision")))
+}
+
+/// Find models: the listed models this account can use to read a picture. `progress(done, total)` is
+/// called as the pings go. Blocking, so call it off the UI thread.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn check_models(cfg: &AiCfg, progress: &dyn Fn(usize, usize)) -> Result<Checked, String> {
+    let listing = list_models_json(cfg)?;
+    let infos = parse_model_info(&cfg.provider, &listing);
+    let total = infos.len();
+    if total == 0 {
+        return Err("The server listed no models.".to_string());
+    }
+    match cfg.provider.as_str() {
+        "openrouter" => Ok(checked_from_flags(total, infos.iter().map(|m| (m.id.clone(), m.vision)).collect())),
+        "ollama" => {
+            let base = cfg.base.trim_end_matches('/');
+            let flags = infos
+                .iter()
+                .enumerate()
+                .map(|(i, m)| {
+                    progress(i, total);
+                    let shown = post_json(&format!("{base}/api/show"), json!({"model": m.id}), None).ok();
+                    (m.id.clone(), shown.as_ref().and_then(show_vision))
+                })
+                .collect();
+            Ok(checked_from_flags(total, flags))
+        }
+        _ if total > PROBE_LIMIT => Ok(checked_from_flags(total, infos.iter().map(|m| (m.id.clone(), None)).collect())),
+        _ => {
+            let key = request_key(cfg);
+            let mut results = Vec::new();
+            for (i, m) in infos.iter().enumerate() {
+                progress(i, total);
+                let (url, body) = probe_request(cfg, &m.id);
+                results.push((m.id.clone(), post_json(&url, body, key.as_deref()).map(|_| ())));
+            }
+            let c = assemble_checked(total, results);
+            if c.ok.is_empty() { Err(nothing_answered(total, &c.left_out)) } else { Ok(c) }
+        }
+    }
+}
+
+/// Listing flags into a [`Checked`]: a model the listing says cannot see is left out; one it does not
+/// say anything about stays.
+fn checked_from_flags(total: usize, flags: Vec<(String, Option<bool>)>) -> Checked {
+    let mut c = Checked { total, ..Default::default() };
+    for (id, v) in flags {
+        match v {
+            Some(false) => c.left_out.push((id, "text only".to_string())),
+            _ => c.ok.push(id),
+        }
+    }
+    c
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn check_models_async(cfg: &AiCfg, progress: &dyn Fn(usize, usize)) -> Result<Checked, String> {
+    let base = cfg.base.trim_end_matches('/');
+    if base.is_empty() {
+        return Err("Set a base URL first.".to_string());
+    }
+    let url = if cfg.provider == "ollama" { format!("{base}/api/tags") } else { format!("{base}/models") };
+    let listing = get_json_async(&url, request_key(cfg).as_deref()).await.map_err(|e| cloud_error_hint(cfg, e))?;
+    let infos = parse_model_info(&cfg.provider, &listing);
+    let total = infos.len();
+    if total == 0 {
+        return Err("The server listed no models.".to_string());
+    }
+    match cfg.provider.as_str() {
+        "openrouter" => Ok(checked_from_flags(total, infos.iter().map(|m| (m.id.clone(), m.vision)).collect())),
+        "ollama" => {
+            let mut flags = Vec::new();
+            for (i, m) in infos.iter().enumerate() {
+                progress(i, total);
+                let shown = post_json_async(&format!("{base}/api/show"), &json!({"model": m.id}), None).await.ok();
+                flags.push((m.id.clone(), shown.as_ref().and_then(show_vision)));
+            }
+            Ok(checked_from_flags(total, flags))
+        }
+        _ if total > PROBE_LIMIT => Ok(checked_from_flags(total, infos.iter().map(|m| (m.id.clone(), None)).collect())),
+        _ => {
+            let key = request_key(cfg);
+            let mut results = Vec::new();
+            for (i, m) in infos.iter().enumerate() {
+                progress(i, total);
+                let (url, body) = probe_request(cfg, &m.id);
+                results.push((m.id.clone(), post_json_async(&url, &body, key.as_deref()).await.map(|_| ())));
+            }
+            let c = assemble_checked(total, results);
+            if c.ok.is_empty() { Err(nothing_answered(total, &c.left_out)) } else { Ok(c) }
+        }
+    }
+}
+
+/// One message of a multi-turn chat (the figure agent's loop). `role` is "system", "user" or
+/// "assistant"; `images` are PNG bytes shown to the model alongside `text`.
+#[derive(Clone, Debug)]
+pub struct Turn {
+    pub role: &'static str,
+    pub text: String,
+    pub images: Vec<Vec<u8>>,
+}
+
+impl Turn {
+    pub fn new(role: &'static str, text: impl Into<String>) -> Turn {
+        Turn { role, text: text.into(), images: Vec::new() }
+    }
+}
+
+/// A whole conversation in, the model's JSON reply out. Same providers and keys as [`transcribe`].
+pub fn chat_turns(cfg: &AiCfg, turns: &[Turn], temp: f64) -> Result<String, String> {
+    match cfg.provider.as_str() {
+        "ollama" => {
+            let url = format!("{}/api/chat", cfg.base.trim_end_matches('/'));
+            let messages: Vec<Value> = turns
+                .iter()
+                .map(|t| json!({"role": t.role, "content": t.text, "images": t.images.iter().map(|b| base64_encode(b)).collect::<Vec<_>>()}))
+                .collect();
+            let body = json!({"model": cfg.model, "messages": messages, "stream": false, "format": "json", "options": {"temperature": temp}});
+            let reply = post_json(&url, body, None)?;
+            reply
+                .pointer("/message/content")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| "The Ollama reply had no message content.".to_string())
+        }
+        _ => {
+            let base = cfg.base.trim_end_matches('/');
+            if base.is_empty() {
+                return Err("Set a base URL for the custom AI endpoint in Settings.".to_string());
+            }
+            let url = format!("{base}/chat/completions");
+            let messages: Vec<Value> = turns
+                .iter()
+                .map(|t| {
+                    let mut content = vec![json!({"type": "text", "text": t.text})];
+                    for b in &t.images {
+                        content.push(json!({"type": "image_url", "image_url": {"url": format!("data:image/png;base64,{}", base64_encode(b))}}));
+                    }
+                    json!({"role": t.role, "content": content})
+                })
+                .collect();
+            let body = json!({"model": cfg.model, "stream": false, "temperature": temp, "response_format": {"type": "json_object"}, "messages": messages});
+            let key = request_key(cfg);
+            let reply = post_json(&url, body, key.as_deref())?;
+            reply
+                .pointer("/choices/0/message/content")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| "The reply had no message content.".to_string())
+        }
+    }
+}
+
 /// What one converted page yields.
 #[derive(Debug)]
 pub struct Converted {
@@ -1035,5 +1367,95 @@ mod tests {
         let ollama = json!({"models":[{"name":"z"},{"name":"y"}]});
         assert_eq!(parse_models("ollama", &ollama), vec!["y".to_string(), "z".to_string()]);
         assert!(parse_models("openrouter", &json!({})).is_empty());
+    }
+
+    #[test]
+    fn why_not_names_the_reason_in_a_few_words() {
+        let e = |s: u16, m: &str| format!("https://ollama.com/v1/chat/completions answered {s}: {m}");
+        assert_eq!(why_not(&e(402, "This model is not in the Free plan. Pro is $20/month")), "not on your plan");
+        assert_eq!(why_not(&e(403, "This model is currently being rolled out and is not yet available to you.")), "not available yet");
+        assert_eq!(why_not(&e(403, "forbidden")), "not available to you");
+        assert_eq!(why_not(&e(400, "this model does not support image input (ref: x)")), "text only");
+        assert_eq!(why_not(&e(400, "clef:27b is a decision model and only supports /v1/systemone")), "not a chat model");
+        assert_eq!(why_not(&e(401, "bad key")), "key refused");
+        assert_eq!(why_not(&e(429, "slow down")), "busy, try again");
+        assert_eq!(why_not("Can't reach https://x/v1/chat/completions: timed out"), "no answer");
+        assert_eq!(why_not(&e(500, "oops")), "error 500");
+    }
+
+    #[test]
+    fn find_models_keeps_only_the_models_that_answered() {
+        let refused = |s: u16, m: &str| Err(format!("u answered {s}: {m}"));
+        let c = assemble_checked(
+            5,
+            vec![
+                ("gemma4:31b".into(), Ok(())),
+                ("kimi-k3".into(), refused(402, "not in the Free plan")),
+                ("beam".into(), refused(400, "does not support image input")),
+                ("minimax-m3.1-flash".into(), Ok(())),
+                ("clef:27b".into(), refused(400, "decision model")),
+            ],
+        );
+        assert_eq!(c.ok, ["gemma4:31b", "minimax-m3.1-flash"]);
+        assert_eq!(c.left_out[0], ("kimi-k3".to_string(), "not on your plan".to_string()));
+        assert_eq!(c.left_out.len(), 3);
+        let note = checked_note(&c);
+        assert!(note.starts_with("2 of 5 models can read images with your account. Only those are listed."), "{note}");
+        assert!(note.contains("kimi-k3 (not on your plan)") && note.contains("beam (text only)"), "{note}");
+    }
+
+    #[test]
+    fn the_note_says_when_everything_answered_and_caps_the_left_out_list() {
+        let all = Checked { ok: vec!["a".into(), "b".into()], left_out: vec![], total: 2 };
+        assert_eq!(checked_note(&all), "2 of 2 models can read images with your account. All are listed.");
+        let many = Checked {
+            ok: vec!["a".into()],
+            left_out: (0..7).map(|i| (format!("m{i}"), "not on your plan".to_string())).collect(),
+            total: 8,
+        };
+        let note = checked_note(&many);
+        assert!(note.contains("m3 (not on your plan)") && !note.contains("m4 (") && note.ends_with("and 3 more."), "{note}");
+    }
+
+    #[test]
+    fn nothing_answering_is_an_error_that_names_a_refused_key() {
+        let refused = vec![("a".to_string(), "key refused".to_string())];
+        assert!(nothing_answered(3, &refused).contains("refused the key"));
+        assert!(nothing_answered(3, &[("a".to_string(), "no answer".to_string())]).contains("connection"));
+    }
+
+    #[test]
+    fn openrouter_modalities_and_local_capabilities_decide_vision_without_pinging() {
+        let v = json!({"data": [
+            {"id": "a/vision", "architecture": {"input_modalities": ["text", "image"]}},
+            {"id": "b/text", "architecture": {"input_modalities": ["text"]}},
+            {"id": "c/unknown"},
+        ]});
+        let infos = parse_model_info("openrouter", &v);
+        assert_eq!(infos.iter().map(|m| m.vision).collect::<Vec<_>>(), [Some(true), Some(false), None]);
+        // Only OpenRouter's listing carries modalities; other servers' flags stay unknown.
+        assert!(parse_model_info("cloud", &v).iter().all(|m| m.vision.is_none()));
+        let c = checked_from_flags(3, infos.into_iter().map(|m| (m.id, m.vision)).collect());
+        assert_eq!(c.ok, ["a/vision", "c/unknown"]);
+        assert_eq!(c.left_out, [("b/text".to_string(), "text only".to_string())]);
+        assert_eq!(show_vision(&json!({"capabilities": ["completion", "vision"]})), Some(true));
+        assert_eq!(show_vision(&json!({"capabilities": ["completion"]})), Some(false));
+        assert_eq!(show_vision(&json!({"details": {}})), None);
+    }
+
+    #[test]
+    fn the_ping_is_one_tiny_picture_and_a_short_reply() {
+        let cloud = AiCfg { provider: "cloud".into(), base: "https://ollama.com/v1/".into(), model: "x".into() };
+        let (url, body) = probe_request(&cloud, "gemma4:31b");
+        assert_eq!(url, "https://ollama.com/v1/chat/completions");
+        assert_eq!(body["model"], "gemma4:31b");
+        assert_eq!(body["max_tokens"], 8);
+        assert!(body.pointer("/messages/0/content/1/image_url/url").and_then(Value::as_str).is_some_and(|u| u.starts_with("data:image/png;base64,")));
+        let local = AiCfg { provider: "ollama".into(), base: "http://127.0.0.1:11434".into(), model: "x".into() };
+        let (url, body) = probe_request(&local, "m");
+        assert_eq!(url, "http://127.0.0.1:11434/api/chat");
+        assert_eq!(body["options"]["num_predict"], 8);
+        assert_eq!(body.pointer("/messages/0/images").and_then(Value::as_array).map(Vec::len), Some(1));
+        assert!(probe_png().starts_with(b"\x89PNG"));
     }
 }

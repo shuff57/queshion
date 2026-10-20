@@ -1034,19 +1034,19 @@ fn proj_render(p: &Params) -> String {
 pub fn defs() -> Vec<FigureDef> {
     vec![
         FigureDef { id: "free-body-diagram", subject: Subject::Physics, title: "Free Body Diagram",
-            blurb: "A dot, block, ball or cart with labelled force arrows at any angle, plus optional velocity and acceleration.",
+            blurb: "A dot or block with every force on it, and nothing else.",
             params: fbd_params, render: fbd_render },
         FigureDef { id: "vector-diagram", subject: Subject::Physics, title: "Vector Diagram",
-            blurb: "Head-to-tail vectors on a grid with a resultant, its angle and its components.",
+            blurb: "Up to three vectors head to tail on a grid, with their resultant.",
             params: vector_params, render: vector_render },
         FigureDef { id: "inclined-plane", subject: Subject::Physics, title: "Inclined Plane",
-            blurb: "A block, ball or cart on a ramp of any angle, with force, velocity and acceleration arrows.",
+            blurb: "A block, ball or cart on a ramp, with its angle and forces.",
             params: incline_params, render: incline_render },
         FigureDef { id: "pulley", subject: Subject::Physics, title: "Pulley",
-            blurb: "Atwood machine, table, ramp and block-and-tackle pulley setups with tension, weight and acceleration marks.",
+            blurb: "Objects on strings over pulleys, from an Atwood machine up.",
             params: pulley_params, render: pulley_render },
         FigureDef { id: "projectile-motion", subject: Subject::Physics, title: "Projectile Motion",
-            blurb: "A parabolic flight from the ground or a cliff with launch velocity, components, time-step positions and marks.",
+            blurb: "A ball launched from the ground or a cliff, with its path.",
             params: proj_params, render: proj_render },
     ]
 }

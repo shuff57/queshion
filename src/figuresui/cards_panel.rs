@@ -59,6 +59,24 @@ fn seg(ui: &mut Ui, opts: &[&'static str], cur: &str) -> Option<String> {
     (c != cur).then_some(c)
 }
 
+/// "+ Sample": a stroke plus icon, then the label in bold.
+fn plus_job(ui: &Ui, label: &str) -> egui::text::LayoutJob {
+    let col = ui.visuals().widgets.inactive.fg_stroke.color;
+    let mut job = egui::text::LayoutJob::default();
+    job.append(egui_phosphor::regular::PLUS, 0.0, egui::TextFormat { font_id: theme::icon_font(18.0), color: col, ..Default::default() });
+    job.append(label, 9.0, egui::TextFormat { font_id: egui::FontId::new(14.0, theme::bold_family()), color: col, ..Default::default() });
+    job
+}
+
+/// The gel chip: a stroke plus icon and a bold blue label.
+fn chip_job(label: &str) -> egui::text::LayoutJob {
+    let col = theme::accent_col();
+    let mut job = egui::text::LayoutJob::default();
+    job.append(egui_phosphor::regular::PLUS, 0.0, egui::TextFormat { font_id: theme::icon_font(16.0), color: col, ..Default::default() });
+    job.append(label, 11.0, egui::TextFormat { font_id: egui::FontId::new(14.4, theme::bold_family()), color: col, ..Default::default() });
+    job
+}
+
 fn small(ui: &mut Ui, text: &str) {
     ui.label(theme::muted(text).size(11.0));
 }
@@ -110,13 +128,25 @@ fn label_control(ui: &mut Ui, p: &mut Params, mode_key: &str, text_key: &str, ti
 }
 
 /// Bulleted readout lines.
-fn readout(ui: &mut Ui, lines: &[String]) {
+fn readout(ui: &mut Ui, lines: &[String]) -> Option<egui::Response> {
+    if theme::chem_skin() && !lines.is_empty() {
+        // the biology page's note: a pale blue rounded box of semibold 13.6 px lines on a 20 px line
+        let fr = egui::Frame::new().fill(theme::accent_faded()).corner_radius(egui::CornerRadius::same(10)).inner_margin(egui::Margin::symmetric(12, 8)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 3.0;
+            for l in lines {
+                ui.add(egui::Label::new(RichText::new(l.as_str()).size(13.6).family(theme::semibold_family()).color(theme::ink()).line_height(Some(20.0))).wrap());
+            }
+        });
+        return Some(fr.response);
+    }
     for l in lines {
         ui.horizontal_top(|ui| {
             ui.label(theme::muted("•").size(12.0));
             ui.add(egui::Label::new(theme::text(l.as_str()).size(12.0)).wrap());
         });
     }
+    None
 }
 
 impl Workspace {
@@ -158,6 +188,33 @@ impl Workspace {
                     "From the Lotka–Volterra model: prey grow and are eaten, predators grow on the prey they eat and die off. The populations swing around their averages, the predators’ peaks a little after the prey’s.",
                 );
             }
+            Card::TitReadout => {
+                let skin = theme::chem_skin();
+                if self.params.s("source") == "Key points" {
+                    ui.add(egui::Label::new(theme::muted(crate::figures::chemistry::tit_end_note(&self.params)).size(11.0)).wrap());
+                    ui.add_space(4.0);
+                }
+                if super::chem_shell::chem_page(ui.ctx()) {
+                    // 12 px under the number boxes
+                    ui.add_space(5.0);
+                }
+                Frame::new()
+                    .fill(theme::accent_faded())
+                    .corner_radius(CornerRadius::same(if skin { 10 } else { 8 }))
+                    .inner_margin(if skin { Margin::symmetric(12, 9) } else { Margin::same(8) })
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        let chem = super::chem_shell::chem_page(ui.ctx());
+                        if skin {
+                            ui.spacing_mut().item_spacing.y = if chem { 2.5 } else { 3.0 };
+                        }
+                        for l in cards::readout(fig, &self.params) {
+                            // the chemistry reference sets each line in 13.6 px on a 20 px line
+                            let t = if chem { theme::strong(l).size(13.6).line_height(Some(20.0)) } else { theme::strong(l).size(if skin { 13.6 } else { 12.0 }) };
+                            ui.add(egui::Label::new(t).wrap());
+                        }
+                    });
+            }
             Card::Strips => self.strips_card(ui),
             Card::Particles => self.particles_card(ui, pdefs),
         }
@@ -178,7 +235,152 @@ impl Workspace {
 
     // ------------------------------------------------------------ gel lanes
 
+    /// The biology page's Lanes card: bold labels, 40 px boxes, lanes split by rules, icon buttons.
+    fn gel_lanes_card_skin(&mut self, ui: &mut Ui) {
+        let noto = || egui::FontFamily::Name("vs-noto".into());
+        let cur = gel::current_setup(&self.params);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        param_label(ui, "Classic setups", "");
+        ui.add_space(5.0);
+        let mut pick = None;
+        let combo = |ui: &mut Ui, id: egui::Id, shown: &str, f: &mut dyn FnMut(&mut Ui)| {
+            ui.scope(|ui| {
+                ui.spacing_mut().button_padding = Vec2::new(15.0, 9.5);
+                ui.spacing_mut().interact_size.y = 39.5;
+                let w = ui.available_width();
+                ComboBox::from_id_salt(id).icon(super::chem_shell::select_chevron).selected_text(RichText::new(shown).size(15.2).family(egui::FontFamily::Name("vs-noto".into()))).width(w).show_ui(ui, |ui| f(ui));
+            });
+        };
+        combo(ui, egui::Id::new("gel_setup"), cur.unwrap_or("Choose one…"), &mut |ui| {
+            for s in gel::setup_names() {
+                if ui.selectable_label(cur == Some(*s), *s).clicked() {
+                    pick = Some(*s);
+                }
+            }
+        });
+        ui.add_space(8.0);
+        ui.add(egui::Label::new(theme::muted(gel::setup_note(cur)).size(13.0).family(noto())).wrap());
+        ui.add_space(16.0);
+        if let Some(s) = pick {
+            let mut q = self.params.clone();
+            q.set_s("setup", s);
+            self.card_commit(q, true);
+        }
+        let lanes = gel::lane_cards(&self.params);
+        let n = lanes.len();
+        let mut edit: Option<(Vec<gel::LaneCard>, bool)> = None;
+        let rule = |ui: &mut Ui| {
+            let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
+            ui.painter().hline(r.x_range(), r.center().y, Stroke::new(1.0, theme::border()));
+        };
+        let field = |ui: &mut Ui, id: egui::Id, cur: &str, hint: &str| -> Option<String> {
+            let focused = ui.memory(|m| m.has_focus(id));
+            let mut buf = if focused { ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| cur.to_string()) } else { cur.to_string() };
+            let r = ui.add(TextEdit::singleline(&mut buf).id(id).desired_width(f32::INFINITY).margin(Margin::symmetric(11, 10)).hint_text(hint).font(egui::FontId::new(15.0, egui::FontFamily::Name("vs-noto".into()))));
+            ui.data_mut(|d| d.insert_temp(id, buf.clone()));
+            r.changed().then_some(buf)
+        };
+        for (i, lane) in lanes.iter().enumerate() {
+            rule(ui);
+            ui.add_space(15.0);
+            let ladder = matches!(lane.kind, gel::LaneKind::Ladder(_));
+            let name = if lane.label.is_empty() { format!("Sample {}", i + 1) } else { lane.label.clone() };
+            ui.horizontal(|ui| {
+                ui.spacing_mut().interact_size.y = 24.0;
+                ui.label(theme::strong(format!("{}. {}", i + 1, if ladder { "Ladder" } else { "Sample" })).size(14.7));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 13.0;
+                    let big = |ui: &mut Ui, g: &str, on: bool, tip: &str| {
+                        let b = Button::new(RichText::new(g).size(18.0).color(theme::ink())).frame(false).min_size(Vec2::splat(30.0));
+                        ui.add_enabled(on, b).on_hover_text(tip).on_disabled_hover_text(tip).clicked()
+                    };
+                    ui.add_space(4.0);
+                    if big(ui, egui_phosphor::regular::TRASH, n > 1, &format!("Remove {name}")) {
+                        let mut v = lanes.clone();
+                        v.remove(i);
+                        edit = Some((v, true));
+                    }
+                    if big(ui, egui_phosphor::regular::ARROW_RIGHT, i + 1 < n, &format!("Move {name} right")) {
+                        let mut v = lanes.clone();
+                        v.swap(i, i + 1);
+                        edit = Some((v, true));
+                    }
+                    if big(ui, egui_phosphor::regular::ARROW_LEFT, i > 0, &format!("Move {name} left")) {
+                        let mut v = lanes.clone();
+                        v.swap(i, i - 1);
+                        edit = Some((v, true));
+                    }
+                });
+            });
+            ui.add_space(11.0);
+            param_label(ui, "Label", "");
+            ui.add_space(5.0);
+            let hint = if ladder { "e.g. Ladder" } else { "e.g. Suspect 1" };
+            if let Some(t) = field(ui, ui.make_persistent_id(("gel_lab", i)), &lane.label, hint) {
+                let mut v = lanes.clone();
+                v[i].label = t;
+                edit = Some((v, false));
+            }
+            ui.add_space(8.0);
+            match &lane.kind {
+                gel::LaneKind::Ladder(k) => {
+                    param_label(ui, "Ladder", "");
+                    ui.add_space(5.0);
+                    let mut k2 = *k;
+                    combo(ui, egui::Id::new(("gel_ladder", i)), gel::LADDERS[(*k).min(2)], &mut |ui| {
+                        for (j, l) in gel::LADDERS.iter().enumerate() {
+                            ui.selectable_value(&mut k2, j, *l);
+                        }
+                    });
+                    if k2 != *k {
+                        let mut v = lanes.clone();
+                        v[i].kind = gel::LaneKind::Ladder(k2);
+                        edit = Some((v, true));
+                    }
+                }
+                gel::LaneKind::Sample(b) => {
+                    param_label(ui, "Bands|in bp, separated by commas", "");
+                    ui.add_space(5.0);
+                    if let Some(t) = field(ui, ui.make_persistent_id(("gel_bands", i)), b, "e.g. 1200, 450, 300") {
+                        let mut v = lanes.clone();
+                        v[i].kind = gel::LaneKind::Sample(t);
+                        edit = Some((v, false));
+                    }
+                }
+            }
+            ui.add_space(13.0);
+        }
+        rule(ui);
+        ui.add_space(14.0);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 9.0;
+            let room = n < gel::MAX_LANES;
+            let chip = |ui: &mut Ui, text: &str, tip: &str| ui.add_enabled(room, Button::new(chip_job(text)).fill(egui::Color32::TRANSPARENT).stroke(Stroke::new(1.0, super::chem_shell::pill_border())).corner_radius(CornerRadius::same(20)).min_size(Vec2::new(0.0, 34.0))).on_hover_text(tip).clicked();
+            if chip(ui, "Sample", "Add a sample lane") {
+                let mut v = lanes.clone();
+                v.push(gel::LaneCard::sample());
+                edit = Some((v, true));
+            }
+            if chip(ui, "Ladder", "Add a ladder lane") {
+                let mut v = lanes.clone();
+                v.push(gel::LaneCard::ladder());
+                edit = Some((v, true));
+            }
+        });
+        ui.add_space(10.0);
+        ui.add(egui::Label::new(theme::muted("Type “x2” after a size for twice as much DNA, a darker band (e.g. 450 x2), or “x0.5” for a fainter one. Sizes can be in kb, e.g. 1.5 kb.").size(13.0).family(noto())).wrap());
+        ui.add_space(6.0);
+        if let Some((v, step)) = edit {
+            let mut q = self.params.clone();
+            gel::set_lane_cards(&mut q, &v);
+            self.card_commit(q, step);
+        }
+    }
+
     fn gel_lanes_card(&mut self, ui: &mut Ui) {
+        if theme::chem_skin() {
+            return self.gel_lanes_card_skin(ui);
+        }
         let cur = gel::current_setup(&self.params);
         small(ui, "Classic setups");
         let mut pick = None;
@@ -258,12 +460,12 @@ impl Workspace {
         }
         ui.horizontal(|ui| {
             let room = n < gel::MAX_LANES;
-            if ui.add_enabled(room, Button::new(RichText::new("+ Sample").size(12.0)).corner_radius(CornerRadius::same(10))).on_hover_text("Add a sample lane").clicked() {
+            if ui.add_enabled(room, Button::new(plus_job(ui, "Sample")).min_size(Vec2::new(0.0, 34.0)).corner_radius(CornerRadius::same(17))).on_hover_text("Add a sample lane").clicked() {
                 let mut v = lanes.clone();
                 v.push(gel::LaneCard::sample());
                 edit = Some((v, true));
             }
-            if ui.add_enabled(room, Button::new(RichText::new("+ Ladder").size(12.0)).corner_radius(CornerRadius::same(10))).on_hover_text("Add a ladder lane").clicked() {
+            if ui.add_enabled(room, Button::new(plus_job(ui, "Ladder")).min_size(Vec2::new(0.0, 34.0)).corner_radius(CornerRadius::same(17))).on_hover_text("Add a ladder lane").clicked() {
                 let mut v = lanes.clone();
                 v.push(gel::LaneCard::ladder());
                 edit = Some((v, true));
@@ -451,10 +653,37 @@ impl Workspace {
 
     fn growth_fit_card(&mut self, ui: &mut Ui, fig: &str) {
         ui.add_space(2.0);
-        readout(ui, &cards::readout(fig, &self.params));
-        ui.label(theme::muted("How the curves are worked out").size(11.0).underline()).on_hover_text(
-            "Exponential growth is dN/dt = rN; logistic growth is dN/dt = rN(K − N)/K, leveling off at the carrying capacity K. Overshoot is logistic growth that feels crowding a lag τ late, so it swings around K. Boom and crash is a population using up food that doesn’t grow back.",
-        );
+        let tip =
+
+            "Exponential growth is dN/dt = rN; logistic growth is dN/dt = rN(K − N)/K, leveling off at the carrying capacity K. Overshoot is logistic growth that feels crowding a lag τ late, so it swings around K. Boom and crash is a population using up food that doesn’t grow back.";
+        let note = readout(ui, &cards::readout(fig, &self.params));
+        if theme::chem_skin() {
+            // the biology page keeps the explanation on the note itself
+            if let Some(r) = note {
+                r.on_hover_text(tip);
+            }
+            ui.add_space(0.0);
+            let mut fit = self.params.b("fit");
+            let mut now = false;
+            ui.horizontal(|ui| {
+                ui.set_height(28.5);
+                if chem_shell::fit_checkbox(ui, &mut fit, "Fit the axes as these change").changed() {
+                    let mut q = if fit { self.params.clone() } else { popdyn::growth_fit_now(&self.params) };
+                    q.set_b("fit", fit);
+                    self.card_commit(q, true);
+                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    now = chem_shell::fit_now_button(ui).on_hover_text("Fit the x- and y-axis ranges to the curve now").clicked();
+                });
+            });
+            if now {
+                let q = popdyn::growth_fit_now(&self.params);
+                self.card_commit(q, true);
+            }
+            return;
+        }
+        let how = ui.label(theme::muted("How the curves are worked out").size(11.0).underline());
+        how.on_hover_text(tip);
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             let mut fit = self.params.b("fit");

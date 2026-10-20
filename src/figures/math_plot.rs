@@ -136,12 +136,12 @@ fn grid(p: &Params) -> Vec<Handle> {
         }
     }
     // Text labels.
-    let (w, ext) = (g.pw + g.ml + 34.0, if p.b("arrows") { 16.0 } else { 0.0 });
+    let (w, ext) = (g.pw + g.ml + 52.5, if p.b("arrows") { 20.0 } else { 0.0 });
     let ax_y = if g.y0 <= 0.0 && g.y1 >= 0.0 { 0.0 } else { g.y0 };
     let ax_x = if g.x0 <= 0.0 && g.x1 >= 0.0 { 0.0 } else { g.x0 };
     if !p.s("title").is_empty() && p.s("title_mode") != "None" && p.s("title_mode") != "Blank line" { hs.push(Handle::label((w / 2.0, 18.0), (180.0, 24.0), "title", "Double-click to edit the title")); }
     if !p.s("xlabel").is_empty() { hs.push(Handle::label((g.ml + g.pw + ext + 14.0, g.sy(ax_y)), (28.0, 22.0), "xlabel", "Double-click to edit the x-axis label")); }
-    if !p.s("ylabel").is_empty() { hs.push(Handle::label((g.sx(ax_x), g.mt - ext - 9.0), (28.0, 22.0), "ylabel", "Double-click to edit the y-axis label")); }
+    if !p.s("ylabel").is_empty() { hs.push(Handle::label((g.sx(ax_x), g.mt - ext - 13.0), (28.0, 22.0), "ylabel", "Double-click to edit the y-axis label")); }
     hs
 }
 
@@ -151,7 +151,8 @@ struct Nl { lo: f64, hi: f64, x0: f64, x1: f64, y: f64, r: f64 }
 fn nl(p: &Params) -> Nl {
     let (lo, mut hi) = (p.f("min"), p.f("max"));
     if hi <= lo { hi = lo + 1.0; }
-    Nl { lo, hi, x0: 40.0, x1: 640.0, y: 64.0, r: super::math::nl_step(p).0 / (p.i("minor") + 1) as f64 }
+    let (_, _, x0, x1, y) = super::math::nl_geom(p);
+    Nl { lo, hi, x0, x1, y, r: super::math::nl_step(p).0 / (p.i("minor") + 1) as f64 }
 }
 fn ineq_str(ivs: &[Interval]) -> String {
     let op = |c: bool| if c { "<=" } else { "<" };

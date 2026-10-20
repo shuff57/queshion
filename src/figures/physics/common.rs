@@ -224,6 +224,19 @@ impl G {
         self.head(x2, y2, x1, y1, c, sw);
         self.head(x1, y1, x2, y2, c, sw);
     }
+    /// A double-headed dimension mark with small, narrow heads (about 10 px long), as the
+    /// reference draws on the wave figure.
+    pub fn dim_arrow_fine(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, c: &str, sw: f64) {
+        let (dx, dy) = (x2 - x1, y2 - y1);
+        let len = (dx * dx + dy * dy).sqrt().max(1e-6);
+        let (ux, uy) = (dx / len, dy / len);
+        let hl = 10.0_f64.min(len * 0.4);
+        self.line(x1 + ux * hl * 0.8, y1 + uy * hl * 0.8, x2 - ux * hl * 0.8, y2 - uy * hl * 0.8, c, sw);
+        for (tx, ty, sx, sy) in [(x2, y2, -ux, -uy), (x1, y1, ux, uy)] {
+            let (bx, by) = (tx + sx * hl, ty + sy * hl);
+            self.poly(&[(tx, ty), (bx - sy * hl * 0.27, by + sx * hl * 0.27), (bx + sy * hl * 0.27, by - sx * hl * 0.27)], c, c, 0.5);
+        }
+    }
     pub fn poly(&mut self, pts: &[Pt], fill: &str, stroke: &str, sw: f64) {
         let p: Vec<Pt> = pts.iter().map(|&(x, y)| (self.x(x), y)).collect();
         self.d.poly(&p, fill, stroke, sw);

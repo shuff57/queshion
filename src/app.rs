@@ -19,6 +19,12 @@ pub struct Settings {
     pub ai_model: String,
     #[serde(default)]
     pub ai_base: String, // custom OpenAI-compatible base URL
+    /// Models "Find models" kept for `ai_models_for` ("provider|base"): the ones this account can use
+    /// to read a picture. Stored so the picker keeps them across restarts.
+    #[serde(default)]
+    pub ai_models_ok: Vec<String>,
+    #[serde(default)]
+    pub ai_models_for: String,
     #[serde(default)]
     pub dark: bool, // dark palette; applied via theme::set_dark
     /// Home screen view modes (false = Cards, true = List).

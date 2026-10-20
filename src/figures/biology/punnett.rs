@@ -63,7 +63,7 @@ pub fn cycle_gene(p: &mut Params, parent: usize, gene: usize) {
             v.iter().map(|g| format!("{}{}", allele_text(g[0]), allele_text(g[1]))).collect::<Vec<_>>().join("")
         }
     };
-    let s = format!("{} x {}", fmt(&pa), fmt(&pb));
+    let s = format!("{} × {}", fmt(&pa), fmt(&pb));
     p.set_s("parents", &s);
 }
 
@@ -71,10 +71,10 @@ pub fn params() -> Vec<ParamDef> {
     vec![
         ParamDef::choice("cross", "Cross", &["Monohybrid", "Dihybrid", "X-linked"], "Monohybrid"),
         ParamDef::choice("dominance", "Dominance", &["Complete", "Incomplete", "Codominance"], "Complete"),
-        ParamDef::text("parents", "Parents (first goes across the top), e.g. Tt x Tt", "Tt x Tt"),
-        ParamDef::text("phenotypes", "Phenotype names, e.g. tall, short (genes split by ;)", "tall, short"),
+        ParamDef::text("parents", "Parents", "Tt × Tt").hint("The first parent goes across the top. Capitals are dominant."),
+        ParamDef::text("phenotypes", "Phenotype names", "tall, short"),
         ParamDef::bool("filled", "Fill in the squares (off = blank for students)", true),
-        ParamDef::choice("shading", "Shading", &["None", "Each phenotype, with a key", "First phenotype only", "Last phenotype only"], "None"),
+        ParamDef::choice("shading", "Shade the cells by phenotype", &["None", "Each phenotype, with a key", "First phenotype only", "Last phenotype only"], "None"),
         ParamDef::bool("geno_ratio", "Show genotype ratio", true),
         ParamDef::bool("pheno_ratio", "Show phenotype ratio", true),
         ParamDef::text("title", "Chart title (blank = none)", ""),
@@ -83,7 +83,7 @@ pub fn params() -> Vec<ParamDef> {
         ParamDef::bool("outline_heavy", "Heavy outer border", true),
         // ---- added for parity with the reference controls
         ParamDef::choice("parent_labels", "Parent labels", &["Genotype", "♀ ♂", "Mother", "None"], "Genotype"),
-        ParamDef::bool("blank_parents", "Leave the parents' genotypes blank", false),
+        ParamDef::bool("blank_parents", "Leave the parents’ genotypes blank", false),
         ParamDef::bool("blank_gametes", "Leave the gametes blank", false),
         ParamDef::choice("cells", "Offspring cells", &["Filled in", "Blank", "Some blank"], "Filled in"),
         ParamDef::list("blank_cells", "Blank cells for Some blank (numbers, row by row from 1)", "1, 4"),
@@ -237,6 +237,17 @@ fn parse_parent(s: &str, cross: Cross) -> Result<Vec<Pair>, String> {
             Ok(v)
         }
     }
+}
+
+/// The gene letters (capital form) named by the Parents text, for the per-allele-class phenotype
+/// rows: one for a monohybrid cross, two for a dihybrid, none for X-linked.
+pub fn gene_letters(p: &Params) -> Vec<char> {
+    let cross = p.s("cross");
+    if cross == "X-linked" { return Vec::new(); }
+    let Some((a, _)) = split_parents(p.s("parents")) else { return Vec::new() };
+    let l: Vec<char> = a.chars().filter(|c| c.is_alphabetic()).collect();
+    let n = if cross == "Dihybrid" { 2 } else { 1 };
+    (0..n).filter_map(|g| l.get(g * 2).map(|c| c.to_uppercase().next().unwrap_or(*c))).collect()
 }
 
 fn split_parents(s: &str) -> Option<(String, String)> {
@@ -453,9 +464,13 @@ const PATTERN_DEFS: &str = r##"<defs><pattern id="pq-hatch" width="10" height="1
 
 const FILLS: [&str; 6] = ["#bfdbfe", "#fde68a", "#bbf7d0", "#fecaca", "#e9d5ff", "#fed7aa"];
 
-/// Rough rendered width of a run of parts at font `size`.
+/// Rendered width of a run of parts at font `size` (Arial, Times italic for genotypes, superscripts
+/// at 0.7 em), measured the way the reference's browser lays it out.
 fn parts_w(parts: &[Part], size: f64) -> f64 {
-    parts.iter().map(|p| p.s.chars().count() as f64 * size * if p.sup { 0.36 } else if p.serif { 0.52 } else if p.bold { 0.6 } else { 0.55 }).sum()
+    parts.iter().map(|p| {
+        let sz = if p.sup { size * 0.7 } else { size };
+        p.s.chars().map(|c| if p.serif { super::plot::times_i_em(c) } else { super::plot::arial_em(c, p.bold) } * sz).sum::<f64>()
+    }).sum()
 }
 
 fn frac(n: i64, total: i64) -> String {
@@ -610,17 +625,20 @@ pub fn render(p: &Params) -> String {
     }
 
     // geometry
-    let cell = match (cross, nc) { (_, 4) => 82.0, _ => 100.0 };
+    // the reference's sizes: 112 px cells with 34/30/26 px type, or 88 px cells with 24/22/20 px for four columns
+    let four = nc >= 4;
+    let (cell, csz, gsz, psz) = if four { (88.0, 24.0, 22.0, 20.0) } else { (112.0, 34.0, 30.0, 26.0) };
     let lab_mode = p.s("parent_labels");
     let blank_par = p.b("blank_parents");
     let (pre_top, pre_side) = match lab_mode { "♀ ♂" => ("♀  ", "♂  "), "Mother" => ("Mother ", "Father "), _ => ("", "") };
     let show_par = lab_mode != "None";
     let gp_side = geno_parts(&pb, cross);
-    let side_w = if !show_par { 0.0 } else { parts_w(&[Part::b(pre_side)], 28.0) + if blank_par { 80.0 } else { parts_w(&gp_side, 28.0) } };
-    let gx_off = (side_w + 86.0).max(120.0);
+    let side_w = if !show_par { 0.0 } else { parts_w(&[Part::b(pre_side)], psz) + if blank_par { 80.0 } else { parts_w(&gp_side, psz) } };
+    // the gap left of the grid: the parent's name, then the side gametes
+    let gx_off = if !show_par { if four { 56.0 } else { 44.0 } } else if four { side_w + 58.1 } else { (2.0 * side_w + 42.5).max(86.0) };
     let content_w = gx_off + cell * nc as f64;
     let fs_ratio = 19.0;
-    let max_line = (content_w + 40.0).max(560.0);
+    let max_line = 460.0f64.max(content_w);
     // pack ratio segments into lines no wider than max_line
     let mut rlines: Vec<Vec<Part>> = Vec::new();
     for (lab, segs, blank) in &blocks {
@@ -649,8 +667,10 @@ pub fn render(p: &Params) -> String {
         rlines.push(line);
     }
     let lines_w = rlines.iter().map(|l| parts_w(l, fs_ratio)).fold(0.0, f64::max);
-    let w = (content_w.max(lines_w) + 90.0).max(580.0);
-    let ox = (w - content_w) / 2.0;
+    // the reference pads its canvas with 16 px all round and fits it to the widest of grid and ratio lines
+    let inner_w = content_w.max(lines_w);
+    let w = inner_w + 32.0;
+    let ox = 16.0 + (inner_w - content_w) / 2.0;
     let cx_mid = w / 2.0;
 
     let mut y = 16.0;
@@ -658,14 +678,14 @@ pub fn render(p: &Params) -> String {
     if !title.is_empty() { y += 24.0; head.push((y, 21.0, title, true)); y += 12.0; }
     for l in wrap(&question, ((w - 60.0) / 8.0) as usize) { y += 22.0; head.push((y, 15.0, l, false)); }
     if !head.is_empty() { y += 14.0; }
-    let p1_y = y + 28.0;
-    let gam_y = p1_y + 38.0;
-    let gy = gam_y + 14.0;
+    let p1_y = y + psz;
+    let gy = p1_y + 2.2 * gsz;
+    let gam_y = gy - 0.6 * gsz;
     let gx = ox + gx_off;
     let grid_h = cell * nr as f64;
-    let mut yb = gy + grid_h + 34.0;
-    let mut d_h = yb;
-    d_h += rlines.len() as f64 * 30.0;
+    let mut yb = gy + grid_h + 38.35;
+    let mut d_h = yb - 9.1 + 9.1;
+    if !rlines.is_empty() { d_h += (rlines.len() as f64 - 1.0) * 27.55 + 9.1; } else { d_h = gy + grid_h; }
     let key_on = shade_mode.starts_with("Each") || (patterns && shade_mode != "None");
     let key_items: Vec<(String, &'static str)> = if shade_mode.starts_with("Each") {
         classes.iter().enumerate().map(|(ci, k)| (k.clone(), shaded(ci).unwrap_or("#fff"))).collect()
@@ -691,29 +711,28 @@ pub fn render(p: &Params) -> String {
         let mut side = Vec::new();
         if !pre_side.is_empty() { side.push(if lab_mode == "Mother" { Part::b(pre_side) } else { Part::plain(pre_side) }); }
         let tcx = gx + cell * nc as f64 / 2.0;
-        side_cx = gx - 66.0 - side_w / 2.0;
+        side_cx = if !four && (gx_off - 86.0).abs() < 0.01 { ox + 2.33 + side_w / 2.0 } else { gx - 55.3 - side_w / 2.0 };
         // prefix (Mother / ♀) drawn as its own text so the genotype keeps its serif italic face
         let pre_attr = if lab_mode == "Mother" { r#"font-weight="bold""# } else { "" };
-        let pre_w = |t: &str| if t.is_empty() { 0.0 } else if lab_mode == "Mother" { parts_w(&[Part::b(t)], 28.0) } else { 30.0 };
+        let pre_w = |t: &str| if t.is_empty() { 0.0 } else if lab_mode == "Mother" { parts_w(&[Part::b(t)], psz) } else { psz * 1.1 };
         let gtop = geno_parts(&pa, cross);
-        let (gw_top, gw_side) = if blank_par { (80.0, 80.0) } else { (parts_w(&gtop, 28.0), parts_w(&gp_side, 28.0)) };
+        let (gw_top, gw_side) = if blank_par { (80.0, 80.0) } else { (parts_w(&gtop, psz), parts_w(&gp_side, psz)) };
         let tx0 = tcx - (pre_w(pre_top) + gw_top) / 2.0;
         let sx0 = side_cx - (pre_w(pre_side) + gw_side) / 2.0;
-        let sy = gy + grid_h / 2.0 + 10.0;
-        if !pre_top.is_empty() { txt(&mut d, tx0, p1_y, 28.0, "start", SANS, pre_attr, pre_top.trim_end()); }
-        if !pre_side.is_empty() { txt(&mut d, sx0, sy, 28.0, "start", SANS, pre_attr, pre_side.trim_end()); }
+        let sy = gy + grid_h / 2.0 + 0.35 * psz;
+        if !pre_top.is_empty() { txt(&mut d, tx0, p1_y, psz, "start", SANS, pre_attr, pre_top.trim_end()); }
+        if !pre_side.is_empty() { txt(&mut d, sx0, sy, psz, "start", SANS, pre_attr, pre_side.trim_end()); }
         let _ = (&top, &side);
         if blank_par {
             d.line(tx0 + pre_w(pre_top), p1_y + 2.0, tx0 + pre_w(pre_top) + 80.0, p1_y + 2.0, INK, 1.4);
             d.line(sx0 + pre_w(pre_side), sy + 2.0, sx0 + pre_w(pre_side) + 80.0, sy + 2.0, INK, 1.4);
         } else {
-            rich(&mut d, tx0 + pre_w(pre_top), p1_y, 28.0, "start", &gtop, true);
-            rich(&mut d, sx0 + pre_w(pre_side), sy, 28.0, "start", &gp_side, true);
+            rich(&mut d, tx0 + pre_w(pre_top), p1_y, psz, "start", &gtop, true);
+            rich(&mut d, sx0 + pre_w(pre_side), sy, psz, "start", &gp_side, true);
         }
     } else {
-        side_cx = gx - 66.0;
+        side_cx = gx - 55.5;
     }
-    let gsz = if nc == 4 { 20.0 } else { 26.0 };
     if p.b("blank_gametes") {
         for i in 0..nc { let x = gx + cell * (i as f64 + 0.5); d.line(x - 22.0, gam_y + 2.0, x + 22.0, gam_y + 2.0, INK, 1.3); }
         for j in 0..nr { let yy = gy + cell * (j as f64 + 0.5) + 8.0; d.line(gx - 56.0, yy, gx - 12.0, yy, INK, 1.3); }
@@ -722,11 +741,10 @@ pub fn render(p: &Params) -> String {
             rich(&mut d, gx + cell * (i as f64 + 0.5), gam_y, gsz, "middle", &gamete_parts(g, cross), true);
         }
         for (j, g) in gb.iter().enumerate() {
-            rich(&mut d, gx - 14.0, gy + cell * (j as f64 + 0.5) + gsz * 0.35, gsz, "end", &gamete_parts(g, cross), true);
+            rich(&mut d, gx - if four { 23.0 } else { 26.0 }, gy + cell * (j as f64 + 0.5) + gsz * 0.35, gsz, "middle", &gamete_parts(g, cross), true);
         }
     }
     // cells
-    let csz = if nc == 4 { 19.0 } else { 28.0 };
     let under = p.b("cell_phenotype");
     for (j, row) in kids.iter().enumerate() {
         for (i, c) in row.iter().enumerate() {
@@ -737,7 +755,7 @@ pub fn render(p: &Params) -> String {
             if !blank {
                 let halo = patterns && fill.starts_with("url");
                 if halo { d.raw(r##"<g stroke="#fff" stroke-width="5" stroke-linejoin="round" style="paint-order:stroke">"##); }
-                let gy_txt = if under { yy + cell / 2.0 + csz * 0.2 } else { yy + cell / 2.0 + csz * 0.35 };
+                let gy_txt = if under { yy + cell / 2.0 + csz * 0.2 } else { yy + cell / 2.0 + csz * 0.36 };
                 rich(&mut d, x + cell / 2.0, gy_txt, csz, "middle", &geno_parts(&c.genes, cross), true);
                 if under {
                     let (_, nm) = pheno(c);
@@ -770,10 +788,11 @@ pub fn render(p: &Params) -> String {
         yb += 18.0 + key_rows as f64 * 26.0;
     }
     // ratios: left-aligned block centred on the page
-    let bx = cx_mid - lines_w / 2.0;
+    // the reference centres short ratio lines on its canvas without taking the padding off, so they sit 16 px right of centre
+    let bx = if lines_w <= content_w { cx_mid + 16.0 - lines_w / 2.0 } else { 16.0 + (inner_w - lines_w) / 2.0 };
     for l in &rlines {
         rich(&mut d, bx, yb, fs_ratio, "start", l, true);
-        yb += 30.0;
+        yb += 27.55;
     }
     d.finish()
 }

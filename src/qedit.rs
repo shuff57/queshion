@@ -436,6 +436,14 @@ impl Draft {
             .map(|q| q.created)
             .unwrap_or_else(|| screens::now_secs());
         let t = screens::now_secs();
+        let explanation = match self.explanation.as_deref() {
+            // A question imported without its key keeps the "no answer key" marker until the
+            // teacher has entered a key: editing the marker away does not make one up.
+            _ if existing.is_some_and(|q| crate::model::is_keyless(q) && !crate::model::rekeyed(q, &kind)) => Some(crate::model::KEYLESS_SENTINEL.to_string()),
+            Some(s) if s.trim() == crate::model::KEYLESS_SENTINEL => None,
+            Some(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+            _ => None,
+        };
         Question {
             id,
             stem: self.stem.trim().to_string(),
@@ -444,10 +452,7 @@ impl Draft {
             difficulty: self.difficulty,
             topics,
             image: self.image.clone(),
-            explanation: match self.explanation.as_deref() {
-                Some(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
-                _ => None,
-            },
+            explanation,
             figure: if self.image.is_some() { self.figure.clone() } else { None },
             created,
             modified: t,
@@ -1333,6 +1338,24 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn the_keyless_marker_cannot_be_edited_away() {
+        let mut q = sample_question();
+        q.kind = Kind::Tf { correct: false };
+        q.explanation = Some(crate::model::KEYLESS_SENTINEL.into());
+        // The teacher deletes the marker but enters no key: it comes back.
+        let mut d = Draft::from_question("b".into(), &q);
+        d.explanation = None;
+        assert_eq!(d.build_question(Some(&q)).explanation.as_deref(), Some(crate::model::KEYLESS_SENTINEL));
+        d.explanation = Some("Because it is a star.".into());
+        assert_eq!(d.build_question(Some(&q)).explanation.as_deref(), Some(crate::model::KEYLESS_SENTINEL));
+        // Entering a key (here: True) clears it; a kept marker text goes too.
+        d.kind = Kind::Tf { correct: true };
+        assert_eq!(d.build_question(Some(&q)).explanation.as_deref(), Some("Because it is a star."));
+        d.explanation = Some(crate::model::KEYLESS_SENTINEL.into());
+        assert_eq!(d.build_question(Some(&q)).explanation, None);
+    }
 
     fn sample_question() -> Question {
         Question {

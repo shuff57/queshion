@@ -27,6 +27,8 @@ pub mod equation;
 pub mod equation_text;
 pub mod export;
 pub mod figfit;
+pub mod figure_agent;
+pub mod figure_eval;
 pub mod figures;
 pub mod figuresui;
 pub mod fonts;

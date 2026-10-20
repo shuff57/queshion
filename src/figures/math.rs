@@ -4,7 +4,7 @@ use super::svg::Doc;
 use super::*;
 use std::f64::consts::PI;
 
-const INK: &str = "#111";
+const INK: &str = "#111827";
 const GREY: &str = "#6b6b6b";
 const TINT: &str = "#e9f1fb";
 const BLUE: &str = "#1f5fbf";
@@ -24,14 +24,16 @@ fn fmtu(v: f64, dec: i64, unit: &str) -> String {
 }
 fn tw(s: &str, size: f64) -> f64 { s.chars().count() as f64 * size * 0.6 }
 /// Text with a broad font fallback list (svg::Doc::text only names DejaVu/Arial).
-fn txt(doc: &mut Doc, x: f64, y: f64, size: f64, anchor: &str, s: &str) {
-    doc.raw(&format!(r##"<text x="{x:.2}" y="{y:.2}" font-size="{size}" text-anchor="{anchor}" font-family="DejaVu Sans, Arial, Liberation Sans, Noto Sans, Helvetica, sans-serif" fill="#000">{}</text>"##, super::svg::esc(s)));
+fn txt(doc: &mut Doc, x: f64, y: f64, size: f64, anchor: &str, s: &str) { txtw(doc, x, y, size, anchor, s, false); }
+fn txtw(doc: &mut Doc, x: f64, y: f64, size: f64, anchor: &str, s: &str, bold: bool) {
+    let wt = if bold { r#" font-weight="bold""# } else { "" };
+    doc.raw(&format!(r##"<text x="{x:.2}" y="{y:.2}" font-size="{size}" text-anchor="{anchor}" font-family="DejaVu Sans, Arial, Liberation Sans, Noto Sans, Helvetica, sans-serif"{wt} fill="#000">{}</text>"##, super::svg::esc(s)));
 }
 fn put(doc: &mut Doc, x: f64, y: f64, text: &str, size: f64) { txt(doc, x, y + size * 0.34, size, "middle", text); }
 fn dline(doc: &mut Doc, a: Pt, b: Pt, color: &str, sw: f64, dash: &str) {
     use std::fmt::Write;
     let mut s = String::new();
-    let _ = write!(s, r#"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{color}" stroke-width="{sw}" stroke-dasharray="{dash}" stroke-linecap="round"/>"#, a.0, a.1, b.0, b.1);
+    let _ = write!(s, r#"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{color}" stroke-width="{sw}" stroke-dasharray="{dash}"/>"#, a.0, a.1, b.0, b.1);
     doc.raw(&s);
 }
 fn dpoly(doc: &mut Doc, pts: &[Pt], color: &str, sw: f64, dash: &str) {
@@ -64,11 +66,11 @@ fn unit_v(a: Pt, b: Pt) -> Pt {
     let l = (dx * dx + dy * dy).sqrt().max(1e-12);
     (dx / l, dy / l)
 }
-fn dist(a: Pt, b: Pt) -> f64 { ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt() }
 fn mix(c1: (f64, f64, f64), c2: (f64, f64, f64), t: f64) -> String {
     let t = t.clamp(0.0, 1.0);
     format!("#{:02x}{:02x}{:02x}", (c1.0 + (c2.0 - c1.0) * t) as u8, (c1.1 + (c2.1 - c1.1) * t) as u8, (c1.2 + (c2.2 - c1.2) * t) as u8)
 }
+fn dist(a: Pt, b: Pt) -> f64 { ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt() }
 
 /// Uniform fit of model points (y up) into a w x h canvas.
 pub(super) struct Map { pub s: f64, pub ox: f64, pub oy: f64 }
@@ -90,6 +92,17 @@ impl Map {
         if x0 > x1 { x0 = 0.0; x1 = 1.0; y0 = 0.0; y1 = 1.0; }
         let s = ((w - 2.0 * mx) / (x1 - x0).max(1e-9)).min((h - 2.0 * my) / (y1 - y0).max(1e-9));
         let m = Map { s, ox: w / 2.0 - s * (x0 + x1) / 2.0, oy: h / 2.0 + s * (y0 + y1) / 2.0 };
+        LAST_MAP.with(|c| c.set(Some((m.s, m.ox, m.oy))));
+        m
+    }
+    /// Like `fit`, but fills exactly `w` x `h` with the top-left of the drawing at (x0, y0): the
+    /// reference draws its solids at a fixed 420 x 300 limit and sizes the page around them.
+    pub(super) fn fit_at(pts: &[Pt], w: f64, h: f64, x0: f64, y0: f64) -> Map {
+        let (mut a0, mut a1, mut b0, mut b1) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
+        for p in pts { a0 = a0.min(p.0); a1 = a1.max(p.0); b0 = b0.min(p.1); b1 = b1.max(p.1); }
+        if a0 > a1 { a0 = 0.0; a1 = 1.0; b0 = 0.0; b1 = 1.0; }
+        let s = (w / (a1 - a0).max(1e-9)).min(h / (b1 - b0).max(1e-9));
+        let m = Map { s, ox: x0 - s * a0, oy: y0 + s * b1 };
         LAST_MAP.with(|c| c.set(Some((m.s, m.ox, m.oy))));
         m
     }
@@ -300,11 +313,11 @@ fn draw_poly_inner(s: PolySpec, dec: i64, unit: &str) -> String {
     for d in &s.dots { all.push(rot(*d)); }
     let (w, h) = (480.0, 360.0);
     let k = 0.6 + 0.4 * fs;
-    let m = Map::fit(&all, w, h, 64.0 * k, 46.0 * k);
+    let m = Map::fit(&all, w, h, 50.0 * k, 36.0 * k);
     let sp: Vec<Pt> = pts.iter().map(|p| m.p(*p)).collect();
     let cen = (sp.iter().map(|p| p.0).sum::<f64>() / n as f64, sp.iter().map(|p| p.1).sum::<f64>() / n as f64);
     let mut doc = new_doc(w, h);
-    doc.poly(&sp, &s.fill, INK, 2.2);
+    doc.poly(&sp, &s.fill, INK, 1.5);
 
     // construction lines
     for e in &s.extras {
@@ -351,7 +364,7 @@ fn draw_poly_inner(s: PolySpec, dec: i64, unit: &str) -> String {
     }
 
     // angles: right-angle squares, arcs (one per congruence mark, or one for a labelled angle), labels
-    let asz = 15.0 * fs;
+    let asz = 17.0 * fs;
     for i in 0..n {
         let v = sp[i];
         let (pa, pb) = (sp[(i + n - 1) % n], sp[(i + 1) % n]);
@@ -430,7 +443,7 @@ fn draw_poly_inner(s: PolySpec, dec: i64, unit: &str) -> String {
     }
     // vertex letters
     if s.vlabels {
-        let vsz = 18.0 * fs;
+        let vsz = 19.0 * fs;
         for i in 0..n {
             let v = sp[i];
             let (u, wv) = (unit_v(v, sp[(i + n - 1) % n]), unit_v(v, sp[(i + 1) % n]));
@@ -817,6 +830,65 @@ pub(crate) fn tri_solve(p: &Params) -> Result<TriSolved, String> {
 pub(crate) fn tri_values(s: &TriSolved) -> [Option<f64>; 6] {
     let sd = s.out.side;
     [Some(s.out.ang[0]), Some(s.out.ang[1]), Some(s.out.ang[2]), sd.map(|x| x[0]), sd.map(|x| x[1]), sd.map(|x| x[2])]
+}
+
+/// The math page's section summaries for the flat shapes ("no unit · rounded to tenths · ...").
+/// The coordinate grid's card summaries, worded like the reference's ("0 to 15 · by 1 ·
+/// numbered · "x" · triangle arrowheads", "None", "No minor gridlines").
+fn grid_skin_summary(title: &str, p: &Params) -> Option<String> {
+    let num = |v: f64| { let r = (v * 1000.0).round() / 1000.0; if r == r.trunc() { format!("{}", r as i64) } else { format!("{r}") } };
+    let axis = |lo: &str, hi: &str, step: &str, numk: &str, lab: &str| {
+        let mut parts = vec![format!("{} to {}", num(p.f(lo)), num(p.f(hi))), format!("by {}", num(p.f(step)))];
+        parts.push(if p.s(numk) == "None" { "no numbers".into() } else { "numbered".into() });
+        let l = p.s(lab).trim();
+        if !l.is_empty() { parts.push(format!("\u{201c}{l}\u{201d}")); }
+        if p.b("arrows") { parts.push("triangle arrowheads".into()); }
+        parts.join(" \u{b7} ")
+    };
+    Some(match title {
+        "Titles" => {
+            let mut parts: Vec<String> = Vec::new();
+            if p.s("title_mode") == "Text" && !p.s("title").trim().is_empty() { parts.push(format!("\u{201c}{}\u{201d}", p.s("title").trim())); }
+            if p.s("xtitle_mode") == "Text" && !p.s("xtitle").trim().is_empty() { parts.push(format!("x: {}", p.s("xtitle").trim())); }
+            if p.s("ytitle_mode") == "Text" && !p.s("ytitle").trim().is_empty() { parts.push(format!("y: {}", p.s("ytitle").trim())); }
+            if parts.is_empty() { "None".into() } else { parts.join(" \u{b7} ") }
+        }
+        "x-axis" => axis("xmin", "xmax", "xstep", "xnum", "xlabel"),
+        "y-axis" => axis("ymin", "ymax", "ystep", "ynum", "ylabel"),
+        "Grid" => {
+            let m = p.i("minor");
+            let mut parts = vec![if m <= 0 { "No minor gridlines".to_string() } else { format!("{m} minor per step") }];
+            if p.s("grid") != "Standard" { parts.push(p.s("grid").to_lowercase()); }
+            parts.join(" \u{b7} ")
+        }
+        _ => return None,
+    })
+}
+
+pub(crate) fn flat_skin_summary(id: &str, title: &str, p: &Params) -> Option<String> {
+    if id == "coordinate-grid" {
+        return grid_skin_summary(title, p);
+    }
+    if !matches!(id, "triangle" | "rectangle" | "parallelogram" | "trapezoid" | "kite" | "regular-polygon") {
+        return None;
+    }
+    match title {
+        "Labels" => {
+            let unit = p.s("unit").trim();
+            let mut parts = vec![if unit.is_empty() { "no unit".to_string() } else { format!("in {unit}") }];
+            parts.push(format!("rounded to {}", match p.i("dec") { 0 => "whole numbers", 1 => "tenths", 2 => "hundredths", _ => "thousandths" }));
+            if p.b("right") { parts.push("right-angle marks".into()); }
+            Some(parts.join(" \u{b7} "))
+        }
+        "Position" => {
+            let b = p.s("bottom").trim();
+            let mut parts = vec![if b.is_empty() || b.starts_with("None") { "standing upright".to_string() } else { format!("{} at the bottom", b.split(',').next().unwrap_or(b)) }];
+            if p.f("rotate") != 0.0 { parts.push(format!("turned {}\u{b0}", p.f("rotate"))); }
+            if p.b("flip") { parts.push("flipped".into()); }
+            Some(parts.join(" \u{b7} "))
+        }
+        _ => None,
+    }
 }
 
 fn shared_tail(v: &mut Vec<ParamDef>, right_default: bool, vertices: bool) {
@@ -1738,25 +1810,29 @@ pub(crate) fn parallel_lines_render(p: &Params) -> String {
     let nm = |k: &str, dflt: &str| { let v = p.s(k).trim(); if v.is_empty() { dflt.to_string() } else { v.to_string() } };
     let names = [nm("name_m", "m"), nm("name_n", "n"), nm("name_p", "p")];
     let ends = p.s("line_ends") != "Plain";
-    let (x0, x1) = (30.0, w - 30.0);
+    let (x0, x1) = ((w - 300.0) / 2.0, (w + 300.0) / 2.0);
+    // the first transversal's crossing x on line y, for placing the line's parallel marks like the reference
+    let cx_first = pl_cx0(p, 0, &ys, w);
+    let cot0 = { let r = p.f("angle").clamp(10.0, 170.0).to_radians(); r.cos() / r.sin() };
     for (i, y) in ys.iter().enumerate() {
         let (a, b) = (t((x0, *y)), t((x1, *y)));
-        dline(&mut d, a, b, INK, 2.0, style_dash(p.s(PL_STYLE[i])));
+        dline(&mut d, a, b, INK, 2.2, style_dash(p.s(PL_STYLE[i])));
         if ends { line_heads(&mut d, a, b); }
         let k = tick_n(p, PL_ARROWS[i]);
-        if k > 0 { chevrons(&mut d, t((w - 80.0, *y)), unit_v(a, b), k); }
-        if p.b("names") { let q = t((50.0, *y - 15.0)); mlabel(&mut d, q.0, q.1, 18.0 * fs, &names[i], ""); }
+        let cross_x = cx_first - cot0 * (*y - ys[0]);
+        if k > 0 { chevrons(&mut d, t(((cross_x - 86.6).max(x0 + 20.0), *y)), unit_v(a, b), k); }
+        if p.b("names") { let q = t((x1 + 8.0 + 10.0 * fs, *y)); mlabel(&mut d, q.0, q.1, 21.0 * fs, &names[i], ""); }
     }
     let nt = p.i("transversals").clamp(1, 2) as usize;
     let rad = 26.0;
     let lsz = 15.0 * fs;
     for ti in 0..nt {
         let th = if ti == 0 { p.f("angle").clamp(10.0, 170.0) } else { p.f("angle_b").clamp(10.0, 170.0) };
-        let cx0 = if nt == 1 { w / 2.0 } else if ti == 0 { w / 2.0 - 70.0 } else { w / 2.0 + 70.0 };
+        let cx0 = pl_cx0(p, ti, &ys, w);
         let tr = th.to_radians();
         let slope = (tr.cos(), -tr.sin());
         let cross: Vec<Pt> = ys.iter().map(|y| { let s = (*y - ys[0]) / slope.1; (cx0 + slope.0 * s, *y) }).collect();
-        let tl = 70.0 / slope.1.abs().max(0.2);
+        let tl = 90.0 / slope.1.abs().max(0.2);
         let a = (cross[0].0 + slope.0 * tl, cross[0].1 + slope.1 * tl);
         let last = cross[nl - 1];
         let b = (last.0 - slope.0 * tl, last.1 - slope.1 * tl);
@@ -2342,7 +2418,7 @@ mod tests {
 }
 }
 
-pub(super) use flat::{angle_dirs, quad_solve, quad_vals_of, regular_polygon_pts, tri_solve, write_givens, RAY_V, TRI_V, Q_V};
+pub(super) use flat::{flat_skin_summary, angle_dirs, quad_solve, quad_vals_of, regular_polygon_pts, tri_solve, write_givens, RAY_V, TRI_V, Q_V};
 use flat::{angles_params, angles_render, kite_params, kite_render, parallel_lines_params, parallel_lines_render, parallelogram_params, parallelogram_render, rectangle_params, rectangle_render, regular_polygon_params, regular_polygon_render, trapezoid_params, trapezoid_render, triangle_params, triangle_render};
 
 // ───────────────────────── coordinate grid ─────────────────────────
@@ -2498,8 +2574,13 @@ fn coordinate_grid_params() -> Vec<ParamDef> {
         ParamDef::bool("endpoints", "Endpoint circles on pieces with a domain", true),
         ParamDef::choice("pt_style", "Point style", &["Dot", "Cross"], "Dot"),
         ParamDef::choice("pt_label", "Point labels", &["Letter", "Letter and coordinates", "None"], "Letter"),
+        ParamDef::choice("label_size", "Label size", &["Large", "Medium", "Small"], "Medium"),
     ]
 }
+
+/// The reference's three label sizes scale every label of the coordinate grid and the number
+/// line by 1.4 / 1 / 0.8 (Large / Medium / Small).
+fn lscale(p: &Params) -> f64 { match p.s("label_size") { "Large" => 1.4, "Small" => 0.8, _ => 1.0 } }
 
 const PALETTE: [&str; 5] = ["#1f5fbf", "#c0392b", "#2a8a3e", "#8e44ad", "#d68910"];
 
@@ -2512,14 +2593,17 @@ pub(super) fn grid_layout(p: &Params) -> GridL {
     if x1 <= x0 { x1 = x0 + k; }
     if y1 <= y0 { y1 = y0 + 1.0; }
     let (xs, ys) = (p.f("xstep").max(1e-6) * k, p.f("ystep").max(1e-6));
-    let (maxw, maxh) = (440.0, 400.0);
+    // the reference's 15 x 15 grid is 480 px square (32 px a unit)
+    let (maxw, maxh) = (480.0, 480.0);
     let (ux, uy) = if p.b("square") && k == 1.0 && p.s("xunits") != "Degrees" {
         let u = (maxw / (x1 - x0)).min(maxh / (y1 - y0)); (u, u)
     } else { (maxw / (x1 - x0), maxh / (y1 - y0)) };
     let (pw, ph) = ((x1 - x0) * ux, (y1 - y0) * uy);
     let title = match p.s("title_mode") { "None" => false, "Blank line" => true, _ => !p.s("title").is_empty() };
-    let ml = 52.0 + if p.s("ytitle_mode") == "Text" || p.s("ytitle_mode") == "Blank line" { 26.0 } else { 0.0 };
-    GridL { x0, x1, y0, y1, xs, ys, ux, uy, ml, mt: if title { 62.0 } else { 30.0 }, pw, ph }
+    // the margins grow with the labels: 1.2 / 1.3 px for each px the tick numbers grow
+    let dn = 14.0 * (lscale(p) - 1.0);
+    let ml = 38.8 + 1.2 * dn + if p.s("ytitle_mode") == "Text" || p.s("ytitle_mode") == "Blank line" { 26.0 } else { 0.0 };
+    GridL { x0, x1, y0, y1, xs, ys, ux, uy, ml, mt: (if title { 88.2 } else { 56.2 }) + 1.3 * dn, pw, ph }
 }
 
 /// "3π/4"-style label for v (in real units) when the axis counts in multiples of π.
@@ -2582,7 +2666,9 @@ fn coordinate_grid_render(p: &Params) -> String {
     let pi_mode = p.s("xunits") == "Multiples of \u{3c0}";
     let deg = p.s("xunits") == "Degrees";
     let xtitle = p.s("xtitle_mode") == "Text" || p.s("xtitle_mode") == "Blank line";
-    let (mr, mb) = (34.0, 46.0 + if xtitle { 26.0 } else { 0.0 });
+    let ls = lscale(p);
+    let dn = 14.0 * (ls - 1.0);
+    let (mr, mb) = (52.5 + 0.75 * dn, 36.0 + dn + if xtitle { 26.0 } else { 0.0 });
     let (w, h) = (pw + ml + mr, ph + mt + mb);
     let mut d = new_doc(w, h);
     let sx = |x: f64| ml + (x - x0) * ux;
@@ -2590,7 +2676,11 @@ fn coordinate_grid_render(p: &Params) -> String {
     let f = |expr: &str, x: f64| eval_full(expr, x, None, deg);
     let minor = p.i("minor");
     let gstyle = p.s("grid");
-    let (gcol, gw, mcol, axw) = match gstyle { "Light" => ("#dde3ea", 0.9, "#eef1f5", 1.6), "Bold" => ("#6f7d8c", 1.4, "#b9c2cc", 2.6), "None" => ("none", 0.0, "none", 1.8), _ => ("#c4cdd8", 1.0, "#e6ebf1", 1.8) };
+    // the reference's standard grid is near-black 1 px crisp lines under 2.4 px axes
+    let (gcol, gw, mcol, axw) = match gstyle { "Light" => ("#dde3ea", 0.9, "#eef1f5", 2.4), "Bold" => ("#6f7d8c", 1.4, "#b9c2cc", 2.6), "None" => ("none", 0.0, "none", 2.4), _ => ("#111827", 1.0, "#e6ebf1", 2.4) };
+    // (a crispEdges group: figures::to_rgba widens its 1 px lines when the preview shrinks, as a browser does)
+    let crisp = gstyle == "Standard" || gstyle.is_empty();
+    let gl = |d: &mut Doc, x1: f64, y1: f64, x2: f64, y2: f64, col: &str, w: f64| { d.raw(&format!(r#"<line x1="{x1:.2}" y1="{y1:.2}" x2="{x2:.2}" y2="{y2:.2}" stroke="{col}" stroke-width="{w}"/>"#)); };
     // gridlines
     if gstyle != "None" {
         if minor > 1 {
@@ -2601,50 +2691,64 @@ fn coordinate_grid_render(p: &Params) -> String {
             let mut k = (y0 / ms).ceil();
             while k * ms <= y1 + 1e-9 { d.line(ml, sy(k * ms), ml + pw, sy(k * ms), mcol, 0.8); k += 1.0; }
         }
+        if crisp { d.raw(r#"<g shape-rendering="crispEdges" data-op="math">"#); }
         let mut k = (x0 / xs - 1e-9).ceil();
-        while k * xs <= x1 + 1e-9 { d.line(sx(k * xs), mt, sx(k * xs), mt + ph, gcol, gw); k += 1.0; }
+        while k * xs <= x1 + 1e-9 { gl(&mut d, sx(k * xs), mt, sx(k * xs), mt + ph, gcol, gw); k += 1.0; }
         let mut k = (y0 / ys - 1e-9).ceil();
-        while k * ys <= y1 + 1e-9 { d.line(ml, sy(k * ys), ml + pw, sy(k * ys), gcol, gw); k += 1.0; }
+        while k * ys <= y1 + 1e-9 { gl(&mut d, ml, sy(k * ys), ml + pw, sy(k * ys), gcol, gw); k += 1.0; }
+        if crisp { d.raw("</g>"); }
     }
-    // axes
+    // axes: the reference runs each 20 px past the grid, with a triangle head at both ends
     let ax_y = if y0 <= 0.0 && y1 >= 0.0 { 0.0 } else { y0 };
     let ax_x = if x0 <= 0.0 && x1 >= 0.0 { 0.0 } else { x0 };
-    let ext = if p.b("arrows") { 16.0 } else { 0.0 };
+    let ext = if p.b("arrows") { 20.0 } else { 0.0 };
     let (axy, axx) = (sy(ax_y), sx(ax_x));
     if p.b("arrows") {
-        d.arrow(ml, axy, ml + pw + ext, axy, INK, axw);
-        d.arrow(axx, mt + ph, axx, mt - ext, INK, axw);
+        let head = |d: &mut Doc, x: f64, y: f64, dx: f64, dy: f64| {
+            // marker: 13 px triangle, tip 2.6 px past the line end, base 10.4 px behind it
+            let (tx, ty) = (x + dx * 2.6, y + dy * 2.6);
+            let (bx, by) = (x - dx * 10.4, y - dy * 10.4);
+            d.raw(&format!(r##"<polygon points="{tx:.2},{ty:.2} {:.2},{:.2} {:.2},{:.2}" fill="#111827"/>"##, bx - dy * 6.5, by + dx * 6.5, bx + dy * 6.5, by - dx * 6.5));
+        };
+        d.raw(&format!(r##"<line x1="{:.2}" y1="{axy:.2}" x2="{:.2}" y2="{axy:.2}" stroke="#111827" stroke-width="{axw}"/>"##, ml - ext, ml + pw + ext));
+        d.raw(&format!(r##"<line x1="{axx:.2}" y1="{:.2}" x2="{axx:.2}" y2="{:.2}" stroke="#111827" stroke-width="{axw}"/>"##, mt + ph + ext, mt - ext));
+        head(&mut d, ml + pw + ext, axy, 1.0, 0.0);
+        head(&mut d, ml - ext, axy, -1.0, 0.0);
+        head(&mut d, axx, mt - ext, 0.0, -1.0);
+        head(&mut d, axx, mt + ph + ext, 0.0, 1.0);
     } else {
-        d.line(ml, axy, ml + pw, axy, INK, axw);
-        d.line(axx, mt + ph, axx, mt, INK, axw);
+        d.line(ml, axy, ml + pw, axy, "#111827", axw);
+        d.line(axx, mt + ph, axx, mt, "#111827", axw);
     }
-    // numbers + ticks
+    // numbers (bold 14 with a white halo, no tick marks, as the reference)
     if p.b("numbers") {
         let (xe, ye) = (every_n(p.s("xnum")), every_n(p.s("ynum")));
         let origin = ax_y == 0.0 && ax_x == 0.0;
+        let num = |d: &mut Doc, x: f64, y: f64, anchor: &str, t: &str| {
+            d.raw(&format!(r##"<text x="{x:.2}" y="{y:.2}" text-anchor="{anchor}" font-family="Arial, Helvetica, Liberation Sans, sans-serif" font-size="{}" font-weight="bold" fill="#111827" stroke="#fff" stroke-width="4" paint-order="stroke" stroke-linejoin="round">{}</text>"##, 14.0 * ls, super::svg::esc(t)));
+        };
         let mut k = (x0 / xs - 1e-9).ceil();
-        let mut n = 0i64;
         while k * xs <= x1 + 1e-9 {
             let v = k * xs;
-            d.line(sx(v), axy - 3.5, sx(v), axy + 3.5, INK, 1.2);
             let lab = if pi_mode { pi_label(v) } else if deg { format!("{}\u{b0}", fmt(v, 3)) } else { fmt(v, 3) };
             let numbered = xe > 0 && (k as i64).rem_euclid(xe) == 0;
-            if numbered && !(v.abs() < 1e-9 && origin) { put(&mut d, sx(v), if axy + 18.0 > mt + ph + 30.0 { axy - 14.0 } else { axy + 15.0 }, &lab, 13.0); }
-            k += 1.0; n += 1;
+            if numbered && !(v.abs() < 1e-9 && origin) { num(&mut d, sx(v), if axy + 18.0 > mt + ph + 30.0 { axy - 9.0 } else { axy + 20.0 + dn }, "middle", &lab); }
+            k += 1.0;
         }
-        let _ = n;
         let mut k = (y0 / ys - 1e-9).ceil();
         while k * ys <= y1 + 1e-9 {
             let v = k * ys;
-            d.line(axx - 3.5, sy(v), axx + 3.5, sy(v), INK, 1.2);
             let numbered = ye > 0 && (k as i64).rem_euclid(ye) == 0;
-            if numbered && !(v.abs() < 1e-9 && origin) { txt(&mut d, axx - 8.0, sy(v) + 4.5, 13.0, "end", &fmt(v, 3)); }
+            if numbered && !(v.abs() < 1e-9 && origin) { num(&mut d, axx - 6.0, sy(v) + 4.1 + 0.35 * dn, "end", &fmt(v, 3)); }
             k += 1.0;
         }
-        if origin && xe > 0 { txt(&mut d, axx - 7.0, axy + 15.0, 13.0, "end", "0"); }
+        if origin && xe > 0 { num(&mut d, axx - 8.0, axy + 20.0 + dn, "end", "0"); }
     }
-    if !p.s("xlabel").is_empty() { math_text(&mut d, ml + pw + ext + 6.0, axy, 17.0, "start", p.s("xlabel"), false); }
-    if !p.s("ylabel").is_empty() { math_text(&mut d, axx, mt - ext - 10.0, 17.0, "middle", p.s("ylabel"), false); }
+    let axis_label = |d: &mut Doc, x: f64, y: f64, anchor: &str, t: &str| {
+        d.raw(&format!(r##"<text x="{x:.2}" y="{y:.2}" text-anchor="{anchor}" font-family="{SERIF}" font-weight="bold" font-size="{}" fill="#111827">{}</text>"##, 19.6 * ls, math_tspans(t)));
+    };
+    if !p.s("xlabel").is_empty() { axis_label(&mut d, ml + pw + ext + 6.0, axy + 5.6 + 0.4 * dn, "start", p.s("xlabel")); }
+    if !p.s("ylabel").is_empty() { axis_label(&mut d, axx, mt - ext - 6.0, "middle", p.s("ylabel")); }
     match p.s("title_mode") {
         "None" => {}
         "Blank line" => { d.line(w / 2.0 - 90.0, 28.0, w / 2.0 + 90.0, 28.0, INK, 1.4); }
@@ -2898,6 +3002,7 @@ fn number_line_params() -> Vec<ParamDef> {
         ParamDef::text("step_text", "Count by as a fraction, e.g. 1/4 (overrides the tick step; numbers become fractions)", ""),
         ParamDef::choice("frac_style", "Fractions written as", &["Improper (5/4)", "Mixed (1 1/4)"], "Improper (5/4)"),
         ParamDef::text("inequality2", "Second graph, drawn separately above the line (its own colour)", ""),
+        ParamDef::choice("label_size", "Label size", &["Large", "Medium", "Small"], "Medium"),
         ParamDef::color("ineq2_color", "Second graph colour", &SWATCHES, "#c0392b"),
         ParamDef::bool("pt_values", "Write the value above unlettered points that are off the numbered ticks", false),
     ]
@@ -2924,12 +3029,13 @@ pub(super) fn nl_step(p: &Params) -> (f64, Option<i64>) {
     (p.f("step").max(1e-6), None)
 }
 /// Stacked fraction label n/d (already reduced) centred at x; `mixed` writes whole parts.
-fn frac_label(d: &mut Doc, x: f64, y: f64, v: f64, den: i64, mixed: bool, size: f64) {
+fn frac_label(d: &mut Doc, x: f64, y: f64, v: f64, den: i64, mixed: bool, size: f64) { frac_label_w(d, x, y, v, den, mixed, size, false); }
+fn frac_label_w(d: &mut Doc, x: f64, y: f64, v: f64, den: i64, mixed: bool, size: f64, bold: bool) {
     let mut n = (v * den as f64).round() as i64;
     let mut dd = den;
     let g = { let (mut a, mut b) = (n.abs(), dd); while b != 0 { let t = a % b; a = b; b = t; } a.max(1) };
     n /= g; dd /= g;
-    if dd == 1 { put(d, x, y, &fmt(n as f64, 0), size); return; }
+    if dd == 1 { txtw(d, x, y + size * 0.34, size, "middle", &fmt(n as f64, 0), bold); return; }
     let neg = n < 0;
     let (whole, rem) = if mixed { (n.abs() / dd, n.abs() % dd) } else { (0, n.abs()) };
     let sign = if neg { "\u{2212}" } else { "" };
@@ -2937,11 +3043,11 @@ fn frac_label(d: &mut Doc, x: f64, y: f64, v: f64, den: i64, mixed: bool, size: 
     let fw = stw(&rem.max(dd).to_string(), size * 0.8).max(size * 0.6);
     let total = stw(&ws, size) + fw;
     let left = x - total / 2.0;
-    if !ws.is_empty() { txt(d, left, y + size * 0.34, size, "start", &ws); }
+    if !ws.is_empty() { txtw(d, left, y + size * 0.34, size, "start", &ws, bold); }
     let cx = left + stw(&ws, size) + fw / 2.0 + 1.0;
-    txt(d, cx, y - 2.0, size * 0.8, "middle", &rem.to_string());
+    txtw(d, cx, y - 2.0, size * 0.8, "middle", &rem.to_string(), bold);
     d.line(cx - fw / 2.0, y + 1.0, cx + fw / 2.0, y + 1.0, INK, 1.0);
-    txt(d, cx, y + size * 0.8 + 1.0, size * 0.8, "middle", &dd.to_string());
+    txtw(d, cx, y + size * 0.8 + 1.0, size * 0.8, "middle", &dd.to_string(), bold);
 }
 
 /// Intervals for one graph row, with the extra words the reference accepts.
@@ -2958,18 +3064,38 @@ fn nl_intervals(s: &str) -> Vec<Interval> {
     parse_ineq(&l)
 }
 
+/// Canvas of the number line (width, height, left and right end of the scale, axis y), shared with
+/// its drag handles. The reference's is 676 wide: the axis runs 16 to 660 (arrow tips), its ticks
+/// 22 in from each end; the axis sits 25 down on a 78 tall canvas and the canvas grows only when
+/// a second graph row or point names need room above it.
+pub(super) fn nl_geom(p: &Params) -> (f64, f64, f64, f64, f64) {
+    let (_, den) = nl_step(p);
+    let above = if !p.s("inequality2").trim().is_empty() { 18.0 } else if !p.s("points").trim().is_empty() || !p.s("inequality").trim().is_empty() { 8.0 } else { 0.0 };
+    let y = 25.0 + above;
+    let label = p.s("label");
+    let w = 676.0 + if label.is_empty() { 0.0 } else { (stw(label, 16.0) + 12.0).max(0.0) };
+    (w, y + 53.0 + 16.0 * (lscale(p) - 1.0) + if den.is_some() { 8.0 } else { 0.0 }, 38.0, 638.0, y)
+}
+
+/// The reference's axis ends: the line runs 22 past the scale and ends in a 13 x 13 solid triangle.
+fn axis_heads(d: &mut Doc, x0: f64, x1: f64, y: f64) {
+    d.line(x0 - 22.0, y, x0, y, INK, 2.4);
+    d.line(x1, y, x1 + 22.0, y, INK, 2.4);
+    d.poly(&[(x0 - 24.6, y), (x0 - 11.6, y - 6.5), (x0 - 11.6, y + 6.5)], INK, INK, 1.0);
+    d.poly(&[(x1 + 24.6, y), (x1 + 11.6, y - 6.5), (x1 + 11.6, y + 6.5)], INK, INK, 1.0);
+}
+
 fn number_line_render(p: &Params) -> String {
     let (lo, mut hi) = (p.f("min"), p.f("max"));
     if hi <= lo { hi = lo + 1.0; }
     let (step, den) = nl_step(p);
     let mixed = p.s("frac_style").starts_with("Mixed");
-    let (w, h) = (680.0, 120.0 + if den.is_some() { 8.0 } else { 0.0 });
-    let (x0, x1) = (40.0, w - 40.0);
-    let y = 64.0;
+    let (w, h, x0, x1, y) = nl_geom(p);
+    let fs = 16.0 * lscale(p);
     let sx = |v: f64| x0 + (v - lo) / (hi - lo) * (x1 - x0);
     let mut d = new_doc(w, h);
-    if p.b("arrows") { d.arrow(x1 - 10.0, y, x1 + 22.0, y, INK, 1.8); d.arrow(x0 + 10.0, y, x0 - 22.0, y, INK, 1.8); }
-    d.line(x0, y, x1, y, INK, 1.8);
+    if p.b("arrows") { axis_heads(&mut d, x0, x1, y); }
+    d.line(x0, y, x1, y, INK, 2.4);
     let k0 = (lo / step - 1e-9).ceil() as i64;
     let k1 = ((hi + 1e-9) / step).floor() as i64;
     let every = p.i("label_every").max(1);
@@ -2977,10 +3103,10 @@ fn number_line_render(p: &Params) -> String {
     let mut numbered: Vec<f64> = vec![];
     for k in k0..=k1 {
         let v = k as f64 * step;
-        d.line(sx(v), y - 8.0, sx(v), y + 8.0, INK, 1.5);
+        d.line(sx(v), y - 9.0, sx(v), y + 9.0, INK, 2.0);
         if p.b("numbers") && (k - k0) % every == 0 {
             numbered.push(v);
-            match den { Some(dd) => frac_label(&mut d, sx(v), y + 24.0, v, dd, mixed, 14.0), None => put(&mut d, sx(v), y + 24.0, &fmt(v, 3), 14.0) }
+            match den { Some(dd) => frac_label_w(&mut d, sx(v), y + 24.0, v, dd, mixed, fs, true), None => txtw(&mut d, sx(v), y + 23.0 + fs * 0.34, fs, "middle", &fmt(v, 3), true) }
         }
         if minor > 0 && k < k1 {
             for m in 1..=minor { let mv = v + step * m as f64 / (minor + 1) as f64; d.line(sx(mv), y - 4.0, sx(mv), y + 4.0, INK, 1.0); }
@@ -3067,10 +3193,20 @@ fn sector(d: &mut Doc, c: Pt, a0: f64, a1: f64, r: f64, text: &str, right: bool,
 }
 
 /// Canvas size and parallel-line rows (screen y) for the parallel-lines figure.
+/// x where transversal `ti` crosses the first line: the transversal passes through the middle of
+/// the lines at the figure's centre (the reference centres the crossings, not the first one).
+pub(super) fn pl_cx0(p: &Params, ti: usize, ys: &[f64], w: f64) -> f64 {
+    let nt = p.i("transversals").clamp(1, 2);
+    let th = (if ti == 0 { p.f("angle").clamp(10.0, 170.0) } else { p.f("angle_b").clamp(10.0, 170.0) }).to_radians();
+    let mid = if nt == 1 { w / 2.0 } else if ti == 0 { w / 2.0 - 70.0 } else { w / 2.0 + 70.0 };
+    mid + th.cos() / th.sin() * (ys[ys.len() - 1] - ys[0]) / 2.0
+}
+
 pub(super) fn pl_layout(p: &Params) -> (f64, f64, Vec<f64>) {
     let nl = p.i("lines").clamp(2, 3) as usize;
-    let gap = 120.0 * p.f("gap").clamp(0.5, 3.0);
-    let (w, h) = (520.0, 240.0 + gap * (nl as f64 - 1.0));
+    // the reference's lines are 300 long and 100 apart, the transversal runs 90 past the outer lines
+    let gap = 100.0 * p.f("gap").clamp(0.5, 3.0);
+    let (w, h) = (400.0, 240.0 + gap * (nl as f64 - 1.0));
     let ys = (0..nl).map(|i| h / 2.0 - gap * (nl as f64 - 1.0) / 2.0 + gap * i as f64).collect();
     (w, h, ys)
 }
@@ -3089,7 +3225,7 @@ fn line_heads(d: &mut Doc, a: Pt, b: Pt) {
 
 type P3 = (f64, f64, f64);
 const OBL_K: f64 = 0.5;
-const OBL_A: f64 = 40.0;
+const OBL_A: f64 = 45.0;
 /// Cabinet-style oblique projection; `sx` = +1 sends depth back to the right, -1 to the left.
 pub(super) fn oblp(p: P3, sx: f64) -> Pt {
     let a = OBL_A.to_radians();
@@ -3115,9 +3251,11 @@ fn is_var(s: &str) -> bool {
 }
 fn stw(s: &str, size: f64) -> f64 { s.chars().count() as f64 * size * 0.5 }
 /// Solid label centred on (x, y). A non-empty `id` makes it a movable label (`labels::wrap`).
-fn sput(d: &mut Doc, id: &str, x: f64, y: f64, text: &str, size: f64) {
+fn sput(d: &mut Doc, id: &str, x: f64, y: f64, text: &str, size: f64) { sput_k(d, id, x, y, text, size, 0.34); }
+/// `sput` with the baseline `k` em below the label's centre (the reference sets it 0.24 em below).
+fn sput_k(d: &mut Doc, id: &str, x: f64, y: f64, text: &str, size: f64, k: f64) {
     let style = if is_var(text) { r#" font-style="italic""# } else { "" };
-    let t = format!(r##"<text x="{x:.2}" y="{:.2}" font-size="{size}" text-anchor="middle" font-family="{SERIF}"{style} fill="#000" stroke="#fff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">{}</text>"##, y + size * 0.34, super::svg::esc(text));
+    let t = format!(r##"<text x="{x:.2}" y="{:.2}" font-size="{size}" text-anchor="middle" font-family="{SERIF}"{style} fill="#000" stroke="#fff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">{}</text>"##, y + size * k, super::svg::esc(text));
     if id.is_empty() { d.raw(&t); } else { d.raw(&super::labels::wrap(id, (x, y), super::labels::text_half(text, size), &t)); }
 }
 /// Label beside screen segment a-b at fraction t, on the side away from `center`.
@@ -3128,6 +3266,17 @@ fn sbeside(d: &mut Doc, id: &str, a: Pt, b: Pt, t: f64, center: Pt, text: &str, 
     if n.0 * (m.0 - center.0) + n.1 * (m.1 - center.1) < 0.0 { n = (-n.0, -n.1); }
     let off = 7.0 + 0.5 * (stw(text, size) * n.0.abs() + size * 0.9 * n.1.abs());
     sput(d, id, m.0 + n.0 * off, m.1 + n.1 * off, text, size);
+}
+/// Medium 20, Large 28, Small 16: the reference's solid label sizes (in its own drawing units).
+fn lsz3(p: &Params) -> f64 { match p.s("label_size") { "Large" => 28.0, "Small" => 16.0, _ => 20.0 } }
+/// `sbeside` with the reference's spacing: 5.4 units clear of the edge sideways, 5.8 above or below, baseline 0.24 em under the centre.
+fn sbeside_r(d: &mut Doc, id: &str, a: Pt, b: Pt, t: f64, center: Pt, text: &str, size: f64) {
+    let m = (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t);
+    let u = unit_v(a, b);
+    let mut n = (-u.1, u.0);
+    if n.0 * (m.0 - center.0) + n.1 * (m.1 - center.1) < 0.0 { n = (-n.0, -n.1); }
+    let off = 0.5 * (stw(text, size) * n.0.abs() + size * 0.9 * n.1.abs()) + 5.4 * n.0.abs() + 5.8 * n.1.abs();
+    sput_k(d, id, m.0 + n.0 * off, m.1 + n.1 * off, text, size, 0.24);
 }
 /// Label for measure `key` of value `v`: `<key>_lab` picks Measure / Text / None (`def` when the
 /// key is absent, e.g. older saved figures) and `<key>_label` holds the text. `hidden` comes from
@@ -3194,11 +3343,11 @@ fn draw_solid(d: &mut Doc, m: &Map, s: &Solid, proj: &dyn Fn(P3) -> Pt, view: P3
     }
     if hidden {
         for ((a, b), visible) in &edges {
-            if !*visible { dline(d, m.p(proj(s.v[*a])), m.p(proj(s.v[*b])), "#555", 1.4, "6 4"); }
+            if !*visible { dline(d, m.p(proj(s.v[*a])), m.p(proj(s.v[*b])), INK, 1.6, "6 5"); }
         }
     }
     for ((a, b), visible) in &edges {
-        if *visible { let (p, q) = (m.p(proj(s.v[*a])), m.p(proj(s.v[*b]))); d.line(p.0, p.1, q.0, q.1, INK, 2.2); }
+        if *visible { let (p, q) = (m.p(proj(s.v[*a])), m.p(proj(s.v[*b]))); d.line(p.0, p.1, q.0, q.1, INK, 2.4); }
     }
 }
 
@@ -3506,17 +3655,17 @@ fn prism_render(p: &Params) -> String {
     let e = if lean >= 0.0 { b[1] } else { b[0] };
     let foot = (e.0 + lean, e.1, 0.0);
     if lean.abs() > 1e-9 { all.push(proj(foot)); }
-    let m = Map::fit(&all, 480.0, 360.0, 70.0, 50.0);
-    let mut d = new_doc(480.0, 360.0);
+    let m = Map::fit_at(&all, 420.0, 300.0, 70.0, 40.0);
+    let mut d = new_doc(560.0, 380.0);
     draw_solid(&mut d, &m, &solid, &proj, oblv(sx), p.b("hidden"));
-    let fs = lsz(p);
+    let fs = lsz3(p);
     let hide = hide_list(p);
     let hid = |n: &str| hide.iter().any(|h| h == n);
     let mc = m.p(cenp);
-    let lab = |d: &mut Doc, id: &str, a: P3, bb: P3, s: Option<String>| if let Some(s) = s { sbeside(d, id, m.p(proj(a)), m.p(proj(bb)), 0.5, mc, &s, fs); };
+    let lab = |d: &mut Doc, id: &str, a: P3, bb: P3, s: Option<String>| if let Some(s) = s { sbeside_r(d, id, m.p(proj(a)), m.p(proj(bb)), 0.5, mc, &s, fs); };
     // labels inside the base face sit away from the base's own centre
     let mb = m.p(proj(centroid3(&b)));
-    let labb = |d: &mut Doc, id: &str, a: P3, bb: P3, t: f64, s: Option<String>| if let Some(s) = s { sbeside(d, id, m.p(proj(a)), m.p(proj(bb)), t, mb, &s, fs); };
+    let labb = |d: &mut Doc, id: &str, a: P3, bb: P3, t: f64, s: Option<String>| if let Some(s) = s { sbeside_r(d, id, m.p(proj(a)), m.p(proj(bb)), t, mb, &s, fs); };
     let right = p.b("right");
     let poly = kind == "Regular polygon";
     // base edge (front bottom) b0-b1
@@ -3534,7 +3683,7 @@ fn prism_render(p: &Params) -> String {
         "Isosceles triangle" => {
             if let Some(s) = wtxt {
                 let f0 = mid3(b[0], b[1]);
-                dline(&mut d, m.p(proj(f0)), m.p(proj(b[2])), "#444", 1.4, "6 4");
+                dline(&mut d, m.p(proj(f0)), m.p(proj(b[2])), INK, 1.6, "6 5");
                 labb(&mut d, "width", f0, b[2], 0.6, Some(s));
                 if right { rmark3(&mut d, &m, &proj, f0, sub3(b[1], f0), sub3(b[2], f0)); }
             }
@@ -3543,7 +3692,7 @@ fn prism_render(p: &Params) -> String {
         _ => {
             if let Some(s) = mtext(p, "apothem", "None", dist3(mid3(b[0], b[1]), centroid3(&b)), hid("apothem")) {
                 let (c0, f0) = (centroid3(&b), mid3(b[0], b[1]));
-                dline(&mut d, m.p(proj(c0)), m.p(proj(f0)), "#444", 1.4, "6 4");
+                dline(&mut d, m.p(proj(c0)), m.p(proj(f0)), INK, 1.6, "6 5");
                 d.circle(m.p(proj(c0)).0, m.p(proj(c0)).1, 2.4, INK, INK, 1.0);
                 labb(&mut d, "apothem", c0, f0, 0.4, Some(s));
                 if right { rmark3(&mut d, &m, &proj, f0, sub3(b[1], f0), sub3(c0, f0)); }
@@ -3562,16 +3711,16 @@ fn prism_render(p: &Params) -> String {
         lab(&mut d, "height", b[vi], t[vi], htxt);
     } else {
         let top = (foot.0, foot.1, hh);
-        dline(&mut d, m.p(proj(top)), m.p(proj(foot)), "#444", 1.4, "6 4");
+        dline(&mut d, m.p(proj(top)), m.p(proj(foot)), INK, 1.6, "6 5");
         let outside = (lean > 0.0 && foot.0 > e.0) || (lean < 0.0 && foot.0 < e.0);
-        if outside { dline(&mut d, m.p(proj(e)), m.p(proj(foot)), "#444", 1.4, "6 4"); }
+        if outside { dline(&mut d, m.p(proj(e)), m.p(proj(foot)), INK, 1.6, "6 5"); }
         if htxt.is_some() || right {
             if right { rmark3(&mut d, &m, &proj, foot, sub3(e, foot), (0.0, 0.0, 1.0)); }
         }
-        if let Some(s) = htxt { sbeside(&mut d, "height", m.p(proj(foot)), m.p(proj(top)), 0.7, mc, &s, fs); }
+        if let Some(s) = htxt { sbeside_r(&mut d, "height", m.p(proj(foot)), m.p(proj(top)), 0.7, mc, &s, fs); }
         lab(&mut d, "lean", e, foot, mtext(p, "lean", "None", lean.abs(), hid("lean")));
         let et = (e.0 + lean, e.1, hh);
-        if let Some(s) = tlabel(p, "edge", "edge", "None", dist3(e, et)) { sbeside(&mut d, "edge", m.p(proj(e)), m.p(proj(et)), 0.3, mc, &s, fs); }
+        if let Some(s) = tlabel(p, "edge", "edge", "None", dist3(e, et)) { sbeside_r(&mut d, "edge", m.p(proj(e)), m.p(proj(et)), 0.3, mc, &s, fs); }
     }
     if p.b("names") {
         let fsn = fs * 0.95;
@@ -3653,28 +3802,32 @@ fn pyramid_render(p: &Params) -> String {
     let proj = |q: P3| oblp(q, sx);
     let all: Vec<Pt> = solid.v.iter().map(|q| proj(*q)).collect();
     let cenp = (all.iter().map(|q| q.0).sum::<f64>() / all.len() as f64, all.iter().map(|q| q.1).sum::<f64>() / all.len() as f64);
-    let m = Map::fit(&all, 480.0, 360.0, 70.0, 50.0);
-    let mut d = new_doc(480.0, 360.0);
+    let m = Map::fit_at(&all, 420.0, 300.0, 70.0, 40.0);
+    let mut d = new_doc(560.0, 380.0);
     draw_solid(&mut d, &m, &solid, &proj, oblv(sx), p.b("hidden"));
-    let fs = lsz(p);
+    let fs = lsz3(p);
     let hide = hide_list(p);
     let hid = |n: &str| hide.iter().any(|h| h == n);
     let mc = m.p(cenp);
-    let lab = |d: &mut Doc, id: &str, a: P3, bb: P3, s: Option<String>| if let Some(s) = s { sbeside(d, id, m.p(proj(a)), m.p(proj(bb)), 0.5, mc, &s, fs); };
+    let lab = |d: &mut Doc, id: &str, a: P3, bb: P3, s: Option<String>| if let Some(s) = s { sbeside_r(d, id, m.p(proj(a)), m.p(proj(bb)), 0.5, mc, &s, fs); };
     let right = p.b("right");
     let foot = (c3.0, c3.1, 0.0);
     let hfoot = (apex.0, apex.1, 0.0);
     if p.b("show_height") {
-        dline(&mut d, m.p(proj(apex)), m.p(proj(hfoot)), "#444", 1.5, "6 4");
-        if lean.abs() > 1e-9 { dline(&mut d, m.p(proj(foot)), m.p(proj(hfoot)), "#444", 1.5, "6 4"); }
-        lab(&mut d, "height", hfoot, apex, mtext(p, "height", "Measure", hh, hid("height")));
+        dline(&mut d, m.p(proj(apex)), m.p(proj(hfoot)), INK, 1.6, "6 5");
+        if lean.abs() > 1e-9 { dline(&mut d, m.p(proj(foot)), m.p(proj(hfoot)), INK, 1.6, "6 5"); }
+        // the reference sets the height beside its line on the side facing away from the depth
+        if let Some(s) = mtext(p, "height", "Measure", hh, hid("height")) {
+            let (pf, pa) = (m.p(proj(hfoot)), m.p(proj(apex)));
+            sbeside_r(&mut d, "height", pf, pa, 0.5, (pf.0 + sx * 100.0, pf.1), &s, fs);
+        }
         if right { rmark3(&mut d, &m, &proj, hfoot, (-sx, 0.0, 0.0), (0.0, 0.0, 1.0)); }
     }
     let mid = mid3(base[0], base[1]);
     if let Some(s) = tlabel(p, "slant", "slant", "None", dist3(mid, apex)).filter(|_| !hid("slant")) {
-        dline(&mut d, m.p(proj(mid)), m.p(proj(apex)), "#444", 1.5, "6 4");
+        dline(&mut d, m.p(proj(mid)), m.p(proj(apex)), INK, 1.6, "6 5");
         let (pa, pm) = (m.p(proj(apex)), m.p(proj(mid)));
-        sbeside(&mut d, "slant", pm, pa, 0.3, mc, &s, fs);
+        sbeside_r(&mut d, "slant", pm, pa, 0.3, mc, &s, fs);
         if right && lean.abs() < 1e-9 { rmark3(&mut d, &m, &proj, mid, sub3(base[1], mid), sub3(apex, mid)); }
     }
     if lean.abs() > 1e-9 && let Some(s) = mtext(p, "lean", "Measure", lean.abs(), false) {
@@ -3682,7 +3835,7 @@ fn pyramid_render(p: &Params) -> String {
         lab(&mut d, "lean", foot, hfoot, Some(s));
     }
     if let Some(s) = mtext(p, "apothem", "None", dist3(mid, foot), hid("apothem")) {
-        dline(&mut d, m.p(proj(foot)), m.p(proj(mid)), "#444", 1.4, "6 4");
+        dline(&mut d, m.p(proj(foot)), m.p(proj(mid)), INK, 1.6, "6 5");
         lab(&mut d, "apothem", foot, mid, Some(s));
         if right { rmark3(&mut d, &m, &proj, mid, sub3(base[1], mid), sub3(foot, mid)); }
     }
@@ -4326,13 +4479,16 @@ pub(super) fn box_geom(p: &Params) -> Option<BoxG> {
         ((lo / st).floor() * st - if lo % st == 0.0 { st } else { 0.0 }, (hi / st).ceil() * st + if hi % st == 0.0 { st } else { 0.0 }, st)
     } else { (p.f("axis_min"), p.f("axis_max").max(p.f("axis_min") + 1e-3), p.f("axis_step").max(1e-3)) };
     let named = sets.iter().any(|(i, _, _)| !p.s(BOX_SETS[*i].2).is_empty());
-    let w = 680.0;
-    let top = if shows_title(p, "title_mode", "title") { 46.0 } else { 20.0 };
+    // the reference's canvas is 676 wide: axis 16 to 660 with arrow tips, ticks 22 in from each end,
+    // and a blank plot is just that axis 25 down on a 78 tall canvas (no empty row above it)
+    let w = 676.0;
+    let titled = shows_title(p, "title_mode", "title");
+    let top = if titled { 46.0 } else if blank { 19.0 } else { 20.0 };
     let rowh = 84.0;
-    let rows = sets.len().max(1) as f64;
+    let rows = sets.len() as f64;
     let ay = top + rowh * rows + 6.0;
-    let h = top + rowh * rows + 62.0 + if shows_title(p, "axis_title_mode", "axis_title") { 22.0 } else { 0.0 };
-    Some(BoxG { sets, amin, amax, step, x0: if named { 110.0 } else { 40.0 }, x1: w - 36.0, top, rowh, w, h, ay })
+    let h = ay + 53.0 + if shows_title(p, "axis_title_mode", "axis_title") { 22.0 } else { 0.0 };
+    Some(BoxG { sets, amin, amax, step, x0: if named { 110.0 } else { 38.0 }, x1: w - 38.0, top, rowh, w, h, ay })
 }
 
 fn box_plot_render(p: &Params) -> String {
@@ -4347,14 +4503,15 @@ fn box_plot_render(p: &Params) -> String {
         _ => if !p.s("title").is_empty() { math_text(&mut d, w / 2.0, 22.0, 18.0, "middle", p.s("title"), true); },
     }
     let ay = g.ay;
-    d.line(x0, ay, x1, ay, INK, 1.8);
+    axis_heads(&mut d, x0, x1, ay);
+    d.line(x0, ay, x1, ay, INK, 2.4);
     let every = number_every(p);
     let k0 = (amin / step).ceil() as i64;
     let k1 = ((amax + 1e-9) / step).floor() as i64;
     for k in k0..=k1 {
         let v = k as f64 * step;
-        d.line(sx(v), ay, sx(v), ay + 7.0, INK, 1.4);
-        if every > 0 && (k - k0) % every == 0 { put(&mut d, sx(v), ay + 21.0, &fmt(v, 3), 13.0); }
+        d.line(sx(v), ay - 9.0, sx(v), ay + 9.0, INK, 2.0);
+        if every > 0 && (k - k0) % every == 0 { put(&mut d, sx(v), ay + 23.0, &fmt(v, 3), 16.0); }
     }
     match p.s("axis_title_mode") {
         "None" => {}
@@ -4559,36 +4716,39 @@ fn mapping_diagram_render(p: &Params) -> String {
     let fs = lsz(p);
     // no pairs: two empty ovals for students to fill in (the reference's blank diagram)
     let rows = if ins.is_empty() && outs.is_empty() { 4.0 } else { ins.len().max(outs.len()).max(1) as f64 };
-    let spacing = 42.0;
+    let spacing = 34.8;
     let has_title = p.s("title_mode") == "Text" || p.s("title_mode") == "Blank line";
     let top = if has_title { 40.0 } else { 0.0 };
-    let h = 100.0 + rows * spacing + top;
-    let w = 480.0;
-    let (lx, rx) = (130.0, 350.0);
-    let cy = top + 66.0 + rows * spacing / 2.0;
-    let mut d = new_doc(w, h);
+    // the reference's canvas: two ovals 49.4 wide, 65.4 in from the sides, the headings 34 down
+    let ry0 = rows * spacing / 2.0 + 14.0;
+    let cy = top + 49.4 + ry0;
+    let h = cy + ry0 + 16.0;
     let shape = p.s("shape");
     let fill = if p.s("fill") == "White" { "#ffffff" } else { TINT };
-    // item widths decide how wide the ovals are
     let iw = |v: &[String]| v.iter().map(|t| stw(t, fs)).fold(0.0, f64::max);
+    let (wi, wo) = (iw(&ins) / 2.0 + 24.0, iw(&outs) / 2.0 + 24.0);
+    let (rxi, rxo) = (wi.max(49.4), wo.max(49.4));
+    let lx = 16.0 + rxi;
+    let rx = lx + rxi + 150.0 + rxo;
+    let w = rx + rxo + 16.0;
+    let mut d = new_doc(w, h);
     let draw_side = |d: &mut Doc, x: f64, n: usize, half_w: f64| {
         let _ = n;
         let ry = rows * spacing / 2.0 + 14.0;
-        let rxx = half_w.max(62.0);
+        let rxx = half_w;
         match shape {
-            "Ovals" => { d.raw(&format!(r##"<ellipse cx="{x}" cy="{cy}" rx="{rxx}" ry="{ry}" fill="{fill}" stroke="{INK}" stroke-width="2"/>"##)); }
-            "Boxes" | "Rectangles" => { d.raw(&format!(r##"<rect x="{}" y="{}" width="{}" height="{}" rx="4" fill="{fill}" stroke="{INK}" stroke-width="2"/>"##, x - rxx, cy - ry, 2.0 * rxx, 2.0 * ry)); }
+            "Ovals" => { d.raw(&format!(r##"<ellipse cx="{x}" cy="{cy}" rx="{rxx}" ry="{ry}" fill="{fill}" stroke="{INK}" stroke-width="2.2"/>"##)); }
+            "Boxes" | "Rectangles" => { d.raw(&format!(r##"<rect x="{}" y="{}" width="{}" height="{}" rx="4" fill="{fill}" stroke="{INK}" stroke-width="2.2"/>"##, x - rxx, cy - ry, 2.0 * rxx, 2.0 * ry)); }
             _ => {}
         }
     };
-    let (wi, wo) = (iw(&ins) / 2.0 + 24.0, iw(&outs) / 2.0 + 24.0);
-    draw_side(&mut d, lx, ins.len(), wi);
-    draw_side(&mut d, rx, outs.len(), wo);
+    draw_side(&mut d, lx, ins.len(), rxi);
+    draw_side(&mut d, rx, outs.len(), rxo);
     if has_title { mode_title(&mut d, p.s("title_mode"), w / 2.0, 26.0, p.s("title"), 19.0); }
     let im = match p.s("in_mode") { "" => "Text", m => m };
     let om = match p.s("out_mode") { "" => "Text", m => m };
-    mode_title(&mut d, im, lx, top + 28.0, p.s("title_in"), 17.0);
-    mode_title(&mut d, om, rx, top + 28.0, p.s("title_out"), 17.0);
+    mode_title(&mut d, im, lx, top + 28.0, p.s("title_in"), 18.0);
+    mode_title(&mut d, om, rx, top + 28.0, p.s("title_out"), 18.0);
     // both sides are the same height; a shorter list spreads out over it
     let pos = |i: usize, n: usize| { let g = rows * spacing / n.max(1) as f64; cy + (i as f64 - (n as f64 - 1.0) / 2.0) * g };
     let tw_in: Vec<f64> = ins.iter().map(|t| stw(t, fs)).collect();
@@ -5247,14 +5407,14 @@ pub fn rows(id: &str) -> Option<super::RowsCard> {
             title: "Equations",
             help: "One per row: y = 2x + 1; 2x + 3y = 6; x = 4; y > x - 2; -2 < x <= 3; y = x + 2, x < 1 (a piece with a domain).",
             hint: "y = 2x + 1",
-            add_label: "Add an equation",
+            add_label: "Add equation",
             source: RowsSource::Joined { key: "equations", sep: ";", color_keys: vec!["eq1_color", "eq2_color", "eq3_color", "eq4_color"] },
         },
         "number-line" => RowsCard {
             title: "Equations",
             help: "An inequality such as -2 < x <= 5, or x < -1 or x >= 3. Leave empty to draw no graph.",
             hint: "-2 < x <= 5",
-            add_label: "Add an inequality",
+            add_label: "Add equation",
             source: RowsSource::Slots(vec![slot("inequality", None, Some("ineq_color")), slot("inequality2", None, Some("ineq2_color"))]),
         },
         // one row per arrow; "Match in order" / "Clear arrows" are the chips under it

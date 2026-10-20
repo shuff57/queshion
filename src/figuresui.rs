@@ -21,6 +21,8 @@ use crate::model::{FigureSpec, Id, Question};
 use crate::theme;
 
 mod cards_panel;
+mod chem_shell;
+mod lucide;
 mod composite_canvas;
 mod pedigree_panel;
 
@@ -99,6 +101,52 @@ fn hash_params(id: &str, p: &Params) -> u64 {
 /// Most screen points per SVG unit the preview zooms a figure to.
 const PREVIEW_MAX_ZOOM: f64 = 4.0;
 
+/// Padding (SVG units) the chemistry preview keeps around the drawing: the reference's 16 px.
+const CHEM_PAD: f64 = 16.0;
+/// Padding (SVG units) the math preview keeps around the inked box: the reference's viewBox is the
+/// drawing's bounds grown by 12 on every side, then fitted into the sheet.
+const MATH_PAD: f64 = 12.0;
+/// How far (points) the math preview's frame starts below the reference's sheet: ours sits about 9 px
+/// under the toolbar rule, the reference's sheet starts at it, with its svg 16 px in.
+const MATH_TOP_GAP: f32 = 8.8;
+
+/// The math preview's padding in our SVG units for figure `id`: the reference's 12 units scaled by
+/// how large our drawing is next to its (ours draws on a 480x360 canvas, the reference on its own
+/// ink-sized one), measured on each figure's opening state.
+fn math_pad(id: &str) -> f64 {
+    MATH_PAD * math_unit(id)
+}
+
+/// Our drawing's size against the reference's for figure `id` (1.0 = same units).
+fn math_unit(id: &str) -> f64 {
+    match id {
+        "triangle" | "parallelogram" | "trapezoid" => 0.875,
+        "rectangle" => 0.87,
+        "kite" => 0.90,
+        "regular-polygon" => 0.91,
+        "angles" => 0.605,
+        "prism" | "pyramid" => 1.0,
+        "cylinder" | "sphere" => 0.88,
+        "cone" => 0.92,
+        _ => 1.0,
+    }
+}
+
+/// The part of a math figure's canvas the preview shows: the whole canvas for the plots, else
+/// the inked box plus the reference's padding.
+fn math_view(content: Option<[f64; 4]>, id: &str, (cw, ch): (f64, f64)) -> [f64; 4] {
+    if math_whole(id) { return [0.0, 0.0, cw, ch]; }
+    // the reference grows prism and pyramid by 12 around the drawing's lines and label origins,
+    // not around their ink: less above (the stroke is inked), more below (the label's descent)
+    if let (Some(b), "prism" | "pyramid") = (content, id) {
+        let (l, t, r, bt) = (12.0, 10.8, 12.0, 16.0);
+        return [(b[0] - l).max(0.0), (b[1] - t).max(0.0), (b[2] + r).min(cw), (b[3] + bt).min(ch)];
+    }
+    view_box_padded(content, (cw, ch), Some(math_pad(id)))
+}
+/// Physics previews: the drawing fills about 92% of the frame's width, as the reference's sheet does.
+const PHYS_PAD: f64 = 0.028;
+
 /// Bounding box `[x0, y0, x1, y1]` (pixels) of the inked pixels of a premultiplied RGBA
 /// raster: anything not (near) white and not transparent. `None` for a blank figure.
 fn ink_box(px: &[u8], w: u32, h: u32) -> Option<[u32; 4]> {
@@ -121,9 +169,16 @@ fn ink_box(px: &[u8], w: u32, h: u32) -> Option<[u32; 4]> {
 
 /// The part of the canvas the preview shows: the inked box plus a margin, kept on the canvas
 /// (the whole canvas when nothing is inked).
+#[cfg(test)]
 fn view_box(content: Option<[f64; 4]>, (cw, ch): (f64, f64)) -> [f64; 4] {
+    view_box_padded(content, (cw, ch), None)
+}
+
+/// `view_box` with a fixed `pad` (SVG units) around the drawing when given. The chemistry
+/// figures use the reference's 16 px page padding, so the figure fills the frame as it does there.
+fn view_box_padded(content: Option<[f64; 4]>, (cw, ch): (f64, f64), fixed: Option<f64>) -> [f64; 4] {
     let Some(b) = content else { return [0.0, 0.0, cw, ch] };
-    let pad = 0.05 * (b[2] - b[0]).max(b[3] - b[1]) + 8.0;
+    let pad = fixed.unwrap_or(0.05 * (b[2] - b[0]).max(b[3] - b[1]) + 8.0);
     [(b[0] - pad).max(0.0), (b[1] - pad).max(0.0), (b[2] + pad).min(cw), (b[3] + pad).min(ch)]
 }
 
@@ -139,8 +194,10 @@ fn keep_view(old: [f64; 4], new: [f64; 4]) -> bool {
 /// Raster scale for a preview shown at `px_per_unit` device pixels per SVG unit: rounded to a
 /// quarter so small zoom changes don't re-render, and capped so the texture stays modest.
 fn raster_for(px_per_unit: f64, (cw, ch): (f64, f64)) -> f32 {
-    let cap = (4096.0 / cw.max(ch).max(1.0)).min((12.0e6 / (cw * ch).max(1.0)).sqrt());
-    ((px_per_unit.min(cap) * 4.0).ceil() / 4.0).clamp(1.0, 6.0) as f32
+    let cap = (2048.0 / cw.max(ch).max(1.0)).min((12.0e6 / (cw * ch).max(1.0)).sqrt());
+    let r = ((px_per_unit.min(cap) * 4.0).ceil() / 4.0).clamp(1.0, 6.0);
+    // rounding up must not push the texture past the cap
+    (if r as f64 > cap && cap >= 1.0 { (cap * 4.0).floor() / 4.0 } else { r }) as f32
 }
 
 fn color_image(png: &[u8]) -> Option<egui::ColorImage> {
@@ -190,6 +247,35 @@ fn thumb_for(ctx: &egui::Context, def: &FigureDef, p: &Params, scale: f32, budge
     tex
 }
 
+/// A thumbnail rasterized to fit a `bw` x `bh` box (points) at the screen's pixel density, so it
+/// is drawn 1:1 instead of being shrunk from a bigger bitmap (which aliases thin hairlines).
+pub(crate) fn thumb_fit(ctx: &egui::Context, def: &FigureDef, p: &Params, bw: f32, bh: f32, budget: &mut u8) -> Option<(TextureHandle, f32)> {
+    let ppp = ctx.pixels_per_point();
+    let key = format!("{}:{:x}:fit{bw:.0}x{bh:.0}@{ppp}", def.id, hash_params(def.id, p));
+    if let Some(hit) = THUMBS.with(|t| t.borrow().get(&key).cloned()) {
+        return hit.map(|t| (t, ppp));
+    }
+    if *budget == 0 {
+        ctx.request_repaint();
+        return None;
+    }
+    *budget -= 1;
+    THUMB_RENDERS.with(|c| c.set(c.get() + 1));
+    // crisp hairlines turn into solid 1 px bars at thumbnail scale; the browser smooths them to fine grey
+    let svg = (def.render)(p).replace(r#"shape-rendering="crispEdges""#, "");
+    let tex = (|| {
+        let mut opt = resvg::usvg::Options::default();
+        opt.fontdb = figures::fontdb();
+        let tree = resvg::usvg::Tree::from_str(&figures::serif_stack(&svg), &opt).ok()?;
+        let sz = tree.size();
+        let k = (bw / sz.width()).min(bh / sz.height()) * ppp;
+        let png = figures::to_png(&svg, k).ok()?;
+        texture(ctx, format!("testparrot:thumb:{key}"), &png)
+    })();
+    THUMBS.with(|t| t.borrow_mut().insert(key, tex.clone()));
+    tex.map(|t| (t, ppp))
+}
+
 const EX_CARD_W: f32 = 270.0;
 /// One gallery row: card (preview 170 + name + buttons + margins) plus the gap under it.
 const EX_CARD_H: f32 = 304.0;
@@ -231,6 +317,84 @@ fn example_card(ui: &mut Ui, ctx: &egui::Context, def: &FigureDef, e: &figures::
             });
         });
     (edit, png)
+}
+
+/// The reference's floating circled "?" at the bottom-left of the page; opens a short tips card.
+fn help_fab(ctx: &egui::Context) {
+    let sr = ctx.content_rect();
+    let id = egui::Id::new("fig_help_fab_open");
+    let open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+    let pos = egui::Pos2::new(sr.left() + 17.0, sr.bottom() - 54.0);
+    let r = egui::Area::new(egui::Id::new("fig_help_fab")).order(egui::Order::Foreground).fixed_pos(pos).show(ctx, |ui| {
+        let (rect, resp) = ui.allocate_exact_size(Vec2::splat(36.0), Sense::click());
+        let p = ui.painter();
+        p.add(egui::epaint::RectShape::filled(rect.translate(Vec2::new(0.0, 1.5)), CornerRadius::same(18), egui::Color32::from_black_alpha(if theme::is_dark() { 70 } else { 28 })));
+        p.circle(rect.center(), 18.0, theme::card(), Stroke::new(1.0, theme::border()));
+        p.text(rect.center(), egui::Align2::CENTER_CENTER, egui_phosphor::regular::QUESTION, theme::icon_font(20.0), if resp.hovered() { theme::accent_col() } else { theme::ink() });
+        resp.on_hover_text("Help")
+    });
+    if r.inner.clicked() {
+        ctx.data_mut(|d| d.insert_temp(id, !open));
+    }
+    if open {
+        let mut close = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+        let full = ctx.content_rect();
+        // Dimmed backdrop (the reference also blurs the page, which egui cannot do).
+        let bd = egui::Area::new(egui::Id::new("fig_help_backdrop")).order(egui::Order::Foreground).fixed_pos(full.min).show(ctx, |ui| {
+            let (rect, resp) = ui.allocate_exact_size(full.size(), Sense::click());
+            ui.painter().rect_filled(rect, 0.0, egui::Color32::from_rgba_unmultiplied(17, 24, 39, 107));
+            resp
+        });
+        if bd.inner.clicked() {
+            close = true;
+        }
+        let w = (full.width() - 32.0).min(440.0);
+        egui::Area::new(egui::Id::new("fig_help_card")).order(egui::Order::Tooltip).anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO).show(ctx, |ui| {
+            Frame::new()
+                .fill(theme::card())
+                .corner_radius(CornerRadius::same(12))
+                .shadow(egui::epaint::Shadow { offset: [0, 18], blur: 60, spread: 0, color: egui::Color32::from_rgba_unmultiplied(17, 24, 39, 61) })
+                .inner_margin(Margin::same(20))
+                .show(ui, |ui| {
+                    ui.set_width(w - 40.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Need a hand?").family(theme::bold_family()).size(19.0).color(theme::ink()));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.add(egui::Button::new(RichText::new(egui_phosphor::regular::X).font(theme::icon_font(16.0)).color(theme::muted_col())).frame(false)).on_hover_text("Close").clicked() {
+                                close = true;
+                            }
+                        });
+                    });
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("If you\u{2019}re running into trouble or have suggestions, email us and we\u{2019}ll help.").size(14.5).color(theme::ink()));
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Want a figure we don\u{2019}t make yet? Email us to request a generator, and we\u{2019}ll build it.").size(14.5).color(theme::ink()));
+                    ui.add_space(12.0);
+                    Frame::new().stroke(Stroke::new(1.0, theme::border())).corner_radius(CornerRadius::same(8)).inner_margin(Margin::symmetric(12, 4)).show(ui, |ui| {
+                        ui.set_width(w - 40.0 - 26.0);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("support@teacher.dev").family(theme::bold_family()).size(16.0).color(theme::ink()));
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.add(egui::Button::new(RichText::new(format!("{} Copy", egui_phosphor::regular::COPY)).size(13.0).color(theme::accent_col())).fill(theme::accent_col().gamma_multiply(0.1))).clicked() {
+                                    ui.ctx().copy_text("support@teacher.dev".to_string());
+                                }
+                            });
+                        });
+                    });
+                    ui.add_space(8.0);
+                    let btn = egui::Button::new(RichText::new(format!("{} Open in email", egui_phosphor::regular::ENVELOPE_SIMPLE)).family(theme::bold_family()).size(15.0).color(egui::Color32::WHITE))
+                        .fill(theme::accent_col())
+                        .corner_radius(CornerRadius::same(10))
+                        .min_size(Vec2::new(w - 40.0, 40.0));
+                    if ui.add_sized(Vec2::new(w - 40.0, 40.0), btn).clicked() {
+                        crate::platform::open_url("mailto:support@teacher.dev");
+                    }
+                });
+        });
+        if close {
+            ctx.data_mut(|d| d.insert_temp(id, false));
+        }
+    }
 }
 
 /// The gallery's PNG button: the example as a 2x PNG on white, through a save dialog.
@@ -302,6 +466,8 @@ pub struct Workspace {
     /// Inline label edit: (param key, buffer, just-opened).
     editing: Option<(&'static str, String, bool)>,
     qa_init: bool,
+    /// An action chosen on the preview toolbar this frame (chemistry skin), handed up by `workspace_view`.
+    tool_act: Option<Act>,
     /// Undo/redo of parameter edits: settled snapshots, plus the edit currently in flight.
     undo: Vec<Params>,
     redo: Vec<Params>,
@@ -335,6 +501,9 @@ pub struct Workspace {
     /// asked for, the inked part of the figure (SVG units) and the part of the canvas on show.
     raster: f32,
     want_raster: f32,
+    /// Sub-pixel offset the shown chemistry texture was rasterized with, and the one wanted now.
+    phase: (f32, f32),
+    want_phase: (f32, f32),
     content: Option<[f64; 4]>,
     view: Option<[f64; 4]>,
 }
@@ -353,6 +522,29 @@ fn load_presets() -> PresetFile {
 
 fn save_presets(f: &PresetFile) {
     let _ = crate::store::save_json("figure-presets.json", f);
+}
+
+/// Chemistry figures drawn whole on the reference's own canvas.
+/// The box the reference's phone sheet gives a chemistry figure's svg: its natural width capped to the
+/// sheet, and a height that follows the width for the charts (no `preserveAspectRatio`) but stays at
+/// the natural height, up to the window less 219 px, for the rest.
+fn phone_box(id: &str, (cw, ch): (f64, f64), card_w: f64, win_h: f64) -> (f64, f64) {
+    let bw = cw.min(card_w - 34.0);
+    let bh = if proportional_box(id) { ch * bw / cw } else { ch.min(win_h - 219.0) };
+    (bw, bh)
+}
+
+fn proportional_box(id: &str) -> bool {
+    matches!(id, "titration-curve" | "heating-cooling-curve" | "mass-spectrum" | "population-growth" | "predator-prey")
+}
+
+/// Math figures the reference fits whole (its canvas is the plot, not the ink): the plots and the mapping diagram.
+fn math_whole(id: &str) -> bool {
+    matches!(id, "coordinate-grid" | "number-line" | "box-plot" | "mapping-diagram")
+}
+
+fn chem_whole(id: &str) -> bool {
+    matches!(id, "titration-curve" | "heating-cooling-curve" | "mass-spectrum" | "line-spectrum" | "photoelectron-spectrum" | "bohr-model" | "particle-diagram" | "lewis-structures" | "orbital-diagram" | "gas-syringe" | "length-reading" | "mass-reading" | "ph-reading" | "temperature-reading" | "volume-by-displacement" | "volume-reading" | "population-growth" | "predator-prey" | "punnett-square" | "pedigree" | "gel-electrophoresis" | "micropipette-reading")
 }
 
 impl Workspace {
@@ -456,10 +648,18 @@ impl Workspace {
             params: v.get("params").and_then(|p| p.as_object()).map(|o| o.iter().map(|(k, v)| (k.clone(), v.clone())).collect()).unwrap_or_default(),
         };
         let p = params_from_spec(def, &spec);
-        if self.sel != Some(i) {
+        // a link that opens a figure fresh starts its history clean (Undo greyed, as on the
+        // reference's first screen); a link pasted over an open figure is one undo step
+        let fresh = self.sel != Some(i);
+        if fresh {
             self.select(i);
         }
-        self.set_params_with_history(p);
+        if fresh || hash_params(def.id, &p) == hash_params(def.id, &self.params) {
+            self.params = p;
+            self.reset_history();
+        } else {
+            self.set_params_with_history(p);
+        }
         Ok(())
     }
 
@@ -487,10 +687,18 @@ impl Workspace {
         params.extend(changed);
         let p = params_from_spec(def, &FigureSpec { id: id.clone(), params });
         self.imp = None;
-        if self.sel != Some(i) {
+        // a link that opens a figure fresh starts its history clean (Undo greyed, as on the
+        // reference's first screen); a link pasted over an open figure is one undo step
+        let fresh = self.sel != Some(i);
+        if fresh {
             self.select(i);
         }
-        self.set_params_with_history(p);
+        if fresh || hash_params(def.id, &p) == hash_params(def.id, &self.params) {
+            self.params = p;
+            self.reset_history();
+        } else {
+            self.set_params_with_history(p);
+        }
         Ok(())
     }
 
@@ -507,6 +715,8 @@ impl Workspace {
         self.reset_history();
         self.examples_open = false;
         self.sel = Some(i);
+        // the reference's chemistry figures open bare (no drag knobs); the Handles chip turns them on
+        self.hide_handles = matches!(reg()[i].subject, figures::Subject::Chemistry | figures::Subject::Physics);
         self.params = figures::start_params(&reg()[i]);
         // the composite shape opens on a blank canvas with its "Start with" screen, as the
         // reference does. Its opening state (share links, Reset all) keeps the arch, so links
@@ -618,6 +828,11 @@ impl Workspace {
     // ----- browser -----
 
     fn browser_view(&mut self, ui: &mut Ui) -> Act {
+        if theme::chem_skin() && self.chem_list() {
+            let a = self.chem_browser(ui);
+            help_fab(ui.ctx());
+            return a;
+        }
         let ctx = ui.ctx().clone();
         ui.horizontal_wrapped(|ui| {
             if tab(ui, "All", self.subject.is_none()) {
@@ -808,19 +1023,24 @@ impl Workspace {
     fn workspace_view(&mut self, ui: &mut Ui) -> Act {
         let ctx = ui.ctx().clone();
         let mut act = Act::None;
+        // the chemistry page skin carries the title in its top header and the actions in the
+        // preview toolbar, so this view drops its own title row and action row
+        let skin = theme::chem_skin() && self.chem_open();
 
-        ui.horizontal(|ui| {
-            if ghost(ui, "← Figures").clicked() {
-                self.back();
-            }
-            let title = match (&self.imp, self.sel) {
-                (Some(i), _) => format!("Imported: {}", i.name),
-                (None, Some(s)) => reg()[s].title.to_string(),
-                _ => String::new(),
-            };
-            ui.label(theme::serif_strong(title).size(19.0));
-        });
-        ui.add_space(8.0);
+        if !skin {
+            ui.horizontal(|ui| {
+                if ghost(ui, "← Figures").clicked() {
+                    self.back();
+                }
+                let title = match (&self.imp, self.sel) {
+                    (Some(i), _) => format!("Imported: {}", i.name),
+                    (None, Some(s)) => reg()[s].title.to_string(),
+                    _ => String::new(),
+                };
+                ui.label(theme::serif_strong(title).size(19.0));
+            });
+            ui.add_space(8.0);
+        }
 
         if self.imp.is_none() && self.sel.is_some() {
             if !ctx.egui_wants_keyboard_input() {
@@ -851,7 +1071,7 @@ impl Workspace {
                 if side > 0.0 { want.min((max_side / side) as f32) } else { want }
             };
             let want = fit(if self.want_raster > 0.0 { self.want_raster } else { 1.5 }, self.canvas);
-            let rescale = self.shown.is_some() && (want - self.raster).abs() > 0.01;
+            let rescale = self.shown.is_some() && ((want - self.raster).abs() > 0.01 || (self.want_phase.0 - self.phase.0).abs() > 0.02 || (self.want_phase.1 - self.phase.1).abs() > 0.02);
             let stale = rescale || self.shown.as_ref().is_none_or(|(sh, _)| *sh != h);
             if stale {
                 let first = self.shown.is_none();
@@ -867,11 +1087,12 @@ impl Workspace {
                     let svg = (def.render)(&self.params);
                     self.canvas = figures::svg_size(&svg);
                     let scale = fit(want, self.canvas);
-                    match figures::to_rgba(&svg, scale) {
+                    match figures::to_rgba_at(&svg, scale, self.want_phase) {
                         Ok((w, hh, px)) => {
                             let img = egui::ColorImage::from_rgba_premultiplied([w as usize, hh as usize], &px);
                             self.content = ink_box(&px, w, hh).map(|b| b.map(|v| v as f64 / scale as f64));
                             self.raster = scale;
+                            self.phase = self.want_phase;
                             let tex = ctx.load_texture(format!("testparrot:fig:{}", def.id), img, egui::TextureOptions::LINEAR);
                             self.shown = Some((h, tex));
                             self.err = None;
@@ -892,47 +1113,117 @@ impl Workspace {
         let generated = self.imp.is_none();
         let avail_h = if self.modal {
             (crate::theme::area_or(ctx.viewport_rect()).height() * 0.55).clamp(260.0, 520.0)
+        } else if skin {
+            ui.available_height().max(240.0)
         } else {
             (ui.available_height() - 64.0).max(240.0)
         };
-        ui.horizontal_top(|ui| {
-            if generated {
-                ui.allocate_ui(Vec2::new(290.0, avail_h), |ui| {
-                    ui.set_width(290.0);
-                    self.controls(ui, avail_h);
-                });
-                ui.add_space(12.0);
+        // A phone-width frame stacks the figure above its controls, as the reference does, and
+        // scrolls as a whole; a wide one puts the controls beside the figure.
+        // the reference stacks its chemistry page below 880 px of window, other pages below 640 px of frame
+        let chem_stack = skin && self.skin_subject() == figures::Subject::Chemistry && ctx.content_rect().width() < 880.0;
+        let narrow = generated && !self.modal && (ui.available_width() < 640.0 || chem_stack);
+        if narrow {
+            // the math reference's phone page keeps 16 px of side padding; ours is 12
+            let side = if skin && self.sel.is_some_and(|i| reg()[i].subject == figures::Subject::Math) { 4.0 } else { 0.0 };
+            let w = ui.available_width() - 2.0 * side;
+            let (cw, ch) = if self.canvas.0 > 1.0 { self.canvas } else { (1.0, 1.0) };
+            let whole_chem = self.sel.is_some_and(|i| matches!(reg()[i].subject, figures::Subject::Chemistry | figures::Subject::Biology) && chem_whole(reg()[i].id));
+            // the reference's sheet sits 17 px from each edge of a phone; ours 8
+            let inset = if whole_chem && !skin { 9.0 } else { 0.0 };
+            let cw_card = w - 2.0 * inset;
+            let mut card_h = ((w as f64 - 22.0) * ch / cw + 22.0).clamp(180.0, (avail_h as f64 * 0.7).max(180.0)) as f32;
+            // the reference opens a chemistry figure alone in a tall white canvas that ends about
+            // 156 px above the window bottom, the controls card sitting below the fold
+            if let Some(i) = self.sel.filter(|&i| reg()[i].subject == figures::Subject::Math && skin) {
+                // the reference's sheet hugs the figure: its drawing shrunk to the width (never grown) plus
+                // 16 px of padding, under the toolbar
+                let id = reg()[i].id;
+                let v = math_view(self.content, id, (cw, ch));
+                let k = ((cw_card as f64 - 34.0) / (v[2] - v[0]).max(1.0)).min(1.0 / math_unit(id));
+                card_h = ((v[3] - v[1]) * k + 32.0 + if ctx.content_rect().width() < 500.0 { 47.5 } else { 54.0 } + 2.0 + if math_whole(id) || ctx.content_rect().width() >= 500.0 { 0.0 } else { 2.5 }) as f32;
             }
-            let w = ui.available_width();
-            ui.allocate_ui(Vec2::new(w, avail_h), |ui| {
-                Frame::new()
-                    .fill(egui::Color32::WHITE)
-                    .stroke(Stroke::new(1.0, theme::border()))
-                    .corner_radius(CornerRadius::same(crate::kit::R_CARD))
-                    .inner_margin(Margin::same(10))
-                    .show(ui, |ui| {
-                        ui.set_width((w - 22.0).max(100.0));
-                        ui.set_height((avail_h - 22.0).max(100.0));
-                        if generated && !self.hide_handles && self.sel.is_some_and(|si| reg()[si].id == "composite-shape") {
-                            self.composite_canvas(ui);
-                        } else if generated && let Some(t) = &preview {
-                            self.preview_interactive(ui, t);
-                        } else if let Some(t) = &preview {
-                            ui.centered_and_justified(|ui| {
-                                ui.add(egui::Image::new(t).shrink_to_fit());
-                            });
-                        } else {
-                            ui.centered_and_justified(|ui| {
-                                if let Some(e) = &self.err {
-                                    ui.label(RichText::new(e).color(theme::red()).size(12.0));
-                                } else {
-                                    ui.spinner();
-                                }
-                            });
-                        }
+            if let Some(i) = self.sel.filter(|&i| matches!(reg()[i].subject, figures::Subject::Chemistry | figures::Subject::Biology)) {
+                if chem_whole(reg()[i].id) && skin {
+                    // the reference's sheet hugs the figure: natural size (shrunk to the width, never
+                    // grown) plus 16 px of padding, under a 47 px toolbar
+                    let (_, bh) = phone_box(reg()[i].id, (cw, ch), cw_card as f64, ui.ctx().content_rect().height() as f64);
+                    card_h = (bh + 32.0 + if ctx.content_rect().width() < 500.0 { 47.0 } else { 54.0 } + 2.0 + if proportional_box(reg()[i].id) || matches!(reg()[i].id, "photoelectron-spectrum" | "punnett-square") { 2.0 } else { 0.0 }) as f32;
+                } else if chem_whole(reg()[i].id) && !skin {
+                    // the reference's sheet hugs the figure: its canvas at natural size (shrunk to
+                    // the width, never grown) plus 16 px of padding on every side
+                    let sc = ((cw_card as f64 - 32.0) / cw).min(1.0);
+                    card_h = (ch * sc + 32.0) as f32;
+                } else {
+                    card_h = card_h.max(ui.available_height() - if skin { 144.0 } else { 156.0 });
+                }
+            }
+            let math_hug = skin && self.sel.is_some_and(|i| reg()[i].subject == figures::Subject::Math);
+            if skin && !whole_chem && !math_hug {
+                // the icon toolbar sits above the figure inside the card
+                card_h += 54.0;
+            }
+            // the math reference leaves 16 px under its header on a phone; ours 11
+            let math_top = if skin && self.sel.is_some_and(|i| reg()[i].subject == figures::Subject::Math) { 5.0 } else { 0.0 };
+            ui.add_space(math_top);
+            ScrollArea::vertical().id_salt("figs_narrow").max_height(avail_h - math_top).auto_shrink([false, false]).scroll_bar_visibility(if theme::chem_skin() { egui::scroll_area::ScrollBarVisibility::AlwaysHidden } else { egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded }).show(ui, |ui| {
+                ui.scope_builder(egui::UiBuilder::new().max_rect(ui.available_rect_before_wrap().shrink2(Vec2::new(side, 0.0))), |ui| {
+                if inset > 0.0 {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.add_space(inset);
+                        self.canvas_card(ui, cw_card, card_h, generated, preview.as_ref());
                     });
+                } else {
+                    self.canvas_card(ui, w, card_h, generated, preview.as_ref());
+                }
+                ui.add_space(if skin && self.skin_subject() == figures::Subject::Biology { 5.0 } else if skin { 8.0 } else { 10.0 });
+                ui.set_width(w);
+                self.controls(ui, 1.0e5);
+                });
             });
-        });
+        } else if skin {
+            self.chem_wide(ui, avail_h, preview.as_ref());
+        } else {
+            // the reference's chemistry sheet is 994 px wide at 1440 (its canvas starts 425 px from
+            // the left and ends 21 px from the right); ours borrows the scrollbar gutter and a
+            // slimmer controls column so the whole-canvas figures fit at the same scale
+            let chem_wide = generated && !self.modal && self.sel.is_some_and(|i| reg()[i].subject == figures::Subject::Chemistry);
+            let ctrl_w = if chem_wide { 274.0 } else { 290.0 };
+            ui.horizontal_top(|ui| {
+                if generated {
+                    ui.allocate_ui(Vec2::new(ctrl_w, avail_h), |ui| {
+                        ui.set_width(ctrl_w);
+                        // the reference sets its controls in white rounded cards on the page
+                        Frame::new()
+                            .fill(theme::card())
+                            .stroke(Stroke::new(1.0, theme::border()))
+                            .corner_radius(CornerRadius::same(crate::kit::R_CARD))
+                            .inner_margin(Margin::same(10))
+                            .show(ui, |ui| {
+                                ui.set_width(ctrl_w - 22.0);
+                                self.controls(ui, avail_h - 40.0);
+                            });
+                    });
+                    ui.add_space(12.0);
+                }
+                let w = ui.available_width() + if chem_wide { 8.0 } else { 0.0 };
+                self.canvas_card(ui, w, avail_h, generated, preview.as_ref());
+            });
+        }
+        if skin {
+            help_fab(&ctx);
+            if let Some(a) = self.tool_act.take() {
+                act = a;
+            }
+            if self.examples_open && self.imp.is_none() && self.sel.is_some() {
+                let a = self.examples_gallery(&ctx);
+                if !matches!(a, Act::None) {
+                    act = a;
+                }
+            }
+            return act;
+        }
         ui.add_space(10.0);
 
         // Action row.
@@ -969,20 +1260,8 @@ impl Workspace {
             if generated && self.sel.is_some() {
                 self.history_and_presets_ui(ui);
             }
-            if generated
-                && let Some(ls) = self.sel.and_then(|si| (reg()[si].params)().into_iter().find(|d| d.key == "label_size"))
-                && matches!(&ls.kind, Kind::Choice(o) if o.len() == 3)
-            {
-                let cur = self.params.s("label_size").to_string();
-                for (name, px) in [("Large", 16.0), ("Medium", 13.0), ("Small", 10.0)] {
-                    let sel = cur == name;
-                    let b = Button::new(RichText::new("A").size(px).color(if sel { theme::accent_col() } else { theme::muted_col() }))
-                        .fill(if sel { theme::accent_faded() } else { egui::Color32::TRANSPARENT })
-                        .stroke(Stroke::new(1.0, if sel { theme::accent_col() } else { theme::border() }));
-                    if ui.add(b).on_hover_text(format!("{name} labels")).clicked() {
-                        self.params.0.insert("label_size".to_string(), Value::S(name.to_string()));
-                    }
-                }
+            if generated {
+                self.label_size_buttons(ui);
             }
             if generated && chip_handles(ui, !self.hide_handles) {
                 self.hide_handles = !self.hide_handles;
@@ -1070,6 +1349,24 @@ impl Workspace {
     }
 
     /// Undo / Redo, "Examples" and "Presets" (saved parameter sets + copy/paste spec).
+    /// The A / A / A label-size buttons of figures that have a three-way `label_size`.
+    fn label_size_buttons(&mut self, ui: &mut Ui) {
+        if let Some(ls) = self.sel.and_then(|si| (reg()[si].params)().into_iter().find(|d| d.key == "label_size"))
+            && matches!(&ls.kind, Kind::Choice(o) if o.len() == 3)
+        {
+            let cur = self.params.s("label_size").to_string();
+            for (name, px) in [("Large", 16.0), ("Medium", 13.0), ("Small", 10.0)] {
+                let sel = cur == name;
+                let b = Button::new(RichText::new("A").size(px).color(if sel { theme::accent_col() } else { theme::muted_col() }))
+                    .fill(if sel { theme::accent_faded() } else { egui::Color32::TRANSPARENT })
+                    .stroke(Stroke::new(1.0, if sel { theme::accent_col() } else { theme::border() }));
+                if ui.add(b).on_hover_text(format!("{name} labels")).clicked() {
+                    self.params.0.insert("label_size".to_string(), Value::S(name.to_string()));
+                }
+            }
+        }
+    }
+
     fn history_and_presets_ui(&mut self, ui: &mut Ui) {
         let Some(si) = self.sel else { return };
         let def = &reg()[si];
@@ -1105,6 +1402,13 @@ impl Workspace {
                 ui.close();
             }
         });
+        self.presets_menu(ui);
+    }
+
+    /// The "Presets" menu: saved presets, copy / paste of a spec.
+    fn presets_menu(&mut self, ui: &mut Ui) {
+        let Some(si) = self.sel else { return };
+        let def = &reg()[si];
         ui.menu_button("Presets", |ui| {
             ui.set_min_width(230.0);
             let mut file = load_presets();
@@ -1142,7 +1446,7 @@ impl Workspace {
                     changed = true;
                 }
             });
-            ui.label(theme::muted("Presets stay on this computer.").size(11.0));
+            ui.label(theme::muted("Saved presets stay in this browser.").size(11.0));
             ui.separator();
             ui.horizontal(|ui| {
                 if ui.button("Copy spec").on_hover_text("Copy this figure's settings as text to share or paste back later").clicked() {
@@ -1203,7 +1507,27 @@ impl Workspace {
         let def = &reg()[si];
         let space = ui.available_size();
         let (full, _) = ui.allocate_exact_size(space, Sense::hover());
-        let area = egui::Rect::from_min_max(full.min, egui::pos2(full.max.x, full.max.y - 16.0));
+        // the chemistry canvas has no hint strip (the reference has none); its help is on the
+        // Handles chip, so the figure gets the whole frame
+        let chem = def.subject == figures::Subject::Chemistry;
+        let phys = def.subject == figures::Subject::Physics;
+        let math = def.subject == figures::Subject::Math;
+        // these chemistry figures draw on the reference's own canvas, which the reference fits whole
+        // into its sheet with 16 px of padding (not zoomed to the ink); the rest are zoomed to the drawing
+        let bio = def.subject == figures::Subject::Biology;
+        let whole = (chem && chem_whole(def.id)) || (bio && theme::chem_skin() && self.chem_open());
+        // the reference sizes the instrument figures to a slightly narrower box than its charts
+        let reading = matches!(def.id, "gas-syringe" | "length-reading" | "mass-reading" | "ph-reading" | "temperature-reading" | "volume-by-displacement" | "volume-reading");
+        let skin_wide = theme::chem_skin() && self.chem_open() && ui.ctx().content_rect().width() >= 880.0;
+        // the reference's chart sheet is 994 px wide at 1440 (ours lays out 993), so its figure box gets the missing pixel
+        let wide_chart = matches!(def.id, "titration-curve" | "heating-cooling-curve" | "mass-spectrum");
+        let area = if math { if theme::chem_skin() { egui::Rect::from_min_max(egui::pos2(full.left() + 16.0, full.top() + 16.0 - MATH_TOP_GAP), egui::pos2(full.right() - 16.0, full.bottom() - 16.0)) } else { full.shrink(16.0) } } else if whole && skin_wide { let a = full.shrink2(Vec2::new(16.0, 11.5)).translate(Vec2::new(0.0, if def.id == "predator-prey" { -5.0 } else { -4.0 })); if wide_chart { egui::Rect::from_min_max(a.min, egui::pos2(a.max.x + 0.0, a.max.y)) } else { a } } else if whole && theme::chem_skin() && self.chem_open() {
+            // a phone: the reference's svg is as wide as the sheet allows (never wider than natural) and
+            // as tall as the figure's own height, the drawing centred in that box
+            let (cw0, ch0) = if self.canvas.0 > 1.0 { self.canvas } else { (1.0, 1.0) };
+            let (bw, bh) = phone_box(def.id, (cw0, ch0), full.width() as f64 + 2.0, ui.ctx().content_rect().height() as f64);
+            egui::Rect::from_min_size(egui::pos2(full.center().x - bw as f32 / 2.0, full.top() + 7.0 + if proportional_box(def.id) || matches!(def.id, "photoelectron-spectrum" | "punnett-square") { 2.0 } else { 0.0 }), Vec2::new(bw as f32, bh as f32))
+        } else if whole { full.shrink2(Vec2::new(if reading { 14.5 } else { 4.0 }, 5.0)) } else if chem || phys { full } else { egui::Rect::from_min_max(full.min, egui::pos2(full.max.x, full.max.y - 16.0)) };
         let nat = tex.size_vec2();
         let rs = if self.raster > 0.0 { self.raster } else { 1.5 };
         let (cw, ch) = if self.canvas.0 > 1.0 { self.canvas } else { ((nat.x / rs) as f64, (nat.y / rs) as f64) };
@@ -1211,7 +1535,7 @@ impl Workspace {
         // the reference draws its figures. The view holds still while the pointer is down (a
         // drag or a slider must not rescale under the hand) and only refits when the drawing
         // leaves it or shrinks well inside it.
-        let fresh = view_box(self.content, (cw, ch));
+        let fresh = if math { math_view(self.content, def.id, (cw, ch)) } else if whole { [0.0, 0.0, cw, ch] } else { view_box_padded(self.content, (cw, ch), if chem { Some(CHEM_PAD) } else if phys { self.content.map(|b| PHYS_PAD * (b[2] - b[0]).max(b[3] - b[1])) } else { None }) };
         let pointer_down = ui.input(|i| i.pointer.any_down());
         match self.view {
             Some(v) if pointer_down || keep_view(v, fresh) => {}
@@ -1219,13 +1543,38 @@ impl Workspace {
         }
         let v = self.view.unwrap_or(fresh);
         let (vw, vh) = ((v[2] - v[0]).max(1.0), (v[3] - v[1]).max(1.0));
-        let k = (area.width() as f64 / vw).min(area.height() as f64 / vh).clamp(0.05, PREVIEW_MAX_ZOOM); // screen points per SVG unit
+        // screen points per SVG unit. The chemistry figures zoom up to 6x on a wide frame (the reference
+        // has no cap there) and, on a narrow one (a phone), only shrink to fit and never grow past
+        // natural size, as the reference does.
+        let max_zoom = if math { if area.width() < 600.0 { 1.0 / math_unit(def.id) } else { 12.0 } } else if !chem { PREVIEW_MAX_ZOOM } else if area.width() < 600.0 && !skin_wide { 1.0 } else { 6.0 };
+        let k = (area.width() as f64 / vw).min(area.height() as f64 / vh).clamp(0.05, max_zoom);
         let origin = area.center() - Vec2::new(((v[0] + vw / 2.0) * k) as f32, ((v[1] + vh / 2.0) * k) as f32);
-        let img = egui::Rect::from_min_size(origin, Vec2::new((cw * k) as f32, (ch * k) as f32));
+        let ppp = ui.ctx().pixels_per_point();
+        // chemistry previews are rasterized at exactly the device scale and drawn on whole pixels,
+        // so one-pixel grid lines stay solid instead of smearing across two pixels
+        // The reference's sheet sits on whole x pixels and 0.35 px below a pixel row in y at its desktop
+        // size, which decides which hairlines of the titration grid land on two pixels (pH 8, 10 mL, 44 mL).
+        let snap = chem || (bio && theme::chem_skin() && self.chem_open()) || (math && def.id == "coordinate-grid" && theme::chem_skin());
+        let (origin, phase) = if snap {
+            let o = egui::pos2((origin.x * ppp).round() / ppp, (origin.y * ppp).floor() / ppp);
+            (o, (0.0, if def.id == "titration-curve" { 0.33 } else if bio { 0.16 } else { 0.0 }))
+        } else { (origin, (0.0, 0.0)) };
+        if !pointer_down { self.want_phase = phase; }
+        let img = if snap && (rs as f64 - k * ppp as f64).abs() < 0.01 * rs as f64 {
+            // 1:1 texels to device pixels
+            egui::Rect::from_min_size(origin, nat / ppp)
+        } else {
+            egui::Rect::from_min_size(origin, Vec2::new((cw * k) as f32, (ch * k) as f32))
+        };
         ui.painter_at(full).image(tex.id(), img, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
         if !pointer_down {
-            let want = raster_for(k * ui.ctx().pixels_per_point() as f64, (cw, ch));
-            if (want - rs).abs() / rs > 0.15 {
+            let want = if snap {
+                let cap = (2040.0 / cw.max(ch).max(1.0)).min((12.0e6 / (cw * ch).max(1.0)).sqrt());
+                (k * ppp as f64).min(cap).clamp(0.2, 6.0) as f32
+            } else {
+                raster_for(k * ppp as f64, (cw, ch))
+            };
+            if (want - rs).abs() / rs > if snap { 0.003 } else { 0.15 } {
                 self.want_raster = want;
                 ui.ctx().request_repaint();
             }
@@ -1252,6 +1601,7 @@ impl Workspace {
         let painter = ui.painter_at(full.expand(8.0));
         let acc = theme::accent_col();
         let mut changed = false;
+        let math_quiet = (def.subject == figures::Subject::Math && def.id != "composite-shape" && theme::chem_skin()) || def.subject == figures::Subject::Biology;
         let mut start_edit: Option<(&'static str, String)> = None;
         for (i, h) in hs.iter().enumerate() {
             let c = to_screen(h.pos);
@@ -1325,6 +1675,8 @@ impl Workspace {
                         painter.rect(hit, 4.0, fill, stroke, egui::StrokeKind::Inside);
                     }
                 }
+                // the math reference draws no resting knobs; they show on hover or drag only
+                _ if !hot && math_quiet => {}
                 sh => {
                     let rad = if hot { 7.5 } else { 5.5 };
                     let (fill, stroke) = if hot {
@@ -1371,7 +1723,7 @@ impl Workspace {
                 self.editing = Some((key, buf, false));
             }
         }
-        if !hs.is_empty() {
+        if !hs.is_empty() && !chem && !theme::chem_skin() {
             painter.text(
                 full.left_bottom() + Vec2::new(4.0, -2.0),
                 egui::Align2::LEFT_BOTTOM,
@@ -1388,18 +1740,60 @@ impl Workspace {
         }
     }
 
+    /// The white frame holding the figure preview (or its spinner / error).
+    fn canvas_card(&mut self, ui: &mut Ui, w: f32, h: f32, generated: bool, preview: Option<&TextureHandle>) {
+        let skin = theme::chem_skin() && generated && self.chem_open();
+        let rr = ui.allocate_ui_with_layout(Vec2::new(w, h), if skin { Layout::top_down(Align::Min) } else { *ui.layout() }, |ui| {
+            let fr = Frame::new()
+                .fill(if skin { theme::card() } else { egui::Color32::WHITE })
+                .stroke(Stroke::new(1.0, theme::border()))
+                .corner_radius(CornerRadius::same(crate::kit::R_CARD))
+                .inner_margin(if skin { Margin::ZERO } else { Margin::same(10) })
+                .show(ui, |ui| {
+                    ui.set_width((w - if skin { 2.0 } else { 22.0 }).max(100.0));
+                    ui.set_height((h - if skin { 2.0 } else { 22.0 }).max(100.0));
+                    if skin {
+                        let a = self.chem_toolbar(ui);
+                        if !matches!(a, Act::None) {
+                            self.tool_act = Some(a);
+                        }
+                        ui.add_space(2.0);
+                    }
+                    if generated && !self.hide_handles && self.sel.is_some_and(|si| reg()[si].id == "composite-shape") {
+                        self.composite_canvas(ui);
+                    } else if generated && let Some(t) = preview {
+                        self.preview_interactive(ui, t);
+                    } else if let Some(t) = preview {
+                        ui.centered_and_justified(|ui| {
+                            ui.add(egui::Image::new(t).shrink_to_fit());
+                        });
+                    } else {
+                        ui.centered_and_justified(|ui| {
+                            if let Some(e) = &self.err {
+                                ui.label(RichText::new(e).color(theme::red()).size(12.0));
+                            } else {
+                                ui.spinner();
+                            }
+                        });
+                    }
+                });
+            let _ = fr;
+        });
+        let _ = rr;
+    }
+
     fn controls(&mut self, ui: &mut Ui, max_h: f32) {
         let Some(si) = self.sel else { return };
         let def = &reg()[si];
         let pdefs = (def.params)();
+        let skin = theme::chem_skin() && self.chem_open();
         ui.vertical(|ui| {
-            ui.label(theme::muted(def.blurb).size(12.0));
-            ui.add_space(6.0);
-            ScrollArea::vertical()
-                .id_salt("figs_controls")
-                .max_height((max_h - 70.0).max(120.0))
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
+            if !skin {
+                ui.label(theme::muted(def.blurb).size(12.0));
+                ui.add_space(6.0);
+            }
+            let params_now = self.params.clone();
+            let mut content = |ui: &mut Ui| {
                     ui.spacing_mut().slider_width = 170.0;
                     let n_now = pdefs.iter().any(|d| d.key == "n").then(|| self.params.i("n"));
                     if let Some(card) = figures::measures_for(def.id) {
@@ -1420,6 +1814,28 @@ impl Workspace {
                     }
                     // the pedigree's Family card: setup, New pedigree and the person editor
                     let classic_in_chips = classic_in_chips || def.id == "pedigree";
+                    // the Punnett page opens on its setup block (Classic setups, Cross, Dominance, Parents), no card header
+                    let top_keys: &[&str] = if skin && def.id == "punnett-square" { &["cross", "dominance", "parents"] } else { &[] };
+                    let classic_in_chips = classic_in_chips || !top_keys.is_empty();
+                    if !top_keys.is_empty() {
+                        ui.add_space(15.5);
+                        Frame::new().inner_margin(Margin::symmetric(18, 0)).show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 8.0;
+                            self.classic_combo(ui, def.id);
+                            for k in top_keys {
+                                if let Some(pd) = pdefs.iter().find(|d| d.key == *k) {
+                                    param_control(ui, def.id, pd, &mut self.params);
+                                    chem_note(ui, def.id, k, &self.params);
+                                    if *k != "parents" {
+                                        ui.add_space(7.0);
+                                    }
+                                }
+                            }
+                            ui.add_space(0.0);
+                        });
+                        // the biology page closes this setup card and opens a second one for the sections
+                        chem_shell::mark_split(ui);
+                    }
                     if def.id == "pedigree" {
                         self.pedigree_card(ui);
                     }
@@ -1431,18 +1847,223 @@ impl Workspace {
                         ui.add_space(6.0);
                     }
                     let secs = figures::layout::sections(def.id, &pdefs, n_now);
+                    if skin && def.id == "mass-spectrum" {
+                        self.isotopes_card(ui, &pdefs);
+                    }
                     for (si_, sec) in secs.iter().enumerate() {
-                        let shown: Vec<usize> = sec.items.iter().copied().filter(|&i| !is_hidden(&pdefs, &self.params, &pdefs[i]) && figures::param_relevant(def.id, pdefs[i].key, &self.params)).collect();
+                        if skin && def.id == "mass-spectrum" && sec.title == "Isotopes" {
+                            continue;
+                        }
+                        let shown: Vec<usize> = sec.items.iter().copied().filter(|&i| !top_keys.contains(&pdefs[i].key) && !is_hidden(&pdefs, &self.params, &pdefs[i]) && !(skin && (def.subject == figures::Subject::Chemistry || matches!(def.id, "coordinate-grid" | "number-line")) && pdefs[i].key == "label_size") && !(skin && def.id == "micropipette-reading" && pdefs[i].key == "shape") && !(def.id == "gel-electrophoresis" && pdefs[i].key == "lane_names") && figures::param_relevant(def.id, pdefs[i].key, &self.params)).collect();
                         if shown.is_empty() {
                             continue;
                         }
                         let id = ui.make_persistent_id(("fig_sec", def.id, sec.title.as_str()));
                         let relevant: Vec<usize> = sec.items.iter().copied().filter(|&i| figures::param_relevant(def.id, pdefs[i].key, &self.params)).collect();
-                        let summary = sec.items.iter().find_map(|&i| figures::cards::summary(def.id, pdefs[i].key, &self.params)).unwrap_or_else(|| section_summary(&pdefs, &self.params, &relevant));
+                        let summary = skin.then(|| figures::chemistry::skin_summary(def.id, &sec.title, &self.params)).flatten().or_else(|| sec.items.iter().find_map(|&i| figures::cards::summary(def.id, pdefs[i].key, &self.params))).or_else(|| if def.id == "population-growth" { figures::biology::popdyn::growth_section_summary(&sec.title, &self.params) } else { None }).or_else(|| if def.id == "pedigree" { figures::biology::pedigree::section_summary(&sec.title, &self.params) } else { None }).or_else(|| if def.id == "titration-curve" { figures::chemistry::tit_section_summary(&sec.title, &self.params) } else { None }).unwrap_or_else(|| section_summary(&pdefs, &self.params, &relevant));
                         let mut reset = false;
                         let (mut reset_labels, mut straighten) = (false, false);
-                        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, si_ < open_sections(def.id))
-                            .show_header(ui, |ui| {
+                        let mut st = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, if skin { (def.id == "population-growth" && sec.title == "Graphs") || (def.id == "gel-electrophoresis" && si_ == 1) || (si_ == 0 && def.subject != figures::Subject::Physics && def.id != "pedigree" && !(def.subject == figures::Subject::Math && (figures::measures_for(def.id).is_some() || figures::rows_for(def.id).is_some()))) || sec.title.to_lowercase().contains("reading") } else { si_ < open_sections(def.id) });
+                        let mut body = |ui: &mut Ui| {
+                                // the chemistry page's blocks sit 12 px apart (5.2 px item spacing plus this), number rows 9.6
+                                let chem_pg = def.subject == figures::Subject::Chemistry;
+                                let (gap, pair_gap) = if chem_pg { (6.0, 3.3) } else if skin && def.id == "population-growth" { (6.0, 0.0) } else { (6.0, 6.0) };
+                                let help = figures::sections::live_help(def.id, &sec.title, &sec.help, &self.params);
+                                // the chemistry page sets the note under the first control, not above it
+                                let mut help_left = !help.is_empty();
+                                // the biology page sets a section's note above its first control, in the page's 13 px grey
+                                if help_left && skin && def.id == "punnett-square" {
+                                    ui.add(egui::Label::new(theme::muted(help.as_str()).size(13.6)).wrap());
+                                    ui.add_space(gap);
+                                    help_left = false;
+                                }
+                                if help_left && !skin {
+                                    ui.label(theme::muted(help.as_str()).size(11.0));
+                                    ui.add_space(4.0);
+                                    help_left = false;
+                                }
+                                if si_ == 0 && !classic_in_chips {
+                                    self.classic_combo(ui, def.id);
+                                }
+                                let pair_ok = |i: usize| skin && (matches!(def.id, "titration-curve" | "heating-cooling-curve") || (def.id == "population-growth" && matches!(pdefs[i].key, "n0" | "r" | "k" | "tspan"))) && matches!(pdefs[i].kind, Kind::Float { .. });
+                                // the biology page's "Time in" select takes one half-width column of its own
+                                let half_alone_of = |i: usize| skin && ((def.id == "population-growth" && pdefs[i].key == "unit") || (def.id == "predator-prey" && pdefs[i].key == "cycle"));
+                                // the predator-prey card sets prey | predators side by side in each row
+                                let pp_pair = |i: usize, j: usize| skin && def.id == "predator-prey" && matches!((pdefs[i].key, pdefs[j].key), ("prey", "pred") | ("prey0", "pred0") | ("prey_avg", "pred_avg") | ("tshow", "unit"));
+                                let mut skip_pair: Option<usize> = None;
+                                for (pos, &i) in shown.iter().enumerate() {
+                                    if skip_pair == Some(i) {
+                                        continue;
+                                    }
+                                    if skin && def.id == "lewis-structures" && matches!(pdefs[i].key, "central" | "tweak") {
+                                        // the Changes section: its note above, then central atom, atoms and bonds
+                                        if pdefs[i].key == "central" {
+                                            self.lewis_changes(ui, &help);
+                                        }
+                                        help_left = false;
+                                        continue;
+                                    }
+                                    let half_alone = half_alone_of(i);
+                                    let partner = if half_alone { None } else { shown.get(pos + 1).copied().filter(|&j| (pair_ok(i) && pair_ok(j)) || pp_pair(i, j)) };
+                                    if half_alone || partner.is_some() {
+                                        // the chemistry page sets number boxes two to a row
+                                        let ks: Vec<usize> = std::iter::once(i).chain(partner).collect();
+                                        skip_pair = partner;
+                                        let w = (ui.available_width() - 10.0) / 2.0;
+                                        let (mut olds, mut news) = (Vec::new(), Vec::new());
+                                        ui.horizontal_top(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 10.0;
+                                            for &k in &ks {
+                                                ui.vertical(|ui| {
+                                                    ui.set_width(w);
+                                                    if chem_pg {
+                                                        ui.spacing_mut().item_spacing.y = 5.0;
+                                                    }
+                                                    olds.push(self.params.0.get(pdefs[k].key).cloned());
+                                                    param_control(ui, def.id, &pdefs[k], &mut self.params);
+                                                    news.push(self.params.0.get(pdefs[k].key).cloned());
+                                                });
+                                            }
+                                        });
+                                        for (n, &k) in ks.iter().enumerate() {
+                                            self.card_after(ui, def.id, pdefs[k].key, &pdefs);
+                                            if let Some(old) = olds[n].clone().filter(|o| news[n].as_ref() != Some(o)) {
+                                                figures::after_panel_change(def.id, pdefs[k].key, &old, &mut self.params);
+                                            }
+                                        }
+                                        ui.add_space(if skin && def.id == "population-growth" { match pdefs[i].key { "n0" => 1.0, "k" => 1.0, "unit" => 3.0, _ => 0.0 } } else if skin && def.id == "predator-prey" { match pdefs[i].key { "prey" => 4.0, "prey0" => 2.0, "prey_avg" => 3.0, "cycle" => 5.0, "tshow" => 8.0, _ => pair_gap } } else { pair_gap });
+                                        continue;
+                                    }
+                                    if pdefs[i].key == figures::labels::KEY {
+                                        // the offsets param is never typed: dragging sets it, this clears it. Always
+                                        // shown (as the reference does), greyed out until a label has moved.
+                                        let moved = figures::labels::any_moved(&self.params);
+                                        let b = ui.add_enabled(moved, egui::Button::new(RichText::new("Reset label positions").size(12.0)));
+                                        let b = if moved { b.on_hover_text("Put every dragged label back in its own place") } else { b.on_disabled_hover_text("Drag a label on the figure to move it; this puts them back") };
+                                        if b.clicked() {
+                                            reset_labels = true;
+                                        }
+                                        continue;
+                                    }
+                                    if skin && def.id == "orbital-diagram" && pdefs[i].key == "charge" {
+                                        continue;
+                                    }
+                                    if skin && def.id == "orbital-diagram" && pdefs[i].key == "element" {
+                                        let ci = pdefs.iter().position(|d| d.key == "charge");
+                                        let old = self.params.0.get("element").cloned();
+                                        let w = ui.available_width();
+                                        ui.horizontal_top(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 12.0;
+                                            ui.vertical(|ui| {
+                                                ui.set_width((w - 92.0).max(120.0));
+                                                param_control(ui, def.id, &pdefs[i], &mut self.params);
+                                            });
+                                            if let Some(ci) = ci {
+                                                ui.vertical(|ui| {
+                                                    ui.set_width(80.0);
+                                                    ui.label(theme::strong("Charge").size(13.5));
+                                                    let (lo, hi) = match &pdefs[ci].kind { Kind::Int { min, max } => (*min, *max), _ => (-4, 8) };
+                                                    let tid = egui::Id::new(("orb_charge_txt", def.id));
+                                                    let cur = self.params.i("charge");
+                                                    let mut txt = ui.ctx().data(|d| d.get_temp::<String>(tid)).filter(|t| t.parse::<i64>().ok().map(|v| v.clamp(lo, hi)) == Some(cur) || t == "-" || t.is_empty()).unwrap_or_else(|| cur.to_string());
+                                                    let te = TextEdit::singleline(&mut txt).desired_width(f32::INFINITY).margin(Margin::symmetric(14, 12)).font(egui::FontId::new(15.0, egui::FontFamily::Name("vs-noto".into())));
+                                                    if ui.add(te).changed() {
+                                                        if let Ok(v) = txt.trim().parse::<i64>() {
+                                                            self.params.0.insert("charge".to_string(), Value::I(v.clamp(lo, hi)));
+                                                        }
+                                                    }
+                                                    ui.ctx().data_mut(|d| d.insert_temp(tid, txt));
+                                                });
+                                            }
+                                        });
+                                        if let Some(old) = old.filter(|o| self.params.0.get("element") != Some(o)) {
+                                            figures::after_panel_change(def.id, "element", &old, &mut self.params);
+                                        }
+                                        ui.add_space(gap);
+                                        continue;
+                                    }
+                                    if self.card_control(ui, def.id, pdefs[i].key, &pdefs) {
+                                        if skin {
+                                            chem_note(ui, def.id, pdefs[i].key, &self.params);
+                                        }
+                                        ui.add_space(gap);
+                                        continue;
+                                    }
+                                    let old = self.params.0.get(pdefs[i].key).cloned();
+                                    param_control(ui, def.id, &pdefs[i], &mut self.params);
+                                    if let Some(old) = old.filter(|o| self.params.0.get(pdefs[i].key) != Some(o)) {
+                                        figures::after_panel_change(def.id, pdefs[i].key, &old, &mut self.params);
+                                    }
+                                    self.card_after(ui, def.id, pdefs[i].key, &pdefs);
+                                    if skin {
+                                        chem_note(ui, def.id, pdefs[i].key, &self.params);
+                                    }
+                                    if pdefs[i].key == "rotate"
+                                        && figures::labels::turnable(def.id)
+                                        && ui.add_enabled(self.params.f("rotate") != 0.0, Button::new(RichText::new("Straighten").size(12.0))).on_hover_text("Turn the figure back to 0°").clicked()
+                                    {
+                                        straighten = true;
+                                    }
+                                    if skin && chem_pg && pdefs[i].label.contains('|') {
+                                        ui.add_space(0.9);
+                                    }
+                                    if help_left {
+                                        if def.subject == figures::Subject::Biology && skin {
+                                            ui.add_space(3.0);
+                                            ui.add(egui::Label::new(theme::muted(help.as_str()).size(13.6).line_height(Some(19.72))).wrap());
+                                        } else {
+                                            ui.label(theme::muted(help.as_str()).size(13.0));
+                                        }
+                                        // the reference tucks a checkbox 2 px closer to the note above it
+                                        let next_bool = chem_pg && shown.get(pos + 1).is_some_and(|&j| matches!(pdefs[j].kind, Kind::Bool));
+                                        ui.add_space(if def.subject == figures::Subject::Biology && skin { gap - 7.0 } else if next_bool { gap - 3.0 } else { gap });
+                                        help_left = false;
+                                    }
+                                    if figures::random_key(def.id) == Some(pdefs[i].key)
+                                        && !skin
+                                        && ui.button(RichText::new("Random").size(12.0)).on_hover_text("Set a random reading").clicked()
+                                    {
+                                        figures::random_reading(def.id, &mut self.params, random_seed());
+                                    }
+                                    let pop_adj = if skin && def.id == "population-growth" { match pdefs[i].key { "growth" => 12.0, "organism" => 9.0, _ => 0.0 } } else if skin && def.id == "predator-prey" { match pdefs[i].key { "pair" => 12.0, "source" => -2.0, _ => 0.0 } } else if skin && def.id == "micropipette-reading" && pdefs[i].key == "volume" { -6.0 } else { 0.0 };
+                                    ui.add_space(if chem_pg && pos + 1 == shown.len() && matches!(pdefs[i].kind, Kind::Choice(_)) { gap - 5.0 } else { gap + pop_adj });
+                                }
+                                ui.add_space(if chem_pg { 1.8 } else if skin && def.id == "punnett-square" { 0.0 } else if skin && def.subject == figures::Subject::Biology { -3.0 } else { 4.0 });
+                            };
+                        if skin && si_ == 0 && matches!((def.id, sec.title.as_str()), ("titration-curve", "Titration") | ("heating-cooling-curve", "Curve") | ("population-growth", "Population") | ("predator-prey", "Predator and prey")) {
+                            // these two pages open on a flat, always-open section with a small caps title
+                            chem_shell::flat_header(ui, &sec.title, &sec.help);
+                            Frame::new().inner_margin(Margin::symmetric(18, 0)).show(ui, |ui| body(ui));
+                            // the chemistry card closes 17 px under its last box
+                            if def.subject == figures::Subject::Chemistry {
+                                chem_shell::mark_split(ui);
+                            } else {
+                                ui.add_space(14.0);
+                            }
+                        } else if skin {
+                            let open = st.is_open();
+                            // the chemistry rows butt against each other
+                            let gap_y = ui.spacing().item_spacing.y;
+                            if def.subject == figures::Subject::Chemistry {
+                                ui.spacing_mut().item_spacing.y = 0.0;
+                            }
+                            if def.subject == figures::Subject::Biology && si_ == 0 {
+                                ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("chem_first_row"), true));
+                            }
+                            let resp = chem_shell::section_header(ui, &sec.title, &summary, open);
+                            ui.spacing_mut().item_spacing.y = gap_y;
+                            if resp.clicked() {
+                                st.toggle(ui);
+                            }
+                            st.show_body_unindented(ui, |ui| {
+                                Frame::new().inner_margin(Margin::symmetric(18, 0)).show(ui, |ui| {
+                                    ui.add_space(if def.subject == figures::Subject::Chemistry { 3.0 } else if def.id == "punnett-square" { 5.5 } else if def.subject == figures::Subject::Biology { if si_ == 0 { -5.0 } else { -1.0 } } else { 2.0 });
+                                    body(ui);
+                                });
+                            });
+                            st.store(ui.ctx());
+                        } else {
+                            let header = |ui: &mut Ui| {
                                 ui.vertical(|ui| {
                                     // leave room for Reset on the right: a long summary wraps
                                     // short of it instead of running underneath
@@ -1456,53 +2077,9 @@ impl Workspace {
                                     let r = ui.add(Button::new(theme::muted("Reset").size(11.0)).frame(false));
                                     reset = r.on_hover_text("Reset this section to its defaults").clicked();
                                 });
-                            })
-                            .body(|ui| {
-                                let help = figures::sections::live_help(def.id, &sec.title, &sec.help, &self.params);
-                                if !help.is_empty() {
-                                    ui.label(theme::muted(help).size(11.0));
-                                    ui.add_space(4.0);
-                                }
-                                if si_ == 0 && !classic_in_chips {
-                                    self.classic_combo(ui, def.id);
-                                }
-                                for &i in &shown {
-                                    if pdefs[i].key == figures::labels::KEY {
-                                        // the offsets param is never typed: dragging sets it, this clears it. Always
-                                        // shown (as the reference does), greyed out until a label has moved.
-                                        let moved = figures::labels::any_moved(&self.params);
-                                        let b = ui.add_enabled(moved, egui::Button::new(RichText::new("Reset label positions").size(12.0)));
-                                        let b = if moved { b.on_hover_text("Put every dragged label back in its own place") } else { b.on_disabled_hover_text("Drag a label on the figure to move it; this puts them back") };
-                                        if b.clicked() {
-                                            reset_labels = true;
-                                        }
-                                        continue;
-                                    }
-                                    if self.card_control(ui, def.id, pdefs[i].key, &pdefs) {
-                                        ui.add_space(6.0);
-                                        continue;
-                                    }
-                                    let old = self.params.0.get(pdefs[i].key).cloned();
-                                    param_control(ui, def.id, &pdefs[i], &mut self.params);
-                                    if let Some(old) = old.filter(|o| self.params.0.get(pdefs[i].key) != Some(o)) {
-                                        figures::after_panel_change(def.id, pdefs[i].key, &old, &mut self.params);
-                                    }
-                                    self.card_after(ui, def.id, pdefs[i].key, &pdefs);
-                                    if pdefs[i].key == "rotate"
-                                        && figures::labels::turnable(def.id)
-                                        && ui.add_enabled(self.params.f("rotate") != 0.0, Button::new(RichText::new("Straighten").size(12.0))).on_hover_text("Turn the figure back to 0°").clicked()
-                                    {
-                                        straighten = true;
-                                    }
-                                    if figures::random_key(def.id) == Some(pdefs[i].key)
-                                        && ui.button(RichText::new("Random").size(12.0)).on_hover_text("Set a random reading").clicked()
-                                    {
-                                        figures::random_reading(def.id, &mut self.params, random_seed());
-                                    }
-                                    ui.add_space(6.0);
-                                }
-                                ui.add_space(4.0);
-                            });
+                            };
+                            st.show_header(ui, header).body(body);
+                        }
                         if reset_labels {
                             let mut p = self.params.clone();
                             figures::labels::reset(&mut p);
@@ -1522,48 +2099,171 @@ impl Workspace {
                             let anchors: Vec<&str> = sec.items.iter().map(|&i| pdefs[i].key).collect();
                             self.reset_card_keys(def.id, &anchors, &pdefs, &start);
                         }
-                        ui.separator();
+                        if !skin {
+                            ui.separator();
+                        }
                     }
-                    faq_section(ui, def.id);
+                    if !skin {
+                        faq_section(ui, def.id);
+                    }
+            };
+            if skin {
+                let mut start_example = false;
+                let mut reset_all = false;
+                let mut preset_apply: Option<Params> = None;
+
+                ui.spacing_mut().scroll.fade.strength = 0.0;
+                ScrollArea::vertical().id_salt("figs_controls").max_height(max_h).auto_shrink([false, false]).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 10.0;
+                    let chem_page = def.subject == figures::Subject::Chemistry;
+                    if chem_page && ui.ctx().content_rect().width() >= 880.0 {
+                        // the reference's side panel starts 2 px lower than ours did
+                        ui.add_space(2.0);
+                    }
+                    let bio_page = def.subject == figures::Subject::Biology;
+                    if bio_page {
+                        ui.add_space(2.0);
+                    }
+                    chem_shell::panel_card_m(ui, if chem_page { Margin { left: 18, right: 18, top: 17, bottom: 16 } } else if bio_page { Margin { left: 18, right: 18, top: 17, bottom: 16 } } else { Margin::same(18) }, |ui| {
+                        let intro = RichText::new(figures::chemistry::skin_intro(def.id).unwrap_or(def.blurb)).size(if def.subject == figures::Subject::Math { 14.5 } else if chem_page || bio_page { 14.72 } else { 15.0 }).color(theme::ink());
+                        // the chemistry page sets its lead at 1.5 line height
+                        ui.label(if chem_page { intro.line_height(Some(22.0)) } else if bio_page { intro.line_height(Some(22.08)) } else { intro });
+                        ui.add_space(if chem_page { 2.0 } else if bio_page { 1.9 } else { 4.0 });
+                        let has_ex = !figures::examples_for(def.id).is_empty();
+                        if chem_shell::outline_button(ui, &format!("{}  Start from an example", egui_phosphor::regular::IMAGES), has_ex).clicked() {
+                            start_example = true;
+                        }
+                    });
+                    ui.add_space(if chem_page && !matches!(def.id, "titration-curve" | "heating-cooling-curve" | "mass-spectrum") { 5.0 } else if chem_page || bio_page { 6.0 } else { 5.0 });
+                    if (chem_page && matches!(def.id, "titration-curve" | "heating-cooling-curve" | "mass-spectrum")) || (skin && def.id == "punnett-square") || (skin && def.subject == figures::Subject::Math && def.id != "composite-shape" && figures::rows_for(def.id).is_some()) {
+                        // the reference's flat first section is a card of its own, the collapsible ones a second
+                        chem_shell::split_cards(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 6.0;
+                            content(ui);
+                        });
+                    } else {
+                        chem_shell::panel_card(ui, 0, |ui| {
+                            ui.spacing_mut().item_spacing.y = if chem_page { 6.0 } else { 8.0 };
+                            content(ui);
+                        });
+                    }
+                    if matches!(def.subject, figures::Subject::Physics | figures::Subject::Chemistry | figures::Subject::Biology | figures::Subject::Math) {
+                        ui.add_space(if chem_page { 6.0 } else { 7.0 });
+                        preset_apply = preset_card(ui, def, &params_now);
+                    }
+                    if !matches!(def.subject, figures::Subject::Chemistry | figures::Subject::Biology | figures::Subject::Math) {
+                        ui.add_space(4.0);
+                        if ui.add(Button::new(theme::muted("Reset all").size(13.0)).frame(false)).clicked() {
+                            reset_all = true;
+                        }
+                        ui.add_space(12.0);
+                        faq_section(ui, def.id);
+                    }
+                    ui.add_space(24.0);
                 });
-            ui.add_space(4.0);
-            if ghost(ui, "Reset all").clicked() {
-                self.params = figures::start_params(def);
+                if let Some(p) = preset_apply {
+                    self.set_params_with_history(p);
+                }
+                if start_example {
+                    self.examples_open = true;
+                }
+                if reset_all {
+                    self.params = figures::start_params(def);
+                }
+            } else {
+                ScrollArea::vertical()
+                    .id_salt("figs_controls")
+                    .max_height((max_h - 70.0).max(120.0))
+                    .auto_shrink([false, true])
+                    .show(ui, content);
+                ui.add_space(4.0);
+                if ghost(ui, "Reset all").clicked() {
+                    self.params = figures::start_params(def);
+                }
             }
         });
+    }
+
+    /// The mass spectrum's Isotopes card: Element / Custom isotopes, the element (or the typed
+    /// isotopes) and the relative atomic mass worked out beneath.
+    fn isotopes_card(&mut self, ui: &mut Ui, pdefs: &[ParamDef]) {
+        // the reference's Isotopes block is the first card of the panel: no card of its own here
+        ui.add_space(15.0);
+        Frame::new().inner_margin(Margin::symmetric(18, 0)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 10.0;
+            ui.label(RichText::new("ISOTOPES".chars().flat_map(|c| [c, '\u{200A}']).collect::<String>()).family(theme::bold_family()).size(12.5).color(theme::muted_col()));
+            let mut src = if self.params.s("source") == "Custom isotopes" { "Custom isotopes".to_string() } else { "Element".to_string() };
+            chem_shell::segmented_track(ui, &["Element", "Custom isotopes"], &mut src);
+            if src != self.params.s("source") {
+                self.params.0.insert("source".to_string(), Value::S(src.clone()));
+            }
+            let custom = src == "Custom isotopes";
+            for k in if custom { ["custom_name", "custom"] } else { ["element", ""] } {
+                if let Some(pd) = pdefs.iter().find(|d| d.key == k) {
+                    param_control(ui, "mass-spectrum", pd, &mut self.params);
+                }
+            }
+            if let Some((head, working)) = figures::chemistry::mass_spectrum_info(&self.params) {
+                Frame::new().fill(if theme::is_dark() { egui::Color32::from_rgb(0x1a, 0x25, 0x3d) } else { egui::Color32::from_rgb(0xe8, 0xf1, 0xfd) }).corner_radius(CornerRadius::same(10)).inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.spacing_mut().item_spacing.y = 5.0;
+                    ui.label(theme::strong(head.as_str()).size(13.5));
+                    if !working.is_empty() {
+                        ui.label(RichText::new(working).size(12.5).color(theme::ink()));
+                    }
+                });
+            }
+        });
+        ui.add_space(12.0);
+        chem_shell::mark_split(ui);
     }
 
     /// The reference's "Measures" card: one row per side/angle/dimension with its value box and a
     /// label popover. A typed value is "given"; an empty box shows the worked-out value in grey.
     fn measures_card(&mut self, ui: &mut Ui, fig: &str, pdefs: &[ParamDef], card: &figures::MeasureCard) {
         let computed: HashMap<&'static str, String> = figures::computed_for(fig, &self.params).into_iter().collect();
+        let skin = theme::chem_skin();
         Frame::new()
             .fill(theme::card())
             .stroke(Stroke::new(1.0, theme::border()))
             .corner_radius(CornerRadius::same(12))
-            .inner_margin(Margin::same(10))
+            .inner_margin(if skin { Margin { left: 18, right: 18, top: 11, bottom: 9 } } else { Margin::same(10) })
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    crate::kit::small_caps(ui, card.title);
-                    if !card.help.is_empty() {
-                        ui.label(theme::muted("(?)").size(11.0)).on_hover_text(card.help);
-                    }
-                });
-                for g in &card.groups {
+                if skin {
+                    ui.spacing_mut().item_spacing.y = 7.0;
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(card.title.to_uppercase().chars().flat_map(|c| [c, '\u{200A}']).collect::<String>()).family(theme::bold_family()).size(12.5).color(theme::muted_col()));
+                        if !card.help.is_empty() {
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                ui.add_space(4.0);
+                                ui.label(RichText::new(egui_phosphor::regular::QUESTION).size(18.0).color(theme::muted_col())).on_hover_text(card.help);
+                            });
+                        }
+                    });
+                } else {
+                    ui.horizontal(|ui| {
+                        crate::kit::small_caps(ui, card.title);
+                        if !card.help.is_empty() {
+                            ui.label(theme::muted("(?)").size(11.0)).on_hover_text(card.help);
+                        }
+                    });
+                }
+                for (gi, g) in card.groups.iter().enumerate() {
                     if !figures::card_visible(fig, g.title, None, &self.params) {
                         continue;
                     }
                     if !g.title.is_empty() {
-                        ui.add_space(6.0);
-                        ui.label(theme::strong(g.title).size(11.0));
+                        ui.add_space(if skin { if gi == 0 { 0.0 } else { 3.0 } } else { 6.0 });
+                        ui.label(theme::strong(g.title).size(if skin { 13.0 } else { 11.0 }));
                     }
                     for r in &g.rows {
                         if !figures::card_visible(fig, g.title, Some(r.value_key), &self.params) {
                             continue;
                         }
                         self.measure_row(ui, pdefs, r, &computed);
-                        ui.add_space(2.0);
+                        ui.add_space(if skin { 0.0 } else { 2.0 });
                     }
                 }
                 // A solver message ("These measures don't fix the triangle.") from `computed`.
@@ -1580,20 +2280,29 @@ impl Workspace {
     fn rows_card(&mut self, ui: &mut Ui, fig: &str, pdefs: &[ParamDef], card: &figures::RowsCard) {
         let extra_id = ui.make_persistent_id(("fig_rows_extra", fig));
         let mut extra: usize = ui.data(|d| d.get_temp(extra_id)).unwrap_or(0);
-        Frame::new()
-            .fill(theme::card())
-            .stroke(Stroke::new(1.0, theme::border()))
-            .corner_radius(CornerRadius::same(12))
-            .inner_margin(Margin::same(10))
+        // the math pages draw this flat inside the first card (letter-spaced title, a "?" circle,
+        // 44 px rows, a dashed Add pill); the card is closed under it by `mark_split`
+        let skin = theme::chem_skin() && self.chem_open() && self.skin_subject() == figures::Subject::Math;
+        let add_text = format!("{}  {}", egui_phosphor::regular::PLUS, card.add_label);
+        let fr = if skin { Frame::new().inner_margin(Margin::symmetric(18, 0)) } else { Frame::new().fill(theme::card()).stroke(Stroke::new(1.0, theme::border())).corner_radius(CornerRadius::same(12)).inner_margin(Margin::same(10)) };
+        if skin {
+            chem_shell::flat_header(ui, card.title, card.help);
+        }
+        fr
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    crate::kit::small_caps(ui, card.title);
-                    if !card.help.is_empty() {
-                        ui.label(theme::muted("(?)").size(11.0)).on_hover_text(card.help);
-                    }
-                });
-                ui.add_space(4.0);
+                if skin {
+                    ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
+                } else {
+                    ui.horizontal(|ui| {
+                        crate::kit::small_caps(ui, card.title);
+                        if !card.help.is_empty() {
+                            ui.label(theme::muted("(?)").size(11.0)).on_hover_text(card.help);
+                        }
+                    });
+                    ui.add_space(4.0);
+                }
+                let edit_w = if skin { ui.available_width() - 46.0 - 40.0 - 16.0 } else { 170.0 };
                 let palette = |k: &str| pdefs.iter().find(|d| d.key == k).and_then(|d| if let Kind::Color(p) = &d.kind { Some(p.clone()) } else { None });
                 match &card.source {
                     figures::RowsSource::Joined { key, sep, color_keys } => {
@@ -1608,13 +2317,15 @@ impl Workspace {
                         let mut remove: Option<usize> = None;
                         for (i, row) in rows.iter_mut().enumerate() {
                             ui.horizontal(|ui| {
-                                ui.add(TextEdit::singleline(row).hint_text(card.hint).desired_width(170.0));
-                                if let Some(ck) = color_keys.get(i)
-                                    && let Some(pal) = palette(ck)
-                                {
-                                    self.row_colour(ui, ck, &pal);
+                                let ck = color_keys.get(i).filter(|_| true);
+                                if skin && let Some(ck) = ck && let Some(pal) = palette(ck) {
+                                    self.row_colour(ui, ck, &pal, skin);
                                 }
-                                if ui.add(Button::new(theme::muted(egui_phosphor::regular::X).size(13.0)).frame(false)).on_hover_text("Remove this row").clicked() {
+                                ui.add(row_edit(row, card.hint, edit_w, skin));
+                                if !skin && let Some(ck) = ck && let Some(pal) = palette(ck) {
+                                    self.row_colour(ui, ck, &pal, skin);
+                                }
+                                if ui.add(Button::new(theme::muted(egui_phosphor::regular::X).size(if skin { 17.0 } else { 13.0 })).frame(false)).on_hover_text("Remove this row").clicked() {
                                     remove = Some(i);
                                 }
                             });
@@ -1627,7 +2338,7 @@ impl Workspace {
                             self.params.0.insert((*key).to_string(), Value::S(joined));
                         }
                         extra = extra.min(rows.iter().filter(|r| r.trim().is_empty()).count());
-                        if ui.button(card.add_label).clicked() && color_keys.len().max(8) > rows.len() {
+                        if (if skin { chem_shell::dashed_chip(ui, &add_text) } else { ui.button(card.add_label) }).clicked() && color_keys.len().max(8) > rows.len() {
                             extra += 1;
                         }
                     }
@@ -1647,28 +2358,34 @@ impl Workspace {
                                         self.params.0.insert(nk.to_string(), Value::S(n));
                                     }
                                 }
+                                if skin && let Some(ck) = sl.color_key && let Some(pal) = palette(ck) {
+                                    self.row_colour(ui, ck, &pal, skin);
+                                }
                                 let mut v = self.params.s(sl.value_key).to_string();
-                                if ui.add(TextEdit::singleline(&mut v).hint_text(card.hint).desired_width(if sl.name_key.is_some() { 120.0 } else { 170.0 })).changed() {
+                                if ui.add(row_edit(&mut v, card.hint, if sl.name_key.is_some() { edit_w - 76.0 } else { edit_w }, skin)).changed() {
                                     self.params.0.insert(sl.value_key.to_string(), Value::S(v));
                                 }
-                                if let Some(ck) = sl.color_key
-                                    && let Some(pal) = palette(ck)
-                                {
-                                    self.row_colour(ui, ck, &pal);
+                                if !skin && let Some(ck) = sl.color_key && let Some(pal) = palette(ck) {
+                                    self.row_colour(ui, ck, &pal, skin);
                                 }
-                                if ui.add(Button::new(theme::muted(egui_phosphor::regular::X).size(13.0)).frame(false)).on_hover_text("Clear this row").clicked() {
+                                if ui.add(Button::new(theme::muted(egui_phosphor::regular::X).size(if skin { 17.0 } else { 13.0 })).frame(false)).on_hover_text("Clear this row").clicked() {
                                     self.params.0.insert(sl.value_key.to_string(), Value::S(String::new()));
                                 }
                             });
                         }
-                        if shown < slots.len() && ui.button(card.add_label).clicked() {
+                        if shown < slots.len() && (if skin { chem_shell::dashed_chip(ui, &add_text) } else { ui.button(card.add_label) }).clicked() {
                             extra = shown;
                         }
                     }
                 }
             });
         ui.data_mut(|d| d.insert_temp(extra_id, extra));
-        ui.add_space(8.0);
+        if skin {
+            ui.add_space(15.0);
+            chem_shell::mark_split(ui);
+        } else {
+            ui.add_space(8.0);
+        }
     }
 
     /// "Add a force" chips: each appends one preset item and bumps the count.
@@ -1716,30 +2433,83 @@ impl Workspace {
         if setups.is_empty() {
             return;
         }
-        ui.label(theme::muted("Classic setups").size(11.0));
+        if theme::chem_skin() {
+            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("pop_label_tight"), if fig == "population-growth" { 2.0_f32 } else { 0.0_f32 }));
+            param_label(ui, "Classic setups", "");
+            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("pop_label_tight"), 0.0_f32));
+            if fig == "punnett-square" {
+                ui.add_space(1.0);
+            }
+        } else {
+            ui.label(theme::muted("Classic setups").size(11.0));
+        }
+        // the dropdown shows the setup the figure is on, as the reference does ("Choose one…" once edited away)
+        let touched: std::collections::BTreeSet<&str> = setups.iter().flat_map(|e| e.params.iter().map(|(k, _)| *k)).collect();
+        let current = setups.iter().position(|e| {
+            let q = example_params(def, e);
+            touched.iter().all(|k| q.0.get(*k) == self.params.0.get(*k))
+        });
         let mut pick = None;
-        egui::ComboBox::from_id_salt(("fig_classic", fig))
-            .selected_text("Choose one…")
-            .width(ui.available_width().min(260.0))
+        let saved_pad = ui.spacing().button_padding.x;
+        if theme::chem_skin() {
+            ui.spacing_mut().button_padding.x = 15.0;
+        }
+        let bio = theme::chem_skin() && def.subject == figures::Subject::Biology;
+        let saved_pad_y = ui.spacing().button_padding.y;
+        let saved_h = ui.spacing().interact_size.y;
+        if bio {
+            // the biology page's select: 40 px tall, 15.2 px text
+            ui.spacing_mut().button_padding.y = 9.5;
+            ui.spacing_mut().interact_size.y = 39.5;
+        }
+        let cb = egui::ComboBox::from_id_salt(("fig_classic", fig));
+        let cb = if theme::chem_skin() { cb.icon(chem_shell::select_chevron) } else { cb };
+        let shown = current.map(|i| setups[i].name).unwrap_or("Choose one…");
+        cb
+            .selected_text(if bio { RichText::new(shown).size(15.2).family(egui::FontFamily::Name("vs-noto".into())) } else { RichText::new(shown) })
+            .width(if theme::chem_skin() { ui.available_width() } else { ui.available_width().min(260.0) })
             .show_ui(ui, |ui| {
                 for (i, e) in setups.iter().enumerate() {
-                    if ui.selectable_label(false, e.name).clicked() {
+                    if ui.selectable_label(current == Some(i), e.name).clicked() {
                         pick = Some(i);
                     }
                 }
             });
+        ui.spacing_mut().button_padding.x = saved_pad;
+        ui.spacing_mut().button_padding.y = saved_pad_y;
+        ui.spacing_mut().interact_size.y = saved_h;
         if let Some(i) = pick {
             self.set_params_with_history(example_params(def, &setups[i]));
         }
-        ui.add_space(6.0);
+        ui.add_space(if fig == "punnett-square" { 6.0 } else if bio && fig == "population-growth" { 17.0 } else if bio { 0.16 } else { 6.0 });
     }
 
     /// A colour swatch that opens a palette popover for one param.
-    fn row_colour(&mut self, ui: &mut Ui, key: &str, pal: &[&'static str]) {
+    fn row_colour(&mut self, ui: &mut Ui, key: &str, pal: &[&'static str], skin: bool) {
         let cur = self.params.s(key).to_string();
-        let (r, resp) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::click());
-        ui.painter().circle_filled(r.center(), 8.0, swatch(&cur));
-        ui.painter().circle_stroke(r.center(), 9.5, Stroke::new(1.0, theme::border()));
+        let (r, resp) = ui.allocate_exact_size(if skin { Vec2::new(46.0, 45.0) } else { Vec2::splat(22.0) }, Sense::click());
+        if skin {
+            ui.painter().rect(r, CornerRadius::same(12), if resp.hovered() { theme::hover_bg() } else { theme::card() }, Stroke::new(1.0, chem_shell::pill_border()), egui::StrokeKind::Inside);
+            if key.starts_with("eq") && key.ends_with("_color") {
+                // the reference's equation row shows a line-style icon (a diagonal with arrowheads),
+                // drawn in the equation's colour
+                let col = egui::Color32::from_rgb(0x11, 0x18, 0x27);
+                let c = r.center();
+                let (a, b) = (c + Vec2::new(-8.0, 8.0), c + Vec2::new(8.0, -8.0));
+                ui.painter().line_segment([a, b], Stroke::new(2.4, col));
+                let d = Vec2::new(1.0, -1.0) / 2f32.sqrt();
+                let n = Vec2::new(d.y, -d.x);
+                for (tip, dir) in [(b + d * 3.0, d), (a - d * 3.0, -d)] {
+                    let base = tip - dir * 7.0;
+                    ui.painter().add(egui::Shape::convex_polygon(vec![tip, base + n * 4.0, base - n * 4.0], col, Stroke::NONE));
+                }
+            } else {
+                ui.painter().circle_filled(r.center(), 7.0, swatch(&cur));
+            }
+        } else {
+            ui.painter().circle_filled(r.center(), 8.0, swatch(&cur));
+            ui.painter().circle_stroke(r.center(), 9.5, Stroke::new(1.0, theme::border()));
+        }
         egui::Popup::menu(&resp).show(|ui| {
             ui.horizontal_wrapped(|ui| {
                 for hex in pal {
@@ -1758,15 +2528,37 @@ impl Workspace {
 
     fn measure_row(&mut self, ui: &mut Ui, pdefs: &[ParamDef], r: &figures::MeasureRow, computed: &HashMap<&'static str, String>) {
         let find = |k: &str| pdefs.iter().find(|d| d.key == k);
+        let skin = theme::chem_skin();
+        // the reference's rows are 46 px tall: boxed 42 px letter tiles, 152 px inputs, 83 px label buttons
+        let rh = if skin { 46.0 } else { 20.0 };
+        let serif = theme::serif_family();
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 5.0;
+            ui.spacing_mut().item_spacing.x = if skin { 8.0 } else { 5.0 };
+            if skin {
+                ui.spacing_mut().interact_size.y = rh;
+            }
             // Name: an editable vertex letter, or a fixed label.
             if let Some(nk) = r.name_key {
                 let mut v = self.params.s(nk).to_string();
-                if ui.add(TextEdit::singleline(&mut v).desired_width(26.0)).changed() {
+                let te = if skin {
+                    TextEdit::singleline(&mut v)
+                        .desired_width(26.0)
+                        .horizontal_align(Align::Center)
+                        .vertical_align(Align::Center)
+                        .min_size(Vec2::new(42.0, rh))
+                        .font(egui::FontId::new(18.0, theme::italic_family(ui.ctx(), &serif).unwrap_or(serif.clone())))
+                } else {
+                    TextEdit::singleline(&mut v).desired_width(26.0)
+                };
+                if ui.add(te).changed() {
                     self.params.0.insert(nk.to_string(), Value::S(v.chars().take(3).collect()));
                 }
-                ui.label(theme::muted(r.name).size(12.0));
+                ui.label(theme::muted(r.name).size(if skin { 17.0 } else { 12.0 }));
+            } else if skin {
+                // a side name (AB, BC, CA) sits bare in an angle-row-wide slot
+                let nm = r.name.trim();
+                let fam = theme::italic_family(ui.ctx(), &serif).unwrap_or(serif.clone());
+                ui.add_sized([if nm == "∠" { 50.0 } else { 50.0 }, rh], egui::Label::new(RichText::new(nm).family(fam).size(18.0).color(theme::text_col())));
             } else {
                 // egui's bundled font has no "∠"; spell it out.
                 let nm = if r.name.trim() == "∠" { "angle" } else { r.name };
@@ -1798,7 +2590,18 @@ impl Workspace {
                         let mut v = self.params.s(r.value_key).to_string();
                         let hint = computed.get(r.value_key).cloned().unwrap_or_default();
                         let was_empty = self.params.s(r.value_key).trim().is_empty();
-                        if ui.add(TextEdit::singleline(&mut v).hint_text(hint.clone()).desired_width(88.0)).changed() {
+                        let te = if skin {
+                            TextEdit::singleline(&mut v)
+                                .hint_text(RichText::new(hint.clone()).size(17.0))
+                                .font(egui::FontId::new(17.0, egui::FontFamily::Name("vs-noto".into())))
+                                .vertical_align(Align::Center)
+                                .min_size(Vec2::new(if r.name_key.is_some() { 152.0 } else { 160.0 }, rh))
+                                .desired_width(if r.name_key.is_some() { 128.0 } else { 136.0 })
+                                .margin(Margin::symmetric(12, 0))
+                        } else {
+                            TextEdit::singleline(&mut v).hint_text(hint.clone()).desired_width(88.0)
+                        };
+                        if ui.add(te).changed() {
                             self.params.0.insert(r.value_key.to_string(), Value::S(v.clone()));
                             // Like the reference: typing a value shows its label, clearing it hides it.
                             if !r.label_key.is_empty() {
@@ -1827,7 +2630,17 @@ impl Workspace {
                 "None" => "None".to_string(),
                 _ => format!("{shown}{}", if shown.is_empty() { String::new() } else { if unit_txt == "°" || unit_txt == "%" { unit_txt.clone() } else { format!(" {unit_txt}").trim_end().to_string() } }),
             };
-            let btn = ui.add(Button::new(RichText::new(if txt.trim().is_empty() { "—".to_string() } else { txt }).size(12.0)).min_size(Vec2::new(78.0, 24.0)));
+            let btn = if skin {
+                // the label button hugs the panel's right edge, as the reference's does
+                ui.add_space((ui.available_width() - 83.0).max(0.0));
+                ui.add(
+                    Button::new(RichText::new(if txt.trim().is_empty() { "—".to_string() } else { txt }).family(if txt_is_math(&mode) { serif.clone() } else { egui::FontFamily::Name("vs-noto".into()) }).size(if txt_is_math(&mode) { 17.0 } else { 13.0 }).color(theme::text_col()))
+                        .min_size(Vec2::new(83.0, rh))
+                        .corner_radius(CornerRadius::same(10)),
+                )
+            } else {
+                ui.add(Button::new(RichText::new(if txt.trim().is_empty() { "—".to_string() } else { txt }).size(12.0)).min_size(Vec2::new(78.0, 24.0)))
+            };
             egui::Popup::menu(&btn).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
                 ui.set_min_width(190.0);
                 ui.label(theme::strong(format!("Label at {}", r.name.trim())).size(12.0));
@@ -1906,6 +2719,11 @@ const SECTION_RESET_W: f32 = 44.0;
 
 /// How many of a figure's generic sections open expanded. The first two, except under the
 /// pedigree's Family card, where the reference keeps Symbols, Labels and Chart title collapsed.
+/// Whether a label button shows a value (set in the serif) rather than the word "None".
+fn txt_is_math(mode: &str) -> bool {
+    mode != "None"
+}
+
 fn open_sections(fig: &str) -> usize {
     match fig {
         "pedigree" => 0,
@@ -2028,7 +2846,7 @@ fn card(ui: &mut Ui, ctx: &egui::Context, def: &FigureDef, idx: usize, budget: &
 }
 
 fn chip_handles(ui: &mut Ui, on: bool) -> bool {
-    crate::kit::chip_toggle(ui, "Handles", on).on_hover_text("Show drag handles on the figure").clicked()
+    crate::kit::chip_toggle(ui, "Handles", on).on_hover_text("Show drag handles on the figure. Drag the dots to edit; drag or double-click a label to move or rename it").clicked()
 }
 
 /// Splits a list value on the separators the generators accept.
@@ -2045,11 +2863,118 @@ fn swatch(hex: &str) -> egui::Color32 {
     egui::Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)
 }
 
+/// The chemistry page's inline note under a control (muted, or amber when it warns).
+fn chem_note(ui: &mut Ui, fig: &str, key: &str, p: &Params) {
+    if let Some(n) = figures::chemistry::notes::key_note(fig, key, p) {
+        let sz = if matches!(fig, "punnett-square" | "gel-electrophoresis" | "pedigree") { 13.1 } else { 13.0 };
+        let t = if n.warn { RichText::new(n.text).size(13.0).color(egui::Color32::from_rgb(0xb4, 0x53, 0x09)) } else { theme::muted(n.text).size(sz).line_height(if sz == 13.1 { Some(19.0) } else { None }) };
+        ui.add(egui::Label::new(t).wrap());
+        ui.add_space(4.0);
+    }
+}
+
 /// A control's label, with the param's hint on hover (the reference keeps help out of the label).
 fn param_label(ui: &mut Ui, label: &str, hint: &str) {
-    let r = ui.label(theme::muted(label).size(11.0));
+    param_label_inner(ui, label, hint);
+    // the biology population page's labels sit a little closer to their boxes than ours did
+    let tight = ui.ctx().data(|d| d.get_temp::<f32>(egui::Id::new("pop_label_tight"))).unwrap_or(0.0);
+    if tight != 0.0 && !label.is_empty() {
+        ui.add_space(-tight);
+    }
+}
+
+fn param_label_inner(ui: &mut Ui, label: &str, hint: &str) {
+    if label.is_empty() {
+        return;
+    }
+    // "Name|note" and "Name (unit)": the reference sets the note / unit in lighter grey after the name
+    let mut piped = false;
+    let (name, note) = match label.split_once('|') {
+        Some((n, t)) => {
+            piped = true;
+            (n.trim_end(), Some(t.to_string()))
+        }
+        None => match label.rfind(" (").filter(|_| label.ends_with(')')) {
+            Some(i) => (&label[..i], Some(label[i + 1..].to_string())),
+            None => (label, None),
+        },
+    };
+    let r = if let Some(note) = note {
+        ui.scope(|ui| {
+            if theme::chem_skin() {
+                ui.spacing_mut().interact_size.y = if ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("chem_skin_page"))).unwrap_or(false) { 20.4 } else { 20.0 };
+                ui.spacing_mut().item_spacing.y = 0.0;
+            }
+            ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let r = ui.label(if theme::chem_skin() { chem_shell::label_name(ui.ctx(), name, 14.08) } else { theme::strong(name).size(12.0) });
+            if theme::chem_skin() {
+                // the chemistry page sets the unit and the note in the label's own 13.5 px, lighter grey
+                let _ = piped;
+                let fade = 1.0;
+                ui.label(RichText::new(note).size(14.08).family(egui::FontFamily::Name("vs-noto".into())).color(theme::muted_col().gamma_multiply(fade)));
+            } else {
+                ui.label(theme::muted(note).size(11.0).color(theme::muted_col().gamma_multiply(0.7)));
+            }
+            r
+        })
+        .inner
+        })
+        .inner
+    } else if theme::chem_skin() {
+        // same row height as a label with a unit, so paired boxes line up
+        ui.scope(|ui| {
+            ui.spacing_mut().interact_size.y = if ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("chem_skin_page"))).unwrap_or(false) { 20.0 } else { 20.0 };
+            ui.spacing_mut().item_spacing.y = 0.0;
+            ui.horizontal_wrapped(|ui| ui.label(chem_shell::label_name(ui.ctx(), label, 14.08))).inner
+        })
+        .inner
+    } else {
+        ui.label(theme::strong(label).size(12.0))
+    };
     if !hint.is_empty() {
         r.on_hover_text(hint);
+    }
+    if piped && theme::chem_skin() {
+        // the reference's two-line note label runs on a 20.4 px line
+        ui.add_space(0.9);
+    }
+}
+
+/// The Punnett page's Phenotypes card: one labelled field per allele class ("T_" tall, "tt" short),
+/// kept in the comma / semicolon `phenotypes` string the generator reads.
+fn phenotype_rows(ui: &mut Ui, pd: &ParamDef, p: &mut Params, genes: &[char]) {
+    let mut names: Vec<Vec<String>> = p.s(pd.key).split(';').map(|g| g.split(',').map(|t| t.trim().to_string()).collect()).collect();
+    names.resize(genes.len(), Vec::new());
+    for g in names.iter_mut() {
+        g.resize(2, String::new());
+    }
+    let ctx = ui.ctx().clone();
+    let serif = theme::italic_family(&ctx, &theme::serif_family()).unwrap_or_else(theme::serif_family);
+    let mut changed = false;
+    for (gi, &c) in genes.iter().enumerate() {
+        let lower = c.to_lowercase().next().unwrap_or(c);
+        for (k, lab) in [format!("{c}_"), format!("{lower}{lower}")].into_iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                let (r, _) = ui.allocate_exact_size(Vec2::new(72.0, 40.0), egui::Sense::hover());
+                ui.painter().text(r.right_center(), egui::Align2::RIGHT_CENTER, lab, egui::FontId::new(17.6, serif.clone()), ui.visuals().text_color());
+                let te = TextEdit::singleline(&mut names[gi][k])
+                    .desired_width(f32::INFINITY)
+                    .margin(Margin::symmetric(10, 10))
+                    .font(egui::FontId::new(15.2, egui::FontFamily::Name("vs-noto".into())));
+                if ui.add(te).changed() {
+                    changed = true;
+                }
+            });
+            if !(gi + 1 == genes.len() && k == 1) {
+                ui.add_space(1.2);
+            }
+        }
+    }
+    if changed {
+        let s = names.iter().map(|g| g.join(", ")).collect::<Vec<_>>().join("; ");
+        p.0.insert(pd.key.to_string(), Value::S(s));
     }
 }
 
@@ -2062,6 +2987,10 @@ fn is_hidden(defs: &[ParamDef], p: &Params, pd: &ParamDef) -> bool {
     }
     let k = pd.key;
     let mut cands: Vec<String> = vec![format!("{k}_mode")];
+    if k == "title" {
+        // the chemistry pages' chart-title switch (Text / Blank line / None)
+        cands.push("title_style".to_string());
+    }
     if let Some(b) = k.strip_suffix("_label") {
         cands.push(format!("{b}_lab"));
         cands.push(format!("{b}_mode"));
@@ -2161,26 +3090,238 @@ fn short_label(l: &str) -> String {
     keep.join(" ").to_lowercase()
 }
 
-/// Short choices (<= 4 options, short labels) as one row of buttons, like the reference.
+/// Short choices as one wrapped row of pills, like the reference: the chosen one is solid
+/// accent with white text, the others white with a hairline border.
 fn segmented(ui: &mut Ui, opts: &[&'static str], cur: &mut String) {
+    let skin = theme::chem_skin();
+    if skin && (opts.len() <= 3 || opts == ["0.8%", "1%", "1.5%", "2%"]) && opts.iter().all(|o| o.chars().count() <= 22) {
+        chem_shell::segmented_track(ui, opts, cur);
+        ui.add_space(0.0);
+        return;
+    }
+    pills(ui, opts, cur);
+}
+
+/// The reference's pill buttons: the chosen one filled blue, the rest outlined.
+fn pills(ui: &mut Ui, opts: &[&'static str], cur: &mut String) {
+    let skin = theme::chem_skin();
+    let chem = skin && (ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("chem_skin_page"))).unwrap_or(false) || ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("bio_skin_page"))).unwrap_or(false));
+    let bio = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("bio_skin_page"))).unwrap_or(false);
+    if chem && !bio {
+        ui.add_space(2.0);
+    }
     ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 3.0;
+        ui.spacing_mut().item_spacing = if chem { Vec2::new(8.0, 8.0) } else if skin { Vec2::new(8.0, 7.0) } else { Vec2::new(6.0, 6.0) };
+        if chem {
+            ui.spacing_mut().button_padding = Vec2::new(16.0, 3.5);
+        }
+        let small = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("pills_small"))).unwrap_or(false);
+        if small {
+            ui.spacing_mut().button_padding = Vec2::new(12.0, 3.0);
+        }
         for o in opts {
             let sel = cur == o;
-            let b = Button::new(RichText::new(*o).size(12.0).color(if sel { theme::accent_col() } else { theme::muted_col() }))
-                .fill(if sel { theme::accent_faded() } else { egui::Color32::TRANSPARENT })
+            let small = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("pills_small"))).unwrap_or(false);
+            let size = if small { 14.4 } else if skin { 15.5 } else { 12.5 };
+            let mut rt = RichText::new(*o).size(size).color(if sel { egui::Color32::WHITE } else if chem { theme::ink() } else { theme::text_col() });
+            if chem {
+                rt = rt.family(theme::semibold_family());
+            }
+            let b = Button::new(rt)
+                .fill(if sel { theme::accent_col() } else { theme::card() })
                 .stroke(Stroke::new(1.0, if sel { theme::accent_col() } else { theme::border() }))
-                .corner_radius(CornerRadius::same(8));
+                .corner_radius(CornerRadius::same(255))
+                .min_size(Vec2::new(0.0, if small { 31.0 } else if chem { 38.0 } else if skin { 38.0 } else { 28.0 }));
             if ui.add(b).clicked() {
                 *cur = o.to_string();
             }
         }
     });
+    ui.ctx().data_mut(|d| d.remove_temp::<bool>(egui::Id::new("pills_small")));
+    if chem && !bio {
+        ui.add_space(3.0);
+    }
 }
 
+impl Workspace {
+    /// The Lewis page's Changes section: the note, the central atom, each atom's lone electrons
+    /// and each bond's order, then what differs from the correct structure and what is wrong.
+    fn lewis_changes(&mut self, ui: &mut Ui, help: &str) {
+        let noto = || egui::FontFamily::Name("vs-noto".into());
+        ui.add(egui::Label::new(theme::muted(help).size(13.0)).wrap());
+        ui.add_space(6.0);
+        if self.params.s("question") != "Full structure" && !figures::chemistry::lewis_has_changes(&self.params) {
+            return;
+        }
+        let mut q = self.params.clone();
+        if let Some((opts, right)) = figures::chemistry::lewis_central_choices(&self.params) {
+            let cur = if q.s("central").trim().is_empty() { right.clone() } else { q.s("central").trim().to_string() };
+            let name = |o: &str| if *o == *right { format!("{o} (correct)") } else { o.to_string() };
+            let mut pick = cur.clone();
+            ui.horizontal(|ui| {
+                ui.label(chem_shell::label_name(ui.ctx(), "Central atom", 14.08));
+                ui.scope(|ui| {
+                    ui.spacing_mut().button_padding = Vec2::new(12.0, 10.0);
+                    ComboBox::from_id_salt("lewis_central")
+                        .icon(chem_shell::select_chevron)
+                        .selected_text(RichText::new(name(&cur)).size(14.4).family(noto()))
+                        .show_ui(ui, |ui| {
+                            for o in &opts {
+                                ui.selectable_value(&mut pick, o.clone(), name(o));
+                            }
+                        });
+                });
+            });
+            if pick != cur {
+                q.set_s("central", if pick == right { "" } else { &pick });
+                q.set_s("tweak", "");
+            }
+            ui.add_space(8.0);
+        }
+        if let Some((atoms, bonds)) = figures::chemistry::lewis_edit_rows(&q) {
+            let caps = |ui: &mut Ui, t: &str| {
+                ui.label(RichText::new(t).size(12.0).family(theme::bold_family()).color(theme::muted_col()));
+            };
+            caps(ui, "ATOMS");
+            ui.add_space(4.0);
+            for (i, name, nb) in atoms.iter().map(|(i, n, b)| (*i, n, b)) {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    let (r, _) = ui.allocate_exact_size(Vec2::new(78.0, 28.0), Sense::hover());
+                    ui.painter().text(r.left_center(), egui::Align2::LEFT_CENTER, name.as_str(), egui::FontId::new(14.4, theme::bold_family()), theme::ink());
+                    let step = |ui: &mut Ui, glyph: &str, on: bool| ui.add_enabled(on, Button::new(RichText::new(glyph).size(18.0).color(theme::ink())).frame(false).min_size(Vec2::splat(28.0))).clicked();
+                    let mut n = *nb;
+                    if step(ui, "\u{2212}", *nb > 0) {
+                        n -= 1;
+                    }
+                    ui.add_sized([112.0, 28.0], egui::Label::new(RichText::new(format!("{nb} lone electron{}", if *nb == 1 { "" } else { "s" })).size(14.4).family(noto())));
+                    if step(ui, "+", *nb < 8) {
+                        n += 1;
+                    }
+                    if n != *nb {
+                        figures::chemistry::lewis_set_edit(&mut q, true, i, n);
+                    }
+                });
+                ui.add_space(13.0);
+            }
+            ui.add_space(8.0);
+            caps(ui, "BONDS");
+            ui.add_space(4.0);
+            for (i, (name, order)) in bonds.iter().enumerate() {
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    let (r, _) = ui.allocate_exact_size(Vec2::new(80.0, 39.0), Sense::hover());
+                    ui.painter().text(r.left_center(), egui::Align2::LEFT_CENTER, name.as_str(), egui::FontId::new(14.4, theme::bold_family()), theme::ink());
+                    let mut cur = ["None", "Single", "Double", "Triple"][(*order).clamp(0, 3) as usize].to_string();
+                    let before = cur.clone();
+                    ui.allocate_ui(Vec2::new(ui.available_width(), 0.0), |ui| chem_shell::segmented_track(ui, &["None", "Single", "Double", "Triple"], &mut cur));
+                    if cur != before {
+                        let o = ["None", "Single", "Double", "Triple"].iter().position(|x| *x == cur).unwrap_or(1) as i32;
+                        figures::chemistry::lewis_set_edit(&mut q, false, i, o);
+                    }
+                });
+                ui.add_space(8.0);
+            }
+        }
+        let n = figures::chemistry::lewis_changes_count(&q);
+        if n > 0 {
+            ui.add(egui::Label::new(theme::muted(format!("{n} change{} from the correct structure", if n == 1 { "" } else { "s" })).size(13.0)).wrap());
+            ui.add_space(4.0);
+            if chem_shell::outline_button(ui, "Reset to correct", true).clicked() {
+                q.set_s("tweak", "");
+                q.set_s("central", "");
+            }
+            for m in figures::chemistry::lewis_mistakes(&q) {
+                ui.add(egui::Label::new(theme::muted(m).size(13.0)).wrap());
+            }
+        }
+        self.params = q;
+    }
+}
+
+/// Extra width the reference's cross spaces carry beyond the font's own space, in px.
+const PUNNETT_SPACE_EXTRA: f32 = 3.3;
+
 fn param_control(ui: &mut Ui, fig: &str, pd: &ParamDef, p: &mut Params) {
-    let label = figures::label_for(fig, pd.key, p).unwrap_or(pd.label);
+    param_control_inner(ui, fig, pd, p);
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("pop_label_tight"), 0.0_f32));
+}
+
+fn param_control_inner(ui: &mut Ui, fig: &str, pd: &ParamDef, p: &mut Params) {
+    let tight: f32 = if fig == "population-growth" && theme::chem_skin() {
+        match pd.key {
+            "growth" | "organism" => 2.0,
+            "n0" | "r" | "k" | "tspan" => 3.0,
+            "unit" => 1.0,
+            _ => 0.0,
+        }
+    } else if fig == "predator-prey" && theme::chem_skin() {
+        match pd.key {
+            "pair" => 2.0,
+            "prey" | "pred" => 4.0,
+            "prey0" | "pred0" | "prey_avg" | "pred_avg" | "cycle" | "tshow" | "unit" => 3.0,
+            _ => 0.0,
+        }
+    } else {
+        0.0
+    };
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("pop_label_tight"), tight));
+    let dyn_label = figures::dynamic_label(fig, pd.key, p);
+    let label = dyn_label.as_deref().or_else(|| figures::label_for(fig, pd.key, p)).unwrap_or(pd.label);
+    if theme::chem_skin() && fig == "punnett-square" && pd.key == "phenotypes" && p.s("dominance") == "Complete" {
+        let genes = figures::biology::punnett::gene_letters(p);
+        if !genes.is_empty() {
+            phenotype_rows(ui, pd, p, &genes);
+            return;
+        }
+    }
     match &pd.kind {
+        Kind::Float { min, max, .. } if theme::chem_skin() && figures::random_key(fig) == Some(pd.key) => {
+            // the chemistry page's reading: a text box with its unit and an outlined Random button
+            param_label(ui, label, pd.hint);
+            ui.add_space(if fig == "micropipette-reading" { -2.0 } else { 1.0 });
+            let unit = if fig == "volume-reading" && !p.s("unit").is_empty() { p.s("unit").to_string() } else if fig == "micropipette-reading" { "µL".to_string() } else { "mL".to_string() };
+            let id = ui.make_persistent_id(("chem_reading", fig, pd.key));
+            let ctx = ui.ctx().clone();
+            let focused = ctx.memory(|m| m.has_focus(id));
+            let shown = fmt_measure(p.f(pd.key));
+            let mut text = if focused { ctx.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| shown.clone()) } else { shown };
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 12.0;
+                let r = ui.add(TextEdit::singleline(&mut text).id(id).desired_width(144.0).margin(Margin::symmetric(10, 10)).font(egui::FontId::new(15.0, egui::FontFamily::Name("vs-noto".into()))));
+                if r.changed() {
+                    ctx.data_mut(|d| d.insert_temp(id, text.clone()));
+                    if let Ok(v) = text.trim().parse::<f64>() {
+                        p.0.insert(pd.key.to_string(), Value::F(v.clamp(*min, *max)));
+                    }
+                }
+                ui.label(RichText::new(unit).size(16.0).family(egui::FontFamily::Name("vs-noto".into())).color(theme::muted_col()));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let btn = chem_shell::outline_chip_icon(ui, lucide::DICES, "Random");
+                    if btn.on_hover_text("Set a random reading").clicked() {
+                        figures::random_reading(fig, p, random_seed());
+                        ctx.data_mut(|d| d.remove_temp::<String>(id));
+                        ctx.memory_mut(|m| m.surrender_focus(id));
+                    }
+                });
+            });
+        }
+        Kind::Float { min, max, .. } if theme::chem_skin() => {
+            // the chemistry page types every number into a boxed field (no sliders)
+            param_label(ui, label, pd.hint);
+            let id = ui.make_persistent_id(("chem_float", fig, pd.key));
+            let ctx = ui.ctx().clone();
+            let focused = ctx.memory(|m| m.has_focus(id));
+            let shown = fmt_measure(p.f(pd.key));
+            let mut text = if focused { ctx.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| shown.clone()) } else { shown };
+            let r = ui.add(TextEdit::singleline(&mut text).id(id).desired_width(f32::INFINITY).margin(Margin::symmetric(10, 10)).font(egui::FontId::new(15.0, egui::FontFamily::Name("vs-noto".into()))));
+            if r.changed() {
+                ctx.data_mut(|d| d.insert_temp(id, text.clone()));
+                if let Ok(v) = text.trim().parse::<f64>() {
+                    p.0.insert(pd.key.to_string(), Value::F(v.clamp(*min, *max)));
+                }
+            }
+        }
         Kind::Float { min, max, step } => {
             param_label(ui, label, pd.hint);
             let mut v = p.f(pd.key);
@@ -2193,7 +3334,8 @@ fn param_control(ui: &mut Ui, fig: &str, pd: &ParamDef, p: &mut Params) {
             } else if *step > 0.0 {
                 s = s.step_by(*step);
             }
-            if ui.add(s).changed() {
+            let changed = skin_slider(ui, s);
+            if changed {
                 if log && v > 0.0 {
                     let mag = 10f64.powf(v.log10().floor() - 2.0);
                     v = (v / mag).round() * mag;
@@ -2221,15 +3363,69 @@ fn param_control(ui: &mut Ui, fig: &str, pd: &ParamDef, p: &mut Params) {
                 }
             } else {
                 param_label(ui, label, pd.hint);
-                if ui.add(egui::Slider::new(&mut v, *min..=*max).clamping(egui::SliderClamping::Always)).changed() {
+                if skin_slider(ui, egui::Slider::new(&mut v, *min..=*max).clamping(egui::SliderClamping::Always)) {
                     p.0.insert(pd.key.to_string(), Value::I(v));
                 }
             }
         }
+        Kind::Bool if theme::chem_skin() && fig == "lewis-structures" && pd.key == "answer" => {
+            // a key icon before the label; greyed out until there is something to key
+            let avail = figures::chemistry::lewis_answer_available(p);
+            let mut v = p.b(pd.key) && avail;
+            let note = figures::chemistry::notes::lewis_answer_note(p);
+            let r = ui.scope(|ui| {
+                ui.spacing_mut().icon_spacing = 9.0;
+                ui.spacing_mut().icon_width = 18.0;
+                ui.spacing_mut().interact_size.y = 18.0;
+                ui.spacing_mut().item_spacing.y = 2.0;
+                let rad = CornerRadius::same(4);
+                let w = &mut ui.visuals_mut().widgets;
+                w.inactive.corner_radius = rad;
+                w.hovered.corner_radius = rad;
+                w.active.corner_radius = rad;
+                w.inactive.bg_stroke = Stroke::new(1.25, egui::Color32::from_rgb(107, 114, 128));
+                let txt = RichText::new(format!("{}  Answer key", egui_phosphor::regular::KEY)).size(14.4).family(theme::bold_family());
+                let r = ui.add_enabled(avail, egui::Checkbox::new(&mut v, if avail { theme::strong(format!("{}  Answer key", egui_phosphor::regular::KEY)).size(14.4) } else { txt.color(theme::muted_col()) }));
+                ui.horizontal_top(|ui| {
+                    ui.add_space(ui.spacing().icon_width + ui.spacing().icon_spacing);
+                    ui.add(egui::Label::new(theme::muted(note).size(13.0)).wrap());
+                });
+                r
+            }).inner;
+            if r.changed() {
+                p.0.insert(pd.key.to_string(), Value::B(v));
+            }
+        }
         Kind::Bool => {
             let mut v = p.b(pd.key);
-            let mut r = ui.checkbox(&mut v, label);
-            if !pd.hint.is_empty() {
+            let skin_hint = theme::chem_skin() && !pd.hint.is_empty();
+            let mut r = if skin_hint {
+                // the chemistry page names the option in bold with its explanation beneath
+                ui.scope(|ui| {
+                    ui.spacing_mut().icon_spacing = 9.0;
+                    ui.spacing_mut().icon_width = 18.0;
+                    ui.spacing_mut().interact_size.y = 18.0;
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    let rad = CornerRadius::same(4);
+                    let w = &mut ui.visuals_mut().widgets;
+                    w.inactive.corner_radius = rad;
+                    w.hovered.corner_radius = rad;
+                    w.active.corner_radius = rad;
+                    w.inactive.bg_stroke = Stroke::new(1.25, egui::Color32::from_rgb(107, 114, 128));
+                    let r = ui.checkbox(&mut v, theme::strong(label).size(14.4));
+                    ui.horizontal_wrapped(|ui| {
+                        ui.add_space(ui.spacing().icon_width + ui.spacing().icon_spacing);
+                        ui.label(theme::muted(pd.hint).size(13.0));
+                    });
+                    r
+                })
+                .inner
+            } else if ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("bio_skin_page"))).unwrap_or(false) && theme::chem_skin() {
+                chem_shell::bio_checkbox(ui, &mut v, label)
+            } else {
+                ui.checkbox(&mut v, label)
+            };
+            if !pd.hint.is_empty() && !skin_hint {
                 r = r.on_hover_text(pd.hint);
             }
             if r.changed() {
@@ -2237,29 +3433,142 @@ fn param_control(ui: &mut Ui, fig: &str, pd: &ParamDef, p: &mut Params) {
             }
         }
         Kind::Choice(opts) => {
-            param_label(ui, label, pd.hint);
+            // the reference's segmented switch (the instrument picker) stands without a label
+            if !(theme::chem_skin() && opts.len() <= 3 && (label == "Instrument" || (fig == "predator-prey" && pd.key == "source"))) {
+                param_label(ui, label, pd.hint);
+            }
             let mut cur = p.s(pd.key).to_string();
-            if opts.len() <= 4 && opts.iter().map(|o| o.chars().count()).sum::<usize>() <= 30 {
+            // the titration's "no common titration picked" reads "Choose one…", as the reference's
+            // placeholder does
+            let shown = |o: &str| {
+                // the Lewis page's "no list pick" is the select's placeholder
+                if fig == "lewis-structures" && pd.key == "preset" && o.starts_with("None") {
+                    return "Molecules with more than one central atom\u{2026}".to_string();
+                }
+                if fig == "titration-curve" && pd.key == "common" && o == "Custom" {
+                    return "Choose one…".to_string();
+                }
+                // the chemistry page writes elements as "8 · O · Oxygen"
+                if fig == "mass-spectrum" && pd.key == "element" && theme::chem_skin() {
+                    if let Some(e) = figures::chemistry::data::ISOTOPES.iter().find(|e| e.0 == o) {
+                        return format!("{} · {} · {}", figures::chemistry::data::z_of(e.1), e.1, e.0);
+                    }
+                }
+                if theme::chem_skin() && matches!(pd.key, "element" | "compare") {
+                    if let Some((n, rest)) = o.split_once(' ') {
+                        if n.parse::<u32>().is_ok() {
+                            return format!("{n} · {}", rest.replacen(" - ", " · ", 1));
+                        }
+                    }
+                }
+                o.to_string()
+            };
+            if theme::chem_skin() && fig == "lewis-structures" && pd.key == "title_style" {
+                ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("seg_icons"), true));
+            }
+            if theme::chem_skin() && fig == "lewis-structures" && pd.key == "question" {
+                ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("pills_small"), true));
+                pills(ui, opts, &mut cur);
+            } else if !(matches!(fig, "population-growth" | "predator-prey") && pd.key == "unit") && ((fig == "predator-prey" && pd.key == "source") || (opts.len() <= 7 && opts.iter().map(|o| o.chars().count()).sum::<usize>() <= 48 && opts.iter().all(|o| o.chars().count() <= if opts.len() <= 3 { 20 } else { 14 }))) {
                 segmented(ui, opts, &mut cur);
             } else {
-                ComboBox::from_id_salt(("fig_param", pd.key))
-                    .selected_text(cur.clone())
-                    .width(200.0)
-                    .show_ui(ui, |ui| {
-                        for o in opts {
-                            ui.selectable_value(&mut cur, o.to_string(), *o);
-                        }
-                    });
+                let chem = theme::chem_skin();
+                ui.scope(|ui| {
+                    if chem {
+                        // the reference's 40 px select with 15.2 px text
+                        ui.spacing_mut().button_padding = Vec2::new(15.0, 9.5);
+                        ui.spacing_mut().interact_size.y = 39.5;
+                    }
+                    let sel = if chem { RichText::new(shown(&cur)).size(15.2).family(egui::FontFamily::Name("vs-noto".into())) } else { RichText::new(shown(&cur)) };
+                    let cb = ComboBox::from_id_salt(("fig_param", pd.key));
+                    let cb = if chem { cb.icon(chem_shell::select_chevron) } else { cb };
+                    cb
+                        .selected_text(sel)
+                        .width(if chem { ui.available_width() } else { 200.0 })
+                        .show_ui(ui, |ui| {
+                            for o in opts {
+                                // the reference's list stops at perchloric acid
+                                if fig == "lewis-structures" && pd.key == "preset" && o.starts_with("CH\u{2083}COCl") && cur != *o {
+                                    continue;
+                                }
+                                ui.selectable_value(&mut cur, o.to_string(), shown(o));
+                            }
+                        });
+                });
             }
             if cur != p.s(pd.key) {
                 p.0.insert(pd.key.to_string(), Value::S(cur));
             }
+            if theme::chem_skin() && fig == "lewis-structures" && pd.key == "preset" {
+                ui.add_space(2.0);
+            }
         }
         Kind::Text => {
-            param_label(ui, label, pd.hint);
+            if theme::chem_skin() && fig == "lewis-structures" && pd.key == "formula" {
+                // the reference sets a "?" after the label, its tooltip the typing guide
+                ui.add_space(0.0);
+                ui.scope(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::new(12.0, 0.0);
+                    ui.spacing_mut().interact_size.y = 20.0;
+                    ui.horizontal(|ui| {
+                        ui.label(chem_shell::label_name(ui.ctx(), label, 14.08));
+                        chem_shell::help_dot(ui, pd.hint);
+                    });
+                });
+                ui.add_space(4.0);
+            } else {
+                param_label(ui, label, pd.hint);
+            }
             let mut cur = p.s(pd.key).to_string();
-            if ui.add(TextEdit::singleline(&mut cur).desired_width(220.0)).changed() {
+            // a label-less box (the reference's titles and point labels) shows its default as a placeholder
+            // the reference pads the multiplication sign with wider spaces than the font's own
+                let ink = ui.visuals().text_color();
+                let fam = theme::italic_family(ui.ctx(), &theme::serif_family()).unwrap_or_else(theme::serif_family);
+                let mut layouter = move |ui: &Ui, text: &dyn egui::TextBuffer, wrap: f32| {
+                    let mut job = egui::text::LayoutJob::default();
+                    job.wrap.max_width = wrap;
+                    for ch in text.as_str().chars() {
+                        let lead = if ch == ' ' { PUNNETT_SPACE_EXTRA } else { 0.0 };
+                        job.append(&ch.to_string(), lead, egui::TextFormat::simple(egui::FontId::new(18.4, fam.clone()), ink));
+                    }
+                    ui.fonts_mut(|f| f.layout_job(job))
+                };
+            let mut te = TextEdit::singleline(&mut cur).desired_width(220.0);
+            if theme::chem_skin() {
+                // the reference's full-width 46 px field
+                te = te.desired_width(f32::INFINITY).margin(Margin::symmetric(if fig == "population-growth" && pd.key == "organism" { 11 } else { 14 }, if fig == "lewis-structures" || fig == "predator-prey" || (fig == "population-growth" && pd.key == "organism") { 10 } else { 12 })).font(egui::FontId::new(15.0, egui::FontFamily::Name("vs-noto".into())));
+            }
+            if theme::chem_skin() && fig == "punnett-square" && pd.key == "parents" {
+                // the reference sets the genotypes in italic serif
+                let fam = theme::italic_family(ui.ctx(), &theme::serif_family()).unwrap_or_else(theme::serif_family);
+                te = te.margin(Margin { left: 13, right: 13, top: 7, bottom: 15 }).font(egui::FontId::new(18.4, fam.clone()));
+                te = te.layouter(&mut layouter);
+            }
+            if label.is_empty() {
+                te = te.hint_text(match &pd.default { Value::S(d) => d.as_str(), _ => "" });
+            }
+            if fig == "population-growth" && pd.key == "organism" {
+                // the reference shows Chrome's placeholder grey (#757575) at the box's own 15 px
+                te = te.hint_text(RichText::new("deer, yeast cells, bacteria").size(15.0).family(egui::FontFamily::Name("vs-noto".into())).color(egui::Color32::from_rgb(0x75, 0x75, 0x75)));
+                ui.add_space(-1.0);
+            }
+            let changed_te = ui
+                .scope(|ui| {
+                    if fig == "population-growth" && pd.key == "organism" {
+                        // egui paints a hint in the weak text colour; the reference uses #757575
+                        ui.visuals_mut().weak_text_color = Some(egui::Color32::from_rgb(0x75, 0x75, 0x75));
+                    }
+                    ui.add(te).changed()
+                })
+                .inner;
+            if fig == "population-growth" && pd.key == "organism" {
+                ui.add_space(1.0);
+            }
+            if changed_te {
                 p.0.insert(pd.key.to_string(), Value::S(cur));
+            }
+            if theme::chem_skin() && fig == "lewis-structures" && pd.key == "formula" {
+                ui.add_space(1.0);
             }
         }
         Kind::Long => {
@@ -2353,22 +3662,75 @@ fn snippet(q: &Question) -> String {
 }
 
 impl crate::App {
+    /// Whether a figure is open on the Figures screen.
+    pub fn figure_open(&self) -> bool {
+        self.figs.ws.sel.is_some()
+    }
+
+    /// Whether a chemistry figure is open on the Figures screen (it gets the chemistry page skin).
+    pub fn chem_figure_open(&self) -> bool {
+        self.figs.ws.chem_open() || self.figs.ws.chem_list()
+    }
+
     /// The standalone Figures screen (sidebar already drawn onto `ui`).
     pub fn draw_figures(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         let mut ws = std::mem::take(&mut self.figs.ws);
         let mut act = Act::None;
-        crate::screens::desk_panel(ui, 24, |ui| {
-            crate::kit::page_header(
-                ui,
-                &["Home", "Figures"],
-                "Figures",
-                Some("Physics, biology, chemistry and math diagrams you can tune, export, or attach to a question."),
-            );
-            ui.add_space(12.0);
+        let phone = ws.sel.is_some() && ui.max_rect().width() < 500.0;
+        let go_home = false;
+        if ws.chem_open() || ws.chem_list() {
+            // the chemistry page skin: white top header over a cool hex-pattern page (no rail)
+            let math_page = ws.skin_subject() == figures::Subject::Math;
+            let title = ws.sel.map(|i| if math_page || ws.skin_subject() == figures::Subject::Physics { format!("{} Generator", if reg()[i].id == "waves" { "Wave" } else { reg()[i].title }) } else { reg()[i].title.to_string() }).unwrap_or_default();
+            self.figs.ws = ws;
+            self.chem_header(ui, &title);
+            ws = std::mem::take(&mut self.figs.ws);
+            let pad = if phone { 12 } else { chem_shell::PAGE_PAD as i8 + 1 };
+            let chem_stack = ws.skin_subject() == figures::Subject::Chemistry && ui.ctx().content_rect().width() < 880.0;
+            // the chemistry and biology pages run their cards 20 px from the header, the right edge and the bottom
+            let tight_page = matches!(ws.skin_subject(), figures::Subject::Chemistry | figures::Subject::Biology);
+            egui::CentralPanel::default()
+                .frame(Frame::new().fill(theme::cream()).inner_margin(if ws.sel.is_some() && !phone && !chem_stack { Margin { left: pad - 1, right: if tight_page { pad - 3 } else { pad - 2 }, top: if tight_page { pad - 3 } else { pad - 1 }, bottom: if tight_page { pad - 3 } else { pad - 2 } } } else if ws.sel.is_some() && tight_page { Margin { left: 16, right: 16, top: 16, bottom: 11 } } else { Margin { left: pad, right: pad - 1, top: pad - 1, bottom: if ws.sel.is_none() { 0 } else { pad - 1 } } }))
+                .show(ui, |ui| {
+                    // the hexagon lattice is the chemistry page's; the biology page has none
+                    if ws.skin_subject() == figures::Subject::Math {
+                        chem_shell::paint_grid(ui.painter(), ui.max_rect().expand2(Vec2::new(pad as f32, pad as f32)));
+                    } else if ws.skin_subject() == figures::Subject::Physics {
+                        chem_shell::paint_physics_doodles(ui.painter(), ui.max_rect().expand2(Vec2::new(pad as f32, pad as f32)));
+                    } else if matches!(ws.skin_subject(), figures::Subject::Biology) {
+                        chem_shell::paint_bio_doodles(ui.ctx(), ui.painter(), egui::Rect::from_min_max(egui::pos2(0.0, chem_shell::HEADER_H), ui.ctx().content_rect().max));
+                    } else {
+                        chem_shell::paint_hex(ui.painter(), egui::Rect::from_min_max(egui::pos2(0.0, chem_shell::HEADER_H), ui.ctx().content_rect().max));
+                    }
+                    act = ws.show(ui);
+                });
+        } else {
+        crate::screens::desk_panel(ui, if phone { 8 } else if ws.sel.is_some() { 16 } else { 24 }, |ui| {
+            if phone {
+                // no breadcrumb row on a phone: the canvas wants the height, and "← Figures" below
+                // leads back to the list (which has the rail with Home)
+            } else if ws.sel.is_some() {
+                // an open figure: just the breadcrumb, so the canvas gets the height (the
+                // reference's canvas runs from under its slim top bar to the window bottom)
+                ui.label(RichText::new("Home  /  Figures").size(11.5).color(theme::muted_col()));
+                ui.add_space(4.0);
+            } else {
+                crate::kit::page_header(
+                    ui,
+                    &["Home", "Figures"],
+                    "Figures",
+                    Some("Physics, biology, chemistry and math diagrams you can tune, export, or attach to a question."),
+                );
+                ui.add_space(12.0);
+            }
             act = ws.show(ui);
         });
+        }
         self.figs.ws = ws;
+        if go_home {
+            self.screen = crate::Screen::Home;
+        }
         match act {
             Act::Save(out) => {
                 let bank = self.store.banks.first().map(|b| b.id.clone());
@@ -3553,8 +4915,8 @@ mod tests {
     /// until a label has been dragged, then it puts the labels back.
     #[test]
     fn reset_label_positions_is_always_shown() {
+        // the triangle lists Labels second (as the reference does), so it opens with the first two sections
         let (ctx, mut ws) = open_tall("triangle");
-        open_section(&ctx, &mut ws, "Labels");
         let state = |ctx: &egui::Context, ws: &mut Workspace| {
             let out = tall_frame(ctx, ws, vec![]);
             let tree = out.platform_output.accesskit_update.expect("accesskit tree");
@@ -3625,7 +4987,7 @@ mod tests {
         assert_eq!(gel::current_setup(&ws.params), Some("Crime scene"));
         assert_eq!(count_named(&ctx, &mut ws, egui_phosphor::regular::ARROW_LEFT), 5, "one card per lane");
         let before = ws.params.clone();
-        click_nth(&ctx, &mut ws, "+ Ladder", 0);
+        click_nth(&ctx, &mut ws, &format!("{}Ladder", egui_phosphor::regular::PLUS), 0);
         let lanes = gel::lane_cards(&ws.params);
         assert_eq!(lanes.len(), 6);
         assert_eq!(lanes[5], gel::LaneCard::ladder());
@@ -3781,4 +5143,92 @@ mod tests {
         let tree = out.platform_output.accesskit_update.expect("accesskit tree");
         assert!(tree.nodes.iter().any(|(_, nd)| nd.label().is_some_and(|l| l.starts_with("A cycle every 10 years"))) || tree.nodes.iter().any(|(_, nd)| nd.value().is_some_and(|l| l.starts_with("A cycle every 10 years"))));
     }
+}
+
+/// The physics page's "Save preset" card: a dashed chip that asks for a name, the saved
+/// presets as chips, and the note that they stay in this browser.
+fn preset_card(ui: &mut Ui, def: &FigureDef, params: &Params) -> Option<Params> {
+    let open_id = egui::Id::new(("preset_card_open", def.id));
+    let mut open = ui.ctx().data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
+    let name_id = open_id.with("name");
+    let mut name = ui.ctx().data(|d| d.get_temp::<String>(name_id)).unwrap_or_default();
+    let mut file = load_presets();
+    let mut changed = false;
+    let mut apply: Option<Params> = None;
+    chem_shell::panel_card(ui, 18, |ui| {
+        ui.spacing_mut().item_spacing.y = 8.0;
+        let list = file.entry(def.id.to_string()).or_default();
+        let mut remove: Option<usize> = None;
+        for (i, pr) in list.iter().enumerate() {
+            ui.horizontal(|ui| {
+                if chem_shell::outline_chip(ui, &pr.name).clicked() {
+                    let spec = FigureSpec { id: def.id.to_string(), params: pr.params.clone() };
+                    apply = Some(params_from_spec(def, &spec));
+                }
+                if ui.add(Button::new(theme::muted("Delete").size(12.0)).frame(false)).clicked() {
+                    remove = Some(i);
+                }
+            });
+        }
+        if let Some(i) = remove {
+            list.remove(i);
+            changed = true;
+        }
+        if open {
+            ui.horizontal(|ui| {
+                let r = ui.add(TextEdit::singleline(&mut name).hint_text("Name this preset").desired_width(160.0));
+                let go = ui.button("Save").clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                if go && !name.trim().is_empty() {
+                    let spec = spec_for(def.id, params);
+                    let nm = name.trim().to_string();
+                    list.retain(|p| p.name != nm);
+                    list.push(PresetEntry { name: nm, params: spec.params });
+                    name.clear();
+                    changed = true;
+                    open = false;
+                }
+            });
+        } else if chem_shell::dashed_chip(ui, &format!("{}  Save preset", egui_phosphor::regular::BOOKMARK_SIMPLE)).clicked() {
+            open = true;
+        }
+        ui.label(theme::muted("Saved presets stay in this browser.").size(12.8));
+    });
+    ui.ctx().data_mut(|d| {
+        d.insert_temp(open_id, open);
+        d.insert_temp(name_id, name);
+    });
+    if changed {
+        save_presets(&file);
+    }
+    apply
+}
+
+
+/// Adds a slider; on the page skin its rail is a grey bar filled blue up to a round white-ringed
+/// handle (the card-white rail of the plain theme would vanish on the white card).
+fn skin_slider(ui: &mut Ui, s: egui::Slider<'_>) -> bool {
+    if !theme::chem_skin() {
+        return ui.add(s).changed();
+    }
+    ui.scope(|ui| {
+        let v = ui.visuals_mut();
+        v.widgets.inactive.bg_fill = theme::border();
+        v.widgets.hovered.bg_fill = theme::border();
+        v.widgets.active.bg_fill = theme::border();
+        v.selection.bg_fill = theme::accent_col();
+        v.slider_trailing_fill = true;
+        // the rail runs the width of the panel up to the value box
+        ui.spacing_mut().slider_width = (ui.available_width() - 76.0).max(100.0);
+        let v = ui.visuals_mut();
+        v.handle_shape = egui::style::HandleShape::Circle;
+        v.widgets.inactive.fg_stroke = Stroke::new(1.0, theme::accent_col());
+        ui.add(s).changed()
+    })
+    .inner
+}
+
+/// One text row of a list card: a plain box, or the math pages' 44 px rounded input.
+fn row_edit<'a>(text: &'a mut String, hint: &'a str, w: f32, skin: bool) -> TextEdit<'a> {
+    let e = TextEdit::singleline(text).hint_text(hint).desired_width(w);
+    if skin { e.margin(Margin::symmetric(12, 13.5 as i8)).font(egui::FontId::new(15.5, egui::FontFamily::Proportional)) } else { e }
 }

@@ -266,11 +266,11 @@ fn parallel_lines(p: &Params) -> Vec<Handle> {
     for ti in 0..nt {
         let th = if ti == 0 { p.f("angle") } else { p.f("angle_b").clamp(15.0, 165.0) };
         let key = if ti == 0 { "angle" } else { "angle_b" };
-        let cx0 = if nt == 1 { w / 2.0 } else if ti == 0 { w / 2.0 - 70.0 } else { w / 2.0 + 70.0 };
+        let cx0 = super::math::pl_cx0(p, ti, &ys, w);
         let tr = th.to_radians();
         let slope = (tr.cos(), -tr.sin());
         let cross: Vec<Pt> = ys.iter().map(|y| { let t = (*y - ys[0]) / slope.1; (cx0 + slope.0 * t, *y) }).collect();
-        let tl = 70.0 / slope.1.abs().max(0.2);
+        let tl = 90.0 / slope.1.abs().max(0.2);
         let tip = (cross[0].0 + slope.0 * tl, cross[0].1 + slope.1 * tl);
         let c0 = cross[0];
         out.push(Handle::knob(tip, "Drag the transversal to change the angle", move |p, s| {
@@ -294,7 +294,7 @@ fn parallel_lines(p: &Params) -> Vec<Handle> {
     out.push(Handle::bar((100.0, last), true, "Drag to change the gap between lines", move |p, s| {
         // last line sits at 120 + gap * (lines - 1) (see math::pl_layout)
         let nl = p.i("lines").clamp(2, 3) as f64;
-        p.set_f("gap", (s.1 - 120.0) / (nl - 1.0) / 120.0);
+        p.set_f("gap", (s.1 - 120.0) / (nl - 1.0) / 100.0);
     }));
     let _ = h;
     turned(out, (w / 2.0, h / 2.0), p.f("turn"))

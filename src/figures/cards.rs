@@ -21,6 +21,8 @@ pub enum Card {
     /// A predator-prey axis "fit" checkbox (true = x-axis) that keeps the range when unticked.
     PpFit(bool),
     PpReadout,
+    /// The titration's equivalence-point readout box.
+    TitReadout,
     Strips,
     Particles,
 }
@@ -45,6 +47,7 @@ pub fn replaces(fig: &str, key: &str) -> Option<Card> {
 pub fn after(fig: &str, key: &str) -> Option<Card> {
     match (fig, key) {
         ("predator-prey", "unit") => Some(Card::PpReadout),
+        ("titration-curve", "pk" | "kp_eqph") => Some(Card::TitReadout),
         _ => None,
     }
 }
@@ -107,6 +110,7 @@ pub fn readout(fig: &str, p: &Params) -> Vec<String> {
     match fig {
         "population-growth" => popdyn::growth_readout(p),
         "predator-prey" => popdyn::pp_readout(p),
+        "titration-curve" => super::chemistry::tit_readout(p),
         _ => Vec::new(),
     }
 }
@@ -117,9 +121,11 @@ pub fn relevant(fig: &str, key: &str, p: &Params) -> bool {
         ("free-body-diagram", "body_size" | "body_lab") => p.s("body") != "Dot",
         ("population-growth", "k") => p.s("growth") != "Exponential (J-curve)",
         ("population-growth", "tau") => p.s("growth") == "Overshoot and oscillation",
-        ("predator-prey", "prey_avg" | "pred_avg" | "cycle") => p.s("source") != "Model rates",
-        ("predator-prey", "alpha" | "beta" | "gamma" | "delta") => p.s("source") == "Model rates",
+        ("titration-curve", _) => super::chemistry::tit_relevant(key, p),
+        ("predator-prey", "prey_avg" | "pred_avg" | "cycle") => !p.s("source").starts_with("Model rates"),
+        ("predator-prey", "alpha" | "beta" | "gamma" | "delta") => p.s("source").starts_with("Model rates"),
         ("particle-diagram", "state2" | "lab_before" | "lab_after") => p.s("boxes") == "Before and after",
+        ("lewis-structures", "lone" | "expand" | "resonance" | "resonance_pick") => super::chemistry::lewis_relevant(key, p),
         ("ph-reading", "places" | "meter") => p.s("instrument") == "Digital meter",
         _ => true,
     }
@@ -149,7 +155,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(anchors, 10);
+        assert_eq!(anchors, 12);
     }
 
     #[test]
@@ -174,7 +180,7 @@ mod tests {
         assert!(!relevant("free-body-diagram", "body_size", &p));
         p.set_s("body", "Block");
         assert!(relevant("free-body-diagram", "body_size", &p));
-        p.set_s("source", "Model rates");
+        p.set_s("source", "Model rates (α β γ δ)");
         assert!(relevant("predator-prey", "alpha", &p) && !relevant("predator-prey", "cycle", &p));
         p.set_s("source", "Populations");
         assert!(!relevant("predator-prey", "delta", &p) && relevant("predator-prey", "prey_avg", &p));

@@ -7,13 +7,13 @@ use std::f64::consts::PI;
 pub fn defs() -> Vec<FigureDef> {
     vec![
         FigureDef { id: "particle-diagram", subject: Subject::Chemistry, title: "Particle Diagram",
-            blurb: "Atoms, ions or molecules drawn as circles in a box or lattice, as a gas, liquid or solid; optional before-and-after pair.",
+            blurb: "Atoms, ions and molecules scattered in a box or packed in a lattice.",
             params: particle_params, render: particle_render },
         FigureDef { id: "bohr-model", subject: Subject::Chemistry, title: "Bohr Model",
-            blurb: "Nucleus (balls, counts or symbol) and electron shells for any element or ion, with a key, shell labels and gained/lost electrons.",
+            blurb: "An atom or ion’s protons, neutrons and electrons on their shells.",
             params: bohr_params, render: bohr_render },
         FigureDef { id: "orbital-diagram", subject: Subject::Chemistry, title: "Orbital Diagram",
-            blurb: "Orbital boxes with spin arrows following the aufbau order, Hund's rule and the Pauli principle.",
+            blurb: "Any atom or ion’s electron configuration as arrows in orbital boxes.",
             params: orbital_params, render: orbital_render },
     ]
 }
@@ -43,8 +43,7 @@ fn bohr_params() -> Vec<ParamDef> {
             .hint("Draw the rings without electrons, for students to draw them."),
         ParamDef::bool("caption", "Caption with element name", false),
         ParamDef::text("title", "Chart title text", ""),
-        ParamDef::bool("gained_lost", "Gained and lost electrons", false)
-            .hint("Gained electrons in their own colour, lost ones as empty spots where they were."),
+        ParamDef::bool("gained_lost", "Gained and lost electrons", false),
         ParamDef::int("neutrons", "Neutrons", -1, 200, -1)
             .hint("-1 takes the mass number."),
         ParamDef::list("shells_custom", "Electrons per shell", "")
@@ -78,12 +77,13 @@ pub(super) fn bohr_geom(p: &Params) -> Bohr {
     let neutral = shells(z, 0);
     let neutrons = if p.i("neutrons") >= 0 { p.i("neutrons") as usize } else { mass_number(z).saturating_sub(z) };
     let nb = z + neutrons;
-    let r0 = if p.s("nucleus") == "Balls" { (36.0f64).max(10.0 * (nb as f64 / 0.85).sqrt() * 0.9).min(70.0) } else { 36.0 };
+    let r0 = 36.0;
+    let _ = nb;
     let nrings = if p.b("gained_lost") { shown.len().max(neutral.len()) } else { shown.len() }.max(1);
-    let gap = if nrings > 5 { 30.0 } else if nrings > 4 { 34.0 } else { 40.0 };
-    let radii: Vec<f64> = (0..nrings).map(|i| r0 + 26.0 + gap * i as f64).collect();
+    // the reference's shells: 70 px for the first, 26 px more for each after it
+    let radii: Vec<f64> = (0..nrings).map(|i| 70.0 + 26.0 * i as f64).collect();
     let rmax = *radii.last().unwrap();
-    let side = 2.0 * (rmax + 24.0);
+    let side = 2.0 * (rmax + 28.0);
     let bw = if p.b("brackets") && charge != 0 { 40.0 } else { 0.0 };
     let key_w = if p.b("key") { 220.0 } else { 0.0 };
     let w = side + 2.0 * bw + key_w;
@@ -92,9 +92,9 @@ pub(super) fn bohr_geom(p: &Params) -> Bohr {
 }
 
 fn ball(d: &mut Doc, x: f64, y: f64, r: f64, fill: &str, sym: &str) {
-    d.circle(x, y, r, fill, INK, 1.6);
+    d.circle(x, y, r, fill, INK, 1.2);
     if sym != "None" && !sym.is_empty() {
-        let fs = if sym.chars().count() > 1 { r * 1.05 } else { r * 1.35 };
+        let fs = if sym.chars().count() > 1 { r * 1.05 } else { r * 1.5 };
         tx(d, x, y + fs * 0.36, fs, "middle", on(fill), true, sym);
     }
 }
@@ -123,13 +123,13 @@ fn bohr_render(p: &Params) -> String {
     let mut d = Doc::new(g.w, g.h);
     let ecol = color9(p.s("electron_color"));
     let esym = p.s("electron_symbol");
-    let er = if esym == "None" { 6.5 } else { 7.5 };
+    let er = if esym == "None" { 4.5 } else { 7.5 };
     let paired = p.s("placement") == "Paired";
     let gl = p.b("gained_lost");
     let mut any_lost = false;
     let mut any_gained = false;
     for (i, &r) in g.radii.iter().enumerate() {
-        d.circle(cx, cy, r, "none", INK, 2.0);
+        d.circle(cx, cy, r, "none", INK, 1.5);
         if p.b("shell_labels") {
             let a = 0.70 * PI;
             let (lx, ly) = (cx + r * a.cos() + 6.0, cy + r * a.sin() + 4.0);
@@ -159,14 +159,14 @@ fn bohr_render(p: &Params) -> String {
         "Blank" => { d.circle(cx, cy, r0, "#ececec", INK, 2.0); }
         "Balls" => {
             let n = z + g.neutrons;
-            let br = (r0 * (0.85 / n.max(1) as f64).sqrt()).min(10.0);
+            let br = 7.0f64.min(60.0 / (1.05 * (n.max(1) as f64).sqrt()));
             // hex grid points nearest the centre
             let mut pts: Vec<(f64, f64)> = Vec::new();
             let m = (n as f64).sqrt() as i64 + 3;
             for row in -m..=m {
                 for col in -m..=m {
-                    let x = (col as f64 + if row % 2 != 0 { 0.5 } else { 0.0 }) * 2.0 * br * 0.98;
-                    let y = row as f64 * 2.0 * br * 0.98 * 0.866;
+                    let x = (col as f64 + if row % 2 != 0 { 0.5 } else { 0.0 }) * 2.0 * br * 0.9;
+                    let y = row as f64 * 2.0 * br * 0.9 * 0.866;
                     pts.push((x, y));
                 }
             }
@@ -348,35 +348,36 @@ pub(super) fn orb_layout(p: &Params) -> OrbLay {
             match (up, down) { (true, true) => 3, (true, false) => 1, _ => 0 }
         }).collect()
     }).collect();
-    let bs = 40.0;
+    let bs = 34.0;
     let ladder = p.s("layout") == "Energy ladder";
-    let sym_w = match p.s("symbol_style") { "None" => 0.0, "Blank line" => 70.0, _ => orb_symbol(z, charge).chars().count() as f64 * 15.0 + 30.0 };
+    let sym_w = match p.s("symbol_style") { "None" => 0.0, "Blank line" => 70.0, _ => orb_symbol(z, charge).chars().count() as f64 * 20.0 + 21.0 };
     let core_w = if core.is_some() { 70.0 } else { 0.0 };
     let cap = if p.b("caption") { 30.0 } else { 0.0 };
     let cfg_h = if p.b("config") { 46.0 } else { 0.0 };
     let mut boxes = Vec::new();
     let mut labels = Vec::new();
     if !ladder {
-        let gap = 26.0;
-        let x_start = 24.0 + sym_w + core_w;
-        let maxw = 760.0;
-        let rowh = bs + 50.0;
+        let gap = 18.0;
+        let x_start = 16.0 + sym_w + core_w;
+        let maxw = 700.0;
+        let rowh = bs + 34.0;
         let (mut x, mut row) = (x_start, 0usize);
         let mut right: f64 = 0.0;
-        let top = 24.0 + cap;
+        let top = 16.0 + cap;
         for (i, s) in subs.iter().enumerate() {
             let gw = (2 * s.l + 1) as f64 * bs;
             if x > x_start && x + gw > maxw { x = x_start; row += 1; }
             let y = top + row as f64 * rowh;
             for k in 0..(2 * s.l + 1) as usize { boxes.push((i, k, x + k as f64 * bs, y)); }
-            labels.push((x + gw / 2.0, y + bs + 24.0));
+            labels.push((x + gw / 2.0, y + bs + 20.0));
             right = right.max(x + gw);
             x += gw + gap;
         }
-        let w = (right + 24.0).max(260.0);
-        let h = top + (row + 1) as f64 * rowh + cfg_h + 6.0;
-        let cfg_y = top + (row + 1) as f64 * rowh + 22.0;
-        OrbLay { subs, core, states, w, h, boxes, labels, sym_xy: (24.0, top + bs / 2.0 + 10.0), core_xy: (24.0 + sym_w, top + bs / 2.0 + 7.0), cfg_y, bs, ladder }
+        let w = (right + 16.0).max(120.0);
+        // one row is 34 (boxes) + 26 (labels) tall inside the 16 px padding: 92 px, as the reference
+        let h = top + (row + 1) as f64 * rowh - 8.0 + 16.0 + cfg_h;
+        let cfg_y = top + (row + 1) as f64 * rowh + 14.0;
+        OrbLay { subs, core, states, w, h, boxes, labels, sym_xy: (16.0, top + bs / 2.0 + 10.0), core_xy: (16.0 + sym_w, top + bs / 2.0 + 7.0), cfg_y, bs, ladder }
     } else {
         let rowh = 62.0;
         let n = subs.len().max(1);
@@ -404,7 +405,7 @@ fn orbital_render(p: &Params) -> String {
     match p.s("symbol_style") {
         "None" => {}
         "Blank line" => { d.line(lay.sym_xy.0, lay.sym_xy.1, lay.sym_xy.0 + 50.0, lay.sym_xy.1, INK, 1.5); }
-        _ => { tx(&mut d, lay.sym_xy.0, lay.sym_xy.1, 30.0, "start", INK, true, &orb_symbol(z, charge)); }
+        _ => { tx(&mut d, lay.sym_xy.0, lay.sym_xy.1, 28.0, "start", INK, true, &orb_symbol(z, charge)); }
     }
     if let Some(c) = lay.core { tx(&mut d, lay.core_xy.0, lay.core_xy.1, 22.0, "start", INK, false, &format!("[{c}]")); }
     if lay.ladder {
@@ -415,7 +416,7 @@ fn orbital_render(p: &Params) -> String {
     let squares = p.s("orbitals") != "Lines";
     let half = p.s("arrows") == "Half arrows";
     for &(i, k, x, y) in &lay.boxes {
-        if squares { d.rect(x, y, bs, bs, "#ffffff", INK, 2.0); } else { d.line(x + 4.0, y + bs, x + bs - 4.0, y + bs, INK, 2.2); }
+        if squares { d.rect(x, y, bs, bs, "#ffffff", INK, 1.5); } else { d.line(x + 4.0, y + bs, x + bs - 4.0, y + bs, INK, 2.2); }
         if !p.b("blank") { spin_arrows(&mut d, x, y, bs, lay.states[i][k], half); }
     }
     for (i, s) in lay.subs.iter().enumerate() {
@@ -424,7 +425,7 @@ fn orbital_render(p: &Params) -> String {
         match p.s("sublabels") {
             "None" => {}
             "Blank lines" => { let x0 = if lay.ladder { lx - 40.0 } else { lx - 20.0 }; d.line(x0, ly + 2.0, x0 + 40.0, ly + 2.0, INK, 1.3); }
-            _ => { tx(&mut d, lx, ly, 18.0, anchor, INK, false, &s.label()); }
+            _ => { tx(&mut d, lx, ly, 16.0, anchor, INK, false, &s.label()); }
         }
     }
     let shown: Vec<Sub> = lay.subs.iter().filter(|s| s.e > 0).cloned().collect();
@@ -598,7 +599,7 @@ pub fn remove_kind(p: &mut Params, defs: &[ParamDef], i: usize) {
     p.set_i(&format!("{last}2_count"), 0);
 }
 
-fn atom_radius(sz: &str) -> f64 { match sz { "XS" => 5.0, "S" => 7.5, "M" => 10.0, "L" => 13.0, _ => 17.0 } }
+fn atom_radius(sz: &str) -> f64 { match sz { "XS" => 6.0, "S" => 10.0, "M" => 15.0, "L" => 20.0, _ => 26.0 } }
 
 /// One particle kind: centre atom + outer atoms.
 #[derive(Clone)]
@@ -637,10 +638,10 @@ fn bound(sp: &Species) -> f64 {
 }
 
 fn atom(d: &mut Doc, x: f64, y: f64, r: f64, fill: &str, ch: &str) {
-    d.circle(x, y, r, fill, INK, 1.6);
+    d.circle(x, y, r, fill, INK, 1.5);
     if ch != "None" && !ch.is_empty() {
         let col = if matches!(fill, "#161616" | "#5c5c5c") { "#ffffff" } else { INK };
-        let fs = if ch.chars().count() > 1 { r * 0.95 } else { r * 1.35 };
+        let fs = if ch.chars().count() > 1 { r * 0.95 } else { r * 1.3 };
         tx(d, x, y + fs * 0.36, fs.max(7.0), "middle", col, true, ch);
     }
 }
@@ -661,7 +662,7 @@ fn fill_box(d: &mut Doc, bx: f64, by: f64, bs: f64, state: &str, layout_lattice:
     match border {
         "None" => {}
         "Double" => { d.rect(bx, by, bs, bs, "none", INK, 1.6); d.rect(bx - 5.0, by - 5.0, bs + 10.0, bs + 10.0, "none", INK, 1.6); }
-        _ => { d.rect(bx, by, bs, bs, "none", INK, 2.2); }
+        _ => { d.rect(bx + 0.75, by + 0.75, bs - 1.5, bs - 1.5, "none", INK, 1.5); }
     }
     if items.is_empty() { return; }
     let mut rg = Rng(seed);
@@ -808,26 +809,26 @@ fn particle_render(p: &Params) -> String {
         }
         v
     };
-    let bs = 320.0;
-    let boxes_w = if show == "Key only" { 0.0 } else if two { bs * 2.0 + 150.0 } else { bs + 40.0 };
+    let bs = 300.0;
+    let boxes_w = if show == "Key only" { 0.0 } else if two { bs * 2.0 + 142.0 } else { bs + 32.0 };
     let key_w = if show == "Box only" { 0.0 } else { 224.0 };
     let w = boxes_w + key_w + if show == "Key only" { 20.0 } else { 0.0 };
-    let h = bs + if two { 70.0 } else { 40.0 };
+    let h = bs + if two { 62.0 } else { 32.0 };
     let mut d = Doc::new(w, h);
     let seed = p.i("shuffle").max(0) as u64 * 7919;
     if show != "Key only" {
         let before = build(false);
-        fill_box(&mut d, 20.0, 20.0, bs, p.s("state"), lattice, gaps, &before, 11 + seed, p.s("border"));
+        fill_box(&mut d, 16.0, 16.0, bs, p.s("state"), lattice, gaps, &before, 11 + seed, p.s("border"));
         if two {
             let after = build(true);
-            d.arrow(bs + 38.0, 20.0 + bs / 2.0, bs + 112.0, 20.0 + bs / 2.0, INK, 2.2);
-            fill_box(&mut d, bs + 130.0, 20.0, bs, p.s("state2"), lattice, gaps, &after, 23 + seed, p.s("border"));
-            tx(&mut d, 20.0 + bs / 2.0, bs + 52.0, 15.0, "middle", INK, true, p.s("lab_before"));
-            tx(&mut d, bs + 130.0 + bs / 2.0, bs + 52.0, 15.0, "middle", INK, true, p.s("lab_after"));
+            d.arrow(bs + 34.0, 16.0 + bs / 2.0, bs + 108.0, 16.0 + bs / 2.0, INK, 2.2);
+            fill_box(&mut d, bs + 126.0, 20.0, bs, p.s("state2"), lattice, gaps, &after, 23 + seed, p.s("border"));
+            tx(&mut d, 16.0 + bs / 2.0, bs + 48.0, 15.0, "middle", INK, true, p.s("lab_before"));
+            tx(&mut d, bs + 126.0 + bs / 2.0, bs + 48.0, 15.0, "middle", INK, true, p.s("lab_after"));
         }
     }
     if show != "Box only" {
-        draw_key(&mut d, p, boxes_w + 12.0, 20.0 + bs / 2.0);
+        draw_key(&mut d, p, boxes_w + 12.0, 16.0 + bs / 2.0);
     }
     wrap(p, d.finish(), &[])
 }
@@ -880,18 +881,18 @@ pub(super) fn handles(id: &str, p: &Params, _size: (f64, f64)) -> Option<Vec<Han
         "particle-diagram" => {
             if p.s("key_show") == "Key only" { return Some(Vec::new()); }
             let two = p.s("boxes") == "Before and after";
-            let bs = 320.0;
+            let bs = 300.0;
             let mut v = Vec::new();
             let boxes: Vec<(f64, &'static str, &'static str)> = if two {
-                vec![(20.0 + bs / 2.0, "a_count", "Before"), (bs + 130.0 + bs / 2.0, "a2_count", "After")]
+                vec![(16.0 + bs / 2.0, "a_count", "Before"), (bs + 126.0 + bs / 2.0, "a2_count", "After")]
             } else {
-                vec![(20.0 + bs / 2.0, "a_count", "")]
+                vec![(16.0 + bs / 2.0, "a_count", "")]
             };
             for (cx, _first, _) in &boxes {
                 let after = *cx > bs;
                 let keys: [&'static str; 4] = if after { ["a2_count", "b2_count", "c2_count", "d2_count"] } else { ["a_count", "b_count", "c_count", "d_count"] };
                 v.push(
-                    Handle::zone((*cx, 20.0 + bs / 2.0), (bs, bs), "Click: add a particle. Scroll up adds, down removes", move |q| {
+                    Handle::zone((*cx, 16.0 + bs / 2.0), (bs, bs), "Click: add a particle. Scroll up adds, down removes", move |q| {
                         q.set_i(keys[0], q.i(keys[0]) + 1);
                     })
                     .with_scroll(move |q, dy| {
@@ -904,8 +905,8 @@ pub(super) fn handles(id: &str, p: &Params, _size: (f64, f64)) -> Option<Vec<Han
                 );
             }
             if two {
-                v.push(Handle::label((20.0 + bs / 2.0, bs + 52.0), (110.0, 24.0), "lab_before", "Double-click to rename"));
-                v.push(Handle::label((bs + 130.0 + bs / 2.0, bs + 52.0), (110.0, 24.0), "lab_after", "Double-click to rename"));
+                v.push(Handle::label((16.0 + bs / 2.0, bs + 48.0), (110.0, 24.0), "lab_before", "Double-click to rename"));
+                v.push(Handle::label((bs + 126.0 + bs / 2.0, bs + 48.0), (110.0, 24.0), "lab_after", "Double-click to rename"));
             }
             Some(v)
         }

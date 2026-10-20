@@ -92,6 +92,27 @@ impl ParamDef {
 
 /// The label a control shows when the reference changes it with another choice: the titration's
 /// acid/base name, the heating curve's direction. `None` keeps the ParamDef's own label.
+/// Labels that carry the user's own words (the predator-prey page names the animals: "Hares at
+/// the start", "Average lynx"). None when the key's label is fixed.
+pub fn dynamic_label(fig: &str, key: &str, p: &Params) -> Option<String> {
+    if fig != "predator-prey" {
+        return None;
+    }
+    let pair = p.s("pair");
+    let (prey, pred) = match biology::popdyn::preset_names(pair) {
+        Some((a, b)) => (a.to_string(), b.to_string()),
+        None => (p.s("prey").trim().to_string(), p.s("pred").trim().to_string()),
+    };
+    let (prey, pred) = (if prey.is_empty() { "Prey".to_string() } else { prey }, if pred.is_empty() { "Predators".to_string() } else { pred });
+    Some(match key {
+        "prey0" => format!("{prey} at the start"),
+        "pred0" => format!("{pred} at the start"),
+        "prey_avg" => format!("Average {}", prey.to_lowercase()),
+        "pred_avg" => format!("Average {}", pred.to_lowercase()),
+        _ => return None,
+    })
+}
+
 pub fn label_for(fig: &str, key: &str, p: &Params) -> Option<&'static str> {
     match fig {
         "titration-curve" => {
@@ -101,6 +122,28 @@ pub fn label_for(fig: &str, key: &str, p: &Params) -> Option<&'static str> {
                 "volume" => if base { "Base volume (mL)" } else { "Acid volume (mL)" },
                 "titrant" => if base { "HCl molarity (M)" } else { "NaOH molarity (M)" },
                 "pk" => if base { "pKb" } else { "pKa" },
+                // the reference's x-axis / y-axis sections drop the axis name from each label
+                "xaxis_from" | "yaxis_from" => "From",
+                "xaxis_to" | "yaxis_to" => "To",
+                "xaxis_by" | "yaxis_by" => "Count by",
+                "xaxis_num" | "yaxis_num" => "Numbers",
+                "xaxis_lab" => "Label at the right end",
+                "yaxis_lab" => "Label at the top end",
+                "xaxis_lab_text" | "yaxis_lab_text" => "",
+                "xaxis_lo" => "Left end",
+                "xaxis_hi" => "Right end",
+                "yaxis_lo" => "Bottom end",
+                "yaxis_hi" => "Top end",
+                _ => return None,
+            })
+        }
+        "population-growth" => {
+            // the reference's rate and time-span labels follow the "Time in" select
+            let u = p.s("unit");
+            Some(match key {
+                "r" => match u { "Hours" => "Growth rate, r (per hour)", "Days" => "Growth rate, r (per day)", "Weeks" => "Growth rate, r (per week)", "Months" => "Growth rate, r (per month)", "Generations" => "Growth rate, r (per generation)", _ => "Growth rate, r (per year)" },
+                "tspan" => match u { "Hours" => "Time span (hours)", "Days" => "Time span (days)", "Weeks" => "Time span (weeks)", "Months" => "Time span (months)", "Generations" => "Time span (generations)", _ => "Time span (years)" },
+                "organism" => "Organism|plural, for the axis titles",
                 _ => return None,
             })
         }
@@ -366,6 +409,13 @@ pub fn param_relevant(id: &str, key: &str, p: &Params) -> bool {
 /// Follow-up after the panel changed param `key` of figure `id` from `old` (a pulley's load
 /// label follows a switch to or from the block and tackle).
 pub fn after_panel_change(id: &str, key: &str, old: &Value, p: &mut Params) {
+    // typing an x-axis range on the titration takes the axis off "fit to the titration"
+    if id == "titration-curve" && key.starts_with("xaxis_") && key != "xaxis_fit" && p.b("xaxis_fit") {
+        p.set_b("xaxis_fit", false);
+    }
+    if id == "predator-prey" {
+        biology::popdyn::pp_panel_changed(key, p);
+    }
     if let ("pulley", "setup", Value::S(old)) = (id, key, old) {
         physics::pulley_setup_changed(old, p);
     }
@@ -385,6 +435,10 @@ pub fn migrate(id: &str, spec: &crate::model::FigureSpec, p: &mut Params) {
         p.set_i("n", 2);
         p.set_b("two", false);
     }
+    // before the pair list opened on the hare and lynx pair, a spec without a pair was the user's own
+    if id == "predator-prey" && !spec.params.contains_key("pair") {
+        p.set_s("pair", biology::popdyn::OWN_PAIR);
+    }
     math::migrate(id, spec, p)
 }
 
@@ -393,6 +447,7 @@ pub fn random_key(id: &str) -> Option<&'static str> {
     match id {
         "spring-scale" => Some("reading"),
         "micropipette-reading" => Some("volume"),
+        "volume-reading" => Some("reading"),
         _ => None,
     }
 }
@@ -409,7 +464,7 @@ pub fn unit_random(seed: u64) -> f64 {
 /// Sets a random reading the instrument can show (the reference's "Random" button); false when
 /// the figure has none.
 pub fn random_reading(id: &str, p: &mut Params, seed: u64) -> bool {
-    physics::random_reading(id, p, seed) || biology::random_reading(id, p, seed)
+    physics::random_reading(id, p, seed) || biology::random_reading(id, p, seed) || chemistry::random_reading(id, p, seed)
 }
 
 /// The reference's "Classic setups" dropdown (population growth, Punnett square, pedigree):
@@ -463,7 +518,7 @@ pub fn params_from_json(def: &FigureDef, over: &serde_json::Value) -> Params {
 }
 
 /// System fonts are loaded once and shared (loading per render made live drags stutter).
-fn fontdb() -> std::sync::Arc<resvg::usvg::fontdb::Database> {
+pub(crate) fn fontdb() -> std::sync::Arc<resvg::usvg::fontdb::Database> {
     static DB: std::sync::OnceLock<std::sync::Arc<resvg::usvg::fontdb::Database>> = std::sync::OnceLock::new();
     DB.get_or_init(|| {
         let mut db = resvg::usvg::fontdb::Database::new();
@@ -482,6 +537,11 @@ fn fontdb() -> std::sync::Arc<resvg::usvg::fontdb::Database> {
             crate::fonts::SANS_BOLD,
             crate::fonts::SERIF_SEMIBOLD,
             crate::fonts::MONO_REGULAR,
+            crate::fonts::LIBERATION_SANS_REGULAR,
+            crate::fonts::LIBERATION_SANS_BOLD,
+            crate::fonts::LIBERATION_SERIF_REGULAR,
+            crate::fonts::LIBERATION_SERIF_ITALIC,
+            crate::fonts::LIBERATION_SERIF_BOLD,
         ] {
             db.load_font_data(bytes.to_vec());
         }
@@ -494,6 +554,17 @@ fn fontdb() -> std::sync::Arc<resvg::usvg::fontdb::Database> {
         std::sync::Arc::new(db)
     })
     .clone()
+}
+
+/// Puts the bundled Times-metric face first in the figure serif stack, so the web build (no
+/// system fonts) measures genotype glyphs like the reference's browser does.
+pub(crate) fn serif_stack(svg: &str) -> std::borrow::Cow<'_, str> {
+    const OLD: &str = "Georgia, 'Times New Roman', Times, serif";
+    if svg.contains(OLD) {
+        std::borrow::Cow::Owned(svg.replace(OLD, "'Liberation Serif', Georgia, 'Times New Roman', Times, serif"))
+    } else {
+        std::borrow::Cow::Borrowed(svg)
+    }
 }
 
 /// Size (w, h) of the SVG canvas in its own units, read from the root `width`/`height`.
@@ -511,7 +582,7 @@ pub fn svg_size(svg: &str) -> (f64, f64) {
 pub fn to_png(svg: &str, scale: f32) -> Result<Vec<u8>, String> {
     let mut opt = resvg::usvg::Options::default();
     opt.fontdb = fontdb();
-    let tree = resvg::usvg::Tree::from_str(svg, &opt).map_err(|e| e.to_string())?;
+    let tree = resvg::usvg::Tree::from_str(&serif_stack(svg), &opt).map_err(|e| e.to_string())?;
     let size = tree.size();
     let (w, h) = ((size.width() * scale).ceil() as u32, (size.height() * scale).ceil() as u32);
     let mut pm = resvg::tiny_skia::Pixmap::new(w.max(1), h.max(1)).ok_or("bad size")?;
@@ -519,16 +590,74 @@ pub fn to_png(svg: &str, scale: f32) -> Result<Vec<u8>, String> {
     pm.encode_png().map_err(|e| e.to_string())
 }
 
+/// Marker of the biology charts' one-unit grid lines (see `biology::plot`).
+const HAIR2: &str = r##"stroke="#111827" stroke-width="1"/>"##;
+const HAIR: &str = r##"stroke="#111827" stroke-width="1" stroke-linecap"##;
+
+/// A browser draws a downscaled crisp grid with every hairline on its own device pixel; resvg
+/// would smear each across two. Snap the axis-aligned unit-width lines to pixel centres and give
+/// them a one-pixel stroke at the reference's grey.
+fn snap_hairlines(svg: &str, scale: f32, phase: (f32, f32)) -> String {
+    let sc = scale as f64;
+    let mut out = String::with_capacity(svg.len());
+    let mut rest = svg;
+    while let Some(i) = rest.find("<line ") {
+        let Some(len) = rest[i..].find("/>") else { break };
+        let tag = &rest[i..i + len + 2];
+        out.push_str(&rest[..i]);
+        let attr = |n: &str| tag.find(&format!(" {n}=\"")).and_then(|k| tag[k + n.len() + 3..].split('"').next()).and_then(|v| v.parse::<f64>().ok());
+        let (ph_x, ph_y) = (phase.0 as f64, phase.1 as f64);
+        let snap = |v: f64, ph: f64| (((v * sc + ph).floor() + 0.5) - ph) / sc;
+        match (tag.contains(HAIR) || (sc >= 1.0 && tag.contains(HAIR2)), attr("x1"), attr("y1"), attr("x2"), attr("y2")) {
+            (true, Some(x1), Some(y1), Some(x2), Some(y2)) if x1 == x2 || y1 == y2 => {
+                let (x1, y1, x2, y2) = if x1 == x2 { (snap(x1, ph_x), y1, snap(x2, ph_x), y2) } else { (x1, snap(y1, ph_y), x2, snap(y2, ph_y)) };
+                out.push_str(&format!(r##"<line x1="{x1:.3}" y1="{y1:.3}" x2="{x2:.3}" y2="{y2:.3}" stroke="#111827" stroke-width="{:.3}" stroke-opacity="{}" stroke-linecap="butt"/>"##, 1.0 / sc, if sc < 1.0 { "0.425" } else { "1" }));
+            }
+            _ => out.push_str(tag),
+        }
+        rest = &rest[i + len + 2..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Rasterize SVG to premultiplied RGBA at `scale`x (no PNG round trip; the canvas editor
 /// re-renders while panning and dragging). Returns (width, height, pixels).
 pub fn to_rgba(svg: &str, scale: f32) -> Result<(u32, u32, Vec<u8>), String> {
+    to_rgba_at(svg, scale, (0.0, 0.0))
+}
+
+/// Like `to_rgba`, with the drawing shifted by `phase` device pixels (each 0..1) and the bitmap one
+/// pixel larger when shifted, so a figure drawn at a fractional screen position keeps the pixel
+/// phase a browser gives it (which decides which hairlines land on one pixel and which on two).
+pub fn to_rgba_at(svg: &str, scale: f32, phase: (f32, f32)) -> Result<(u32, u32, Vec<u8>), String> {
     let mut opt = resvg::usvg::Options::default();
     opt.fontdb = fontdb();
-    let tree = resvg::usvg::Tree::from_str(svg, &opt).map_err(|e| e.to_string())?;
+    // A browser draws crispEdges hairlines at least one device pixel wide however far the figure
+    // is shrunk; resvg would fade them out below 1 px, so a downscaled grid (a phone) widens them.
+    let widened;
+    let svg = if scale < 1.0 && let Some(a) = svg.find(r#"<g shape-rendering="crispEdges""#) && let Some(len) = svg[a..].find("</g>") {
+        let seg = &svg[a..a + len];
+        // the math grid's near-black 1 px lines come out as the browser's mid grey (120) at that width
+        let op = if seg.starts_with(r#"<g shape-rendering="crispEdges" data-op="math">"#) { 0.567_f32 } else { 0.41_f32 };
+        widened = format!("{}{}{}", &svg[..a], seg.replace(r#"stroke-width="1""#, &format!(r#"stroke-width="{:.3}" stroke-opacity="{:.3}""#, 1.0 / scale.max(0.05), op)), &svg[a + len..]);
+        widened.as_str()
+    } else {
+        svg
+    };
+    let snapped;
+    let svg = if (scale < 1.0 && svg.contains(HAIR)) || (scale >= 1.0 && svg.contains(r#"<g shape-rendering="crispEdges" data-op="math">"#) && svg.contains(HAIR2)) {
+        snapped = snap_hairlines(svg, scale, phase);
+        snapped.as_str()
+    } else {
+        svg
+    };
+    let tree = resvg::usvg::Tree::from_str(&serif_stack(svg), &opt).map_err(|e| e.to_string())?;
     let size = tree.size();
-    let (w, h) = ((size.width() * scale).ceil().max(1.0) as u32, (size.height() * scale).ceil().max(1.0) as u32);
+    let extra = if phase.0 > 0.0 || phase.1 > 0.0 { 1.0 } else { 0.0 };
+    let (w, h) = ((size.width() * scale + extra).ceil().max(1.0) as u32, (size.height() * scale + extra).ceil().max(1.0) as u32);
     let mut pm = resvg::tiny_skia::Pixmap::new(w, h).ok_or("bad size")?;
-    resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(scale, scale), &mut pm.as_mut());
+    resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(scale, scale).post_translate(phase.0, phase.1), &mut pm.as_mut());
     Ok((w, h, pm.take()))
 }
 

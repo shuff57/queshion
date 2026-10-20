@@ -1,0 +1,421 @@
+[
+  {
+    "name": "number-line-inequality",
+    "level": "easy",
+    "request": "A number line from -5 to 5 with the inequality x > 2 graphed.",
+    "ids": [
+      "number-line"
+    ],
+    "checks": [
+      {
+        "key": "min",
+        "max": -5
+      },
+      {
+        "key": "max",
+        "min": 5
+      },
+      {
+        "key": "inequality",
+        "contains": "x>2"
+      }
+    ]
+  },
+  {
+    "name": "hexagon-side-6cm",
+    "level": "easy",
+    "request": "A regular hexagon with each side 6 cm.",
+    "ids": [
+      "regular-polygon"
+    ],
+    "checks": [
+      {
+        "key": "n",
+        "eq": 6
+      },
+      {
+        "key": "from",
+        "eq": "Side"
+      },
+      {
+        "key": "value",
+        "eq": 6
+      },
+      {
+        "key": "unit",
+        "contains": "cm"
+      }
+    ]
+  },
+  {
+    "name": "box-plot-seven-values",
+    "level": "easy",
+    "request": "A box plot of the data 3, 5, 7, 9, 11, 13, 15.",
+    "ids": [
+      "box-plot"
+    ],
+    "checks": [
+      {
+        "key": "data",
+        "contains": "3,5,7,9,11,13,15"
+      }
+    ]
+  },
+  {
+    "name": "right-triangle-3-4",
+    "level": "easy",
+    "request": "A right triangle with legs 3 and 4.",
+    "ids": [
+      "triangle"
+    ],
+    "checks": [
+      {
+        "keys": [
+          "m_ab",
+          "m_bc",
+          "m_ca"
+        ],
+        "contains_values": [
+          3,
+          4
+        ]
+      }
+    ]
+  },
+  {
+    "name": "ramp-forces-rough",
+    "level": "param",
+    "request": "A free-body diagram of a 5 kg block sliding down a rough 30 degree ramp, showing gravity, the normal force and friction.",
+    "ids": [
+      "inclined-plane"
+    ],
+    "checks": [
+      {
+        "key": "angle",
+        "eq": 30
+      },
+      {
+        "key": "gravity",
+        "eq": true
+      },
+      {
+        "key": "normal",
+        "eq": true
+      },
+      {
+        "key": "friction",
+        "eq": "Up the ramp"
+      },
+      {
+        "key": "surface",
+        "eq": "Rough"
+      },
+      {
+        "key": "obj_lab",
+        "contains": "5kg"
+      }
+    ]
+  },
+  {
+    "name": "projectile-60-components",
+    "level": "param",
+    "request": "A ball launched from level ground at 60 degrees, showing the velocity components.",
+    "ids": [
+      "projectile-motion"
+    ],
+    "checks": [
+      {
+        "key": "from",
+        "eq": "Level ground"
+      },
+      {
+        "key": "angle",
+        "eq": 60
+      },
+      {
+        "key": "comps",
+        "eq": true
+      }
+    ]
+  },
+  {
+    "name": "angles-straight-line-110",
+    "level": "param",
+    "request": "Two angles on a straight line, one of them 110 degrees. Show both measures.",
+    "ids": [
+      "angles"
+    ],
+    "checks": [
+      {
+        "keys": [
+          "ray2",
+          "ray3",
+          "ray4",
+          "ray5",
+          "ray6"
+        ],
+        "contains_values": [
+          110
+        ]
+      }
+    ]
+  },
+  {
+    "name": "punnett-blank-for-students",
+    "level": "param",
+    "request": "A Punnett square for a cross of Bb and Bb, left blank for students to fill in.",
+    "ids": [
+      "punnett-square"
+    ],
+    "checks": [
+      {
+        "key": "parents",
+        "contains": "Bb"
+      },
+      {
+        "key": "filled",
+        "eq": false
+      }
+    ]
+  },
+  {
+    "name": "motion-graph-vague",
+    "level": "ambiguous",
+    "request": "A graph for the motion problem.",
+    "ids": [
+      "motion-graphs",
+      "projectile-motion",
+      "coordinate-grid"
+    ]
+  },
+  {
+    "name": "decline-eiffel-tower",
+    "level": "decline",
+    "request": "A detailed photo-realistic picture of the Eiffel Tower.",
+    "expect": "decline"
+  },
+  {
+    "name": "decline-feynman-diagram",
+    "level": "decline",
+    "request": "A Feynman diagram of electron-positron annihilation.",
+    "expect": "decline"
+  },
+  {
+    "name": "decline-roman-map",
+    "level": "decline",
+    "request": "A map of the Roman Empire at its largest extent.",
+    "expect": "decline"
+  },
+  {
+    "name": "polygon-over-the-limit",
+    "level": "limits",
+    "request": "A regular polygon with 50 sides, each side 6 cm.",
+    "ids": [
+      "regular-polygon"
+    ],
+    "checks": [
+      {
+        "key": "n",
+        "eq": 20
+      },
+      {
+        "note_contains": [
+          "20"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "image-pentagon",
+    "level": "image",
+    "reference": {
+      "id": "regular-polygon",
+      "params": {
+        "n": 5,
+        "value": 6
+      }
+    },
+    "ids": [
+      "regular-polygon"
+    ],
+    "checks": [
+      {
+        "key": "n",
+        "eq": 5
+      }
+    ]
+  },
+  {
+    "name": "image-number-line",
+    "level": "image",
+    "reference": {
+      "id": "number-line",
+      "params": {
+        "min": -3,
+        "max": 8,
+        "inequality": "x >= 1"
+      }
+    },
+    "ids": [
+      "number-line"
+    ],
+    "checks": [
+      {
+        "key": "min",
+        "eq": -3
+      },
+      {
+        "key": "max",
+        "eq": 8
+      },
+      {
+        "key": "inequality",
+        "contains": ">=1"
+      }
+    ]
+  },
+  {
+    "name": "image-projectile-cliff",
+    "level": "image",
+    "reference": {
+      "id": "projectile-motion",
+      "params": {
+        "from": "A cliff",
+        "angle": 30
+      }
+    },
+    "ids": [
+      "projectile-motion"
+    ],
+    "checks": [
+      {
+        "key": "from",
+        "eq": "A cliff"
+      },
+      {
+        "key": "angle",
+        "min": 25,
+        "max": 35
+      }
+    ]
+  },
+  {
+    "name": "image-ramp-forces",
+    "level": "image",
+    "reference": {
+      "id": "inclined-plane",
+      "params": {
+        "angle": 20,
+        "gravity": true,
+        "normal": true,
+        "friction": "Up the ramp"
+      }
+    },
+    "ids": [
+      "inclined-plane"
+    ],
+    "checks": [
+      {
+        "key": "angle",
+        "min": 15,
+        "max": 25
+      },
+      {
+        "key": "normal",
+        "eq": true
+      },
+      {
+        "key": "friction",
+        "eq": "Up the ramp"
+      }
+    ]
+  },
+  {
+    "name": "real-ch4-acetyl-chloride",
+    "level": "real-image",
+    "reference": {
+      "file": "figure_images/ch4-q1-acetyl-chloride.png"
+    },
+    "ids": [
+      "lewis-structures"
+    ],
+    "checks": [
+      {
+        "keys": [
+          "formula",
+          "preset"
+        ],
+        "any_contains": [
+          "CH3COCl",
+          "acetyl chloride"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "real-ch4-nh3-handwritten",
+    "level": "real-image",
+    "reference": {
+      "file": "figure_images/ch4-q4a-nh3.png"
+    },
+    "ids": [
+      "lewis-structures"
+    ],
+    "checks": [
+      {
+        "keys": [
+          "formula",
+          "preset"
+        ],
+        "any_contains": [
+          "NH3",
+          "ammonia"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "real-ch4-co2-handwritten",
+    "level": "real-image",
+    "reference": {
+      "file": "figure_images/ch4-q4b-co2.png"
+    },
+    "ids": [
+      "lewis-structures"
+    ],
+    "checks": [
+      {
+        "keys": [
+          "formula",
+          "preset"
+        ],
+        "any_contains": [
+          "CO2",
+          "carbon dioxide"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "real-ch4-pf3-handwritten",
+    "level": "real-image",
+    "reference": {
+      "file": "figure_images/ch4-5b-q4b-pf3.png"
+    },
+    "ids": [
+      "lewis-structures"
+    ],
+    "checks": [
+      {
+        "keys": [
+          "formula",
+          "preset"
+        ],
+        "any_contains": [
+          "PF3",
+          "phosphorus trifluoride"
+        ]
+      }
+    ]
+  }
+]

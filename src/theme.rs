@@ -155,7 +155,81 @@ pub fn area_or(default: egui::Rect) -> egui::Rect {
 }
 
 fn pal() -> Palette {
-    if is_dark() { dark_palette() } else { light_palette() }
+    match (chem_skin(), is_dark()) {
+        (true, false) => chem_light_palette(),
+        (true, true) => chem_dark_palette(),
+        (false, true) => dark_palette(),
+        (false, false) => light_palette(),
+    }
+}
+
+thread_local! {
+    /// The chemistry-figures page skin (cool grey page, blue accent, Noto Sans): on while a
+    /// chemistry figure is open, off everywhere else.
+    static CHEM_SKIN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub fn chem_skin() -> bool {
+    CHEM_SKIN.with(|c| c.get())
+}
+
+/// Switches the chemistry skin and restyles `ctx` when it changed.
+pub fn set_chem_skin(on: bool, ctx: &Context) {
+    if chem_skin() != on {
+        CHEM_SKIN.with(|c| c.set(on));
+        setup_style(ctx);
+        ctx.request_repaint();
+    }
+}
+
+/// The reference chemistry site's tokens: page #f6f7fb, ink #1f2937, hairline #e3e4ea,
+/// blue #2563eb with #1d4ed8 text, #bfdbfe pill borders, #eff6ff washes.
+pub const fn chem_light_palette() -> Palette {
+    Palette {
+        cream: Color32::from_rgb(0xf6, 0xf7, 0xfb),
+        rail: Color32::from_rgb(0x1f, 0x29, 0x37),
+        card: Color32::from_rgb(0xff, 0xff, 0xff),
+        field: Color32::from_rgb(0xff, 0xff, 0xff),
+        border: Color32::from_rgb(0xe3, 0xe4, 0xea),
+        rule: Color32::from_rgb(0xbf, 0xdb, 0xfe),
+        ink: Color32::from_rgb(0x1f, 0x29, 0x37),
+        text: Color32::from_rgb(0x37, 0x41, 0x51),
+        muted: Color32::from_rgb(0x6b, 0x72, 0x80),
+        accent: Color32::from_rgb(0x25, 0x63, 0xeb),
+        accent_hover: Color32::from_rgb(0x1d, 0x4e, 0xd8),
+        accent_faded: Color32::from_rgb(0xef, 0xf6, 0xff),
+        on_accent: Color32::from_rgb(0xff, 0xff, 0xff),
+        highlighter: Color32::from_rgb(0xdb, 0xea, 0xfe),
+        hover_bg: Color32::from_rgb(0xef, 0xf6, 0xff),
+        green: Color32::from_rgb(0x15, 0x80, 0x3d),
+        red: Color32::from_rgb(0xb9, 0x1c, 0x1c),
+        table: Color32::from_rgb(0xe5, 0xe7, 0xeb),
+        grid_line: Color32::from_rgba_premultiplied(0, 0, 3, 10),
+    }
+}
+
+pub const fn chem_dark_palette() -> Palette {
+    Palette {
+        cream: Color32::from_rgb(0x11, 0x16, 0x21),
+        rail: Color32::from_rgb(0x0b, 0x0f, 0x17),
+        card: Color32::from_rgb(0x1a, 0x21, 0x31),
+        field: Color32::from_rgb(0x11, 0x16, 0x21),
+        border: Color32::from_rgb(0x2e, 0x38, 0x4d),
+        rule: Color32::from_rgb(0x3b, 0x4a, 0x68),
+        ink: Color32::from_rgb(0xf3, 0xf4, 0xf6),
+        text: Color32::from_rgb(0xd1, 0xd5, 0xdb),
+        muted: Color32::from_rgb(0x9c, 0xa3, 0xaf),
+        accent: Color32::from_rgb(0x60, 0xa5, 0xfa),
+        accent_hover: Color32::from_rgb(0x93, 0xc5, 0xfd),
+        accent_faded: Color32::from_rgb(0x1e, 0x2a, 0x4a),
+        on_accent: Color32::from_rgb(0x0b, 0x12, 0x20),
+        highlighter: Color32::from_rgb(0x1e, 0x3a, 0x8a),
+        hover_bg: Color32::from_rgb(0x23, 0x2d, 0x44),
+        green: Color32::from_rgb(0x86, 0xef, 0xac),
+        red: Color32::from_rgb(0xfc, 0xa5, 0xa5),
+        table: Color32::from_rgb(0x0b, 0x0f, 0x17),
+        grid_line: Color32::from_rgba_premultiplied(2, 2, 3, 11),
+    }
 }
 
 /// The print-work surface (exports, page preview) stays paper-white in both
@@ -220,9 +294,20 @@ pub fn italic_family(ctx: &Context, family: &FontFamily) -> Option<FontFamily> {
     let fam = FontFamily::Name(name.into());
     ctx.fonts(|f| f.definitions().families.contains_key(&fam)).then_some(fam)
 }
+/// The chemistry skin's semi-bold (breadcrumb, header pills); plain bold elsewhere.
+pub fn semibold_family() -> FontFamily {
+    if chem_skin() { FontFamily::Name("vs-noto-semibold".into()) } else { bold_family() }
+}
+/// The chemistry skin's medium (500) and extra-bold (800) faces; the nearest plain faces elsewhere.
+pub fn medium_family() -> FontFamily {
+    if chem_skin() { FontFamily::Name("vs-noto-medium".into()) } else { bold_family() }
+}
+pub fn xbold_family() -> FontFamily {
+    if chem_skin() { FontFamily::Name("vs-noto-xbold".into()) } else { bold_family() }
+}
 /// Named family: real bold sans (used by [`strong`]).
 pub fn bold_family() -> FontFamily {
-    FontFamily::Name("vs-sans-bold".into())
+    FontFamily::Name(if chem_skin() { "vs-noto-bold" } else { "vs-sans-bold" }.into())
 }
 
 // ---------- text helpers ----------
@@ -359,6 +444,11 @@ fn load_fonts() -> FontDefinitions {
     put(&mut defs, "SourceSans3-It", crate::fonts::SANS_ITALIC);
     put(&mut defs, "SourceSans3-Semibold", crate::fonts::SANS_SEMIBOLD);
     put(&mut defs, "SourceSans3-Bold", crate::fonts::SANS_BOLD);
+    put(&mut defs, "NotoSans-Regular", crate::fonts::NOTO_REGULAR);
+    put(&mut defs, "NotoSans-SemiBold", crate::fonts::NOTO_SEMIBOLD);
+    put(&mut defs, "NotoSans-Bold", crate::fonts::NOTO_BOLD);
+    put(&mut defs, "NotoSans-Medium", crate::fonts::NOTO_MEDIUM);
+    put(&mut defs, "NotoSans-ExtraBold", crate::fonts::NOTO_EXTRABOLD);
     // The print serif comes from the binary (src/fonts.rs): the page preview, the card
     // thumbnails and the PDF all use the very same faces.
     put(&mut defs, "SourceSerif4-Regular", crate::fonts::SERIF_REGULAR);
@@ -412,6 +502,17 @@ fn load_fonts() -> FontDefinitions {
         )
     };
     let (fam, fonts) = named("vs-sans-bold", vec!["SourceSans3-Bold", "SourceSans3-Semibold", "SourceSans3-Regular"]);
+    defs.families.insert(fam, fonts);
+    // the chemistry page skin's sans (Source Sans stays behind it for glyphs it lacks)
+    let (fam, fonts) = named("vs-noto", vec!["NotoSans-Regular", "SourceSans3-Regular"]);
+    defs.families.insert(fam, fonts);
+    let (fam, fonts) = named("vs-noto-bold", vec!["NotoSans-Bold", "NotoSans-SemiBold", "SourceSans3-Bold"]);
+    defs.families.insert(fam, fonts);
+    let (fam, fonts) = named("vs-noto-semibold", vec!["NotoSans-SemiBold", "NotoSans-Bold", "SourceSans3-Semibold"]);
+    defs.families.insert(fam, fonts);
+    let (fam, fonts) = named("vs-noto-medium", vec!["NotoSans-Medium", "NotoSans-Regular", "SourceSans3-Regular"]);
+    defs.families.insert(fam, fonts);
+    let (fam, fonts) = named("vs-noto-xbold", vec!["NotoSans-ExtraBold", "NotoSans-Bold", "SourceSans3-Bold"]);
     defs.families.insert(fam, fonts);
     let (fam, fonts) = named("vs-serif", vec!["SourceSerif4-Regular", "SourceSerif4-Semibold", "SourceSans3-Regular"]);
     defs.families.insert(fam, fonts);
@@ -502,13 +603,14 @@ fn setup_style(ctx: &Context) {
         v.widgets.open.corner_radius = CornerRadius::same(12);
 
         style.text_styles.clear();
-        style.text_styles.insert(TextStyle::Body, FontId::new(13.0, FontFamily::Proportional));
-        style.text_styles.insert(TextStyle::Button, FontId::new(13.0, FontFamily::Proportional));
-        style.text_styles.insert(TextStyle::Small, FontId::new(11.0, FontFamily::Proportional));
-        style.text_styles.insert(TextStyle::Heading, FontId::new(22.0, FontFamily::Proportional));
+        let sans = if chem_skin() { FontFamily::Name("vs-noto".into()) } else { FontFamily::Proportional };
+        style.text_styles.insert(TextStyle::Body, FontId::new(13.0, sans.clone()));
+        style.text_styles.insert(TextStyle::Button, FontId::new(13.0, sans.clone()));
+        style.text_styles.insert(TextStyle::Small, FontId::new(11.0, sans.clone()));
+        style.text_styles.insert(TextStyle::Heading, FontId::new(22.0, sans.clone()));
         style.text_styles.insert(
             TextStyle::Name("Heading2".into()),
-            FontId::new(17.0, FontFamily::Proportional),
+            FontId::new(17.0, sans),
         );
         style.text_styles.insert(TextStyle::Monospace, FontId::new(12.0, FontFamily::Monospace));
 

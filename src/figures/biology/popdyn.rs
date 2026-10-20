@@ -70,6 +70,16 @@ fn color_hex(name: &str) -> &'static str {
     }
 }
 
+/// Width of `s` in bold Arial/Helvetica at `size` px (the reference measures labels the same way).
+fn bold_width(s: &str, size: f64) -> f64 {
+    const W: [u16; 95] = [
+        278, 333, 474, 556, 556, 889, 722, 238, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 333, 333, 584, 584, 584, 611,
+        975, 722, 722, 722, 722, 667, 611, 778, 722, 278, 556, 722, 611, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 333, 278, 333, 584, 556,
+        333, 556, 611, 556, 611, 556, 333, 611, 611, 278, 278, 556, 278, 889, 611, 611, 611, 611, 389, 556, 333, 611, 556, 778, 556, 556, 500, 389, 280, 389, 584,
+    ];
+    s.chars().map(|c| if (' '..='~').contains(&c) { W[c as usize - 32] as f64 } else { 556.0 }).sum::<f64>() * size / 1000.0
+}
+
 fn minor_of(s: &str) -> i64 {
     match s { "2 per block" => 2, "4 per block" => 4, "5 per block" => 5, _ => 1 }
 }
@@ -79,26 +89,26 @@ fn minor_of(s: &str) -> i64 {
 pub fn growth_params() -> Vec<ParamDef> {
     vec![
         ParamDef::choice("growth", "Growth", &["Logistic (S-curve)", "Exponential (J-curve)", "Exponential and logistic", "Overshoot and oscillation", "Boom and crash"], "Logistic (S-curve)"),
-        ParamDef::float("n0", "Starting size, N0", 1.0, 1_000_000.0, 1.0, 20.0),
+        ParamDef::float("n0", "Starting size, N₀", 1.0, 1_000_000.0, 1.0, 20.0),
         ParamDef::float("r", "Growth rate, r (per time unit)", 0.01, 5.0, 0.05, 0.5),
         ParamDef::float("k", "Carrying capacity, K", 10.0, 1_000_000.0, 10.0, 1000.0),
         ParamDef::float("tspan", "Time span", 1.0, 1000.0, 1.0, 20.0),
         ParamDef::choice("unit", "Time in", &["Hours", "Days", "Weeks", "Months", "Years", "Generations"], "Years"),
-        ParamDef::text("organism", "Organism plural, for axis titles (e.g. deer)", ""),
-        ParamDef::choice("graph", "Graph", &[
+        ParamDef::text("organism", "Organism plural, for the axis titles", ""),
+        ParamDef::choice("graph", "Show", &[
             "Population size over time", "Growth rate over time", "Per capita growth rate over time",
             "Population size and growth rate", "Population size and per capita rate", "Growth rate and per capita rate",
             "Growth rate against population size", "Per capita rate against population size", "Both rates against population size",
         ], "Population size over time"),
         ParamDef::choice("curve_color", "Curve color", &["Blue", "Red", "Green", "Black", "Orange", "Purple"], "Blue"),
         ParamDef::list("census", "Census data points (time:size)", ""),
-        ParamDef::bool("mark_k", "Mark the carrying capacity", true),
-        ParamDef::bool("mark_infl", "Mark the inflection point (logistic)", false),
+        ParamDef::bool("mark_k", "Carrying capacity, K dashed line", true),
+        ParamDef::bool("mark_infl", "Inflection point where growth is fastest", false),
         ParamDef::text("x_title", "x-axis title (blank = automatic)", ""),
         ParamDef::text("y_title", "y-axis title (blank = automatic)", ""),
-        ParamDef::bool("fit", "Fit the axes automatically", true),
-        ParamDef::float("x_max", "x-axis maximum (when not fitting)", 1.0, 100_000.0, 1.0, 20.0),
-        ParamDef::float("y_max", "y-axis maximum (when not fitting, first panel)", 0.001, 10_000_000.0, 10.0, 1100.0),
+        ParamDef::bool("fit", "Fit the axes as these change", true),
+        ParamDef::float("x_max", "To", 1.0, 100_000.0, 1.0, 20.0),
+        ParamDef::float("y_max", "To", 0.001, 10_000_000.0, 10.0, 1100.0),
         ParamDef::choice("minor", "Minor gridlines", &["None", "2 per block", "4 per block", "5 per block"], "None"),
         ParamDef::bool("blank", "Blank graph (axes only, for students to draw on)", false),
         ParamDef::text("title", "Chart title (blank = none)", ""),
@@ -107,32 +117,32 @@ pub fn growth_params() -> Vec<ParamDef> {
         // ---- added for parity with the reference controls
         ParamDef::float("tau", "Overshoot: lag, tau (0 = automatic, r*tau = 1.3)", 0.0, 100.0, 0.1, 0.0),
         ParamDef::bool("draw_curve", "Draw the curve", true),
-        ParamDef::bool("census_auto", "Census points counted from the model", false),
-        ParamDef::float("census_every", "Census: count every (time units)", 0.1, 100.0, 0.1, 1.0),
-        ParamDef::choice("census_scatter", "Census scatter", &["None, on the curve", "About 5%", "About 10%", "About 20%"], "None, on the curve"),
+        ParamDef::bool("census_auto", "Show census points on the population graph", false),
+        ParamDef::float("census_every", "Count every", 0.1, 100.0, 0.1, 1.0),
+        ParamDef::choice("census_scatter", "Scatter", &["None, on the curve", "About 5%", "About 10%", "About 20%"], "None, on the curve"),
         ParamDef::int("census_seed", "Census: new counts (seed)", 1, 9999, 1),
-        ParamDef::bool("census_table", "List the census counts in a table beside the graph", false),
+        ParamDef::bool("census_table", "List them in a table beside the graph", false),
         ParamDef::choice("k_label_style", "Carrying capacity label", &["Text", "Blank line", "None"], "Text"),
-        ParamDef::bool("mark_phases", "Growth phases above the graph (lag, exponential, stationary)", false),
+        ParamDef::bool("mark_phases", "Growth phases above the graph", false),
         ParamDef::choice("title_style", "Chart title", &["Text", "Blank line", "None"], "Text"),
-        ParamDef::choice("xtitle_style", "Time axis title", &["Text", "Blank line", "None"], "Text"),
-        ParamDef::choice("ytitle_style", "Population size axis title", &["Text", "Blank line", "None"], "Text"),
+        ParamDef::choice("xtitle_style", "Time axis", &["Text", "Blank line", "None"], "Text"),
+        ParamDef::choice("ytitle_style", "Population size axis", &["Text", "Blank line", "None"], "Text"),
         ParamDef::text("rate_title", "Growth rate axis title (blank = automatic)", ""),
         ParamDef::text("pc_title", "Per capita rate axis title (blank = automatic)", ""),
-        ParamDef::float("x_min", "x-axis from (when not fitting)", -100_000.0, 100_000.0, 1.0, 0.0),
-        ParamDef::float("x_step", "x-axis count by (0 = automatic)", 0.0, 100_000.0, 0.1, 0.0),
-        ParamDef::choice("x_numbers", "x-axis numbers", &["Automatic", "Every line", "Every 2nd line", "Every 5th line", "Every 10th line", "No numbers"], "Automatic"),
-        ParamDef::choice("x_end", "x-axis label at the right end", &["None", "Text"], "None"),
+        ParamDef::float("x_min", "From", -100_000.0, 100_000.0, 1.0, 0.0),
+        ParamDef::float("x_step", "Count by", 0.0, 100_000.0, 0.1, 0.0),
+        ParamDef::choice("x_numbers", "Numbers", &["Automatic", "Every line", "Every 2nd line", "Every 5th line", "Every 10th line", "No numbers"], "Automatic"),
+        ParamDef::choice("x_end", "Label at the right end", &["None", "Text"], "None"),
         ParamDef::text("x_end_text", "x-axis end label text", "t"),
-        ParamDef::choice("x_lo_end", "x-axis left end", &["None", "Triangle arrow", "Line arrow", "Circle"], "None"),
-        ParamDef::choice("x_hi_end", "x-axis right end", &["None", "Triangle arrow", "Line arrow", "Circle"], "None"),
-        ParamDef::float("y_min", "y-axis from (when not fitting)", -10_000_000.0, 10_000_000.0, 1.0, 0.0),
-        ParamDef::float("y_step", "y-axis count by (0 = automatic)", 0.0, 10_000_000.0, 0.1, 0.0),
-        ParamDef::choice("y_numbers", "y-axis numbers", &["Automatic", "Every line", "Every 2nd line", "Every 5th line", "Every 10th line", "No numbers"], "Automatic"),
-        ParamDef::choice("y_end", "y-axis label at the top end", &["None", "Text"], "None"),
+        ParamDef::choice("x_lo_end", "Left end", &["None", "Triangle arrow", "Line arrow", "Circle"], "None"),
+        ParamDef::choice("x_hi_end", "Right end", &["None", "Triangle arrow", "Line arrow", "Circle"], "None"),
+        ParamDef::float("y_min", "From", -10_000_000.0, 10_000_000.0, 1.0, 0.0),
+        ParamDef::float("y_step", "Count by", 0.0, 10_000_000.0, 0.1, 0.0),
+        ParamDef::choice("y_numbers", "Numbers", &["Automatic", "Every line", "Every 2nd line", "Every 5th line", "Every 10th line", "No numbers"], "Automatic"),
+        ParamDef::choice("y_end", "Label at the top end", &["None", "Text"], "None"),
         ParamDef::text("y_end_text", "y-axis end label text", "N"),
-        ParamDef::choice("y_lo_end", "y-axis bottom end", &["None", "Triangle arrow", "Line arrow", "Circle"], "None"),
-        ParamDef::choice("y_hi_end", "y-axis top end", &["None", "Triangle arrow", "Line arrow", "Circle"], "None"),
+        ParamDef::choice("y_lo_end", "Bottom end", &["None", "Triangle arrow", "Line arrow", "Circle"], "None"),
+        ParamDef::choice("y_hi_end", "Top end", &["None", "Triangle arrow", "Line arrow", "Circle"], "None"),
         ParamDef::float("y2_max", "Second graph y-axis maximum (when not fitting, 0 = fit)", 0.0, 10_000_000.0, 0.1, 0.0),
         ParamDef::float("y2_step", "Second graph y-axis count by (0 = automatic)", 0.0, 10_000_000.0, 0.01, 0.0),
     ]
@@ -276,50 +286,18 @@ pub fn growth_render(p: &Params) -> String {
     let phases = p.b("mark_phases") && t_inf.is_some() && !blank && panels.contains(&Panel::TimeN);
     let has_ends = p.s("y_end") == "Text" || p.s("y_hi_end") != "None" && !p.s("y_hi_end").is_empty();
 
-    // census table beside the graph
-    let table: Vec<(f64, f64)> = if p.b("census_table") && !blank { census.clone() } else { vec![] };
-    let single = panels.len() == 1;
-    let ah = if single { 300.0 } else { 205.0 };
-    let rows_per = (((ah - 28.0f64) / 17.0).floor() as usize).max(4);
-    let ntab = if table.is_empty() { 0 } else { table.len().div_ceil(rows_per) };
-    let tab_w = 150.0;
-    let (x0, aw) = (112.0f64, 510.0f64);
-    let x_end_extra = if p.s("x_end") == "Text" || p.s("x_hi_end") != "None" && !p.s("x_hi_end").is_empty() { 20.0 } else { 0.0 };
-    let w = 660.0 + x_end_extra + if ntab > 0 { 10.0 + ntab as f64 * (tab_w + 12.0) } else { 0.0 };
-    let top = 28.0 + if has_title { 34.0 } else { 0.0 } + if phases { 26.0 } else { 0.0 } + if has_ends { 16.0 } else { 0.0 };
-    let stride = ah + 82.0;
-    let legend_h = if series.len() > 1 { 34.0 } else { 0.0 };
-    let h = top + stride * panels.len() as f64 + legend_h + 6.0;
-    let mut d = Doc::new(w, h);
-    if !title.is_empty() { bold(&mut d, (x0 + aw / 2.0).max(w / 2.0 - if ntab > 0 { ntab as f64 * 81.0 } else { 0.0 }), 32.0, 19.0, "middle", &title); }
-    else if title_blank { d.line(x0 + aw / 2.0 - 140.0, 36.0, x0 + aw / 2.0 + 140.0, 36.0, INK, 1.3); }
-
-    let tx = if p.s("x_title").trim().is_empty() { format!("Time ({unit})") } else { p.s("x_title").trim().to_string() };
-    let noun = if org.is_empty() { String::new() } else { org.clone() };
     let fit = p.b("fit");
-    let opts = AxOpts {
-        xnum: numbers_every(p.s("x_numbers")),
-        ynum: numbers_every(p.s("y_numbers")),
-        xend: if p.s("x_end") == "Text" { p.s("x_end_text").trim().to_string() } else { String::new() },
-        yend: if p.s("y_end") == "Text" { p.s("y_end_text").trim().to_string() } else { String::new() },
-        x_lo: p.s("x_lo_end").to_string(), x_hi: p.s("x_hi_end").to_string(),
-        y_lo: p.s("y_lo_end").to_string(), y_hi: p.s("y_hi_end").to_string(),
-        xt_mode: p.s("xtitle_style").to_string(), yt_mode: p.s("ytitle_style").to_string(),
+    let ydata_of = |pk: &Panel, si: usize| -> &Vec<f64> {
+        match pk { Panel::TimeN => &series[si].ys, Panel::TimeRate | Panel::NRate => &rates[si], _ => &pers[si] }
     };
-
-    for (pi, pk) in panels.iter().enumerate() {
-        let y0 = top + stride * pi as f64;
-        // values to plot
-        let ydata = |si: usize| -> &Vec<f64> {
-            match pk { Panel::TimeN => &series[si].ys, Panel::TimeRate | Panel::NRate => &rates[si], _ => &pers[si] }
-        };
+    let range_of = |pi: usize, pk: &Panel| -> (f64, f64, f64, f64, f64, f64) {
         let is_time = matches!(pk, Panel::TimeN | Panel::TimeRate | Panel::TimePer);
         // fit
         let (mut ymin, mut ymax) = (0.0f64, 0.0f64);
         let mut xmax_n = 0.0f64;
         for (si, s) in series.iter().enumerate() {
             if !s.fit { continue; }
-            for (i, v) in ydata(si).iter().enumerate() {
+            for (i, v) in ydata_of(pk, si).iter().enumerate() {
                 ymax = ymax.max(*v);
                 ymin = ymin.min(*v);
                 xmax_n = xmax_n.max(s.ys[i]);
@@ -364,6 +342,48 @@ pub fn growth_render(p: &Params) -> String {
             yt = yb + ((top_v - yb) / ys - 1e-9).ceil() * ys;
         }
         if yt <= yb { yt = yb + ys; }
+        (yb, yt, ys, xlo, x1, xs)
+    };
+    let ranges: Vec<(f64, f64, f64, f64, f64, f64)> = panels.iter().enumerate().map(|(pi, pk)| range_of(pi, pk)).collect();
+    // census table beside the graph
+    let table: Vec<(f64, f64)> = if p.b("census_table") && !blank { census.clone() } else { vec![] };
+    let single = panels.len() == 1;
+    // the reference's graph paper: 32 px squares, a 640 px wide plot, the left margin sized to the
+    // widest y number (0.6 em of 14 px per character)
+    let ny0 = (((ranges[0].1 - ranges[0].0) / ranges[0].2).round().max(1.0)) as f64;
+    let ah = if single { (ny0 * 32.0).clamp(160.0, 480.0) } else { 205.0 };
+    let rows_per = (((ah - 28.0f64) / 17.0).floor() as usize).max(4);
+    let ntab = if table.is_empty() { 0 } else { table.len().div_ceil(rows_per) };
+    let tab_w = 150.0;
+    let ychars = ranges.iter().zip(&panels).map(|(r, _)| y_label_chars(r.0, r.1, r.2, numbers_every(p.s("y_numbers")))).max().unwrap_or(1);
+    let (x0, aw) = (ref_left(ychars), 640.0f64);
+    let x_end_extra = if p.s("x_end") == "Text" || p.s("x_hi_end") != "None" && !p.s("x_hi_end").is_empty() { 20.0 } else { 0.0 };
+    let w = x0 + aw + 22.4 + x_end_extra + if ntab > 0 { 10.0 + ntab as f64 * (tab_w + 12.0) } else { 0.0 };
+    let top = 14.0 + if has_title { 34.0 } else { 0.0 } + if phases { 26.0 } else { 0.0 } + if has_ends { 16.0 } else { 0.0 };
+    let stride = ah + 66.8 + 20.0;
+    let legend_h = if series.len() > 1 { 26.6 } else { 0.0 };
+    let h = top + stride * panels.len() as f64 - 20.0 + legend_h;
+    let mut d = Doc::new(w, h);
+    if !title.is_empty() { bold(&mut d, (x0 + aw / 2.0).max(w / 2.0 - if ntab > 0 { ntab as f64 * 81.0 } else { 0.0 }), 32.0, 19.0, "middle", &title); }
+    else if title_blank { d.line(x0 + aw / 2.0 - 140.0, 36.0, x0 + aw / 2.0 + 140.0, 36.0, INK, 1.3); }
+
+    let tx = if p.s("x_title").trim().is_empty() { format!("Time ({unit})") } else { p.s("x_title").trim().to_string() };
+    let noun = if org.is_empty() { String::new() } else { org.clone() };
+    let opts = AxOpts {
+        xnum: numbers_every(p.s("x_numbers")),
+        ynum: numbers_every(p.s("y_numbers")),
+        xend: if p.s("x_end") == "Text" { p.s("x_end_text").trim().to_string() } else { String::new() },
+        yend: if p.s("y_end") == "Text" { p.s("y_end_text").trim().to_string() } else { String::new() },
+        x_lo: p.s("x_lo_end").to_string(), x_hi: p.s("x_hi_end").to_string(),
+        y_lo: p.s("y_lo_end").to_string(), y_hi: p.s("y_hi_end").to_string(),
+        xt_mode: p.s("xtitle_style").to_string(), yt_mode: p.s("ytitle_style").to_string(),
+    };
+
+    for (pi, pk) in panels.iter().enumerate() {
+        let y0 = top + stride * pi as f64;
+        let ydata = |si: usize| -> &Vec<f64> { ydata_of(pk, si) };
+        let is_time = matches!(pk, Panel::TimeN | Panel::TimeRate | Panel::TimePer);
+        let (yb, yt, ys, xlo, x1, xs) = ranges[pi];
         let a = Axes { x: x0, y: y0, w: aw, h: ah, x0: xlo, x1, y0: yb, y1: yt, xs, ys };
 
         let ytitle_auto = match pk {
@@ -389,7 +409,7 @@ pub fn growth_render(p: &Params) -> String {
         begin_clip(&mut d, &a, &clip);
         let kstyle = p.s("k_label_style");
         if has_k && matches!(pk, Panel::TimeN) && p.b("mark_k") {
-            dashed(&mut d, &[(a.px(a.x0), a.py(k)), (a.px(a.x1), a.py(k))], INK, 1.6, "7 5");
+            dashed(&mut d, &[(a.px(a.x0), a.py(k)), (a.px(a.x1), a.py(k))], INK, 2.0, "7 5");
         }
         if has_k && matches!(pk, Panel::NRate | Panel::NPer) && p.b("mark_k") {
             dashed(&mut d, &[(a.px(k), a.py(a.y0)), (a.px(k), a.py(a.y1))], INK, 1.6, "7 5");
@@ -440,7 +460,14 @@ pub fn growth_render(p: &Params) -> String {
             match kstyle {
                 "None" => {}
                 "Blank line" => { d.line(a.x + 8.0, a.py(k) + 20.0, a.x + 170.0, a.py(k) + 20.0, INK, 1.3); }
-                _ => bold(&mut d, a.x + 8.0, a.py(k) + 17.0, 13.0, "start", if p.s("k_label").trim().is_empty() { "Carrying capacity (K)" } else { p.s("k_label").trim() }),
+                _ => {
+                    // the reference paints a white plate under the label, then the text with a white halo,
+                    // so the dashed line and the gridlines never run through the words
+                    let text = if p.s("k_label").trim().is_empty() { "Carrying capacity (K)" } else { p.s("k_label").trim() };
+                    let (x, y, size) = (a.x + 8.0, a.py(k) + 21.7, 14.7);
+                    d.raw(&format!(r##"<g fill="#fff"><rect x="{:.3}" y="{:.3}" width="{:.4}" height="{:.3}"/></g>"##, x - 2.0, y - size * 0.78, bold_width(text, size) + 4.0, size * 1.02));
+                    txt(&mut d, x, y, size, "start", SANS, r##"font-weight="bold" stroke="#fff" stroke-width="4" paint-order="stroke" stroke-linejoin="round""##, text);
+                }
             }
         }
         if has_k && matches!(pk, Panel::NRate | Panel::NPer) && p.b("mark_k") && kstyle != "None" {
@@ -495,12 +522,74 @@ pub fn growth_render(p: &Params) -> String {
     if series.len() > 1 && !blank && draw_curve {
         let items: Vec<(String, String, String)> = series.iter().map(|s| (s.name.clone(), s.color.clone(), s.dash.replace(' ', ","))).collect();
         let items: Vec<(String, String, String)> = items.into_iter().map(|(n, c, dsh)| (n, c, if dsh.is_empty() { String::new() } else { "8 5".into() })).collect();
-        legend(&mut d, x0 + aw / 2.0, h - 20.0, &items);
+        legend(&mut d, x0 + aw / 2.0, h - 23.4, &items);
     }
     d.finish()
 }
 
 /// "Start from an example" entries for population growth (reference gallery + classic setups).
+/// The reference's one-line summaries under the Population Growth section headers.
+pub fn growth_section_summary(title: &str, p: &Params) -> Option<String> {
+    let num = |v: f64| {
+        let t = format!("{:.4}", (v * 10_000.0).round() / 10_000.0);
+        t.trim_end_matches('0').trim_end_matches('.').to_string()
+    };
+    let ends = |lo: &str, hi: &str| -> String {
+        let nm = |s: &str| s.to_lowercase();
+        let plain = |s: &str| s.is_empty() || s == "None";
+        if plain(lo) && plain(hi) { "plain ends".into() }
+        else if lo == hi { format!("{} at both ends", nm(lo)) }
+        else if plain(lo) { format!("{} at the right end", nm(hi)) }
+        else if plain(hi) { format!("{} at the left end", nm(lo)) }
+        else { format!("{} and {} ends", nm(lo), nm(hi)) }
+    };
+    Some(match title {
+        "Graphs" => p.s("graph").to_string(),
+        "Curve" => if p.0.contains_key("draw_curve") && !p.b("draw_curve") { "Hidden, for students to draw".into() } else { p.s("curve_color").to_string() },
+        "Census data" => {
+            if !p.b("census_auto") && p.s("census").trim().is_empty() { return Some("None".into()); }
+            let unit = p.s("unit").to_lowercase();
+            let sc = match p.s("census_scatter") { "About 5%" => "\u{b1}5% noise", "About 10%" => "\u{b1}10% noise", "About 20%" => "\u{b1}20% noise", _ => "on the curve" };
+            let mut t = format!("Every {} {} \u{b7} {}", num(p.f("census_every")), if unit.is_empty() { "years".into() } else { unit }, sc);
+            if p.b("census_table") { t.push_str(" \u{b7} with a table"); }
+            t
+        }
+        "Marked on the graph" => {
+            let mut v: Vec<&str> = Vec::new();
+            if p.b("mark_k") { v.push("Carrying capacity"); }
+            if p.b("mark_infl") { v.push("inflection point"); }
+            if p.b("mark_phases") { v.push("phases"); }
+            if v.is_empty() { "Nothing".into() } else { v.join(" \u{b7} ") }
+        }
+        "Titles" => {
+            let mut v: Vec<String> = Vec::new();
+            let q = |t: &str| format!("\u{201c}{t}\u{201d}");
+            let unit = p.s("unit").to_lowercase();
+            if p.s("title_style") == "Text" && !p.s("title").trim().is_empty() { v.push(q(p.s("title").trim())); }
+            let tx = if p.s("x_title").trim().is_empty() { format!("Time ({})", if unit.is_empty() { "years" } else { &unit }) } else { p.s("x_title").trim().to_string() };
+            let org = p.s("organism").trim();
+            let ty = if !p.s("y_title").trim().is_empty() { p.s("y_title").trim().to_string() } else if org.is_empty() { "Population size (N)".to_string() } else { format!("Number of {org} (N)") };
+            match p.s("xtitle_style") { "Text" => v.push(q(&tx)), "Blank line" => v.push("blank time line".into()), _ => {} }
+            match p.s("ytitle_style") { "Text" => v.push(q(&ty)), "Blank line" => v.push("blank size line".into()), _ => {} }
+            if v.is_empty() { "None".into() } else { v.join(" \u{b7} ") }
+        }
+        "x-axis" | "y-axis" => {
+            let x = title == "x-axis";
+            let ax = axes_of(p, false).into_iter().next()?;
+            let (lo, hi, st) = if x { (ax.x0, ax.x1, ax.xs) } else { (ax.y0, ax.y1, ax.ys) };
+            let (k, end, l, h) = if x { ("x", p.s("x_end"), p.s("x_lo_end"), p.s("x_hi_end")) } else { ("y", p.s("y_end"), p.s("y_lo_end"), p.s("y_hi_end")) };
+            let nn = ((hi - lo) / st).round().max(1.0) as i64;
+            let auto = ((nn as f64) / if x { 11.0 } else { 12.0 }).ceil().max(1.0) as i64;
+            let every = numbers_every(p.s(&format!("{k}_numbers"))).unwrap_or(auto);
+            let nums = match every { 0 => "no numbers".to_string(), 1 => "numbered".to_string(), n => format!("numbered every {n}") };
+            let label = if end == "Text" { format!("label \u{201c}{}\u{201d}", p.s(&format!("{k}_end_text")).trim()) } else { "no label".to_string() };
+            format!("{} to {} \u{b7} by {} \u{b7} {nums} \u{b7} {label} \u{b7} {}", num(lo), num(hi), num(st), ends(l, h))
+        }
+        "Grid" => match p.s("minor") { "2 per block" | "4 per block" | "5 per block" => format!("Minor gridlines, {}", p.s("minor")), _ => "No minor gridlines".into() },
+        _ => return None,
+    })
+}
+
 pub fn growth_examples() -> Vec<Example> {
     let st = |v: &str| Value::S(v.into());
     vec![
@@ -591,36 +680,43 @@ pub fn growth_classics() -> Vec<Example> {
 
 // ---------------------------------------------------------------- predator-prey
 
+pub const OWN_PAIR: &str = "Your own pair";
+
 const PAIRS: [&str; 9] = [
-    "Custom (use the fields below)",
     "Snowshoe hare and Canada lynx",
-    "Rabbit and red fox",
-    "Mouse and owl",
-    "Aphid and ladybug",
     "Rabbit and wolf",
+    "Rabbit and red fox",
     "Moose and wolf (Isle Royale)",
     "Sea lion and orca",
     "Snake and eagle",
+    "Mouse and owl",
+    "Aphid and ladybug",
+    "Your own pair",
 ];
+
+/// The animals a named pair stands for (prey, predator), None for Custom.
+pub fn preset_names(pair: &str) -> Option<(&'static str, &'static str)> {
+    preset(pair).map(|(a, b, ..)| (a, b))
+}
 
 pub fn pp_params() -> Vec<ParamDef> {
     vec![
-        ParamDef::choice("pair", "Pair (presets override names, averages and cycle)", &PAIRS, PAIRS[0]),
+        ParamDef::choice("pair", "Pair", &PAIRS, PAIRS[0]),
         ParamDef::text("prey", "Prey", "Hares"),
         ParamDef::text("pred", "Predators", "Lynx"),
-        ParamDef::choice("source", "Work the cycle out from", &["Populations", "Model rates"], "Populations"),
+        ParamDef::choice("source", "Work the cycle out from", &["Populations", "Model rates (α β γ δ)"], "Populations"),
         ParamDef::float("prey0", "Prey at the start", 0.1, 1_000_000.0, 1.0, 20.0),
         ParamDef::float("pred0", "Predators at the start", 0.1, 1_000_000.0, 1.0, 12.0),
         ParamDef::float("prey_avg", "Average prey", 1.0, 1_000_000.0, 1.0, 50.0),
         ParamDef::float("pred_avg", "Average predators", 1.0, 1_000_000.0, 1.0, 20.0),
-        ParamDef::float("cycle", "Cycle length (time units)", 0.5, 500.0, 0.5, 10.0),
+        ParamDef::float("cycle", "Cycle length (years)", 0.5, 500.0, 0.5, 10.0),
         ParamDef::float("alpha", "Model: prey growth, alpha", 0.01, 5.0, 0.01, 0.67),
         ParamDef::float("beta", "Model: predation, beta", 0.0001, 1.0, 0.0001, 0.0337),
         ParamDef::float("gamma", "Model: predator death, gamma", 0.01, 5.0, 0.01, 0.67),
         ParamDef::float("delta", "Model: predator gain, delta", 0.0001, 1.0, 0.0001, 0.0135),
         ParamDef::float("tshow", "Time shown", 1.0, 1000.0, 1.0, 40.0),
         ParamDef::choice("unit", "Units", &["Years", "Months", "Weeks", "Days"], "Years"),
-        ParamDef::choice("graph", "Graph", &["Over time", "Predators against prey"], "Over time"),
+        ParamDef::choice("graph", "Show", &["Over time", "Predators against prey"], "Over time"),
         ParamDef::choice("show", "Show", &["Both", "Prey only", "Predators only"], "Both"),
         ParamDef::choice("style", "Style", &["Color", "Black and white"], "Color"),
         ParamDef::choice("data", "Data", &["Smooth curves", "Points each time unit", "Census counts"], "Smooth curves"),
@@ -637,13 +733,13 @@ pub fn pp_params() -> Vec<ParamDef> {
         ParamDef::float("census_noise", "Census: counts off by about (%)", 0.0, 50.0, 1.0, 10.0),
         ParamDef::int("census_seed", "Census: new counts (seed)", 1, 9999, 1),
         ParamDef::bool("census_join", "Join the counts with lines (solid prey, dashed predators)", true),
-        ParamDef::bool("mark_lag", "Mark the lag from a prey peak to the predator peak after it", false),
-        ParamDef::bool("mark_period", "Mark the period from one peak to the next", false),
+        ParamDef::bool("mark_lag", "Lag from a prey peak to the predator peak after it", false),
+        ParamDef::bool("mark_period", "Period from one peak to the next", false),
         ParamDef::choice("lag_labels", "Lag and period labels", &["Name and length", "Name only", "Blank for students"], "Name and length"),
         ParamDef::choice("title_style", "Chart title", &["Text", "Blank line", "None"], "Text"),
         ParamDef::choice("xtitle_style", "x-axis title", &["Text", "Blank line", "None"], "Text"),
         ParamDef::choice("ytitle_style", "y-axis title", &["Text", "Blank line", "None"], "Text"),
-        ParamDef::bool("x_fit", "x-axis: fit to the time shown", true),
+        ParamDef::bool("x_fit", "Fit to the time shown", true),
         ParamDef::float("x_min", "x-axis from (when not fitting)", -10_000.0, 10_000.0, 1.0, 0.0),
         ParamDef::float("x_max", "x-axis to (when not fitting)", 0.1, 10_000.0, 1.0, 40.0),
         ParamDef::float("x_step", "x-axis count by (0 = automatic)", 0.0, 10_000.0, 0.1, 0.0),
@@ -652,7 +748,7 @@ pub fn pp_params() -> Vec<ParamDef> {
         ParamDef::text("x_end_text", "x-axis end label text", "t"),
         ParamDef::choice("x_lo_end", "x-axis left end", &["None", "Triangle arrow", "Line arrow", "Circle"], "None"),
         ParamDef::choice("x_hi_end", "x-axis right end", &["None", "Triangle arrow", "Line arrow", "Circle"], "None"),
-        ParamDef::bool("y_fit", "y-axis: fit to the populations", true),
+        ParamDef::bool("y_fit", "Fit to the populations", true),
         ParamDef::float("y_min", "y-axis from (when not fitting)", -1_000_000.0, 1_000_000.0, 1.0, 0.0),
         ParamDef::float("y_max", "y-axis to (when not fitting)", 0.1, 10_000_000.0, 1.0, 120.0),
         ParamDef::float("y_step", "y-axis count by (0 = automatic)", 0.0, 10_000_000.0, 0.1, 0.0),
@@ -718,6 +814,37 @@ fn preset_start(pair: &str) -> Option<(f64, f64, f64)> {
     }
 }
 
+/// A pair pick fills the page's boxes with that pair's numbers; typing in one of those boxes while
+/// a named pair is picked turns the pair into "Your own pair" and keeps everything else as shown.
+pub fn pp_panel_changed(key: &str, p: &mut Params) {
+    let pair = p.s("pair").to_string();
+    let Some((a, b, pa, qa, cy, u, _)) = preset(&pair) else { return };
+    let fill = |p: &mut Params| {
+        p.set_s("prey", a);
+        p.set_s("pred", b);
+        p.set_f("prey_avg", pa);
+        p.set_f("pred_avg", qa);
+        p.set_f("cycle", cy);
+        p.set_s("unit", u);
+        let (x0, y0) = preset_start(&pair).map(|(x, y, _)| (x, y)).unwrap_or((pa * 0.4, qa * 0.6));
+        p.set_f("prey0", x0);
+        p.set_f("pred0", y0);
+    };
+    if key == "pair" {
+        fill(p);
+        if let Some((_, _, t)) = preset_start(&pair) {
+            p.set_f("tshow", t);
+        }
+    } else if matches!(key, "prey" | "pred" | "prey_avg" | "pred_avg" | "cycle" | "unit" | "prey0" | "pred0") {
+        let typed = p.0.get(key).cloned();
+        fill(p);
+        if let Some(v) = typed {
+            p.0.insert(key.to_string(), v);
+        }
+        p.set_s("pair", PAIRS[8]);
+    }
+}
+
 /// Mean spacing of successive peaks (0 when fewer than two).
 fn cycle_est(pk: &[(f64, f64)]) -> f64 {
     if pk.len() < 2 { return 0.0; }
@@ -761,10 +888,12 @@ fn pp_setup(p: &Params) -> PpSetup {
     let (x0, y0) = if let Some((a, b, _)) = preset_start(pair) { (a, b) }
         else if preset(pair).is_some() { (pavg * 0.4, qavg * 0.6) }
         else { (p.f("prey0").max(0.01), p.f("pred0").max(0.01)) };
+    // the reference's default (hares and lynx) counts thousands of animals
+    if ytitle.is_empty() && prey == "Hares" && pred == "Lynx" && pavg == 50.0 && qavg == 20.0 { ytitle = "Number of animals (thousands)".into(); }
     if prey.is_empty() { prey = "Prey".into(); }
     if pred.is_empty() { pred = "Predators".into(); }
     let (alpha, beta, gamma, delta);
-    if p.s("source") == "Model rates" {
+    if p.s("source").starts_with("Model rates") {
         alpha = p.f("alpha"); beta = p.f("beta"); gamma = p.f("gamma"); delta = p.f("delta");
     } else {
         // alpha = gamma = w; time scaling is exact, so measure the period at w = 1 and rescale.
@@ -835,7 +964,7 @@ pub fn pp_readout(p: &Params) -> Vec<String> {
         out.push(format!("{}: {} to {}, averaging {}", st.prey, sig3(plo), sig3(phi), sig3(st.gamma / st.delta.max(1e-12))));
         out.push(format!("{}: {} to {}, averaging {}", st.pred, sig3(qlo), sig3(qhi), sig3(st.alpha / st.beta.max(1e-12))));
     }
-    if p.s("source") != "Model rates" {
+    if !p.s("source").starts_with("Model rates") {
         out.push(format!("α = {}, β = {}, γ = {}, δ = {}", sig3(st.alpha), sig3(st.beta), sig3(st.gamma), sig3(st.delta)));
     }
     let _ = (st.pavg, st.qavg, st.cycle);
@@ -922,15 +1051,6 @@ pub fn pp_render(p: &Params) -> String {
     let right = !phase && show_prey && show_pred && match p.s("y_axis") { "Predators on the right" => true, "One for both" => false, _ => auto_right };
     let census = p.s("data") == "Census counts";
 
-    let (w, ax_x, aw, ah) = (680.0 + if right { 50.0 } else { 0.0 }, 112.0, 530.0, 360.0);
-    let has_title = !title.is_empty() || title_style == "Blank line";
-    let ends = p.s("y_end") == "Text" || !matches!(p.s("y_hi_end"), "None" | "");
-    let top = 28.0 + if has_title { 34.0 } else { 0.0 } + if ends { 16.0 } else { 0.0 };
-    let h = top + ah + 128.0;
-    let mut d = Doc::new(w, h);
-    if !title.is_empty() { bold(&mut d, ax_x + aw / 2.0, 32.0, 19.0, "middle", &title); }
-    else if title_style == "Blank line" { d.line(ax_x + aw / 2.0 - 140.0, 36.0, ax_x + aw / 2.0 + 140.0, 36.0, INK, 1.3); }
-
     // census counts: sampled every `census_every`, scattered by about census_noise %
     let counts: Vec<(f64, f64, f64)> = if census {
         let every = p.f("census_every").max(tshow / 400.0).max(0.01);
@@ -975,6 +1095,21 @@ pub fn pp_render(p: &Params) -> String {
             (lo, lo + ((hi - lo) / st - 1e-9).ceil() * st, st)
         }
     };
+
+    // the reference's graph paper: 32 px squares, a 640 px plot, margins sized to the numbers
+    let vmax0 = if phase { maxpred } else { match (show_prey, show_pred) { (true, true) if !right => maxprey.max(maxpred), (true, _) => maxprey, _ => maxpred } };
+    let (yb0, yt0, ys0) = if phase { let ys = nice_step(maxpred * 1.05, 10.0); (0.0, ((maxpred * 1.05) / ys).ceil() * ys, ys) } else { yrange(vmax0) };
+    let ah = (((yt0 - yb0) / ys0).round().max(1.0) * 32.0).clamp(160.0, 480.0);
+    let ychars = y_label_chars(yb0, yt0, ys0, numbers_every(p.s("y_numbers")));
+    let (ax_x, aw) = (ref_left(ychars), 640.0f64);
+    let w = ax_x + aw + 22.4 + if right { 50.0 } else { 0.0 };
+    let has_title = !title.is_empty() || title_style == "Blank line";
+    let ends = p.s("y_end") == "Text" || !matches!(p.s("y_hi_end"), "None" | "");
+    let top = 14.0 + if has_title { 34.0 } else { 0.0 } + if ends { 16.0 } else { 0.0 };
+    let h = top + ah + 66.8 + if p.b("legend") || phase { 26.6 } else { 0.0 };
+    let mut d = Doc::new(w, h);
+    if !title.is_empty() { bold(&mut d, ax_x + aw / 2.0, 32.0, 19.0, "middle", &title); }
+    else if title_style == "Blank line" { d.line(ax_x + aw / 2.0 - 140.0, 36.0, ax_x + aw / 2.0 + 140.0, 36.0, INK, 1.3); }
 
     if !phase {
         let vmax = match (show_prey, show_pred) { (true, true) if !right => maxprey.max(maxpred), (true, _) => maxprey, _ => maxpred };
@@ -1127,7 +1262,7 @@ pub fn pp_render(p: &Params) -> String {
         let mut items = Vec::new();
         if show_prey { items.push((prey.clone(), cprey.to_string(), String::new())); }
         if show_pred { items.push((pred.clone(), cpred.to_string(), dash_pred.to_string())); }
-        if p.b("legend") { legend(&mut d, ax_x + aw / 2.0, top + ah + 90.0, &items); }
+        if p.b("legend") { legend(&mut d, ax_x + aw / 2.0, top + ah + 70.0, &items); }
     } else {
         let xmax = maxprey;
         let ymax = maxpred;
@@ -1147,7 +1282,7 @@ pub fn pp_render(p: &Params) -> String {
         let (sx, sy) = a.pt((x0, y0));
         d.circle(sx, sy, 5.0, INK, "#fff", 1.5);
         bold(&mut d, sx + 9.0, sy - 8.0, 12.0, "start", "start");
-        bold(&mut d, ax_x + aw / 2.0, top + ah + 90.0, 13.0, "middle", "Time runs along the loop (arrow shows direction)");
+        bold(&mut d, ax_x + aw / 2.0, top + ah + 74.92, 14.7, "middle", "Time runs along the loop (arrow shows direction)");
     }
     d.finish()
 }
@@ -1256,7 +1391,7 @@ mod tests {
         assert_eq!(r[2], "Lynx: 6.72 to 44.6, averaging 20");
         assert_eq!(r[3], "α = 0.674, β = 0.0337, γ = 0.674, δ = 0.0135");
         // model rates typed in: no rates line, averages from the rates
-        let r = pp_readout(&pp(&[("source", s("Model rates")), ("alpha", Value::F(0.674)), ("beta", Value::F(0.0337)), ("gamma", Value::F(0.674)), ("delta", Value::F(0.0135))]));
+        let r = pp_readout(&pp(&[("source", s("Model rates (α β γ δ)")), ("alpha", Value::F(0.674)), ("beta", Value::F(0.0337)), ("gamma", Value::F(0.674)), ("delta", Value::F(0.0135))]));
         assert_eq!(r.len(), 3);
         assert_eq!(r[0], "A cycle every 10 years; the predators peak 1.6 years after the prey");
         assert_eq!(r[1], "Hares: 16.8 to 111, averaging 49.9");
@@ -1265,7 +1400,7 @@ mod tests {
         assert!(r[0].starts_with("A cycle every 20 days"), "{}", r[0]);
         assert!(r[1].starts_with("Aphids: ") && r[2].starts_with("Ladybugs: "), "{r:?}");
         // a short cycle in one unit reads "1 year"
-        assert!(pp_readout(&pp(&[("cycle", Value::F(1.0))]))[0].starts_with("A cycle every 1 year;"));
+        assert!(pp_readout(&pp(&[("pair", s("Your own pair")), ("cycle", Value::F(1.0))]))[0].starts_with("A cycle every 1 year;"));
     }
 
     /// Turning an axis's fit off keeps the fitted range in its boxes (no jump).
@@ -1310,7 +1445,7 @@ mod tests {
         render_case("predator-prey", "default", &[]);
         render_case("predator-prey", "foxes", &[("pair", s("Rabbit and red fox")), ("marks", s("Peaks")), ("data", s("Points each time unit")), ("tshow", Value::F(30.0)), ("minor", s("2 per block"))]);
         render_case("predator-prey", "phase", &[("graph", s("Predators against prey")), ("style", s("Black and white"))]);
-        render_case("predator-prey", "rates", &[("source", s("Model rates")), ("show", s("Prey only"))]);
+        render_case("predator-prey", "rates", &[("source", s("Model rates (α β γ δ)")), ("show", s("Prey only"))]);
         render_case("predator-prey", "parity", &[("data", s("Census counts")), ("marks", s("Peaks")), ("mark_lag", Value::B(true)),
             ("mark_period", Value::B(true)), ("y_axis", s("Predators on the right")), ("title_style", s("Blank line")),
             ("x_fit", Value::B(false)), ("x_max", Value::F(30.0)), ("x_step", Value::F(5.0)), ("y_fit", Value::B(false)), ("y_max", Value::F(150.0))]);

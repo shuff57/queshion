@@ -25,6 +25,8 @@ pub fn overrides(id: &str) -> Vec<(&'static str, Value)> {
         // the reference: one magnifier above the object's right end (share links v3)
         "length-reading" => vec![("mag_show", st("Ruler and one magnifier above"))],
         "ruler-reading" => vec![("magnify", st("Ruler and magnifiers"))],
+        // the reference's micropipette: a short body with a long shaft and tip (share links v4)
+        "micropipette-reading" => vec![("shape", st("Short body, long shaft and tip"))],
         // Chemistry starting examples.
         "line-spectrum" => vec![("strips", st("Hydrogen; Helium; Sodium; Unknown = Hydrogen + Sodium"))],
         // the reference opens on percent abundance (78.99 %, "Abundance (%)")
@@ -41,7 +43,7 @@ pub fn overrides(id: &str) -> Vec<(&'static str, Value)> {
         "ph-reading" => vec![("meter", st("Probe in a beaker"))],
         // the reference's grey marbles and no arrow between the cylinders (share links v3)
         "volume-by-displacement" => vec![("marble_color", st("Gray")), ("arrow", Value::B(false))],
-        "heating-cooling-curve" => vec![("curve_color", st("#c0392b")), ("plateau_labels", st("The change (Melting)"))],
+        "heating-cooling-curve" => vec![("curve_color", st("#c0392b")), ("plateau_labels", st("The change (Melting)")), ("scale", st("To scale"))],
         // Blank starting grids for students.
         "coordinate-grid" => vec![("equations", st("")), ("xmax", Value::F(15.0)), ("ymax", Value::F(15.0))],
         "number-line" => vec![("inequality", st(""))],
@@ -69,6 +71,7 @@ pub fn added_in(id: &str) -> &'static [(u32, &'static [&'static str])] {
         "ph-reading" => &[(3, &["meter"])],
         "kite" => &[(3, &["flip"])],
         "length-reading" => &[(3, &["mag_show"])],
+        "micropipette-reading" => &[(4, &["shape"])],
         _ => &[],
     }
 }
@@ -175,12 +178,12 @@ mod tests {
         let d = registry().into_iter().find(|d| d.id == "ph-reading").unwrap();
         let open = (d.render)(&start_params(&d));
         assert!(open.contains(">ON/OFF<") && open.contains(">CAL<") && !open.contains(">MODE<"), "bench meter: {open}");
-        assert!(open.contains(">4.62<"));
+        assert!(open.contains("meter reading 4.62<"));
         let plain = (d.render)(&Params::defaults(&(d.params)()));
         assert!(plain.contains(">MODE<"), "saved meters keep the hanging probe");
         let mut one = start_params(&d);
         one.set_s("places", "0.0");
-        assert!((d.render)(&one).contains(">4.6<"));
+        assert!((d.render)(&one).contains("meter reading 4.6<"));
         assert!(start("kite").b("flip"), "kite opens mirrored like the reference");
         assert_eq!(start("kite").s("fill"), "#ffffff");
         let vd = start("volume-by-displacement");
@@ -188,7 +191,7 @@ mod tests {
         let d = registry().into_iter().find(|d| d.id == "volume-by-displacement").unwrap();
         let open = (d.render)(&start_params(&d));
         let plain = (d.render)(&Params::defaults(&(d.params)()));
-        assert!(open.contains("#9a9a9a") && !open.contains("#8fb4d6"), "grey marbles");
+        assert!(open.contains("#8f8f8f") && !open.contains("#8fb4d6"), "grey marbles");
         assert!(plain.contains("#8fb4d6"), "saved figures keep blue marbles");
         assert!(open.matches("<polygon").count() < plain.matches("<polygon").count(), "no arrow head");
         let pl = start("parallel-lines");

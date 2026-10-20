@@ -28,7 +28,78 @@ fn radius(h: f64, below: bool, n: usize) -> f64 {
     if below { (150.0f64).min(300.0 / n.max(1) as f64 + 40.0) } else { (h * 0.3).clamp(110.0, 170.0) }
 }
 
+/// The reference does not let strokes and type grow with the lens: inside it they are drawn at
+/// `k^0.4` times their size instead of `k` times, so each `stroke-width` and `font-size` in the
+/// copied body is scaled by `k^-0.6` before the group's own scale of `k` is applied.
+fn damp(body: &str, k: f64) -> String {
+    let f = k.powf(-0.6);
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body;
+    loop {
+        let hit = ["stroke-width=\"", "font-size=\""].iter().filter_map(|k| rest.find(k).map(|i| (i, k.len()))).min();
+        let Some((i, l)) = hit else { out.push_str(rest); break };
+        out.push_str(&rest[..i + l]);
+        rest = &rest[i + l..];
+        let end = rest.find('"').unwrap_or(rest.len());
+        match rest[..end].parse::<f64>() {
+            Ok(v) => out.push_str(&format!("{:.3}", v * f)),
+            Err(_) => out.push_str(&rest[..end]),
+        }
+        rest = &rest[end..];
+    }
+    out
+}
+
+/// Inside the lens a label's gap past its tick (`data-xe` marks the tick end) shrinks with the type.
+fn damp_gaps(body: &str, k: f64) -> String {
+    let f = k.powf(-0.6);
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body;
+    while let Some(i) = rest.find("<text x=\"") {
+        let (head, tail) = rest.split_at(i + 9);
+        out.push_str(head);
+        let end = tail.find('>').unwrap_or(tail.len());
+        let tag = &tail[..end];
+        let xe = tag.find("data-xe=\"").and_then(|j| tag[j + 9..].split('"').next()).and_then(|v| v.parse::<f64>().ok());
+        let x = tag.split('"').next().and_then(|v| v.parse::<f64>().ok());
+        let ye = tag.find("data-ye=\"").and_then(|j| tag[j + 9..].split('"').next()).and_then(|v| v.parse::<f64>().ok());
+        let mut t = match (xe, x) {
+            (Some(xe), Some(x)) => format!("{:.3}{}", xe + (x - xe) * f, &tail[tail.find('"').unwrap_or(0)..end]),
+            _ => tail[..end].to_string(),
+        };
+        if let Some(ye) = ye {
+            // the same shrink for the gap below a tick (the ruler's numbers)
+            if let Some(j) = t.find(" y=\"") {
+                let rest = &t[j + 4..];
+                if let Some(q) = rest.find('"') {
+                    if let Ok(y) = rest[..q].parse::<f64>() {
+                        t = format!("{} y=\"{:.3}{}", &t[..j], ye + (y - ye) * f, &rest[q..]);
+                    }
+                }
+            }
+        }
+        out.push_str(&t);
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Common tangent lines of two circles (the dashed joins), as ((x1,y1),(x2,y2)) for each side.
+fn tangents(c1: (f64, f64), r1: f64, c2: (f64, f64), r2: f64) -> [((f64, f64), (f64, f64)); 2] {
+    let (dx, dy) = (c2.0 - c1.0, c2.1 - c1.1);
+    let d = (dx * dx + dy * dy).sqrt().max(1e-6);
+    let (ux, uy) = (dx / d, dy / d);
+    let cs = ((r1 - r2) / d).clamp(-1.0, 1.0);
+    let sn = (1.0 - cs * cs).sqrt();
+    [-1.0, 1.0].map(|s| {
+        let n = (ux * cs - uy * sn * s, uy * cs + ux * sn * s);
+        ((c1.0 + r1 * n.0, c1.1 + r1 * n.1), (c2.0 + r2 * n.0, c2.1 + r2 * n.1))
+    })
+}
+
 fn zoom_group(body: &str, f: &Focus, c: (f64, f64), r: f64, k: f64, id: usize) -> String {
+    let body = &damp_gaps(&damp(body, k), k);
     format!(
         r##"<defs><clipPath id="qsmag{id}"><circle cx="{:.2}" cy="{:.2}" r="{r:.2}"/></clipPath></defs><g clip-path="url(#qsmag{id})"><rect x="{:.2}" y="{:.2}" width="{:.2}" height="{:.2}" fill="#fff"/><g transform="translate({:.2} {:.2}) scale({k:.4}) translate({:.2} {:.2})">{body}</g></g><circle cx="{:.2}" cy="{:.2}" r="{r:.2}" fill="none" stroke="{INK}" stroke-width="3"/>"##,
         c.0, c.1, c.0 - r, c.1 - r, 2.0 * r, 2.0 * r, c.0, c.1, -f.x, -f.y, c.0, c.1
@@ -89,14 +160,18 @@ pub fn compose(p: &Params, svg: String, foci: &[Focus], below: bool) -> String {
 /// number of numbered marks with room around them, so the numbers at its top and bottom stay
 /// whole (`compose` zoomed in so far that "30" was cut to "3("). `f.x` should sit between the
 /// scale's ticks and its numbers.
-pub fn compose_side(p: &Params, svg: String, f: &Focus) -> String {
+pub fn compose_side(p: &Params, svg: String, f: &Focus) -> String { compose_side_w(p, svg, f, None) }
+
+/// `compose_side` with an optional fixed canvas width (the reference's readings are a set
+/// width: the lens sits 16 px in from the right edge).
+pub fn compose_side_w(p: &Params, svg: String, f: &Focus, cw: Option<f64>) -> String {
     if !wants_magnifier(p) {
         return svg;
     }
     let (w, h, body) = inner(&svg);
     let n = p.i("mag_marks").clamp(1, 6) as f64;
-    let r = (h * 0.2).clamp(95.0, 125.0);
-    let window = ((n + 1.2) * f.label_px).max(36.0);
+    let r = 150.0;
+    let window = ((n + 1.0) * f.label_px).max(36.0);
     let k = 2.0 * r / window;
     if magnifier_only(p) {
         let gap = 24.0;
@@ -104,18 +179,18 @@ pub fn compose_side(p: &Params, svg: String, f: &Focus) -> String {
         d.raw(&zoom_group(&body, f, (gap + r, gap + r), r, k, 0));
         return d.finish();
     }
-    let (cw, ch) = (w + 2.0 * r + 50.0, h.max(2.0 * r + 20.0));
+    let fixed = cw.is_some();
+    let (cw, ch) = (cw.unwrap_or(w + 2.0 * r + 50.0), h.max(2.0 * r + 32.0));
     let mut d = Doc::new(cw, ch);
     d.raw(&body);
-    let c = (w + 25.0 + r, f.y.clamp(r + 10.0, ch - r - 10.0));
+    let c = (if fixed { cw - 16.0 - r } else { w + 25.0 + r }, f.y.clamp(r + 16.0, ch - r - 16.0));
     // the small circle on the instrument marks exactly what the lens shows
     let sr = window / 2.0;
     let (dx, dy) = (c.0 - f.x, c.1 - f.y);
     let len = (dx * dx + dy * dy).sqrt().max(1e-6);
-    let (nx, ny) = (-dy / len, dx / len);
-    for s in [-1.0, 1.0] {
-        d.raw(&format!(r##"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{INK}" stroke-width="1.2" stroke-dasharray="5 4"/>"##,
-            f.x + nx * sr * s, f.y + ny * sr * s, c.0 + nx * r * s, c.1 + ny * r * s));
+    let _ = (len, dx, dy);
+    for (a, b) in tangents((f.x, f.y), sr, c, r) {
+        d.raw(&format!(r##"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{INK}" stroke-width="1.2" stroke-dasharray="5 4"/>"##, a.0, a.1, b.0, b.1));
     }
     d.circle(f.x, f.y, sr, "none", INK, 1.4);
     d.raw(&zoom_group(&body, f, c, r, k, 0));
@@ -123,13 +198,12 @@ pub fn compose_side(p: &Params, svg: String, f: &Focus) -> String {
 }
 
 /// Radius of the single magnifier drawn above an instrument (`compose_above`).
-pub const ABOVE_R: f64 = 120.0;
+pub const ABOVE_R: f64 = 150.0;
 /// Instrument rows above this y are blank in the length reading, so `compose_above` drops them.
-const ABOVE_CROP: f64 = 70.0;
 
 /// How far `compose_above` moves the instrument down (handles add it to their y).
 pub fn above_shift() -> f64 {
-    2.0 * ABOVE_R + 30.0 - ABOVE_CROP
+    2.0 * ABOVE_R + 68.0
 }
 
 /// One magnifier above the instrument, centred over the focus, joined to a small circle at it
@@ -139,11 +213,11 @@ pub fn compose_above(p: &Params, svg: String, f: &Focus) -> String {
     let n = p.i("mag_marks").clamp(1, 6) as f64;
     let r = ABOVE_R;
     let dy = above_shift();
-    let window = (n * f.label_px * 1.12).max(24.0);
+    let window = ((n + 1.0) * f.label_px).max(24.0);
     let mut d = Doc::new(w, h + dy);
     d.raw(&format!(r#"<g transform="translate(0 {dy:.2})">{body}</g>"#));
     let (fx, fy) = (f.x, f.y + dy);
-    let c = (fx.clamp(r + 15.0, w - r - 15.0), r + 12.0);
+    let c = (fx.clamp(r + 16.0, w - r - 16.0), r + 16.0);
     let sr = window / 2.0;
     let (ddx, ddy) = (c.0 - fx, c.1 - fy);
     let len = (ddx * ddx + ddy * ddy).sqrt().max(1e-6);
@@ -157,3 +231,33 @@ pub fn compose_above(p: &Params, svg: String, f: &Focus) -> String {
     d.finish()
 }
 
+
+/// A single lens at a fixed place on a fixed-size canvas, as the reference lays out its gas
+/// syringe and balance: the instrument keeps its own coordinates, the lens (radius 150) sits at
+/// `lens`, and the small circle on the instrument has radius `rs` for the default of two numbered
+/// marks (it grows with the "Numbered marks" setting). Without the magnifier the canvas loses its
+/// top `crop_y` rows.
+pub fn compose_fixed(p: &Params, svg: String, f: &Focus, canvas: (f64, f64), lens: (f64, f64), rs: f64, crop_y: f64) -> String {
+    if magnifier_only(p) { return compose(p, svg, &[*f], true); }
+    let (_, _, body) = inner(&svg);
+    if !wants_magnifier(p) {
+        let mut d = Doc::new(canvas.0, canvas.1 - crop_y);
+        d.raw(&format!(r#"<g transform="translate(0 {:.2})">{body}</g>"#, -crop_y));
+        return d.finish();
+    }
+    let n = p.i("mag_marks").clamp(1, 6) as f64;
+    let r = 150.0;
+    let sr = (rs * n / 2.0).max(8.0);
+    let mut d = Doc::new(canvas.0, canvas.1);
+    d.raw(&body);
+    let (dx, dy) = (lens.0 - f.x, lens.1 - f.y);
+    let len = (dx * dx + dy * dy).sqrt().max(1e-6);
+    let (nx, ny) = (-dy / len, dx / len);
+    for s in [-1.0, 1.0] {
+        d.raw(&format!(r##"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{INK}" stroke-width="1.2" stroke-dasharray="5 4"/>"##,
+            f.x + nx * sr * s, f.y + ny * sr * s, lens.0 + nx * r * s, lens.1 + ny * r * s));
+    }
+    d.circle(f.x, f.y, sr, "none", INK, 1.5);
+    d.raw(&zoom_group(&body, f, lens, r, r / sr, 0));
+    d.finish()
+}

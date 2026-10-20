@@ -84,8 +84,9 @@ pub fn encode(id: &str, cur: &Params, base: &Params) -> String {
 /// Link format version written by `encode` (`&v=3`). Links without it are v1. A link reads the
 /// opening-state keys newer than its version (`start::newer_than`) as plain defaults, so it
 /// opens as it did when made. v2: round 5 (vector resultant dashed); v3: P4 (orbital diagram
-/// without the configuration line, bare angles and parallel lines).
-pub const VERSION: u32 = 3;
+/// without the configuration line, bare angles and parallel lines); v4: the micropipette opens
+/// on the reference's short body.
+pub const VERSION: u32 = 4;
 
 /// Pasted text with whitespace dropped and HTML-escaped ampersands (`&amp;`, from a link copied
 /// out of a mail or web page) turned back into `&`.

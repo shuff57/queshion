@@ -334,17 +334,21 @@ pub(super) fn wave_layout(p: &Params) -> WLay {
     let fy = (-ym, ym, ys);
     let (ymin, ymax, ystep) = if p.b("yaxis_fit") { fy } else { axis_range(p.f("ymin"), p.f("ymax"), p.f("ystep"), fy) };
     let w = 600.0;
-    let h = match kind { "Transverse" => 420.0, "Longitudinal" => 260.0, _ => 540.0 };
+    // square gridlines, as the reference draws them (clamped so odd axis settings stay usable)
+    let cells = |lo: f64, hi: f64, st: f64| ((hi - lo) / st).max(1.0);
+    let ph = (470.0 * cells(ymin, ymax, ystep) / cells(xmin, xmax, xstep)).clamp(200.0, 380.0);
+    let h = match kind { "Transverse" => 0.0, "Longitudinal" => 260.0, _ => 0.0 };
     let top = if has_title(p) { 54.0 } else { 22.0 };
-    let (x0, pw) = (96.0, 470.0);
+    let (x0, pw) = (90.0, 470.0);
     let mut y = top;
     let strip = if kind != "Transverse" {
         let s = (y + if kind == "Both" { 26.0 } else { 34.0 }, 64.0);
         y = s.0 + s.1 + 36.0;
         Some(s)
     } else { None };
+    let h = if h == 0.0 { y + 6.0 + ph + 62.0 } else { h };
     let panel = if kind != "Longitudinal" {
-        Some(Axes { x0, y0: y + 6.0, w: pw, h: h - y - 6.0 - 62.0, xmin, xmax, ymin, ymax })
+        Some(Axes { x0, y0: y + 6.0, w: pw, h: ph, xmin, xmax, ymin, ymax })
     } else { None };
     let sx = Axes { x0, y0: 0.0, w: pw, h: 1.0, xmin, xmax, ymin: 0.0, ymax: 1.0 };
     WLay { w, h, panel, xstep, ystep, strip, sx }
@@ -361,6 +365,72 @@ fn axis_title(p: &Params, key: &str, mode: &str, auto: &str) -> Option<String> {
         "Blank line" => Some(String::new()),
         _ => Some(if p.s(key).trim().is_empty() { auto.to_string() } else { p.s(key).to_string() }),
     }
+}
+
+/// The wave page's collapsed-row summaries ("Transverse · A = 3 · λ = 4 · 2 cycles").
+pub(super) fn wave_summary(title: &str, p: &Params) -> Option<String> {
+    let n = |v: f64| {
+        let t = format!("{:.2}", v);
+        t.trim_end_matches('0').trim_end_matches('.').replace('-', "\u{2212}")
+    };
+    let q = |mode: &str, text: &str| match p.s(mode) {
+        "None" => "no label".to_string(),
+        "Blank line" => "blank line".to_string(),
+        _ => format!("\u{201c}{}\u{201d}", text),
+    };
+    let l = wave_layout(p);
+    let num = |key: &str| match p.s(key) {
+        "No numbers" => "no numbers".to_string(),
+        "Every line" => "numbered".to_string(),
+        v => format!("numbered {}", v.to_lowercase()),
+    };
+    let axis = |lo: f64, hi: f64, st: f64, fit: bool, numkey: &str, lettered: bool| {
+        let mut v = vec![format!("{} to {}", n(lo), n(hi)), format!("by {}", n(st)), (if fit { "fitted" } else { "set by hand" }).to_string(), num(numkey)];
+        if lettered && p.b("grid") {
+            v.push("no label".into());
+        }
+        v.join(" \u{b7} ")
+    };
+    let parts: Vec<String> = match title {
+        "Wave" => vec![
+            p.s("kind").to_string(),
+            format!("A = {}", n(p.f("amp"))),
+            format!("\u{3bb} = {}", n(p.f("wl"))),
+            { let c = p.f("cycles"); format!("{} {}", n(c), if (c - 1.0).abs() < 1e-9 { "cycle" } else { "cycles" }) },
+        ],
+        "Marks" => {
+            let mut v = vec![];
+            if p.b("mark_wl") { v.push(format!("wavelength {}", q("wl_lab_mode", p.s("wl_lab")))); }
+            if p.b("mark_amp") { v.push(format!("amplitude {}", q("amp_lab_mode", p.s("amp_lab")))); }
+            if p.b("mark_ct") { v.push("crest and trough".to_string()); }
+            if v.is_empty() { v.push("no marks".into()); }
+            v
+        }
+        "Graph" => vec![
+            (if p.b("numbers") { "numbered axes" } else { "no axis numbers" }).to_string(),
+            (if p.b("grid") { "gridlines" } else { "tick marks" }).to_string(),
+            (if p.b("color") { "color" } else { "black and white" }).to_string(),
+        ],
+        "Titles" => {
+            let time = p.s("against") == "Time";
+            let mut v = vec![];
+            if has_title(p) { v.push(q("title_mode", p.s("title"))); }
+            v.push(q("xt_mode", if p.s("xt").trim().is_empty() { if time { "Time (s)" } else { "Distance (m)" } } else { p.s("xt") }));
+            v.push(q("yt_mode", if p.s("yt").trim().is_empty() { "Displacement (cm)" } else { p.s("yt") }));
+            v
+        }
+        "x-axis" => return Some(axis(l.sx.xmin, l.sx.xmax, l.xstep, p.b("xaxis_fit"), "xaxis_num", true)),
+        "y-axis" => {
+            let a = l.panel.as_ref()?;
+            return Some(axis(a.ymin, a.ymax, l.ystep, p.b("yaxis_fit"), "yaxis_num", true));
+        }
+        "Grid" => vec![match p.s("minor") {
+            "None" => "No minor gridlines".to_string(),
+            m => format!("Minor gridlines, {}", m),
+        }],
+        _ => return None,
+    };
+    Some(parts.join(" \u{b7} "))
 }
 
 fn wave_render(p: &Params) -> String {
@@ -428,21 +498,22 @@ fn wave_render(p: &Params) -> String {
             if xe > 0 {
                 for (k, xv) in ticks(ax.xmin, ax.xmax, l.xstep) {
                     if k.rem_euclid(xe as i64) != 0 || (xv.abs() < 1e-9 && zero_in) { continue; }
-                    g.text(ax.px(xv) + 2.0, y0 + 15.0, 11.5, "start", &fmt_num(xv).replace('-', "−"), true);
+                    g.text(ax.px(xv), y0 + 18.0, 11.5, "middle", &fmt_num(xv).replace('-', "−"), true);
                 }
             }
             if ye > 0 {
                 for (k, yv) in ticks(ax.ymin, ax.ymax, l.ystep) {
                     if k.rem_euclid(ye as i64) != 0 { continue; }
-                    g.text(lft - 7.0, ax.py(yv) + 4.0, 11.5, "end", &fmt_num(yv).replace('-', "−"), true);
+                    let zero = yv.abs() < 1e-9 && zero_in && xe > 0;
+                    g.text(lft - 6.0, ax.py(yv) + if zero { 18.0 } else { 4.0 }, 11.5, "end", &fmt_num(yv).replace('-', "−"), true);
                 }
             }
         }
         if let Some(t) = &yl {
-            let (cx, cy) = (lft - 52.0, (tp + bt) / 2.0);
+            let (cx, cy) = (lft - 40.0, (tp + bt) / 2.0);
             if t.is_empty() { g.line(cx, cy - 50.0, cx, cy + 50.0, INK, 1.5); } else { g.vtext(cx, cy, 15.0, &supers(t), true); }
         }
-        title_x(&mut g, (lft + rgt) / 2.0, bt + 34.0);
+        title_x(&mut g, (lft + rgt) / 2.0, bt + 24.0);
         // the curve, clipped to the graph
         g.raw(&format!(r#"<clipPath id="wclip"><rect x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}"/></clipPath><g clip-path="url(#wclip)">"#, lft - 2.0, tp - 2.0, ax.w + 4.0, ax.h + 4.0));
         let (s0, s1) = (0f64.max(ax.xmin), span.min(ax.xmax));
@@ -455,7 +526,7 @@ fn wave_render(p: &Params) -> String {
         let in_x = |x: f64| x >= ax.xmin - 1e-9 && x <= ax.xmax.min(span) + 1e-9;
         if p.b("mark_amp") && in_x(crest(0.0)) {
             let xa = ax.px(crest(0.0));
-            g.dim_arrow(xa, y0, xa, ax.py(a), mc, 1.5);
+            g.dim_arrow_fine(xa, y0, xa, ax.py(a), mc, 1.5);
             g.label_at(xa + 14.0, (y0 + ax.py(a)) / 2.0 - 8.0, 20.0, &lab_mode(p, "amp_lab", "amp_lab_mode"), ITALIC);
         }
         // index of the last whole crest drawn (it carries the "crest" label)
@@ -469,7 +540,7 @@ fn wave_render(p: &Params) -> String {
             let yb = if s == 0.0 { y0 } else { ax.py(a) };
             g.line(ax.px(s), yb, ax.px(s), ya - 7.0, mc, 1.1);
             g.line(ax.px(e), if busy { ya + 8.0 } else { yb }, ax.px(e), ya - 7.0, mc, 1.1);
-            g.dim_arrow(ax.px(s), ya, ax.px(e), ya, mc, 1.4);
+            g.dim_arrow_fine(ax.px(s), ya, ax.px(e), ya, mc, 1.4);
             g.label_at((ax.px(s) + ax.px(e)) / 2.0, ya - 12.0, 20.0, &wl_lab, ITALIC);
         }
         if p.b("mark_ct") {
@@ -521,7 +592,7 @@ fn wave_render(p: &Params) -> String {
                 let y = by - 14.0;
                 g.line(ax.px(s), by - 2.0, ax.px(s), y - 7.0, mc, 1.1);
                 g.line(ax.px(e), by - 2.0, ax.px(e), y - 7.0, mc, 1.1);
-                g.dim_arrow(ax.px(s), y, ax.px(e), y, mc, 1.4);
+                g.dim_arrow_fine(ax.px(s), y, ax.px(e), y, mc, 1.4);
                 g.label_at((ax.px(s) + ax.px(e)) / 2.0, y - 12.0, 20.0, &wl_lab, ITALIC);
             }
         }
@@ -554,10 +625,10 @@ fn with_ls(mut v: Vec<ParamDef>) -> Vec<ParamDef> {
 pub fn defs() -> Vec<FigureDef> {
     vec![
         FigureDef { id: "motion-graphs", subject: Subject::Physics, title: "Motion Graphs",
-            blurb: "Position-, velocity- and acceleration-time graphs built from up to six motion segments (rest, constant velocity, speeding up, slowing down).",
+            blurb: "Position, velocity and acceleration against time, built segment by segment.",
             params: || with_ls(motion_params()), render: |p| crate::figures::svg::with_label_size(motion_render(p), p) },
         FigureDef { id: "waves", subject: Subject::Physics, title: "Waves",
-            blurb: "Transverse and longitudinal waves with amplitude and wavelength marks on measurable, gridded axes.",
+            blurb: "Transverse and longitudinal waves on numbered axes, to measure.",
             params: || with_ls(wave_params()), render: |p| crate::figures::svg::with_label_size(wave_render(p), p) },
     ]
 }

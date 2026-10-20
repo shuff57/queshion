@@ -5,11 +5,11 @@ use crate::figures::{Params, ParamDef, Subject};
 pub fn defs() -> Vec<FigureDef> {
     vec![
         FigureDef { id: "titration-curve", subject: Subject::Chemistry, title: "Titration Curve",
-            blurb: "pH against volume of titrant for strong or weak acids and bases, computed from the concentrations.",
-            params: tit_params, render: tit_render },
+            blurb: "An acid–base titration curve from molarities and pKa, or from the pH values you type.",
+            params: tit_params, render: |p| crate::figures::svg::with_label_size(tit_render(p), p) },
         FigureDef { id: "heating-cooling-curve", subject: Subject::Chemistry, title: "Heating and Cooling Curve",
-            blurb: "Temperature against time as a substance warms or cools through melting and boiling.",
-            params: heat_params, render: heat_render },
+            blurb: "A heating or cooling curve for water, ethanol and other substances, or your own melting and boiling points, schematic or to scale.",
+            params: heat_params, render: |p| crate::figures::svg::with_label_size(heat_render(p), p) },
     ]
 }
 
@@ -30,37 +30,40 @@ const KINDS: [&str; 4] = ["Strong acid with a strong base", "Weak acid with a st
 const COMMON: [&str; 7] = ["Custom", "HCl with NaOH", "CH₃COOH (acetic acid) with NaOH", "HCOOH (formic acid) with NaOH", "HF with NaOH", "NaOH with HCl", "NH₃ (ammonia) with HCl"];
 const MARKS: [&str; 3] = ["Dot and lines to the axes", "Dot", "Not marked"];
 
+/// Text size factor of the L/M/S label-size choice (the graph margins follow it).
+pub(super) fn lf(p: &Params) -> f64 { crate::figures::svg::label_factor(p.s("label_size")) }
+
 fn tit_params() -> Vec<ParamDef> {
     let mut v = vec![
-        ParamDef::choice("kind", "What's titrated", &KINDS, "Weak acid with a strong base"),
+        ParamDef::choice("kind", "What\u{2019}s titrated", &KINDS, "Weak acid with a strong base"),
+        ParamDef::choice("common", "Common titration|25.0 mL of 0.100 M, with 0.100 M", &COMMON, "Custom"),
+        ParamDef::choice("source", "", &["Concentrations", "Key points"], "Concentrations"),
         ParamDef::float("molarity", "Analyte molarity (M)", 0.001, 2.0, 0.005, 0.1),
         ParamDef::float("volume", "Analyte volume (mL)", 1.0, 200.0, 0.5, 25.0),
         ParamDef::float("titrant", "Titrant molarity (M)", 0.001, 2.0, 0.005, 0.1),
         ParamDef::float("pk", "pKa", 1.0, 12.0, 0.01, 4.76)
             .hint("pKb for a weak base."),
+        ParamDef::float("kp_start", "Starting pH", 0.0, 14.0, 0.01, 2.88),
+        ParamDef::float("kp_end", "Ending pH", 0.0, 14.0, 0.01, 12.52),
+        ParamDef::float("kp_veq", "Equivalence volume (mL)", 0.5, 500.0, 0.5, 25.0),
+        ParamDef::float("kp_eqph", "Equivalence pH", 0.0, 14.0, 0.01, 8.73),
         ParamDef::choice("equiv", "Equivalence point", &MARKS, "Dot and lines to the axes"),
-        ParamDef::bool("half", "Mark half-equivalence (weak only; same as Half-equivalence point = Dot and lines)", false),
-        ParamDef::float("xmax", "x-axis maximum when fitted (mL, 0 = twice the equivalence volume)", 0.0, 1000.0, 1.0, 0.0),
-        ParamDef::text("title", "Chart title text", ""),
-        ParamDef::text("xlabel", "x-axis title text (blank = automatic)", ""),
-        ParamDef::text("eq_label", "Equivalence point label text", "equivalence point"),
-        ParamDef::text("half_label", "Half-equivalence label text", "half-equivalence point"),
-        ParamDef::color("curve_color", "Curve", &CURVE_COLORS, "#1f5fa8"),
-        ParamDef::choice("common", "Common titration", &COMMON, "Custom")
-            .hint("25.0 mL of 0.100 M, with 0.100 M."),
-        ParamDef::choice("source", "Work the curve out from", &["Concentrations", "Key points"], "Concentrations"),
-        ParamDef::float("kp_start", "Key points: starting pH", 0.0, 14.0, 0.01, 2.88),
-        ParamDef::float("kp_end", "Key points: ending pH", 0.0, 14.0, 0.01, 12.52),
-        ParamDef::float("kp_veq", "Key points: equivalence volume (mL)", 0.5, 500.0, 0.5, 25.0),
-        ParamDef::float("kp_eqph", "Key points: equivalence pH", 0.0, 14.0, 0.01, 8.73),
-        ParamDef::choice("eq_label_style", "Equivalence point label", &TITLE3, "Text"),
-        ParamDef::choice("half_mark", "Half-equivalence point (pH = pKa)", &MARKS, "Not marked"),
-        ParamDef::choice("half_label_style", "Half-equivalence point label", &TITLE3, "Text"),
-        answer_param("Answer key (equivalence and half-equivalence points)"),
-        title_style(true),
+        ParamDef::choice("eq_label_style", "Its label", &TITLE3, "Text"),
+        ParamDef::text("eq_label", "", "Equivalence point"),
+        ParamDef::choice("half_mark", "Half-equivalence point|where pH = pKa", &MARKS, "Not marked"),
+        ParamDef::choice("half_label_style", "Its label", &TITLE3, "Text"),
+        ParamDef::text("half_label", "", "Half-equivalence point"),
+        ParamDef::bool("half", "Mark half-equivalence", false).hint("Weak only; same as Half-equivalence point = Dot and lines."),
+        ParamDef::choice("title_style", "Chart title", &TITLE3, "None"),
+        ParamDef::text("title", "", ""),
         ParamDef::choice("xtitle_style", "x-axis title", &TITLE3, "Text"),
+        ParamDef::text("xlabel", "", "").hint("Blank = automatic."),
         ParamDef::choice("ytitle_style", "y-axis title", &TITLE3, "Text"),
-        ParamDef::text("ytitle", "y-axis title text", "pH"),
+        ParamDef::text("ytitle", "", "pH"),
+        ParamDef::color("curve_color", "Curve", &CURVE_COLORS, "#2563eb"),
+        ParamDef::float("xmax", "x-axis maximum when fitted (mL, 0 = twice the equivalence volume)", 0.0, 1000.0, 1.0, 0.0),
+        answer_param("Answer key (equivalence and half-equivalence points)"),
+        crate::figures::svg::label_size_param(),
         ParamDef::bool("xaxis_fit", "x-axis: fit to the titration", true),
     ];
     v.extend(xaxis_params(AxisDefaults { from: 0.0, to: 50.0, by: 2.0, num: "Every 5th line" }, 1000.0));
@@ -69,8 +72,86 @@ fn tit_params() -> Vec<ParamDef> {
     v
 }
 
-const T_W: f64 = 680.0;
-const T_H: f64 = 520.0;
+
+/// Lowercased mark name for a section summary ("dot and lines to the axes").
+fn mark_words(m: &str) -> String { m.to_lowercase() }
+
+/// Section-header summary the reference shows under a titration section title (`None` = the
+/// generic one). The Titration section itself shows none.
+pub fn tit_section_summary(title: &str, p: &Params) -> Option<String> {
+    let axis = |pre: &str| {
+        let fr = tit_frame(p);
+        let a = if pre == "xaxis" { fr.g.x } else { fr.g.y };
+        let num = match p.s(&format!("{pre}_num")) {
+            "Every 2nd line" => "numbered every 2".to_string(),
+            "Every 5th line" => "numbered every 5".to_string(),
+            "Every 10th line" => "numbered every 10".to_string(),
+            "No numbers" => "no numbers".to_string(),
+            _ => "numbered every line".to_string(),
+        };
+        let lab = if p.s(&format!("{pre}_lab")) == "Text" { format!("labelled “{}”", p.s(&format!("{pre}_lab_text"))) } else { "no label".to_string() };
+        let (lo, hi) = (p.s(&format!("{pre}_lo")), p.s(&format!("{pre}_hi")));
+        let ends = if lo == "None" && hi == "None" { "plain ends".to_string() } else { format!("{} / {} ends", lo.to_lowercase(), hi.to_lowercase()) };
+        format!("{} to {} · by {} · {num} · {lab} · {ends}", tick(a.from), tick(a.to), tick(a.by))
+    };
+    Some(match title {
+        "Titration" => String::new(),
+        "Marked points" => format!("Equivalence: {} · half-equivalence: {}", mark_words(p.s("equiv")), mark_words(p.s("half_mark"))),
+        "Curve" => {
+            let i = CURVE_COLORS.iter().position(|c| c.eq_ignore_ascii_case(p.s("curve_color"))).unwrap_or(0);
+            ["Blue", "Red", "Green", "Purple", "Orange", "Black"][i].to_string()
+        }
+        "Titles" => {
+            let f = tit_frame(p);
+            let auto = format!("Volume of {} added (mL)", if f.acid_analyte { "NaOH" } else { "HCl" });
+            let xl = if p.s("xlabel").trim().is_empty() { auto } else { p.s("xlabel").to_string() };
+            let mut v = Vec::new();
+            for (st, t) in [("title_style", p.s("title").to_string()), ("xtitle_style", xl), ("ytitle_style", p.s("ytitle").to_string())] {
+                if p.s(st) == "Text" && !t.trim().is_empty() { v.push(format!("“{t}”")); }
+            }
+            if v.is_empty() { "No titles".to_string() } else { v.join(" · ") }
+        }
+        "x-axis" => axis("xaxis"),
+        "y-axis" => axis("yaxis"),
+        "Grid" => match p.s("minor_grid") { "2 per block" => "2 minor gridlines per block", "4 per block" => "4 minor gridlines per block", "5 per block" => "5 minor gridlines per block", _ => "No minor gridlines" }.to_string(),
+        _ => return None,
+    })
+}
+
+/// The readout box under the Titration controls: where the equivalence point (and, for weak
+/// analytes, the half-equivalence point) falls.
+pub fn tit_readout(p: &Params) -> Vec<String> {
+    let f = tit_frame(p);
+    let mut v = vec![format!("Equivalence point: {} mL, pH {}", tick((f.veq * 100.0).round() / 100.0), num(f.ph(f.veq), 2))];
+    if f.kind.starts_with("Weak") {
+        v.push(format!("Half-equivalence point: {} mL, pH {}", tick((f.veq * 50.0).round() / 100.0), num(f.ph(f.veq / 2.0), 2)));
+    }
+    v
+}
+
+/// "The ending pH is at the end of the x-axis (50 mL)." under the Key points boxes.
+pub fn tit_end_note(p: &Params) -> String {
+    format!("The ending pH is at the end of the x-axis ({} mL).", tick(tit_frame(p).g.x.to))
+}
+
+/// Whether titration control `key` applies now (the reference shows only the chosen mode's boxes,
+/// a label's text box only while its choice is "Text", and the half-equivalence tick-box only
+/// through the Half-equivalence point dropdown).
+pub fn tit_relevant(key: &str, p: &Params) -> bool {
+    match key {
+        "molarity" | "volume" | "titrant" | "pk" => p.s("source") != "Key points",
+        "kp_start" | "kp_end" | "kp_veq" | "kp_eqph" => p.s("source") == "Key points",
+        "half" => false,
+        "eq_label_style" => p.s("equiv") != "Not marked",
+        "eq_label" => p.s("equiv") != "Not marked" && p.s("eq_label_style") == "Text",
+        "half_label_style" => p.s("half_mark") != "Not marked",
+        "half_label" => p.s("half_mark") != "Not marked" && p.s("half_label_style") == "Text",
+        "title" => p.s("title_style") == "Text",
+        "xlabel" => p.s("xtitle_style") == "Text",
+        "ytitle" => p.s("ytitle_style") == "Text",
+        _ => true,
+    }
+}
 
 /// Chemistry + axis frame shared by the titration renderer and its handles.
 pub(super) struct TitFrame { pub kind: String, pub ca: f64, pub va: f64, pub ct: f64, pub pk: f64, pub acid_analyte: bool, pub veq: f64, pub g: Graph, pub remap: Option<[f64; 6]> }
@@ -137,9 +218,9 @@ pub(super) fn tit_frame(p: &Params) -> TitFrame {
     let y = Axis::read(p, "yaxis");
     let xt = axis_title(p, "xtitle_style", "x").is_some();
     let yt = axis_title(p, "ytitle_style", p.s("ytitle")).is_some();
-    let (x0, x1, y0, y1) = plot_rect(T_W, T_H, &x, &y, xt, yt, 0.0);
+    let ((x0, x1, y0, y1), (w, h)) = plot_rect(&x, &y, xt, yt, 0.0, lf(p));
     let minor = match p.s("minor_grid") { "2 per block" => 2, "4 per block" => 4, "5 per block" => 5, _ => 0 };
-    let g = Graph { x, y, minor, x0, x1, y0, y1 };
+    let g = Graph { x, y, minor, x0, x1, y0, y1, w, h, lf: lf(p) };
     if key_points {
         let m0 = titration_ph(&kind, ca, va, ct, pk, 0.0);
         let me = titration_ph(&kind, ca, va, ct, pk, veq);
@@ -178,7 +259,7 @@ fn titration_ph(kind: &str, ca: f64, va: f64, ct: f64, pk: f64, v: f64) -> f64 {
 fn tit_render(p: &Params) -> String {
     let f = tit_frame(p);
     let g = &f.g;
-    let mut d = Doc::new(T_W, T_H);
+    let mut d = Doc::new(g.w, g.h);
     let titr_name = if f.acid_analyte { "NaOH" } else { "HCl" };
     let xl = if p.s("xlabel").trim().is_empty() { format!("Volume of {titr_name} added (mL)") } else { p.s("xlabel").to_string() };
     draw_graph(&mut d, g, axis_title(p, "xtitle_style", &xl), axis_title(p, "ytitle_style", p.s("ytitle")));
@@ -188,13 +269,13 @@ fn tit_render(p: &Params) -> String {
         let v = v0 + (v1 - v0) * i as f64 / n as f64;
         (g.px(v), g.py(f.ph(v).clamp(g.y.from, g.y.to)))
     }).collect();
-    let cc = if p.s("curve_color").starts_with('#') { p.s("curve_color") } else { "#1f5fa8" };
+    let cc = if p.s("curve_color").starts_with('#') { p.s("curve_color") } else { "#2563eb" };
     d.polyline(&pts, cc, 2.8);
     let label = |d: &mut Doc, x: f64, y: f64, style_key: &str, text: &str| {
         match p.s(style_key) {
             "None" => {}
             "Blank line" => { d.line(x + 10.0, y + 4.0, x + 110.0, y + 4.0, INK, 1.3); }
-            _ => { d.raw(&format!(r##"<text x="{:.2}" y="{:.2}" font-size="14" font-family="{FONT}" font-weight="bold" fill="{INK}" stroke="#fff" stroke-width="4" paint-order="stroke">{}</text>"##, x + 10.0, y + 5.0, crate::figures::svg::esc(text))); }
+            _ => { d.raw(&format!(r##"<text x="{:.2}" y="{:.2}" font-size="15.4" font-family="{FONT}" font-weight="bold" fill="{INK}" stroke="#fff" stroke-width="4" paint-order="stroke">{}</text>"##, x + 12.0, y + 5.6, crate::figures::svg::esc(text))); }
         }
     };
     let mut foot = Vec::new();
@@ -206,10 +287,10 @@ fn tit_render(p: &Params) -> String {
         let (ex, ey) = (g.px(v), g.py(ph));
         if ex < g.x0 || ex > g.x1 || ey < g.y0 || ey > g.y1 { continue; }
         if mark.starts_with("Dot and") {
-            dashed(&mut d, ex, ey, ex, g.y1, INK, 1.3);
-            dashed(&mut d, g.x0, ey, ex, ey, INK, 1.3);
+            // the reference's guides: 1.6 wide, dashed 6 on / 5 off, butt caps
+            d.raw(&format!(r##"<g stroke="{INK}" stroke-width="1.6" stroke-dasharray="6 5"><line x1="{ex:.2}" y1="{ey:.2}" x2="{ex:.2}" y2="{:.2}"/><line x1="{ex:.2}" y1="{ey:.2}" x2="{:.2}" y2="{ey:.2}"/></g>"##, g.y1, g.x0));
         }
-        d.circle(ex, ey, 5.5, INK, INK, 1.0);
+        d.circle(ex, ey, 5.5, INK, "#fff", 1.5);
         let (sk, tk) = if half { ("half_label_style", "half_label") } else { ("eq_label_style", "eq_label") };
         label(&mut d, ex, ey, sk, p.s(tk));
     }
@@ -219,7 +300,7 @@ fn tit_render(p: &Params) -> String {
             foot.push(format!("Half-equivalence point: {} mL, pH {}", tick((f.veq * 50.0).round() / 100.0), num(f.ph(f.veq / 2.0), 2)));
         }
     }
-    wrap(p, d.finish(), &foot)
+    wrap_at(p, d.finish(), &foot, Some((g.x0 + g.x1) / 2.0))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -230,6 +311,13 @@ const SUBST: [(&str, f64, f64); 6] = [
     ("Water", 0.0, 100.0), ("Ethanol", -114.0, 78.0), ("Acetone", -95.0, 56.0),
     ("Mercury", -39.0, 357.0), ("Sodium chloride", 801.0, 1413.0), ("Substance X", 20.0, 90.0),
 ];
+
+/// "Melts at 0 °C and boils at 100 °C." under the Substance choice (freezes / condenses when cooling).
+pub fn substance_note(p: &Params) -> Option<String> {
+    let (mp, bp) = if p.s("substance") == "Custom" { (p.f("mp"), p.f("bp")) } else { let s = SUBST.iter().find(|s| s.0 == p.s("substance"))?; (s.1, s.2) };
+    let t = |v: f64| num(v, if v.fract() == 0.0 { 0 } else { 1 }).replace('-', "\u{2212}");
+    Some(if p.s("mode") == "Cooling" { format!("Freezes at {} \u{b0}C and condenses at {} \u{b0}C.", t(mp), t(bp)) } else { format!("Melts at {} \u{b0}C and boils at {} \u{b0}C.", t(mp), t(bp)) })
+}
 
 fn heat_params() -> Vec<ParamDef> {
     let mut v = vec![
@@ -249,12 +337,12 @@ fn heat_params() -> Vec<ParamDef> {
         ParamDef::float("t_gas", "Gas warms / cools (min)", 0.5, 30.0, 0.5, 2.0),
         ParamDef::bool("labels", "Labels on the curve", true)
             .hint("Off draws none at all."),
-        ParamDef::text("title", "Chart title text", ""),
+        ParamDef::text("title", "", ""),
         ParamDef::text("ylabel", "y-axis title text", "Temperature (°C)"),
         ParamDef::list("phase_names", "Phase labels (5): solid, melting, liquid, boiling, gas", "solid, solid + liquid, liquid, liquid + gas, gas"),
-        ParamDef::color("curve_color", "Curve", &CURVE_COLORS, "#1f5fa8"),
+        ParamDef::color("curve_color", "Curve", &CURVE_COLORS, "#2563eb"),
         ParamDef::bool("supercool", "Supercooled", false)
-            .hint("Cooling: the liquid dips below its freezing point first."),
+            .hint("The liquid cools past its freezing point before it starts to freeze, then warms back up to it."),
         ParamDef::choice("seg_labels", "Segment labels", &["States", "Blank lines", "None"], "States"),
         ParamDef::choice("plateau_labels", "Plateaus labeled with", &["Both states (Solid + liquid)", "The change (Melting)"], "Both states (Solid + liquid)"),
         ParamDef::bool("letters", "Letters at the corners", false)
@@ -270,12 +358,11 @@ fn heat_params() -> Vec<ParamDef> {
     ];
     v.extend(xaxis_params(AxisDefaults { from: 0.0, to: 20.0, by: 1.0, num: "Every 2nd line" }, 1000.0));
     v.extend(yaxis_params(AxisDefaults { from: -20.0, to: 120.0, by: 10.0, num: "Every 2nd line" }, 5000.0));
+    v.push(crate::figures::svg::label_size_param());
     v.push(minor_param());
     v
 }
 
-const H_W: f64 = 760.0;
-const H_H: f64 = 520.0;
 
 /// Stage list + axis frame shared by the heating-curve renderer and its handles.
 pub(super) struct HeatFrame { pub seq: Vec<(Ph, f64, f64, f64)>, pub mp: f64, pub bp: f64, pub lo: f64, pub hi: f64, pub total: f64, pub scaled: bool, pub cooling: bool, pub g: Graph, pub k: f64 }
@@ -339,9 +426,9 @@ pub(super) fn heat_frame(p: &Params) -> HeatFrame {
     }
     let xt = axis_title(p, "xtitle_style", "x").is_some();
     let yt = axis_title(p, "ytitle_style", p.s("ylabel")).is_some();
-    let (x0, x1, y0, y1) = plot_rect(H_W, H_H, &x, &y, xt, yt, 0.0);
+    let ((x0, x1, y0, y1), (w, h)) = plot_rect(&x, &y, xt, yt, 0.0, lf(p));
     let minor = match p.s("minor_grid") { "2 per block" => 2, "4 per block" => 4, "5 per block" => 5, _ => 0 };
-    HeatFrame { seq, mp, bp, lo, hi, total, scaled, cooling, g: Graph { x, y, minor, x0, x1, y0, y1 }, k }
+    HeatFrame { seq, mp, bp, lo, hi, total, scaled, cooling, g: Graph { x, y, minor, x0, x1, y0, y1, w, h, lf: lf(p) }, k }
 }
 
 /// The five phase labels (solid, melting, liquid, boiling, gas), defaults filling blanks.
@@ -359,7 +446,46 @@ fn phase_names(p: &Params) -> Vec<String> {
 pub(super) enum Ph { Solid, Melt, Liquid, Boil, Gas }
 
 fn halo(d: &mut Doc, x: f64, y: f64, size: f64, anchor: &str, t: &str) {
-    d.raw(&format!(r##"<text x="{x:.2}" y="{y:.2}" font-size="{size}" text-anchor="{anchor}" font-family="{FONT}" font-weight="bold" fill="{INK}" stroke="#fff" stroke-width="5" paint-order="stroke">{}</text>"##, crate::figures::svg::esc(t)));
+    d.raw(&format!(r##"<text x="{x:.2}" y="{y:.2}" font-size="{size}" text-anchor="{anchor}" font-family="{FONT}" font-weight="bold" fill="{INK}" stroke="#fff" stroke-width="4" paint-order="stroke">{}</text>"##, crate::figures::svg::esc(t)));
+}
+
+/// Label placement helper: boxes are `[x0, y0, x1, y1]`, lines `[x1, y1, x2, y2]`.
+struct Placer { lines: Vec<[f64; 4]>, boxes: Vec<[f64; 4]>, inner: [f64; 4] }
+
+impl Placer {
+    fn grow(b: &[f64; 4], m: f64) -> [f64; 4] { [b[0] - m, b[1] - m, b[2] + m, b[3] + m] }
+    fn hits_line(l: &[f64; 4], b: &[f64; 4]) -> bool {
+        let (n, r) = (l[2] - l[0], l[3] - l[1]);
+        let (mut i, mut a) = (0.0_f64, 1.0_f64);
+        for (o, s) in [(-n, l[0] - b[0]), (n, b[2] - l[0]), (-r, l[1] - b[1]), (r, b[3] - l[1])] {
+            if o == 0.0 { if s < 0.0 { return false; } } else if o < 0.0 { i = i.max(s / o); } else { a = a.min(s / o); }
+        }
+        i <= a
+    }
+    fn overlap(a: &[f64; 4], b: &[f64; 4]) -> bool { a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3] }
+    fn clear(&self, b: &[f64; 4]) -> bool {
+        let g3 = Self::grow(b, 3.0);
+        let g2 = Self::grow(b, 2.0);
+        !self.lines.iter().any(|l| Self::hits_line(l, &g3)) && !self.boxes.iter().any(|q| Self::overlap(q, &g2))
+    }
+    fn ok(&self, b: &[f64; 4]) -> bool {
+        b[0] >= self.inner[0] && b[2] <= self.inner[2] && b[1] >= self.inner[1] && b[3] <= self.inner[3] && self.clear(b)
+    }
+    fn shift(&self, b: &[f64; 4]) -> [f64; 4] {
+        let tx = (self.inner[0] - b[0]).max((self.inner[2] - b[2]).min(0.0));
+        let ty = (self.inner[1] - b[1]).max((self.inner[3] - b[3]).min(0.0));
+        [b[0] + tx, b[1] + ty, b[2] + tx, b[3] + ty]
+    }
+    fn score(&self, b: &[f64; 4]) -> usize {
+        let g3 = Self::grow(b, 3.0);
+        let g2 = Self::grow(b, 2.0);
+        self.lines.iter().filter(|l| Self::hits_line(l, &g3)).count() + 2 * self.boxes.iter().filter(|q| Self::overlap(q, &g2)).count()
+    }
+    fn best(&self, c: &[[f64; 4]]) -> [f64; 4] {
+        let mut best: Option<([f64; 4], usize)> = None;
+        for b in c { let s = self.shift(b); let sc = self.score(&s); if best.map_or(true, |(_, bs)| sc < bs) { best = Some((s, sc)); } }
+        best.map(|q| q.0).unwrap_or([0.0; 4])
+    }
 }
 
 fn heat_render(p: &Params) -> String {
@@ -367,7 +493,7 @@ fn heat_render(p: &Params) -> String {
     let g = &hf.g;
     let (mp, bp, lo, hi, cooling) = (hf.mp, hf.bp, hf.lo, hf.hi, hf.cooling);
     let seq = hf.seq.clone();
-    let mut d = Doc::new(H_W, H_H);
+    let mut d = Doc::new(g.w, g.h);
     let auto_x = if p.s("xaxis") == "Heat added" { if cooling { "Heat removed" } else { "Heat added" } } else { "Time (min)" };
     let xl = if p.s("xtitle").trim().is_empty() { auto_x.to_string() } else { p.s("xtitle").to_string() };
     draw_graph(&mut d, g, axis_title(p, "xtitle_style", &xl), axis_title(p, "ytitle_style", p.s("ylabel")));
@@ -388,43 +514,118 @@ fn heat_render(p: &Params) -> String {
         corners.push(*pts.last().unwrap());
     }
     let clip: Vec<(f64, f64)> = pts.iter().map(|&(x, y)| (x.clamp(g.x0, g.x1), y.clamp(g.y0, g.y1))).collect();
-    let cc = if p.s("curve_color").starts_with('#') { p.s("curve_color") } else { "#1f5fa8" };
+    let cc = if p.s("curve_color").starts_with('#') { p.s("curve_color") } else { "#2563eb" };
     d.polyline(&clip, cc, 3.0);
     let names = phase_names(p);
     let change = p.s("plateau_labels").starts_with("The change");
     if p.b("labels") {
-        let mut u = 0.0;
-        for s in &seq {
-            let (xa, xb) = (hf.px(u), hf.px(u + s.3));
-            u += s.3;
-            let xm = (xa + xb) / 2.0;
-            let ym = (hf.py(s.1) + hf.py(s.2)) / 2.0;
-            let plateau = matches!(s.0, Ph::Melt | Ph::Boil);
-            let name = match s.0 {
-                Ph::Solid => names[0].clone(), Ph::Liquid => names[2].clone(), Ph::Gas => names[4].clone(),
-                Ph::Melt => if change { if cooling { "Freezing".into() } else { "Melting".into() } } else { names[1].clone() },
-                Ph::Boil => if change { if cooling { "Condensing".into() } else { "Boiling".into() } } else { names[3].clone() },
-            };
-            match p.s("seg_labels") {
-                "None" => {}
-                "Blank lines" => { let (yy, ww) = if plateau { (ym - 12.0, 70.0) } else { (ym + 5.0, 60.0) }; d.line(xm - ww / 2.0, yy, xm + ww / 2.0, yy, INK, 1.4); }
-                _ => { if plateau { halo(&mut d, xm, ym - 10.0, 15.0, "middle", &name); } else { halo(&mut d, xm, ym + 5.0, 15.0, "middle", &name); } }
-            }
-            if plateau {
+        // Placement follows the reference generator: candidate boxes are tried in order and the
+        // first one clear of the curve, guides and earlier labels wins.
+        let h = 15.4_f64;
+        let cw = h * 0.58;
+        let mut corners_px: Vec<(f64, f64)> = Vec::new();
+        {
+            let mut u = 0.0;
+            if let Some(f0) = seq.first() { corners_px.push((hf.px(0.0), hf.py(f0.1))); }
+            for s in &seq { u += s.3; corners_px.push((hf.px(u), hf.py(s.2))); }
+        }
+        let mut pl = Placer { lines: Vec::new(), boxes: Vec::new(), inner: [g.x0 + 3.0, g.y0 + 3.0, g.x1 - 3.0, g.y1 - 3.0] };
+        let plateau_of = |ph: &Ph| matches!(ph, Ph::Melt | Ph::Boil);
+        if p.b("plateau_dashes") {
+            for s in &seq {
+                if !plateau_of(&s.0) { continue; }
                 let tv = if s.0 == Ph::Melt { mp } else { bp };
-                if p.b("plateau_dashes") { dashed(&mut d, g.x0, hf.py(tv), xa.min(xb), hf.py(tv), INK, 1.3); }
-                let lab = match p.s("temp_labels") {
-                    "None" => None,
-                    "m.p. and b.p." => Some(if s.0 == Ph::Melt { if cooling { "f.p." } else { "m.p." } } else { "b.p." }.to_string()),
-                    "Blank lines" => Some(String::new()),
-                    _ => Some(format!("{} °C", tick(tv))),
-                };
-                match lab {
-                    Some(t) if t.is_empty() => { d.line(g.x0 + 8.0, hf.py(tv) - 8.0, g.x0 + 60.0, hf.py(tv) - 8.0, INK, 1.3); }
-                    Some(t) => { halo(&mut d, g.x0 + 8.0, hf.py(tv) - 8.0, 15.0, "start", &t); }
-                    None => {}
-                }
+                let i = seq.iter().position(|q| std::ptr::eq(q, s)).unwrap_or(0);
+                let xa = corners_px[i].0;
+                if tv < lo || tv > hi || xa - g.x0 <= 1.0 { continue; }
+                pl.lines.push([g.x0, hf.py(tv), xa, hf.py(tv)]);
             }
+        }
+        for w in clip.windows(2) { pl.lines.push([w[0].0, w[0].1, w[1].0, w[1].1]); }
+        // temperature labels at the plateaus
+        let mut point_out: Vec<(f64, f64, String)> = Vec::new();
+        let mut point_blank: Vec<[f64; 4]> = Vec::new();
+        let tmode = p.s("temp_labels");
+        if tmode != "None" {
+            for s in &seq {
+                if !plateau_of(&s.0) { continue; }
+                let tv = if s.0 == Ph::Melt { mp } else { bp };
+                if tv < lo || tv > hi { continue; }
+                let ay = hf.py(tv);
+                let text = match tmode {
+                    "m.p. and b.p." => if s.0 == Ph::Melt { if cooling { "f.p." } else { "m.p." } } else { "b.p." }.to_string(),
+                    "Blank lines" => String::new(),
+                    _ => format!("{} °C", tick(tv)),
+                };
+                let w = if text.is_empty() { 60.0 } else { text.chars().count() as f64 * cw };
+                let mut c = Vec::new();
+                for e in [6.0, 30.0, 60.0, 100.0, 150.0] { for t in [ay - 6.0 - h, ay + 6.0] { c.push([g.x0 + e, t, g.x0 + e + w, t + h]); } }
+                let c4: Vec<[f64; 4]> = c.iter().take(4).cloned().collect();
+                let l = c.iter().find(|b| pl.ok(b)).cloned().unwrap_or_else(|| pl.best(&c4));
+                pl.boxes.push(l);
+                if text.is_empty() { point_blank.push([l[0], l[3], l[2], l[3]]); } else { point_out.push((l[0], l[3] - h * 0.22, text)); }
+            }
+        }
+        // segment labels: plateaus first, then the sloped runs
+        let seg_mode = p.s("seg_labels");
+        let mut seg_out: Vec<(usize, [f64; 4])> = Vec::new();
+        if seg_mode != "None" {
+            let mut order: Vec<usize> = (0..seq.len()).collect();
+            order.sort_by_key(|&i| if plateau_of(&seq[i].0) { 0 } else { 1 });
+            for i in order {
+                let s = &seq[i];
+                let (a, o) = (corners_px[i], corners_px[i + 1]);
+                let mid = ((a.0 + o.0) / 2.0, (a.1 + o.1) / 2.0);
+                if mid.0 < g.x0 || mid.0 > g.x1 || mid.1 < g.y0 || mid.1 > g.y1 { continue; }
+                let name = match s.0 {
+                    Ph::Solid => names[0].clone(), Ph::Liquid => names[2].clone(), Ph::Gas => names[4].clone(),
+                    Ph::Melt => if change { if cooling { "Freezing".into() } else { "Melting".into() } } else { names[1].clone() },
+                    Ph::Boil => if change { if cooling { "Condensing".into() } else { "Boiling".into() } } else { names[3].clone() },
+                };
+                let c = if seg_mode == "Blank lines" { 80.0 } else { name.chars().count() as f64 * cw };
+                let ub = |x: f64, y: f64| [x, y - h / 2.0, x + c, y + h / 2.0];
+                let lp = |t: f64| (a.0 + (o.0 - a.0) * t, a.1 + (o.1 - a.1) * t);
+                let mut d2: Vec<[f64; 4]> = Vec::new();
+                if plateau_of(&s.0) {
+                    for k in 0..6 {
+                        let n = 10.0 + k as f64 * h * 1.1;
+                        for e in [a.1 - n - h / 2.0, a.1 + n + h / 2.0] {
+                            d2.push(ub((a.0 + o.0 - c) / 2.0, e)); d2.push(ub(o.0 - 2.0 - c, e)); d2.push(ub(a.0 + 2.0, e));
+                            d2.push(ub(a.0 + 8.0, e)); d2.push(ub(a.0 + 16.0, e)); d2.push(ub(a.0 - 4.0 - c, e));
+                        }
+                    }
+                } else {
+                    for e in [10.0, 10.0 + h, 10.0 + 2.0 * h] {
+                        for t in [0.5, 0.35, 0.65, 0.2, 0.8] { let q = lp(t); d2.push(ub(q.0 - e - c, q.1)); d2.push(ub(q.0 + e, q.1)); }
+                    }
+                    for e in [10.0, 10.0 + h, 10.0 + 2.0 * h] {
+                        for t in [0.5, 0.0, 1.0] { let q = lp(t); d2.push(ub(q.0 - c / 2.0, q.1 - e - h / 2.0)); d2.push(ub(q.0 - c / 2.0, q.1 + e + h / 2.0)); }
+                    }
+                }
+                let f = d2.iter().find(|b| pl.ok(b)).cloned().unwrap_or_else(|| pl.best(&d2));
+                pl.boxes.push(f);
+                seg_out.push((i, f));
+            }
+            seg_out.sort_by_key(|q| q.0);
+        }
+        for (i, f) in &seg_out {
+            if seg_mode == "Blank lines" { d.line(f[0], f[3], f[2], f[3], INK, 1.5); }
+            else {
+                let name = match seq[*i].0 {
+                    Ph::Solid => names[0].clone(), Ph::Liquid => names[2].clone(), Ph::Gas => names[4].clone(),
+                    Ph::Melt => if change { if cooling { "Freezing".into() } else { "Melting".into() } } else { names[1].clone() },
+                    Ph::Boil => if change { if cooling { "Condensing".into() } else { "Boiling".into() } } else { names[3].clone() },
+                };
+                halo(&mut d, f[0], f[3] - h * 0.22, 15.4, "start", &name);
+            }
+        }
+        for (x, y, t) in &point_out { halo(&mut d, *x, *y, 15.4, "start", t); }
+        for b in &point_blank { d.line(b[0], b[1], b[2], b[3], INK, 1.5); }
+        for s in &seq {
+            if !plateau_of(&s.0) || !p.b("plateau_dashes") { continue; }
+            let tv = if s.0 == Ph::Melt { mp } else { bp };
+            let i = seq.iter().position(|q| std::ptr::eq(q, s)).unwrap_or(0);
+            dashed(&mut d, g.x0, hf.py(tv), corners_px[i].0.min(corners_px[i + 1].0), hf.py(tv), INK, 1.3);
         }
     }
     if p.b("letters") {
@@ -436,7 +637,7 @@ fn heat_render(p: &Params) -> String {
             halo(&mut d, x + ox, y + oy, 16.0, "middle", &((b'A' + i as u8) as char).to_string());
         }
     }
-    wrap(p, d.finish(), &[])
+    wrap_at(p, d.finish(), &[], Some((g.x0 + g.x1) / 2.0))
 }
 
 // ---------------------------------------------------------------------------------------------

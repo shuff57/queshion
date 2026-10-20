@@ -90,6 +90,65 @@ impl Kind {
     pub fn qkind(&self) -> QKind { match self { Kind::Mc {..} => QKind::Mc, Kind::Tf {..} => QKind::Tf, Kind::Matching {..} => QKind::Matching, Kind::Blank {..} => QKind::Blank, Kind::Short {..} => QKind::Short, Kind::Multipart {..} => QKind::Multipart } }
 }
 
+/// Explanation a shared-pool importer stores on a question imported without its answer key
+/// (`share-core`'s `KEYLESS_SENTINEL`; the two must stay identical, `tests/share_core_fixtures.rs`).
+pub const KEYLESS_SENTINEL: &str =
+    "No answer key: this question was imported without its key. Add the correct answers before printing a key.";
+
+/// Whether `q` was imported from the pool without its answer key: printing must then show no key.
+///
+/// The spec's durable marker is a `keyless: bool` field on `Question` (with `origin`); it cannot
+/// be added yet without changing files that build `Question` literally and have uncommitted
+/// edits (`src/screens.rs`, `src/figuresui.rs`). Until then the importer's sentinel explanation is
+/// the marker, and share-core refuses to publish a question carrying it without `hide_key`.
+pub fn is_keyless(q: &Question) -> bool {
+    q.explanation.as_deref() == Some(KEYLESS_SENTINEL)
+}
+
+/// What a keyless question prints where its key would be.
+pub const KEY_NOT_PROVIDED: &str = "Key not provided";
+
+/// Whether the teacher has entered a key into a question that was imported keyless (`before`),
+/// judging by its edited `kind`: a correct choice marked (Mc), every right side filled
+/// (Matching), every blank given an answer, a sample written, and for True/False the value
+/// changed (a keyless True/False holds a placeholder `false` the model cannot mark as unset; with
+/// the `keyless` field a re-key action replaces this guess). Multipart: every part.
+pub fn rekeyed(before: &Question, kind: &Kind) -> bool {
+    match (kind, &before.kind) {
+        (Kind::Mc { answers }, _) => answers.iter().any(|a| a.correct),
+        (Kind::Tf { correct }, Kind::Tf { correct: was }) => correct != was,
+        (Kind::Tf { .. }, _) => true,
+        (Kind::Matching { pairs, .. }, _) => !pairs.is_empty() && pairs.iter().all(|p| !p.right.trim().is_empty()),
+        (Kind::Blank { accept }, _) => !accept.is_empty() && accept.iter().all(|a| a.iter().any(|s| !s.trim().is_empty())),
+        (Kind::Short { sample }, _) => !sample.trim().is_empty(),
+        (Kind::Multipart { parts }, old) => {
+            let old_parts: &[Part] = match old {
+                Kind::Multipart { parts } => parts,
+                _ => &[],
+            };
+            parts.iter().enumerate().all(|(i, p)| match (&p.kind, old_parts.get(i).map(|o| &o.kind)) {
+                (PartKind::Mc { answers }, _) => answers.iter().any(|a| a.correct),
+                (PartKind::Tf { correct }, Some(PartKind::Tf { correct: was })) => correct != was,
+                (PartKind::Tf { .. }, _) => true,
+                (PartKind::Short { sample }, _) => !sample.trim().is_empty(),
+            })
+        }
+    }
+}
+
+/// The right-hand column of a matching question as it prints: the pairs' right items, then the
+/// distractors, each text once (two lefts may share a right item), blank items skipped. The
+/// sheet and the answer key both letter this column (`examui`), so they always agree.
+pub fn right_column(pairs: &[Pair], distractors: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for s in pairs.iter().map(|p| &p.right).chain(distractors) {
+        if !s.trim().is_empty() && !out.contains(s) {
+            out.push(s.clone());
+        }
+    }
+    out
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Question {
     pub id: Id,
@@ -414,6 +473,36 @@ mod tests {
         let back: QuestionBank = serde_json::from_str(&serde_json::to_string(&b2).unwrap()).unwrap();
         assert_eq!(back.details.author, "A. Teacher");
         assert_eq!(back.details.description, "");
+    }
+
+    #[test]
+    fn right_column_dedupes_and_skips_blanks() {
+        let p = |l: &str, r: &str| Pair { left: l.into(), right: r.into() };
+        let pairs = [p("Dog", "Mammal"), p("Cat", "Mammal"), p("Frog", "Amphibian"), p("Newt", " ")];
+        assert_eq!(right_column(&pairs, &["Bird".into(), "Mammal".into(), String::new()]), ["Mammal", "Amphibian", "Bird"]);
+    }
+
+    #[test]
+    fn rekeyed_needs_a_real_key() {
+        let mut q: Question = serde_json::from_str(r#"{"id":"q","stem":"s","kind":{"Tf":{"correct":false}},"points":null,"difficulty":null,"created":0,"modified":0}"#).unwrap();
+        q.explanation = Some(KEYLESS_SENTINEL.into());
+        assert!(!rekeyed(&q, &Kind::Tf { correct: false }));
+        assert!(rekeyed(&q, &Kind::Tf { correct: true }));
+        let a = |c| Answer { text: "x".into(), correct: c, locked: false };
+        assert!(!rekeyed(&q, &Kind::Mc { answers: vec![a(false), a(false)] }));
+        assert!(rekeyed(&q, &Kind::Mc { answers: vec![a(true), a(false)] }));
+        let p = |r: &str| Pair { left: "l".into(), right: r.into() };
+        assert!(!rekeyed(&q, &Kind::Matching { pairs: vec![p("X"), p("")], distractors: vec![] }));
+        assert!(rekeyed(&q, &Kind::Matching { pairs: vec![p("X"), p("Y")], distractors: vec![] }));
+        assert!(!rekeyed(&q, &Kind::Blank { accept: vec![vec!["a".into()], vec![]] }));
+    }
+
+    #[test]
+    fn keyless_marker() {
+        let mut q: Question = serde_json::from_str(r#"{"id":"q","stem":"s","kind":{"Tf":{"correct":false}},"points":null,"difficulty":null,"created":0,"modified":0}"#).unwrap();
+        assert!(!is_keyless(&q));
+        q.explanation = Some(KEYLESS_SENTINEL.into());
+        assert!(is_keyless(&q));
     }
 
     #[test]

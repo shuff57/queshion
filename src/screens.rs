@@ -125,7 +125,7 @@ pub fn desk_panel<R>(
             right: if margin >= 16 { margin.saturating_add(14) } else { margin },
         }))
         .show(root, |ui| {
-            theme::paint_grid(ui.painter(), ui.max_rect());
+            if !theme::chem_skin() { theme::paint_grid(ui.painter(), ui.max_rect()); }
             f(ui)
         })
         .inner
@@ -332,6 +332,9 @@ impl crate::App {
     /// shell screens draw through `shell_frame` too.
     pub fn draw_screen(&mut self, ctx: &egui::Context) {
         self.poll_ai();
+        if !matches!(self.screen, crate::Screen::Figures) {
+            theme::set_chem_skin(false, ctx);
+        }
         match &self.screen {
             crate::Screen::Welcome => self.draw_welcome(ctx),
             crate::Screen::Home => self.draw_home(ctx),
@@ -349,7 +352,15 @@ impl crate::App {
             crate::Screen::Imports => self.draw_imports(ctx),
             crate::Screen::Figures => {
                 let mut root = root_ui(ctx);
-                self.draw_sidebar_into(&mut root);
+                // an open chemistry figure wears the chemistry site's page skin: its own top
+                // header instead of the rail
+                let chem = self.chem_figure_open();
+                theme::set_chem_skin(chem, ctx);
+                // an open figure on a phone-width window gives the rail's 90 px to the canvas, as
+                // the reference does (it has no rail); the breadcrumb's Home link leaves instead
+                if !chem && !(self.figure_open() && root.max_rect().width() < 500.0) {
+                    self.draw_sidebar_into(&mut root);
+                }
                 self.draw_figures(&mut root);
             }
             crate::Screen::Settings => self.draw_settings(ctx),
@@ -523,7 +534,7 @@ impl crate::App {
                 bottom: 10,
             }))
             .show(root, |ui| {
-                theme::paint_grid(ui.painter(), ui.max_rect());
+                if !theme::chem_skin() { theme::paint_grid(ui.painter(), ui.max_rect()); }
                 let rect = ui.max_rect();
                 ui.painter().rect(
                     rect,
@@ -1070,33 +1081,38 @@ impl crate::App {
     /// current keyed provider. The key lives only in the text buffer until saved (then it is
     /// cleared), and in `ai-keys.json`; it is never shown, logged or put in a toast.
     /// Model picker: a dropdown filled by "Find models", plus a free-text name for models the
-    /// server does not list.
+    /// server does not list. Find models keeps only the models this account can use to read a
+    /// picture (`ai::check_models`) and remembers them in settings, so the list survives a restart.
     fn draw_model_picker(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         use crate::kit;
+        use std::sync::{Arc, Mutex};
+        #[derive(Default)]
+        struct Job {
+            busy: bool,
+            progress: (usize, usize),
+            result: Option<Result<crate::ai::Checked, String>>,
+        }
         let cfg = crate::ai::AiCfg::from(&self.settings);
-        type Models = std::sync::Arc<std::sync::Mutex<Option<Result<Vec<String>, String>>>>;
-        let id_models = egui::Id::new("ai_models_list");
-        let id_for = egui::Id::new("ai_models_for");
-        let id_probe = egui::Id::new("ai_models_probe");
+        let id_job = egui::Id::new("ai_models_job");
         let id_msg = egui::Id::new("ai_models_msg");
-        let probe: Models = ctx.data_mut(|d| d.get_temp(id_probe)).unwrap_or_default();
+        let job: Arc<Mutex<Job>> = ctx.data_mut(|d| d.get_temp(id_job)).unwrap_or_default();
         let mut msg: Option<(String, bool)> = ctx.data_mut(|d| d.get_temp(id_msg));
         let target = format!("{}|{}", cfg.provider, cfg.base);
-        if let Some(r) = probe.lock().ok().and_then(|mut g| g.take()) {
+        let finished = job.lock().ok().and_then(|mut g| g.result.take());
+        if let Some(r) = finished {
             match r {
-                Ok(models) => {
-                    let n = models.len();
-                    ctx.data_mut(|d| {
-                        d.insert_temp(id_models, models);
-                        d.insert_temp(id_for, target.clone());
-                    });
-                    msg = Some((format!("Found {n} model{}.", if n == 1 { "" } else { "s" }), false));
+                Ok(c) => {
+                    msg = Some((crate::ai::checked_note(&c), false));
+                    self.settings.ai_models_ok = c.ok;
+                    self.settings.ai_models_for = target.clone();
+                    self.save_settings();
                 }
                 Err(e) => msg = Some((e, true)),
             }
         }
-        let same = ctx.data_mut(|d| d.get_temp::<String>(id_for)).as_deref() == Some(target.as_str());
-        let models: Vec<String> = if same { ctx.data_mut(|d| d.get_temp(id_models)).unwrap_or_default() } else { Vec::new() };
+        let (busy, progress) = job.lock().map(|g| (g.busy, g.progress)).unwrap_or((false, (0, 0)));
+        let models: Vec<String> =
+            if self.settings.ai_models_for == target { self.settings.ai_models_ok.clone() } else { Vec::new() };
         ui.horizontal(|ui| {
             ui.label(theme::text("Model"));
             let mut chosen = self.settings.ai_model.trim().to_string();
@@ -1110,30 +1126,52 @@ impl crate::App {
                         ui.selectable_value(&mut chosen, m.clone(), m.as_str());
                     }
                     if models.is_empty() {
-                        ui.label(theme::muted("Press Find models to list this server’s models.").size(11.5));
+                        ui.label(
+                            theme::muted("Press Find models to list the models your account can use to read images.")
+                                .size(11.5),
+                        );
                     }
                 });
             if chosen.as_str() != self.settings.ai_model.trim() {
                 self.settings.ai_model = chosen;
             }
-            if kit::ghost_button(ui, "Find models").clicked() {
-                msg = Some(("Looking for models…".to_string(), false));
-                let probe2 = probe.clone();
+            if ui.add_enabled_ui(!busy, |ui| kit::ghost_button(ui, "Find models").clicked()).inner {
+                msg = None;
+                if let Ok(mut g) = job.lock() {
+                    g.busy = true;
+                    g.progress = (0, 0);
+                }
+                let job2 = job.clone();
                 let ctx2 = ctx.clone();
                 let cfg2 = cfg.clone();
                 #[cfg(not(target_arch = "wasm32"))]
                 std::thread::spawn(move || {
-                    let r = crate::ai::list_models(&cfg2);
-                    if let Ok(mut g) = probe2.lock() {
-                        *g = Some(r);
+                    let (job3, ctx3) = (job2.clone(), ctx2.clone());
+                    let r = crate::ai::check_models(&cfg2, &move |done, total| {
+                        if let Ok(mut g) = job3.lock() {
+                            g.progress = (done, total);
+                        }
+                        ctx3.request_repaint();
+                    });
+                    if let Ok(mut g) = job2.lock() {
+                        g.busy = false;
+                        g.result = Some(r);
                     }
                     ctx2.request_repaint();
                 });
                 #[cfg(target_arch = "wasm32")]
                 wasm_bindgen_futures::spawn_local(async move {
-                    let r = crate::ai::list_models_async(&cfg2).await;
-                    if let Ok(mut g) = probe2.lock() {
-                        *g = Some(r);
+                    let (job3, ctx3) = (job2.clone(), ctx2.clone());
+                    let r = crate::ai::check_models_async(&cfg2, &move |done, total| {
+                        if let Ok(mut g) = job3.lock() {
+                            g.progress = (done, total);
+                        }
+                        ctx3.request_repaint();
+                    })
+                    .await;
+                    if let Ok(mut g) = job2.lock() {
+                        g.busy = false;
+                        g.result = Some(r);
                     }
                     ctx2.request_repaint();
                 });
@@ -1147,12 +1185,17 @@ impl crate::App {
                     .hint_text(cfg.model.as_str()),
             );
         });
-        if let Some((m, bad)) = &msg {
+        if busy {
+            let (done, total) = progress;
+            let text = if total == 0 { "Checking models…".to_string() } else { format!("Checking models… {done} of {total}") };
+            ui.label(theme::muted(text).size(12.0));
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        } else if let Some((m, bad)) = &msg {
             let t = if *bad { theme::muted(m.clone()).color(theme::bad()) } else { theme::muted(m.clone()) };
             ui.label(t.size(12.0));
         }
         ctx.data_mut(|d| {
-            d.insert_temp(id_probe, probe);
+            d.insert_temp(id_job, job);
             match msg {
                 Some(m) => {
                     d.insert_temp(id_msg, m);

@@ -2842,6 +2842,10 @@ fn draw_item_body(
     style: model::PaperStyle,
     mut pws: Option<(&Id, usize, &mut EditUi)>,
 ) {
+    if model::is_keyless(q) {
+        // Imported from the pool without its key: say so where the teacher looks.
+        ui.label(egui::RichText::new("No answer key").size(bp * 0.8).color(egui::Color32::from_rgb(170, 60, 40)));
+    }
     match &q.kind {
         Kind::Mc { answers } => {
             draw_image(app, ui, ctx, q.image.as_ref());
@@ -2901,11 +2905,7 @@ fn draw_item_body(
         }
         Kind::Matching { pairs, distractors } => {
             draw_image(app, ui, ctx, q.image.as_ref());
-            let rights: Vec<String> = pairs
-                .iter()
-                .map(|p| p.right.clone())
-                .chain(distractors.iter().cloned())
-                .collect();
+            let rights = model::right_column(pairs, distractors);
             ui.columns(2, |cols| {
                 for (li, p) in pairs.iter().enumerate() {
                     popt(&mut cols[0], format!("{} {}", style.number_label(number + li as u32), p.left), bp);
@@ -3859,11 +3859,8 @@ fn map_question_raw_style(number: u32, q: &model::Question, style: model::PaperS
             // Every text entry is a left-column item (no stem line); the
             // exporters print them with continuing numbers from `number`.
             dq.text = pairs.iter().map(|p| p.left.clone()).collect();
-            let rights: Vec<&String> = pairs
-                .iter()
-                .map(|p| &p.right)
-                .chain(distractors.iter())
-                .collect();
+            // The same column the sheet prints (no blank or repeated choice).
+            let rights = model::right_column(pairs, distractors);
             dq.choices = rights
                 .iter()
                 .enumerate()
@@ -3871,13 +3868,13 @@ fn map_question_raw_style(number: u32, q: &model::Question, style: model::PaperS
                 .collect();
             dq.key_marks = pairs
                 .iter()
-                .map(|p| rights.iter().position(|r| **r == p.right).map(letter).unwrap_or_else(|| "?".to_string()))
+                .map(|p| rights.iter().position(|r| *r == p.right).map(letter).unwrap_or_else(|| "?".to_string()))
                 .collect();
             ktext = pairs
                 .iter()
                 .enumerate()
                 .map(|(i, p)| {
-                    let li = rights.iter().position(|r| **r == p.right);
+                    let li = rights.iter().position(|r| *r == p.right);
                     format!(
                         "{}-{}",
                         i + 1,
@@ -3962,6 +3959,13 @@ fn map_question_raw_style(number: u32, q: &model::Question, style: model::PaperS
         }
     }
 
+    // Imported without its key: the placeholder flags (all false, a layout pairing) are not a key.
+    if model::is_keyless(q) {
+        dq.correct.clear();
+        dq.key_marks.clear();
+        dq.key_text = "Key not provided".to_string();
+        return Mapped { dq, img: q.image.clone(), pieces };
+    }
     // The teacher's explanation travels inside key_text (prints only on the key).
     if let Some(ex) = &q.explanation {
         let ex = ex.trim();
@@ -5959,6 +5963,60 @@ mod stem_ui_tests {
         assert!(t.contains("\na. NH₃") && !t.contains("a. a."), "{t}");
         assert!(t.contains("\nb. CO₂ (True / False)"), "{t}");
         assert!(m.dq.key_text.contains("a) pyramidal") && m.dq.key_text.contains("b) True"), "{}", m.dq.key_text);
+    }
+
+    fn plain_q(kind: Kind) -> model::Question {
+        model::Question {
+            stem: "Match".into(),
+            kind,
+            id: "q".into(),
+            points: Some(1.0),
+            difficulty: None,
+            topics: vec![],
+            image: None,
+            explanation: None,
+            figure: None,
+            created: 0,
+            modified: 0,
+        }
+    }
+
+    #[test]
+    fn matching_column_has_no_blank_or_repeated_choice_and_the_key_agrees() {
+        let p = |l: &str, r: &str| model::Pair { left: l.into(), right: r.into() };
+        // Two lefts share a right item.
+        let q = plain_q(Kind::Matching { pairs: vec![p("Dog", "Mammal"), p("Cat", "Mammal"), p("Frog", "Amphibian")], distractors: vec![] });
+        let m = map_question_raw(1, &q);
+        assert_eq!(m.dq.choices, ["A. Mammal", "B. Amphibian"]);
+        assert_eq!(m.dq.key_text, "1-A 2-A 3-B");
+        assert_eq!(m.dq.key_marks, ["A", "A", "B"]);
+        // A distractor equal to a right item, and a blank one.
+        let q = plain_q(Kind::Matching { pairs: vec![p("a", "X"), p("b", "Y")], distractors: vec!["X".into(), " ".into(), "Z".into()] });
+        let m = map_question_raw(1, &q);
+        assert_eq!(m.dq.choices, ["A. X", "B. Y", "C. Z"]);
+        assert_eq!(m.dq.key_text, "1-A 2-B");
+    }
+
+    #[test]
+    fn keyless_questions_print_no_key() {
+        let p = |l: &str, r: &str| model::Pair { left: l.into(), right: r.into() };
+        for kind in [
+            Kind::Tf { correct: false },
+            Kind::Mc { answers: vec![model::Answer { text: "x".into(), correct: false, locked: false }, model::Answer { text: "y".into(), correct: false, locked: false }] },
+            Kind::Matching { pairs: vec![p("Dog", "Mammal"), p("Frog", "Amphibian")], distractors: vec!["Bird".into()] },
+            Kind::Blank { accept: vec![vec![]] },
+            Kind::Short { sample: String::new() },
+        ] {
+            let mut q = plain_q(kind);
+            q.explanation = Some(model::KEYLESS_SENTINEL.into());
+            let m = map_question_raw(1, &q);
+            assert_eq!(m.dq.key_text, "Key not provided");
+            assert!(m.dq.key_marks.is_empty() && m.dq.correct.is_empty(), "{:?}", m.dq.key_marks);
+            // The student side is untouched.
+            if let Kind::Matching { .. } = q.kind {
+                assert_eq!(m.dq.choices, ["A. Mammal", "B. Amphibian", "C. Bird"]);
+            }
+        }
     }
 
     #[test]

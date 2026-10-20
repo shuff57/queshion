@@ -38,7 +38,7 @@ mod tests {
     fn dragging_moves_the_reading() {
         let (d, mut p) = fig("volume-reading");
         let h = d.handles(&p, (360.0, 600.0)).remove(0);
-        (h.drag.unwrap())(&mut p, (140.0, 295.0)); // halfway up the 100 mL cylinder
+        (h.drag.unwrap())(&mut p, (76.0, 272.0)); // halfway up the 100 mL cylinder
         assert!((p.f("reading") - 50.0).abs() < 0.2, "{}", p.f("reading"));
     }
 

@@ -10,6 +10,14 @@ mod pulley;
 pub(crate) use pulley::{pulley_relevant, pulley_setup_changed};
 mod examples;
 
+/// The collapsed-row summary of a section on the physics page skin, where the page has one.
+pub fn skin_summary(id: &str, title: &str, p: &Params) -> Option<String> {
+    match id {
+        "waves" => graphs::wave_summary(title, p),
+        _ => None,
+    }
+}
+
 /// "Start from an example" entries for this subject's figures.
 pub fn examples(id: &str) -> Option<Vec<super::Example>> {
     examples::examples(id)

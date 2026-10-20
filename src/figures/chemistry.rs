@@ -14,12 +14,13 @@ mod curves;
 pub mod data;
 mod lewis;
 mod measure;
+pub mod notes;
 pub mod spectra;
 
-pub const INK: &str = "#1b1b1b";
+pub const INK: &str = "#111";
 pub const GLASS: &str = "#f3f8fb";
 pub const GLASS_EDGE: &str = "#56626b";
-pub const FONT: &str = "Noto Sans, Liberation Sans, DejaVu Sans, Arial, sans-serif";
+pub const FONT: &str = "Arial, Helvetica, Liberation Sans, Noto Sans, DejaVu Sans, sans-serif";
 
 /// Number formatted with `dp` decimals.
 pub fn num(v: f64, dp: usize) -> String {
@@ -32,6 +33,14 @@ pub fn tx(d: &mut Doc, x: f64, y: f64, size: f64, anchor: &str, color: &str, bol
     let w = if bold { "bold" } else { "normal" };
     d.raw(&format!(
         r##"<text x="{x:.2}" y="{y:.2}" font-size="{size}" text-anchor="{anchor}" font-family="{FONT}" font-weight="{w}" fill="{color}">{}</text>"##,
+        super::svg::esc(s)
+    ));
+}
+
+/// Text whose gap below a tick end (`ye`) shrinks with the type inside a magnifier.
+pub fn txy(d: &mut Doc, x: f64, y: f64, ye: f64, size: f64, anchor: &str, color: &str, s: &str) {
+    d.raw(&format!(
+        r##"<text x="{x:.2}" y="{y:.2}" data-ye="{ye:.2}" font-size="{size}" text-anchor="{anchor}" font-family="{FONT}" font-weight="normal" fill="{color}">{}</text>"##,
         super::svg::esc(s)
     ));
 }
@@ -56,7 +65,7 @@ pub fn liquid(name: &str) -> (&'static str, &'static str) {
         "Blue" => ("#9ccbf0", "#4f90c4"),
         "Red" => ("#f09aa0", "#c4525c"),
         "Green" => ("#a5dcab", "#52a35c"),
-        _ => ("#c9cfd5", "#8a949d"),
+        _ => ("#dcdcdc", "#8a949d"),
     }
 }
 
@@ -65,12 +74,167 @@ pub fn liquid(name: &str) -> (&'static str, &'static str) {
 pub fn live_help(id: &str, title: &str, p: &Params) -> Option<String> {
     match (id, title) {
         ("lewis-structures", "Structure") => Some(lewis::central_note(p)),
+        ("lewis-structures", "Changes") if p.s("question") != "Full structure" && !lewis::has_changes(p) => {
+            Some("Changes need the full structure. Set Question to Full structure to make a \u{201c}find the mistake\u{201d} question.".to_string())
+        }
+        ("line-spectrum", "Look") => Some(match p.s("style") {
+            "Absorption" => "Dark lines across a rainbow, as a cool gas takes out of white light.",
+            "Print" => "Black lines on white, for a black-and-white copier.",
+            _ => "Bright colored lines on black, as a glowing gas gives off.",
+        }.to_string()),
+        ("bohr-model", "Atom or ion") => {
+            let z = data::z_of(p.s("element"));
+            let a = data::mass_number(z);
+            Some(format!(
+                "Picking an element sets its protons, its neutrons from its mass number ({}: {} \u{2212} {} = {}) and a neutral atom\u{2019}s shells. Changing the charge sets the shells for that ion.",
+                data::symbol(z), a, z, a.saturating_sub(z)
+            ))
+        }
         ("volume-reading", "Reading") | ("volume-by-displacement", "Readings") | ("gas-syringe", "Volume of gas")
         | ("length-reading", "Length and position") | ("mass-reading", "Mass") | ("temperature-reading", "Temperature")
         | ("ph-reading", "pH") => measure::range_note(id, p),
         _ => None,
     }
 }
+
+/// The mass spectrum's Isotopes card note (relative atomic mass line, working).
+pub fn mass_spectrum_info(p: &Params) -> Option<(String, String)> {
+    spectra::ms_info(p)
+}
+
+/// The chemistry page's one-line section summaries ("100 mL graduated cylinder"), where the
+/// reference words them differently from the generic "value · value" digest.
+pub fn skin_summary(id: &str, title: &str, p: &Params) -> Option<String> {
+    if id == "lewis-structures" {
+        return lewis::skin_summary(title, p);
+    }
+    if let Some(s) = super::math::flat_skin_summary(id, title, p) {
+        return Some(s);
+    }
+    if let Some(s) = super::physics::skin_summary(id, title, p) {
+        return Some(s);
+    }
+    if id == "mass-spectrum" {
+        return spectra::ms_summary(title, p);
+    }
+    if let Some(s) = atom_summary(id, title, p) {
+        return Some(s);
+    }
+    if let Some(s) = super::biology::pipette::skin_summary(id, title, p) {
+        return Some(s);
+    }
+    if let Some(s) = super::biology::gel::skin_summary(id, title, p) {
+        return Some(s);
+    }
+    measure::skin_summary(id, title, p)
+}
+
+/// "Sodium, 1s² 2s² 2p⁶ 3s¹" style summaries of the orbital diagram and photoelectron pages.
+fn atom_summary(id: &str, title: &str, p: &Params) -> Option<String> {
+    use data::{config, config_ex, config_text, name, symbol, z_of};
+    let charge = p.i("charge") as i64;
+    let title_line = |p: &Params| format!("{}, {}", if p.s("title").trim().is_empty() { "No title" } else { "Title" }, if p.b("answer") { "answer key" } else { "no answer key" });
+    match (id, title) {
+        ("orbital-diagram", "Atom or ion") => {
+            let z = z_of(p.s("element"));
+            let ion = match charge { 0 => String::new(), c if c > 0 => format!("{}{}", if c > 1 { c.to_string() } else { String::new() }, "+"), c => format!("{}{}", if c < -1 { (-c).to_string() } else { String::new() }, "-") };
+            Some(format!("{}{}, {}, {} electrons", symbol(z), ion, name(z).to_lowercase(), (z as i64 - charge).max(0)))
+        }
+        ("orbital-diagram", "Configuration") => {
+            let z = z_of(p.s("element"));
+            let subs = if p.s("exceptions") == "Real" { config(z, charge) } else { config_ex(z, charge, false) };
+            Some(config_text(&subs, None))
+        }
+        ("orbital-diagram", "Look") => Some(format!("{}, {}", p.s("arrows"), p.s("orbitals").to_lowercase())),
+        ("orbital-diagram", "For the student") => {
+            let mut v: Vec<&str> = Vec::new();
+            if p.b("blank") { v.push("orbitals"); }
+            if p.b("config_blank") { v.push("configuration"); }
+            if p.s("symbol_style") == "Blank line" { v.push("symbol"); }
+            if p.s("sublabels") == "Blank lines" { v.push("sublevel labels"); }
+            Some(if v.is_empty() { "Nothing left blank".to_string() } else { format!("{} left blank", v.join(", ")) })
+        }
+        ("orbital-diagram", "Changes") => Some(if p.s("edits").trim().is_empty() && p.i("extra_empty") == 0 { "Ground state".to_string() } else { "Changed".to_string() }),
+        ("orbital-diagram", "Title and answer key") | ("photoelectron-spectrum", "Title and answer key") => Some(title_line(p)),
+        ("photoelectron-spectrum", "Element") => {
+            let z = z_of(p.s("element")).min(54);
+            Some(format!("{}, {}", name(z), config_text(&config(z, 0), None)))
+        }
+        ("photoelectron-spectrum", "Energy axis") => Some(format!("{}, {}", p.s("scale"), p.s("units"))),
+        ("photoelectron-spectrum", "Peaks") => {
+            let mut v = vec![p.s("drawn").to_string(), match p.s("sublabel_style") { "Blank lines" => "blank labels", "None" => "no labels", _ => "labeled" }.to_string()];
+            if p.b("counts") { v.push("electron counts".into()); }
+            if p.b("energies") { v.push("energies".into()); }
+            Some(v.join(", "))
+        }
+        ("photoelectron-spectrum", "For the student") => Some(format!("Element {}, electrons {}", if p.b("names") { "named" } else { "not named" }, if p.b("numbered") { "numbered" } else { "not numbered" })),
+        _ => None,
+    }
+}
+
+/// The chemistry page's intro line above "Start from an example", where known.
+pub fn skin_intro(id: &str) -> Option<&'static str> {
+    match id {
+        "triangle" => Some("Make a printable triangle drawn to scale for your class."),
+        "volume-reading" => Some("Make printable graduated cylinder, buret and beaker figures for chemistry tests."),
+        "volume-by-displacement" => Some("Make printable water displacement figures for chemistry tests."),
+        "gas-syringe" => Some("Make printable gas syringe figures for chemistry tests."),
+        "length-reading" => Some("Make printable length measurement figures for chemistry tests."),
+        "mass-reading" => Some("Make printable balance figures for chemistry tests."),
+        "titration-curve" => Some("Make printable titration curves for chemistry tests."),
+        "heating-cooling-curve" => Some("Make printable heating and cooling curves for chemistry tests."),
+        "particle-diagram" => Some("Make printable particle diagrams for AP Chemistry tests."),
+        "bohr-model" => Some("Make printable Bohr model diagrams for chemistry tests."),
+        "lewis-structures" => Some("Make printable Lewis structures for chemistry tests."),
+        "orbital-diagram" => Some("Make printable orbital diagrams for chemistry tests."),
+        "line-spectrum" => Some("Make printable line spectra for chemistry tests."),
+        "photoelectron-spectrum" => Some("Make printable photoelectron spectra (PES) for AP Chemistry tests."),
+        "mass-spectrum" => Some("Make printable mass spectra of elements for chemistry tests."),
+        "temperature-reading" => Some("Make printable thermometer figures for chemistry tests."),
+        "ph-reading" => Some("Make printable pH meter figures for chemistry tests."),
+        "punnett-square" => Some("Make printable Punnett squares for biology tests."),
+        "population-growth" => Some("Make printable population growth graphs for biology tests."),
+        "pedigree" => Some("Make printable pedigree charts for biology tests."),
+        "predator-prey" => Some("Make printable predator–prey graphs for biology tests."),
+        "gel-electrophoresis" => Some("Make printable gel electrophoresis results for biology tests."),
+        "micropipette-reading" => Some("Make printable micropipette figures for biology tests."),
+        "coordinate-grid" => Some("Make a printable coordinate grid (graph paper) for your class."),
+        "number-line" => Some("Make a printable number line for your class."),
+        "rectangle" => Some("Make a printable rectangle or square drawn to scale for your class."),
+        "parallelogram" => Some("Make a printable parallelogram or rhombus drawn to scale for your class."),
+        "trapezoid" => Some("Make a printable trapezoid drawn to scale for your class: a right, isosceles or scalene trapezoid, from its bases and height."),
+        "kite" => Some("Make a printable kite drawn to scale for your class."),
+        "regular-polygon" => Some("Make a printable regular polygon for your class, from an equilateral triangle to a 20-gon."),
+        "prism" => Some("Make a printable prism drawn to scale for your class."),
+        "cylinder" => Some("Make a printable cylinder drawn to scale for your class."),
+        "pyramid" => Some("Make a printable pyramid drawn to scale for your class."),
+        "cone" => Some("Make a printable cone drawn to scale for your class."),
+        "sphere" => Some("Make a printable sphere or hemisphere for your class."),
+        "box-plot" => Some("Make a printable box plot for your class."),
+        "mapping-diagram" => Some("Make a printable mapping diagram for your class."),
+        "ruler-reading" => Some("Make a printable ruler figure for your class."),
+        "angles" => Some("Make a printable angle diagram for your class: a single angle of any size, adjacent angles, angles on a straight line, angles around a point or vertical angles."),
+        "parallel-lines" => Some("Make a printable diagram of parallel lines cut by a transversal for your class."),
+        "waves" => Some("Make printable wave diagrams for physics tests."),
+        "motion-graphs" => Some("Make printable motion graphs for physics tests."),
+        "spring-scale" => Some("Make printable spring scale figures for physics tests."),
+        "circuit-diagram" => Some("Make printable circuit diagrams for physics tests."),
+        "free-body-diagram" => Some("Make printable free body diagrams for physics tests."),
+        "vector-diagram" => Some("Make printable vector diagrams for physics tests."),
+        "inclined-plane" => Some("Make printable inclined plane figures for physics tests."),
+        "pulley" => Some("Make printable pulley figures for physics tests."),
+        "projectile-motion" => Some("Make printable projectile motion figures for physics tests."),
+        _ => None,
+    }
+}
+
+/// The Random button of the instrument readings.
+pub fn random_reading(id: &str, p: &mut Params, seed: u64) -> bool {
+    measure::random_reading(id, p, seed)
+}
+
+pub use lewis::{answer_available as lewis_answer_available, changes_count as lewis_changes_count, mistake_lines as lewis_mistakes, central_choices as lewis_central_choices, edit_rows as lewis_edit_rows, has_changes as lewis_has_changes, relevant as lewis_relevant, set_edit as lewis_set_edit};
+pub use curves::{tit_end_note, tit_readout, tit_relevant, tit_section_summary};
 
 pub fn shade(name: &str) -> &'static str {
     match name {
@@ -156,7 +320,7 @@ pub fn title_at(d: &mut Doc, p: &Params, cx: f64, y: f64, size: f64) {
 }
 
 /// Palette for curve colours.
-pub const CURVE_COLORS: [&str; 6] = ["#1f5fa8", "#c0392b", "#2e8b57", "#8e44ad", "#d68910", "#1b1b1b"];
+pub const CURVE_COLORS: [&str; 6] = ["#2563eb", "#c0392b", "#2e8b57", "#8e44ad", "#d68910", "#1b1b1b"];
 
 /// "Start from an example" entries for this subject's figures.
 pub fn examples(id: &str) -> Option<Vec<super::Example>> {
@@ -393,12 +557,12 @@ mod tests {
             })
             .collect();
         let big: Vec<_> = circles.iter().filter(|c| c.2 > 12.0 && c.0 < 360.0).collect();
-        let small: Vec<_> = circles.iter().filter(|c| c.2 < 6.0 && c.0 < 360.0).collect();
+        let small: Vec<_> = circles.iter().filter(|c| c.2 < 7.0 && c.0 < 360.0).collect();
         assert_eq!(big.len(), 24);
         assert_eq!(small.len(), 6);
         for s in &small {
             // inside a hole: four iron neighbours, none overlapping it
-            let near = big.iter().filter(|b| ((b.0 - s.0).hypot(b.1 - s.1)) < 30.0).count();
+            let near = big.iter().filter(|b| ((b.0 - s.0).hypot(b.1 - s.1)) < 45.0).count();
             assert_eq!(near, 4, "carbon at {s:?} sits in a hole");
             assert!(big.iter().all(|b| (b.0 - s.0).hypot(b.1 - s.1) >= b.2 + s.2 - 0.5), "no overlap at {s:?}");
         }

@@ -576,10 +576,10 @@ fn circuit_render(p: &Params) -> String {
 pub fn defs() -> Vec<FigureDef> {
     vec![
         FigureDef { id: "spring-scale", subject: Subject::Physics, title: "Spring Scale",
-            blurb: "A colour-coded spring scale reading any force, with an optional magnifier, zero offset and hanging object.",
+            blurb: "A spring scale with its pointer at any force, for reading practice.",
             params: spring_params, render: spring_render },
         FigureDef { id: "circuit-diagram", subject: Subject::Physics, title: "Circuit Diagram",
-            blurb: "Series or parallel circuits of resistors and bulbs with a battery, switch, ammeter and voltmeter in US or IEC symbols.",
+            blurb: "A battery with resistors or bulbs in series or in parallel.",
             params: circuit_params, render: circuit_render },
     ]
 }

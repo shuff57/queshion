@@ -23,7 +23,7 @@ pub fn layout_of(p: &Params) -> Layout {
     LAST.with(|l| l.borrow().clone())
 }
 
-pub fn lane_x(l: &Layout, i: usize) -> f64 { l.gx + 12.0 + l.lane_w * (i as f64 + 0.5) }
+pub fn lane_x(l: &Layout, i: usize) -> f64 { l.gx + 14.0 + l.lane_w * (i as f64 + 0.5) }
 pub fn band_y(l: &Layout, bp: f64) -> f64 { l.well_y + 8.0 + run_frac(bp, &l.agar) * l.run }
 
 /// Fragment size whose band sits at screen y (inverse of `band_y`).
@@ -146,7 +146,7 @@ pub fn setup_note(name: Option<&str>) -> &'static str {
         Some("Paternity test") => "Every band in the child comes from the mother or the father; Father A’s bands fill the gaps.",
         Some("Restriction digest") => "Lambda DNA uncut and cut by three restriction enzymes, beside a λ HindIII ladder.",
         Some("PCR products") => "PCR products beside a 100 bp ladder, with a faint primer band in the negative control.",
-        _ => "Replaces the lanes with a ready-made experiment. Undo brings yours back.",
+        _ => "Replaces the lanes and gel with a ready-made experiment. Undo brings yours back.",
     }
 }
 
@@ -155,20 +155,41 @@ pub fn lanes_summary(p: &Params) -> String {
     lane_cards(p).iter().map(|l| if l.label.is_empty() { "Sample".to_string() } else { l.label.clone() }).collect::<Vec<_>>().join(", ")
 }
 
+/// The reference's one-line summaries of the Gel, Labels and Chart title cards.
+pub fn skin_summary(id: &str, title: &str, p: &Params) -> Option<String> {
+    if id != "gel-electrophoresis" {
+        return None;
+    }
+    Some(match title {
+        "Gel" => format!("{} agarose, {}{}", p.s("agarose"), p.s("look").to_lowercase(), if p.b("ruler") { ", ruler" } else { "" }),
+        "Labels" => {
+            let low = |s: &str| if !p.b("sizes") { "none" } else { match s { "Sizes" => "sizes", "Blank lines" => "blank lines", _ => "none" } };
+            let names = if !p.b("lane_names") { "none" } else { match p.s("lane_labels") { "Names" => "names", "Blank lines" => "blank lines", _ => "none" } };
+            let mut v = vec![format!("Lane {names}")];
+            if p.b("lane_numbers") { v.push("numbers".to_string()); }
+            v.push(format!("ladder {}", low(p.s("ladder_sizes"))));
+            v.push(format!("electrodes {}", if p.b("electrodes") { p.s("electrode_style").to_lowercase() } else { "none".to_string() }));
+            v.join(", ")
+        }
+        "Chart title and answer key" => format!("{}, {}", if p.s("title").trim().is_empty() { "No title".to_string() } else { format!("\u{201c}{}\u{201d}", p.s("title").trim()) }, if p.b("answer") { "answer key" } else { "no answer key" }),
+        _ => return None,
+    })
+}
+
 pub fn params() -> Vec<ParamDef> {
     vec![
-        ParamDef::choice("setup", "Classic setup (overrides lanes text)", &SETUPS, SETUPS[0]),
+        ParamDef::choice("setup", "Classic setups", &SETUPS, SETUPS[0]),
         ParamDef::long("lanes", "Lanes: Label: bands | Label: ladder 1kb | ...", CRIME),
         ParamDef::choice("agarose", "Agarose", &["0.8%", "1%", "1.5%", "2%"], "1%"),
         ParamDef::choice("look", "Look", &["Printable", "Blue stain", "Glowing"], "Printable"),
-        ParamDef::bool("ruler", "Ruler for measuring how far each band ran", false),
+        ParamDef::bool("ruler", "Ruler, for measuring how far each band ran", false),
         ParamDef::bool("lane_names", "Lane names", true),
         ParamDef::bool("sizes", "Ladder sizes", true),
         ParamDef::bool("electrodes", "Electrode signs", true),
         ParamDef::bool("answer", "Answer key (matching lanes)", false),
         ParamDef::text("title", "Chart title (blank = none)", ""),
         ParamDef::float("band_height", "Band thickness", 0.5, 2.5, 0.1, 1.0),
-        ParamDef::float("run_length", "Gel length (px of run)", 250.0, 520.0, 10.0, 400.0),
+        ParamDef::float("run_length", "Gel length (px of run)", 250.0, 520.0, 2.0, 392.0),
         ParamDef::choice("lane_labels", "Lane labels", &["Names", "Blank lines", "None"], "Names"),
         ParamDef::bool("lane_numbers", "Lane numbers", false),
         ParamDef::choice("ladder_sizes", "Ladder sizes", &["Sizes", "Blank lines", "None"], "Sizes"),
@@ -245,7 +266,7 @@ fn parse_lanes(s: &str) -> Vec<Lane> {
 fn run_frac(bp: f64, agarose: &str) -> f64 {
     let (lo, hi): (f64, f64) = match agarose { "0.8%" => (800.0, 15000.0), "1.5%" => (300.0, 5000.0), "2%" => (100.0, 2500.0), _ => (500.0, 10000.0) };
     let t = (hi.log10() - bp.log10()) / (hi.log10() - lo.log10());
-    (0.12 + t * (0.76 - 0.12)).clamp(0.05, 0.95)
+    (0.0757 + t * (0.767 - 0.0757)).clamp(0.04, 0.95)
 }
 
 /// Ladder-size label text in the chosen units ("8000 bp", "10,000 bp", "1.5 kb").
@@ -289,37 +310,39 @@ pub fn render(p: &Params) -> String {
     };
     let title = p.s("title").trim().to_string();
     let n = lanes.len();
-    let lane_w = 56.0;
+    let lane_w = 54.0;
     // ladder lanes whose sizes get written: first lane (left side) and last lane (right side)
     let left_ladder = if smode != "None" && lanes[0].ladder.is_some() { Some(0usize) } else { None };
     let right_ladder = if smode != "None" && n > 1 && lanes[n - 1].ladder.is_some() { Some(n - 1) } else { None };
     let label_w = |li: Option<usize>| -> f64 {
         let Some(i) = li else { return 0.0 };
         if smode == "Blank lines" { return 96.0; }
-        lanes[i].bands.iter().map(|(bp, _)| tw(&size_label(*bp, units), 13.0)).fold(0.0, f64::max) + 56.0
+        // the reference ends its size numbers 16 px short of the gel
+        lanes[i].bands.iter().map(|(bp, _)| size_label(*bp, units).chars().map(|c| super::plot::arial_em(c, false)).sum::<f64>() * 13.0).fold(0.0, f64::max) + 26.2
     };
+    let bold_w = |t: &str| t.chars().map(|c| super::plot::arial_em(c, true)).sum::<f64>() * 14.0;
     let name_len = if lmode == "Names" { lanes.iter().map(|l| l.label.chars().count()).max().unwrap_or(0) } else { 0 };
     // short names sit level above their lanes; long ones are turned 45 degrees
     let flat = lmode == "Names" && (name_len as f64) * 8.6 <= lane_w + 6.0;
     let name_h = match lmode {
         "Names" if flat => 26.0,
-        "Names" if name_len > 0 => (name_len as f64 * 8.4 * 0.72 + 26.0).min(150.0),
+        "Names" if name_len > 0 => 20.11 + lanes.iter().map(|l| bold_w(&l.label)).fold(0.0, f64::max) * std::f64::consts::FRAC_1_SQRT_2,
         "Blank lines" => 30.0,
         _ => 10.0,
     } + if numbers { 24.0 } else { 0.0 };
-    let elec_w = match emode { "None" => 0.0, "Named" => 104.0, _ => 40.0 };
-    let left = 24.0 + label_w(left_ladder).max(elec_w);
+    let elec_w = match emode { "None" => 0.0, "Named" => 104.0, _ => 26.0 };
+    let left = 16.0 + label_w(left_ladder).max(elec_w).max(10.2);
     let ruler_w = if p.b("ruler") { 64.0 } else { 0.0 };
-    let mut right = 24.0 + label_w(right_ladder) + ruler_w;
+    let mut right = 27.0 + if right_ladder.is_some() { label_w(right_ladder) - 10.2 } else { 0.0 } + ruler_w;
     if lmode == "Names" && !flat {
         // the last rotated name leans right past the gel edge
-        let last = lanes[n - 1].label.chars().count() as f64 * 8.6 * 0.72 + 14.0;
-        right = right.max(last - 40.0);
+        let last = bold_w(&lanes[n - 1].label) * std::f64::consts::FRAC_1_SQRT_2;
+        right = right.max(last - 36.0 + 16.0);
     }
-    let gel_w = n as f64 * lane_w + 24.0;
+    let gel_w = n as f64 * lane_w + 28.0;
     let run = p.f("run_length").clamp(250.0, 520.0);
     let gel_h = run + 40.0;
-    let top = 20.0 + if title.is_empty() { 0.0 } else { 36.0 } + name_h;
+    let top = 16.0 + if title.is_empty() { 0.0 } else { 36.0 } + name_h;
     let gy = top;
     let well_y = gy + 18.0;
     // answer key
@@ -351,7 +374,7 @@ pub fn render(p: &Params) -> String {
     let ans_w = answer_lines.iter().map(|l| tw(l, 15.0)).fold(0.0, f64::max) + 40.0;
     let w = (left + gel_w + right).max(420.0).max(ans_w);
     let gx = left + (w - left - gel_w - right) / 2.0;
-    let h = gy + gel_h + 30.0 + if answer_lines.is_empty() { 0.0 } else { 14.0 + answer_lines.len() as f64 * 22.0 };
+    let h = gy + gel_h + 16.0 + if answer_lines.is_empty() { 0.0 } else { 14.0 + answer_lines.len() as f64 * 22.0 };
     LAST.with(|l| *l.borrow_mut() = Layout {
         w, gx, gy, well_y, run, lane_w, agar: agar.clone(),
         lanes: lanes.iter().map(|l| LaneInfo { ladder: l.ladder.is_some(), bands: l.bands.clone() }).collect(),
@@ -362,7 +385,7 @@ pub fn render(p: &Params) -> String {
     }
     if !title.is_empty() { bold(&mut d, w / 2.0, 32.0, 20.0, "middle", &title); }
     d.raw(&format!(r##"<rect x="{gx:.1}" y="{gy:.1}" width="{gel_w:.1}" height="{gel_h:.1}" rx="7" fill="{gel_fill}" stroke="{}" stroke-width="2"/>"##, if glow { gel_fill } else { INK }));
-    let lane_x = |i: usize| gx + 12.0 + lane_w * (i as f64 + 0.5);
+    let lane_x = |i: usize| gx + 14.0 + lane_w * (i as f64 + 0.5);
     let bh = p.f("band_height").clamp(0.5, 2.5);
     for (i, l) in lanes.iter().enumerate() {
         let cx = lane_x(i);
@@ -375,7 +398,7 @@ pub fn render(p: &Params) -> String {
         match lmode {
             "Names" if flat => bold(&mut d, cx, lab_y, 15.0, "middle", &l.label),
             "Names" => {
-                let (tx, ty) = (cx + 4.0, lab_y);
+                let (tx, ty) = (cx - 4.0, lab_y);
                 txt(&mut d, tx, ty, 14.0, "start", SANS, &format!(r#"font-weight="bold" transform="rotate(-45 {tx:.1} {ty:.1})""#), &l.label);
             }
             "Blank lines" => { d.line(cx - 24.0, lab_y - 6.0, cx + 24.0, lab_y - 6.0, INK, 1.4); }
@@ -384,7 +407,7 @@ pub fn render(p: &Params) -> String {
         // bands, merging those too close for the gel to separate into one thicker band
         let mut bs: Vec<(f64, f64, f64)> = l.bands.iter().map(|(bp, amt)| {
             let y = well_y + 8.0 + run_frac(*bp, &agar) * run;
-            let th = (3.2 + 1.6 * amt.min(3.0)) * bh;
+            let th = (4.4 + 1.6 * amt.min(3.0)) * bh;
             (y - th / 2.0, y + th / 2.0, *amt)
         }).collect();
         bs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
@@ -456,24 +479,24 @@ pub fn render(p: &Params) -> String {
                 let parts: Vec<String> = v.iter().map(|bp| size_label(*bp, units).trim_end_matches(unit).to_string()).collect();
                 format!("{}{unit}", parts.join("/"))
             };
-            txt(&mut d, edge + sgn * 22.0, ly[i] + 4.5, 13.0, if side_left { "end" } else { "start" }, SANS, "", &lab);
+            txt(&mut d, edge + sgn * 16.0, ly[i] + 4.5, 13.0, if side_left { "end" } else { "start" }, SANS, "", &lab);
             if (ly[i] - y).abs() < 0.5 {
-                d.line(edge + sgn * 16.0, *y, edge + sgn * 4.0, *y, INK, 1.2);
+                d.line(edge + sgn * 11.0, *y, edge + sgn * 2.0, *y, INK, 1.0);
             } else {
-                d.polyline(&[(edge + sgn * 16.0, ly[i]), (edge + sgn * 9.0, *y), (edge + sgn * 4.0, *y)], INK, 1.2);
+                d.polyline(&[(edge + sgn * 11.0, ly[i]), (edge + sgn * 6.0, *y), (edge + sgn * 2.0, *y)], INK, 1.0);
             }
         }
     }
     if emode != "None" {
-        let ex = gx - 22.0;
-        let (ty, by) = (well_y, gy + gel_h - 22.0);
+        let ex = gx - 16.0;
+        let (ty, by) = (well_y, gy + gel_h - 14.0);
         if emode == "Blank" {
-            d.circle(ex, ty, 12.0, "none", INK, 1.8);
-            d.circle(ex, by, 12.0, "none", "#dc2626", 1.8);
+            d.circle(ex, ty, 10.0, "none", INK, 1.8);
+            d.circle(ex, by, 10.0, "none", "#dc2626", 1.8);
         } else {
-            d.circle(ex, ty, 12.0, INK, INK, 1.0);
+            d.circle(ex, ty, 10.0, INK, INK, 1.0);
             d.line(ex - 6.0, ty, ex + 6.0, ty, "#fff", 2.6);
-            d.circle(ex, by, 12.0, "#dc2626", "#dc2626", 1.0);
+            d.circle(ex, by, 10.0, "#dc2626", "#dc2626", 1.0);
             d.line(ex - 6.0, by, ex + 6.0, by, "#fff", 2.6);
             d.line(ex, by - 6.0, ex, by + 6.0, "#fff", 2.6);
             if emode == "Named" {

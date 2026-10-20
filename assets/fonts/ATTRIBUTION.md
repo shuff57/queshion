@@ -22,3 +22,12 @@ Liberation Mono.
   document is not a font product.
 
 See docs/fonts.md for which face is used where.
+
+- Liberation Sans Regular and Bold (Arial-metric face for the chemistry figure text): copied
+  unmodified from Fedora's liberation-sans-fonts package. Licence: OFL-LiberationSans.txt.
+
+- Noto Sans Regular, Medium, SemiBold, Bold and ExtraBold (the chemistry figures page skin, which matches the
+  reference's system sans): Fedora's google-noto-fonts package, subset to Latin and common
+  punctuation with pyftsubset (no other change). Licence: OFL-NotoSans.txt.
+
+- Liberation Serif Regular, Italic and Bold (Times-metric face for the biology figure genotypes): copied from Fedora liberation-serif-fonts, subset to Latin with pyftsubset. Licence: OFL-LiberationSerif.txt.

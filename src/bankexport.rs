@@ -78,10 +78,14 @@ fn block(title: &str, body: &str) -> String {
 /// entries would read as a matching list to the exporter), MC choices keep their letters with
 /// the correct ones marked, every other kind prints its key under the stem.
 fn bank_q(q: &Question, number: u32, image: Option<DocImage>) -> DocQ {
+    // Imported from the pool without its key: the placeholder values (all-false choices, empty
+    // matches, a `false` True/False) are not a key and are never printed as one.
+    let keyless = crate::model::is_keyless(q);
+    let none = crate::model::KEY_NOT_PROVIDED;
     let mut text = q.stem.trim_end().to_string();
     let mut parts: Vec<String> = vec![meta_line(q)];
     let mut choices: Vec<String> = Vec::new();
-    let key;
+    let mut key;
     match &q.kind {
         Kind::Mc { answers } => {
             for (i, a) in answers.iter().enumerate() {
@@ -91,8 +95,14 @@ fn bank_q(q: &Question, number: u32, image: Option<DocImage>) -> DocQ {
             key = answers.iter().enumerate().filter(|(_, a)| a.correct).map(|(i, _)| letter(i).to_string()).collect::<Vec<_>>().join(", ");
         }
         Kind::Tf { correct } => {
-            key = if *correct { "True" } else { "False" }.to_string();
+            key = if keyless { none } else if *correct { "True" } else { "False" }.to_string();
             parts.push(format!("**Answer:** {key}"));
+        }
+        Kind::Matching { pairs, distractors } if keyless => {
+            let mut lines: Vec<String> = pairs.iter().enumerate().map(|(i, p)| format!("{}. {}", i + 1, p.left.trim())).collect();
+            lines.push(format!("Choices: {}", crate::model::right_column(pairs, distractors).join(", ")));
+            parts.push(block("Matches", &lines.join("\n")));
+            key = none.to_string();
         }
         Kind::Matching { pairs, distractors } => {
             let mut lines: Vec<String> = pairs.iter().enumerate().map(|(i, p)| format!("{}. {} → {}", i + 1, p.left.trim(), p.right.trim())).collect();
@@ -129,7 +139,7 @@ fn bank_q(q: &Question, number: u32, image: Option<DocImage>) -> DocQ {
                         keys.push(format!("{l}. {}", k.join(", ")));
                     }
                     PartKind::Tf { correct } => {
-                        let k = if *correct { "True" } else { "False" };
+                        let k = if keyless { none } else if *correct { "True" } else { "False" };
                         s.push_str(&format!("\n**Answer:** {k}"));
                         keys.push(format!("{l}. {k}"));
                     }
@@ -144,6 +154,9 @@ fn bank_q(q: &Question, number: u32, image: Option<DocImage>) -> DocQ {
             }
             key = keys.join("\n");
         }
+    }
+    if keyless {
+        key = none.to_string();
     }
     if let Some(e) = q.explanation.as_deref().map(str::trim).filter(|e| !e.is_empty()) {
         parts.push(block("Explanation", e));
@@ -165,7 +178,7 @@ pub fn bank_csv(bank: &QuestionBank) -> String {
             kind_title(q.kind.qkind()).to_string(),
             q.points.map(num_str).unwrap_or_default(),
             question_cell(q),
-            answer_cell(&q.kind),
+            if crate::model::is_keyless(q) { crate::model::KEY_NOT_PROVIDED.to_string() } else { answer_cell(&q.kind) },
             choices_cell(&q.kind),
             q.explanation.as_deref().unwrap_or("").trim().to_string(),
             q.topics.iter().map(|t| t.trim()).filter(|t| !t.is_empty()).collect::<Vec<_>>().join(", "),
@@ -270,6 +283,11 @@ pub fn bank_aiken(bank: &QuestionBank) -> (String, usize) {
             skipped += 1;
             continue;
         };
+        if crate::model::is_keyless(q) {
+            // The format is a key: a question with none cannot be written.
+            skipped += 1;
+            continue;
+        }
         let correct: Vec<usize> = answers.iter().enumerate().filter(|(_, a)| a.correct).map(|(i, _)| i).collect();
         if correct.len() != 1 || answers.len() < 2 || answers.len() > 26 {
             skipped += 1;
@@ -298,6 +316,10 @@ pub fn bank_blackboard(bank: &QuestionBank) -> (String, usize) {
     let mut pad = 0;
     let mut skipped = 0;
     for q in &bank.questions {
+        if crate::model::is_keyless(q) {
+            skipped += 1;
+            continue;
+        }
         match &q.kind {
             Kind::Mc { answers } => {
                 let correct = answers.iter().filter(|a| a.correct).count();
@@ -314,6 +336,9 @@ pub fn bank_blackboard(bank: &QuestionBank) -> (String, usize) {
     }
     let mut rows = Vec::new();
     for q in &bank.questions {
+        if crate::model::is_keyless(q) {
+            continue; // counted in the first pass
+        }
         let (kind, correct, wrong): (&str, String, Vec<String>) = match &q.kind {
             Kind::Mc { answers } => {
                 let good: Vec<&str> = answers.iter().filter(|a| a.correct).map(|a| a.text.trim()).collect();
@@ -703,6 +728,39 @@ pub fn embedded_data(pdf: &[u8]) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
     use crate::formats::make_question;
+
+    /// A keyless (pool-imported) question: its placeholder values never print as a key.
+    #[test]
+    fn keyless_questions_export_no_key() {
+        let sentinel = Some(crate::model::KEYLESS_SENTINEL.to_string());
+        let mut tf = make_question("The sun is a star.".into(), Kind::Tf { correct: false });
+        tf.explanation = sentinel.clone();
+        let mut m = make_question(
+            "Match".into(),
+            Kind::Matching { pairs: vec![crate::model::Pair { left: "Dog".into(), right: String::new() }, crate::model::Pair { left: "Frog".into(), right: String::new() }], distractors: vec!["Mammal".into(), "Amphibian".into()] },
+        );
+        m.explanation = sentinel.clone();
+        let mut mp = make_question("Parts".into(), Kind::Multipart { parts: vec![Part { stem: "a. x".into(), kind: PartKind::Tf { correct: false } }] });
+        mp.explanation = sentinel;
+        let bank = QuestionBank { id: "b".into(), name: "n".into(), questions: vec![tf.clone(), m.clone(), mp.clone()], created: 0, modified: 0, details: Default::default() };
+        for q in &bank.questions {
+            let d = bank_q(q, 1, None);
+            assert_eq!(d.key_text, crate::model::KEY_NOT_PROVIDED);
+            let t = d.text.join("\n");
+            assert!(!t.contains("**Answer:** False") && !t.contains("→"), "{t}");
+        }
+        let m_text = bank_q(&m, 1, None).text.join("\n");
+        assert!(m_text.contains("Choices: Mammal, Amphibian"), "{m_text}");
+        let csv = bank_csv(&bank);
+        assert_eq!(csv.matches(crate::model::KEY_NOT_PROVIDED).count(), 3, "{csv}");
+        assert!(!csv.contains(",False,") && !csv.contains(",True,"), "{csv}");
+        let (bb, skipped) = bank_blackboard(&bank);
+        assert_eq!((bb.trim(), skipped), ("", 3));
+        let mut mc = make_question("Pick".into(), Kind::Mc { answers: vec![Answer { text: "x".into(), correct: false, locked: false }, Answer { text: "y".into(), correct: false, locked: false }] });
+        mc.explanation = Some(crate::model::KEYLESS_SENTINEL.to_string());
+        let (aiken, skipped) = bank_aiken(&QuestionBank { questions: vec![mc], ..bank });
+        assert_eq!((aiken.as_str(), skipped), ("", 1));
+    }
     use crate::model::{Answer, Part};
 
     fn bank() -> QuestionBank {

@@ -8,7 +8,7 @@ use crate::figures::{ParamDef, Params, Subject};
 pub fn defs() -> Vec<FigureDef> {
     vec![FigureDef {
         id: "lewis-structures", subject: Subject::Chemistry, title: "Lewis Structures",
-        blurb: "Type a formula (or a molecule's name from the list) and get its dot-and-line structure with lone pairs, resonance and question modes.",
+        blurb: "The Lewis structure of a molecule or ion, correct or with mistakes to find.",
         params: params, render: render,
     }]
 }
@@ -23,23 +23,21 @@ const PRESETS: [&str; 23] = [
 fn params() -> Vec<ParamDef> {
     vec![
         ParamDef::text("formula", "Formula or name", "H2O")
-            .hint("A formula like H2O, CO2, NH4+ or SO4 2-, or a name like ethanol."),
-        ParamDef::choice("preset", "Or pick from the list", &PRESETS, "None (use the formula)")
-            .hint("Molecules with more than one central atom; overrides the formula."),
+            .hint("Type a formula like CH4, NO3- or SO4 2-, or one atom or ion like N or Ca 2+, with a space or ^ before a charge of 2 or more. You can also type a name from the list, like ethanol."),
+        ParamDef::choice("preset", "Or pick from the list", &PRESETS, "None (use the formula)"),
         ParamDef::bool("lone", "Show lone pairs", true),
-        ParamDef::bool("formal", "Formal charges", false)
-            .hint("Label each atom whose formal charge isn't 0."),
         ParamDef::bool("expand", "Expand the octet to lower formal charges", false),
-        ParamDef::text("title", "Chart title text", ""),
         ParamDef::text("tweak", "Changes: b2=3 (bond 2 triple, 0 = none), e1=4 (atom 1 has 4 lone electrons); or click bonds and atoms", ""),
         ParamDef::choice("shape", "Shape", &["Flat", "Shaped"], "Flat"),
         ParamDef::choice("bond_style", "Bonds", &["Lines", "Dots"], "Lines"),
+        ParamDef::bool("formal", "Formal charges", false)
+            .hint("Label each atom whose formal charge isn\u{2019}t 0."),
         ParamDef::choice("resonance", "Resonance structures", &["Show one", "Show all"], "Show one"),
         ParamDef::int("resonance_pick", "Which resonance structure", 1, 6, 1),
         ParamDef::choice("question", "Give students", &["Full structure", "Bonds only", "Skeleton"], "Full structure"),
-        ParamDef::text("central", "Central atom", "")
-            .hint("Blank uses the correct one."),
-        title_style(false),
+        ParamDef::text("central", "Central atom", ""),
+        { let mut t = title_style(false); t.default = Value::S("None".into()); t },
+        ParamDef::text("title", "", ""),
         answer_param("Answer key (the full structure, or the mistakes in a changed structure)"),
     ]
 }
@@ -51,7 +49,8 @@ struct Bond { a: usize, b: usize, order: i32 }
 #[derive(Clone)]
 struct Mol { atoms: Vec<Atom>, bonds: Vec<Bond>, charge: i32, centre: Option<usize> }
 
-const L: f64 = 72.0;
+/// Bond length between atom centres (the reference's 64 px).
+const L: f64 = 64.0;
 
 impl Mol {
     fn add(&mut self, sym: &str, parent: Option<usize>, ang: f64, order: i32) -> usize {
@@ -382,10 +381,11 @@ struct Frame { w: f64, h: f64, ox: f64, oy: f64, x0: f64, x1: f64, y0: f64, y1: 
 fn frame(m: &Mol) -> Frame {
     let (mut x0, mut x1, mut y0, mut y1) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
     for a in &m.atoms { x0 = x0.min(a.x); x1 = x1.max(a.x); y0 = y0.min(a.y); y1 = y1.max(a.y); }
-    let margin = 56.0;
+    // the reference pads the drawing by 16 px: half a glyph (26.4 px) across, a lone pair's
+    // reach (33.7 px) up and down
     let extra = if m.charge != 0 { 16.0 } else { 0.0 };
-    let w = (x1 - x0 + 2.0 * margin + 2.0 * extra).max(160.0);
-    let h = (y1 - y0 + 2.0 * margin + 2.0 * extra).max(140.0);
+    let w = x1 - x0 + 2.0 * 26.4 + 2.0 * extra;
+    let h = y1 - y0 + 2.0 * 33.7 + 2.0 * extra;
     let (ox, oy) = ((w - (x1 - x0)) / 2.0 - x0, (h - (y1 - y0)) / 2.0 - y0);
     Frame { w, h, ox, oy, x0, x1, y0, y1 }
 }
@@ -416,7 +416,7 @@ fn draw_mol(d: &mut Doc, m: &Mol, fr: &Frame, dx: f64, dy: f64, p: &Params, mode
                 }
                 continue;
             }
-            let g = |s: &str| if s == "H" { 10.0 } else { 13.0 };
+            let g = |s: &str| if s == "H" { 14.4 } else { 15.1 };
             let (sa, sb) = (g(&m.atoms[b.a].sym), g(&m.atoms[b.b].sym));
             let offs: Vec<f64> = match b.order { 1 => vec![0.0], 2 => vec![-3.5, 3.5], _ => vec![-5.0, 0.0, 5.0] };
             for o in offs {
@@ -427,7 +427,7 @@ fn draw_mol(d: &mut Doc, m: &Mol, fr: &Frame, dx: f64, dy: f64, p: &Params, mode
     let flat = p.s("shape") != "Shaped";
     for (i, a) in m.atoms.iter().enumerate() {
         let (x, y) = pos(i);
-        tx(d, x, y + 8.0, 24.0, "middle", INK, false, &a.sym);
+        tx(d, x, y + 9.1, 26.0, "middle", INK, false, &a.sym);
         if mode == Mode::Full && p.b("lone") {
             let mut dirs: Vec<f64> = Vec::new();
             for b in m.bonds.iter().filter(|b| b.order > 0 || dots) {
@@ -461,13 +461,13 @@ fn draw_mol(d: &mut Doc, m: &Mol, fr: &Frame, dx: f64, dy: f64, p: &Params, mode
                 }
             }
             for (k, &ang) in chosen.iter().enumerate() {
-                let r = if a.sym.len() > 1 { 25.0 } else { 19.0 };
+                let r = if a.sym.len() > 1 { 20.0 } else { 15.1 };
                 let (c, s) = (ang.to_radians().cos(), ang.to_radians().sin());
                 let (px, py) = (x + r * c, y - r * s);
                 if k < pairs {
-                    for sgn in [-1.0, 1.0] { d.circle(px + s * 3.8 * sgn, py + c * 3.8 * sgn, 2.4, INK, INK, 0.5); }
+                    for sgn in [-1.0, 1.0] { d.circle(px + s * 4.3 * sgn, py + c * 4.3 * sgn, 2.6, INK, INK, 0.5); }
                 } else {
-                    d.circle(px, py, 2.4, INK, INK, 0.5);
+                    d.circle(px, py, 2.6, INK, INK, 0.5);
                 }
             }
         }
@@ -547,7 +547,7 @@ fn layout(p: &Params) -> Result<Lay, String> {
     for pl in placed.iter_mut() { pl.3 = (hmax - pl.1.h) / 2.0; }
     let mut h = hmax;
     let mut answer = None;
-    let question = match p.s("question") { "Bonds only" => Mode::Bonds, "Skeleton" => Mode::Skeleton, _ => Mode::Full };
+    let question = if has_changes(p) { Mode::Full } else { match p.s("question") { "Bonds only" => Mode::Bonds, "Skeleton" => Mode::Skeleton, _ => Mode::Full } };
     if p.b("answer") && question != Mode::Full && placed.len() == 1 {
         let m = placed[0].0.clone();
         let fr = frame(&m);
@@ -559,7 +559,7 @@ fn layout(p: &Params) -> Result<Lay, String> {
     }
     // room for the "Mistakes" list under a changed structure
     let changed = !p.s("tweak").trim().is_empty() || !p.s("central").trim().is_empty();
-    let target = if p.b("answer") && changed { 520.0f64.max(w) } else { w.max(160.0) };
+    let target = if p.b("answer") && changed { 520.0f64.max(w) } else { w.max(60.0) };
     let shift = (target - w) / 2.0;
     if shift > 0.0 {
         for pl in placed.iter_mut() { pl.2 += shift; }
@@ -577,7 +577,7 @@ fn render(p: &Params) -> String {
             return d.finish();
         }
     };
-    let question = match p.s("question") { "Bonds only" => Mode::Bonds, "Skeleton" => Mode::Skeleton, _ => Mode::Full };
+    let question = if has_changes(p) { Mode::Full } else { match p.s("question") { "Bonds only" => Mode::Bonds, "Skeleton" => Mode::Skeleton, _ => Mode::Full } };
     let mut d = Doc::new(lay.w, lay.h);
     let n = lay.mols.len();
     for (k, (m, fr, x, y)) in lay.mols.iter().enumerate() {
@@ -650,6 +650,148 @@ pub(super) fn handles(id: &str, p: &Params, _size: (f64, f64)) -> Option<Vec<Han
     }
     let _ = (fr.x0, fr.x1, fr.y0, fr.y1, fr.h);
     Some(v)
+}
+
+/// "C2H5OH" typed as a formula, shown as subscripts ("C₂H₅OH") in the Structure summary.
+pub fn summary_formula(p: &Params) -> String {
+    if p.s("preset") != "None (use the formula)" && !p.s("preset").is_empty() {
+        return p.s("preset").split(',').next().unwrap_or("").to_string();
+    }
+    let f = p.s("formula").trim();
+    if f.is_empty() { return "No formula".into(); }
+    pretty(name_formula(f).unwrap_or(f))
+}
+
+/// The side panel's one-line summaries for this figure's sections.
+pub fn skin_summary(title: &str, p: &Params) -> Option<String> {
+    Some(match title {
+        "Structure" => summary_formula(p),
+        "Look" => {
+            let mut s = p.s("shape").to_string();
+            if p.s("bond_style") == "Dots" { s.push_str(", bonds as dots"); }
+            if p.b("formal") { s.push_str(", formal charges"); }
+            s
+        }
+        "Question" => p.s("question").to_string(),
+        "Changes" => if p.s("question") != "Full structure" && !has_changes(p) {
+            "Correct structure".into()
+        } else {
+            let (n, k) = (changes_count(p), mistake_lines(p).len());
+            if n == 0 { "Correct structure".into() } else { format!("{} change{}, {} mistake{}", n, if n == 1 { "" } else { "s" }, k, if k == 1 { "" } else { "s" }) }
+        },
+        "Title and answer key" => format!(
+            "{}, {}",
+            if p.s("title_style") == "Text" && !p.s("title").trim().is_empty() { "Title" } else { "No title" },
+            if p.b("answer") && answer_available(p) { "answer key" } else { "no answer key" }
+        ),
+        _ => return None,
+    })
+}
+
+/// A wrong structure is being made: a different central atom, edited bonds or lone electrons.
+pub fn has_changes(p: &Params) -> bool { !p.s("tweak").trim().is_empty() || !p.s("central").trim().is_empty() }
+
+/// The answer key has something to say once the question is not the full structure or the
+/// structure has been changed.
+pub fn answer_available(p: &Params) -> bool { p.s("question") != "Full structure" || has_changes(p) }
+
+/// The note under the Shape switch.
+pub fn shape_note(p: &Params) -> &'static str {
+    if p.s("shape") == "Shaped" { "Placed to hint at the real shape, like bent H\u{2082}O. Still a flat drawing." } else { "Atoms and lone pairs on the four sides of each symbol, as most textbooks draw them." }
+}
+
+/// The note under the Bonds switch.
+pub fn bonds_note(p: &Params) -> &'static str {
+    if p.s("bond_style") == "Dots" { "Each shared pair as two dots between the atoms." } else { "Each shared pair as a line between the atoms." }
+}
+
+/// The note under "Give students".
+pub fn question_note(p: &Params) -> &'static str {
+    if has_changes(p) { return "A changed structure is always drawn in full. Reset it to make a \u{201c}complete this\u{201d} question."; }
+    match p.s("question") {
+        "Bonds only" => "The atoms and bonds, for students to add the lone electrons.",
+        "Skeleton" => "The atoms in place, for students to add bonds and lone electrons.",
+        _ => "The whole structure, bonds and lone electrons.",
+    }
+}
+
+/// The note under the Answer key switch (a greyed-out switch with a reason when there is nothing to key).
+pub fn answer_note(p: &Params) -> &'static str {
+    if has_changes(p) { "List the structure\u{2019}s mistakes under the figure." }
+    else if p.s("question") != "Full structure" { "Draw the full structure under the figure." }
+    else { "Choose a question or change the structure to add an answer key." }
+}
+
+/// How many atoms, bonds and the central atom differ from the correct structure.
+pub fn changes_count(p: &Params) -> usize {
+    let (Ok(m), Ok(c)) = (build(p), base(p, None)) else { return 0 };
+    let mut n = 0;
+    if m.centre.map(|i| &m.atoms[i].sym) != c.centre.map(|i| &c.atoms[i].sym) { n += 1; }
+    if m.atoms.len() == c.atoms.len() && m.bonds.len() == c.bonds.len() {
+        n += m.atoms.iter().zip(&c.atoms).filter(|(a, b)| a.nb != b.nb).count();
+        n += m.bonds.iter().zip(&c.bonds).filter(|(a, b)| a.order != b.order).count();
+    }
+    n
+}
+
+/// What is wrong with the changed structure, one sentence each.
+pub fn mistake_lines(p: &Params) -> Vec<String> {
+    match (build(p), base(p, None)) { (Ok(m), Ok(c)) => mistakes(p, &m, &c), _ => Vec::new() }
+}
+
+/// Whether the Structure's extra switches (lone pairs, expanded octet, resonance) apply right now.
+/// The reference's panel shows them only when they would change the drawing.
+pub fn relevant(key: &str, p: &Params) -> bool {
+    match key {
+        "lone" => !p.b("lone"),
+        "expand" => {
+            if p.b("expand") { return true; }
+            let mut q = p.clone();
+            q.0.insert("expand".into(), Value::B(true));
+            let (a, b) = (base(p, None), base(&q, None));
+            matches!((a, b), (Ok(a), Ok(b)) if a.electrons() != b.electrons() || a.bonds.iter().map(|x| x.order).sum::<i32>() != b.bonds.iter().map(|x| x.order).sum::<i32>())
+        }
+        "resonance" | "resonance_pick" => {
+            let n = base(p, Some(p.s("central")).filter(|c| !c.trim().is_empty())).map(|m| resonances(&m).len()).unwrap_or(1);
+            n > 1 && (key == "resonance" || p.s("resonance") == "Show one")
+        }
+        _ => true,
+    }
+}
+
+/// The central-atom choices (distinct atoms of the correct structure) and the correct one.
+pub fn central_choices(p: &Params) -> Option<(Vec<String>, String)> {
+    let m = base(p, None).ok()?;
+    let mut v: Vec<String> = Vec::new();
+    for a in &m.atoms { if !v.contains(&a.sym) { v.push(a.sym.clone()); } }
+    let right = m.centre.map(|c| m.atoms[c].sym.clone())?;
+    if m.atoms.len() < 3 { return None; }
+    Some((v, right))
+}
+
+/// Rows of the Changes section: each atom with its lone electrons and each bond with its order,
+/// labelled as the reference does ("H 1", "O", "O–H 1"). None with several structures drawn.
+pub fn edit_rows(p: &Params) -> Option<(Vec<(usize, String, i32)>, Vec<(String, i32)>)> {
+    let m = build_all(p).ok()?;
+    if m.len() != 1 { return None; }
+    let m = &m[0];
+    let num = |names: &[String], i: usize| {
+        let same = names.iter().filter(|n| **n == names[i]).count();
+        if same > 1 { format!("{} {}", names[i], names[..=i].iter().filter(|n| **n == names[i]).count()) } else { names[i].clone() }
+    };
+    let names: Vec<String> = m.atoms.iter().map(|a| a.sym.clone()).collect();
+    // the reference lists the atoms around the central one first, the central atom last
+    let mut order: Vec<usize> = (0..m.atoms.len()).filter(|&i| Some(i) != m.centre).collect();
+    order.extend(m.centre);
+    let atoms = order.into_iter().map(|i| (i, num(&names, i), m.atoms[i].nb)).collect();
+    let bnames: Vec<String> = m.bonds.iter().map(|b| format!("{}\u{2013}{}", m.atoms[b.a].sym, m.atoms[b.b].sym)).collect();
+    let bonds = (0..m.bonds.len()).map(|i| (num(&bnames, i), m.bonds[i].order)).collect();
+    Some((atoms, bonds))
+}
+
+/// Sets atom `i`'s lone electrons / bond `i`'s order in the changes text.
+pub fn set_edit(p: &mut Params, atom: bool, i: usize, val: i32) {
+    set_tweak(p, &format!("{}{}", if atom { "e" } else { "b" }, i), val);
 }
 
 // ---------------------------------------------------------------------------------------------

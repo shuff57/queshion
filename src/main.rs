@@ -1,7 +1,7 @@
 //! verSHion desktop binary: native entry, headless hooks, and the eframe adapter.
 use eframe::egui;
 use vershion::{
-    ai, ditto, examui, figfit, figures, formats, model, platform, store, App, Settings,
+    ai, ditto, examui, figfit, figure_agent, figure_eval, figures, formats, model, platform, store, App, Settings,
 };
 
 /// eframe adapter for the host-agnostic [`vershion::App`].
@@ -78,6 +78,122 @@ fn main() -> Result<(), eframe::Error> {
         let p = figures::params_from_json(&def, &over);
         let png = figures::to_png(&(def.render)(&p), 1.5).expect("render");
         std::fs::write(vershion::env_var("VERSHION_OUT").expect("VERSHION_OUT"), png).expect("write");
+        return Ok(());
+    }
+    // Headless one-shot: VERSHION_FIND_MODELS=1 runs the Settings "Find models" check against the configured
+    // provider and prints the note and the models kept.
+    #[cfg(not(target_arch = "wasm32"))]
+    if vershion::env_var("VERSHION_FIND_MODELS").as_deref() == Ok("1") {
+        let settings: Settings = store::load_json("settings.json").unwrap_or_default();
+        let cfg = ai::AiCfg::from(&settings);
+        match ai::check_models(&cfg, &|d, n| eprintln!("checking {d}/{n}")) {
+            Ok(c) => {
+                println!("{}", ai::checked_note(&c));
+                println!("kept: {}", c.ok.join(", "));
+            }
+            Err(e) => {
+                eprintln!("find models failed: {e}");
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
+    }
+    if vershion::env_var("VERSHION_FIGURE_CATALOG").as_deref() == Ok("1") {
+        println!("{}", figure_agent::catalog_text());
+        return Ok(());
+    }
+    // Headless one-shot: VERSHION_FIGURE_EVAL=<cases.json> [VERSHION_EVAL_REPEATS=3] [VERSHION_EVAL_ONLY=<name part>]
+    // [VERSHION_EVAL_OUT=<report.json>] runs the figure agent's eval cases against the configured provider.
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Ok(path) = vershion::env_var("VERSHION_FIGURE_EVAL") {
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"));
+        let base = std::path::Path::new(&path).parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        let mut cases = figure_eval::parse_cases(&text).unwrap_or_else(|e| panic!("{e}"));
+        if let Ok(only) = vershion::env_var("VERSHION_EVAL_ONLY") {
+            cases.retain(|c| c.name.contains(&only) || c.level == only);
+        }
+        let bad: Vec<String> = cases.iter().flat_map(|c| figure_eval::validate(c, &base).into_iter().map(move |p| format!("{}: {p}", c.name))).collect();
+        if !bad.is_empty() {
+            eprintln!("invalid cases:\n{}", bad.join("\n"));
+            std::process::exit(1);
+        }
+        let repeats = vershion::env_var("VERSHION_EVAL_REPEATS").ok().and_then(|n| n.parse().ok()).unwrap_or(3);
+        let settings: Settings = store::load_json("settings.json").unwrap_or_default();
+        let mut cfg = ai::AiCfg::from(&settings);
+        // VERSHION_EVAL_MODEL=<model> tries another model without touching settings.json.
+        if let Ok(m) = vershion::env_var("VERSHION_EVAL_MODEL") {
+            cfg.model = m;
+        }
+        let mut judge_cfg = cfg.clone();
+        if let Ok(m) = vershion::env_var("VERSHION_JUDGE_MODEL") {
+            judge_cfg.model = m;
+        }
+        let mut judge = figure_eval::ModelJudge { cfg: &judge_cfg };
+        let judging = vershion::env_var("VERSHION_EVAL_JUDGE").as_deref() == Ok("1");
+        // VERSHION_EVAL_TRIES=<n> lets each run take up to n reviewed attempts (needs the judge).
+        let tries = vershion::env_var("VERSHION_EVAL_TRIES").ok().and_then(|n| n.parse().ok()).unwrap_or(1);
+        let results = figure_eval::run_all_tries(
+            &cases,
+            repeats,
+            &base,
+            &mut figure_agent::ModelChat { cfg: &cfg },
+            if judging || tries > 1 { Some(&mut judge) } else { None },
+            tries,
+            |m| eprintln!("running {m}"),
+        );
+        // Pictures to look at: VERSHION_EVAL_PICS=<dir> saves each final figure and each reference.
+        if let Ok(dir) = vershion::env_var("VERSHION_EVAL_PICS") {
+            std::fs::create_dir_all(&dir).expect("pics dir");
+            for (c, r) in cases.iter().zip(&results) {
+                if let Some(Ok(png)) = c.reference.as_ref().map(|x| figure_eval::reference_png(x, &base)) {
+                    std::fs::write(format!("{dir}/{}-ref.png", c.name), png).expect("write");
+                }
+                for (i, run) in r.runs.iter().enumerate() {
+                    if let Some(png) = &run.png {
+                        std::fs::write(format!("{dir}/{}-{}.png", c.name, i + 1), png).expect("write");
+                    }
+                }
+            }
+        }
+        println!("{}", figure_eval::format_report(&results));
+        if let Ok(out) = vershion::env_var("VERSHION_EVAL_OUT") {
+            std::fs::write(out, serde_json::to_string_pretty(&results).unwrap_or_default()).expect("write");
+        }
+        return Ok(());
+    }
+    // Headless one-shot: VERSHION_FIGURE_AGENT="<request>" VERSHION_OUT=<file.png> runs the figure
+    // agent loop against the configured provider, prints each step and the chosen figure spec.
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Ok(request) = vershion::env_var("VERSHION_FIGURE_AGENT") {
+        let settings: Settings = store::load_json("settings.json").unwrap_or_default();
+        let cfg = ai::AiCfg::from(&settings);
+        let reference = vershion::env_var("VERSHION_FIGURE_IMAGE").ok().map(|p| std::fs::read(&p).unwrap_or_else(|e| panic!("cannot read {p}: {e}")));
+        // With a picture, a reviewer checks each figure against it and the agent gets up to 3 tries.
+        let mut judge = figure_agent::ModelJudge { cfg: &cfg };
+        let run = figure_agent::run_with_retries(
+            &request,
+            reference.as_deref(),
+            &mut figure_agent::ModelChat { cfg: &cfg },
+            Some(&mut judge),
+            figure_agent::MAX_TRIES,
+        );
+        if run.tries > 1 {
+            eprintln!("took {} attempts", run.tries);
+        }
+        for s in &run.steps {
+            println!("{:<14} {}", s.tool, s.summary);
+        }
+        if let (Some(png), Ok(path)) = (&run.png, vershion::env_var("VERSHION_OUT")) {
+            std::fs::write(path, png).expect("write");
+        }
+        match run.spec {
+            Some(spec) => println!("{}", serde_json::json!({"figure": spec, "note": run.note})),
+            None if run.declined.is_some() => println!("declined: {}", run.declined.unwrap_or_default()),
+            None => {
+                eprintln!("figure agent failed: {}", run.error.unwrap_or_default());
+                std::process::exit(1);
+            }
+        }
         return Ok(());
     }
     // Headless one-shot: VERSHION_EXPORT=<exam index> VERSHION_OUT=<dir> writes exam.pdf, exam.docx
