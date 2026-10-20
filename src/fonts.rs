@@ -205,6 +205,77 @@ pub fn install_fetched(faces: Vec<(Face, Vec<u8>)>) -> Vec<Face> {
     }
 }
 
+/// The 14 standard PDF fonts hayro draws a PDF's non-embedded text with: Foxit's fonts from
+/// PDFium, bare CFF programs despite the `.pfb` name (BSD-style licence,
+/// `assets/pdf-fonts/LICENSE_FOXIT`). Natively hayro compiles
+/// them in (`embed-fonts`); the web build fetches these files from `pdf-fonts/` with the faces
+/// (`src/web.rs`) and hands them to hayro through [`pdf_standard_font`].
+pub const PDF_STANDARD_FONTS: [&str; 14] = [
+    "FoxitSans.pfb",
+    "FoxitSansBold.pfb",
+    "FoxitSansItalic.pfb",
+    "FoxitSansBoldItalic.pfb",
+    "FoxitFixed.pfb",
+    "FoxitFixedBold.pfb",
+    "FoxitFixedItalic.pfb",
+    "FoxitFixedBoldItalic.pfb",
+    "FoxitSerif.pfb",
+    "FoxitSerifBold.pfb",
+    "FoxitSerifItalic.pfb",
+    "FoxitSerifBoldItalic.pfb",
+    "FoxitDingbats.pfb",
+    "FoxitSymbol.pfb",
+];
+
+/// The file of the standard font hayro asks for: the same choice as hayro's own `embed-fonts`.
+pub fn pdf_standard_font_file(font: hayro::hayro_interpret::font::StandardFont) -> &'static str {
+    use hayro::hayro_interpret::font::StandardFont as S;
+    match font {
+        S::Helvetica => "FoxitSans.pfb",
+        S::HelveticaBold => "FoxitSansBold.pfb",
+        S::HelveticaOblique => "FoxitSansItalic.pfb",
+        S::HelveticaBoldOblique => "FoxitSansBoldItalic.pfb",
+        S::Courier => "FoxitFixed.pfb",
+        S::CourierBold => "FoxitFixedBold.pfb",
+        S::CourierOblique => "FoxitFixedItalic.pfb",
+        S::CourierBoldOblique => "FoxitFixedBoldItalic.pfb",
+        S::TimesRoman => "FoxitSerif.pfb",
+        S::TimesBold => "FoxitSerifBold.pfb",
+        S::TimesItalic => "FoxitSerifItalic.pfb",
+        S::TimesBoldItalic => "FoxitSerifBoldItalic.pfb",
+        S::ZapfDingBats => "FoxitDingbats.pfb",
+        S::Symbol => "FoxitSymbol.pfb",
+    }
+}
+
+/// How a CFF font program starts: version 1.0, header size 4.
+const CFF_HEADER: [u8; 3] = [0x01, 0x00, 0x04];
+
+/// Standard PDF fonts fetched at startup (web build).
+static FETCHED_PDF: OnceLock<Vec<(&'static str, &'static [u8])>> = OnceLock::new();
+
+/// The bytes of a fetched standard PDF font (web build; natively hayro has its own).
+pub fn pdf_standard_font(file: &str) -> Option<&'static [u8]> {
+    FETCHED_PDF.get_or_init(Vec::new).iter().find(|(f, _)| *f == file).map(|(_, b)| *b)
+}
+
+/// Web build: hands over the standard PDF fonts fetched at startup. Only the first call counts;
+/// bytes that do not start like a CFF font program (version 1.0, 4-byte header) are dropped.
+/// Returns the files now in use.
+pub fn install_fetched_pdf_fonts(fonts: Vec<(&'static str, Vec<u8>)>) -> Vec<&'static str> {
+    let mut list: Vec<(&'static str, &'static [u8])> = Vec::new();
+    for (file, bytes) in fonts {
+        if PDF_STANDARD_FONTS.contains(&file) && bytes.starts_with(&CFF_HEADER) && !list.iter().any(|(f, _)| *f == file) {
+            list.push((file, Box::leak(bytes.into_boxed_slice())));
+        }
+    }
+    let used: Vec<&'static str> = list.iter().map(|(f, _)| *f).collect();
+    match FETCHED_PDF.set(list) {
+        Ok(()) => used,
+        Err(_) => Vec::new(),
+    }
+}
+
 /// The family name the faces carry in their `name` table (used by SVG `font-family`).
 pub const SERIF_FAMILY: &str = "Source Serif 4";
 
@@ -809,6 +880,48 @@ mod tests {
             assert_eq!(html.contains(&preload), f.web_fetched(), "{f:?}: {preload}");
         }
         assert_eq!(html.matches(r#"rel="preload" href="fonts/"#).count(), Face::ALL.iter().filter(|f| f.web_fetched()).count());
+    }
+
+    /// The web build's standard PDF fonts are byte for byte the ones hayro compiles in natively,
+    /// picked the same way, and index.html ships and preloads every one of them.
+    #[test]
+    fn pdf_standard_fonts_match_hayros_own() {
+        use hayro::hayro_interpret::font::StandardFont as S;
+        let all = [
+            S::Helvetica,
+            S::HelveticaBold,
+            S::HelveticaOblique,
+            S::HelveticaBoldOblique,
+            S::Courier,
+            S::CourierBold,
+            S::CourierOblique,
+            S::CourierBoldOblique,
+            S::TimesRoman,
+            S::TimesBold,
+            S::TimesItalic,
+            S::TimesBoldItalic,
+            S::ZapfDingBats,
+            S::Symbol,
+        ];
+        let mut files: Vec<&str> = all.iter().map(|s| pdf_standard_font_file(*s)).collect();
+        for s in all {
+            let file = pdf_standard_font_file(s);
+            let ours = std::fs::read(format!("{}/assets/pdf-fonts/{file}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+            let (theirs, index) = s.get_font_data();
+            assert!((*theirs).as_ref() == ours.as_slice() && index == 0, "{s:?} is not {file}");
+            assert!(ours.starts_with(&CFF_HEADER), "{file} is a CFF program");
+        }
+        files.sort_unstable();
+        let mut listed = PDF_STANDARD_FONTS.to_vec();
+        listed.sort_unstable();
+        assert_eq!(files, listed);
+        let html = include_str!("../index.html");
+        assert!(html.contains(r#"<link data-trunk rel="copy-dir" href="assets/pdf-fonts" data-target-path="pdf-fonts" />"#));
+        for file in PDF_STANDARD_FONTS {
+            let preload = format!(r#"<link rel="preload" href="pdf-fonts/{file}" as="fetch" crossorigin />"#);
+            assert!(html.contains(&preload), "{preload}");
+        }
+        assert!(install_fetched_pdf_fonts(vec![("FoxitSans.pfb", b"<!doctype html>".to_vec())]).is_empty());
     }
 
     #[test]

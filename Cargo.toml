@@ -34,8 +34,10 @@ egui = "0.36"
 log = "0.4"
 # std clocks panic on wasm32; this is std's clock natively and the browser's in a page.
 web-time = "1"
-# Pure-Rust PDF rasterizer: page previews and PDF imports on the web (no pdftoppm).
-hayro = { version = "0.8", default-features = false, features = ["embed-fonts", "embed-cmaps"] }
+# Pure-Rust PDF rasterizer: page previews and PDF imports on the web (no pdftoppm). Its 14
+# standard fonts (`embed-fonts`) are compiled in natively only; the web build fetches the same
+# files (assets/pdf-fonts, src/fonts.rs `PDF_STANDARD_FONTS`).
+hayro = { version = "0.8", default-features = false, features = ["embed-cmaps"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp"] }
@@ -64,7 +66,8 @@ idna = "1"   # already in the tree via url; shows an IDN host in Unicode beside 
 share-core = { path = "server/share-core" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11", "links"] }
+hayro = { version = "0.8", default-features = false, features = ["embed-fonts"] }
+eframe ={ version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11", "links"] }
 rfd = "0.17"
 ureq = { version = "3", features = ["platform-verifier"] }
 # Shared-pool refresh and device tokens live in the OS keychain (src/share/vault.rs): macOS Keychain,
