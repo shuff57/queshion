@@ -4,10 +4,11 @@
 //!
 //! Natively every face is compiled into the binary, so the app and the embedded officecraft tab
 //! need no filesystem access for fonts. The web build compiles in only the faces marked `embed`
-//! in [`Face`] (the four Source Serif 4 faces, which equaSHion compiles in anyway, and the UI's
-//! Source Sans 3 Regular) and fetches the rest from `fonts/` next to index.html before the app
-//! starts (`src/web.rs`, [`install_fetched`]). A face that did not arrive is drawn with a
-//! compiled-in stand-in ([`Face::stand_in`]), so no consumer ever sees empty bytes, and the set
+//! in [`Face`] (the four Source Serif 4 faces, which equaSHion compiles in anyway) plus a small
+//! Latin cut of the UI face ([`last_resort`]), and fetches the rest from `fonts/` next to
+//! index.html before the app starts (`src/web.rs`, [`install_fetched`]). A face that did not
+//! arrive is drawn with a stand-in ([`Face::stand_in`], then [`last_resort`]), so no consumer
+//! ever sees empty bytes, and the set
 //! is fixed the first time any face is read, so the PDF metrics and subsets, egui and resvg all
 //! see the same bytes for the whole session (docs/progress.md, "web fonts").
 //!
@@ -86,9 +87,9 @@ bundled_faces! {
     SerifBoldItalic = "SourceSerif4-BoldIt.ttf", embed;
     /// The semibold print face used by headings.
     SerifSemibold = "SourceSerif4-Semibold.ttf", fetch;
-    /// UI faces (Source Sans 3). Regular is the app's text face, so the web build embeds it: the
-    /// stand-in for every sans face that does not arrive.
-    SansRegular = "SourceSans3-Regular.ttf", embed;
+    /// UI faces (Source Sans 3). Regular is the app's text face and the stand-in for every other
+    /// sans face; if it does not arrive on the web, [`last_resort`] (a Latin cut of it) stands in.
+    SansRegular = "SourceSans3-Regular.ttf", fetch;
     SansItalic = "SourceSans3-It.ttf", fetch;
     SansSemibold = "SourceSans3-Semibold.ttf", fetch;
     SansBold = "SourceSans3-Bold.ttf", fetch;
@@ -116,8 +117,9 @@ bundled_faces! {
 }
 
 impl Face {
-    /// The compiled-in face drawn in this one's place when the web build could not fetch it
-    /// (itself for a compiled-in face).
+    /// The face drawn in this one's place when the web build could not fetch it (itself for
+    /// Source Sans 3 Regular and the compiled-in faces). Every stand-in is compiled in, except
+    /// Source Sans 3 Regular, which falls back in turn to [`last_resort`].
     pub const fn stand_in(self) -> Face {
         match self {
             Face::SerifSemibold | Face::LiberationSerifBold => Face::SerifBold,
@@ -142,13 +144,33 @@ impl Face {
         self.compiled_in().or_else(|| fetched(self))
     }
 
-    /// This face's bytes, or (on the web, when it was not fetched) its stand-in's.
+    /// This face's bytes, or (on the web, when it was not fetched) its stand-in's, or
+    /// [`last_resort`]'s.
     pub fn bytes(self) -> &'static [u8] {
-        match self.loaded() {
-            Some(b) => b,
-            None => self.stand_in().compiled_in().unwrap_or_default(),
-        }
+        self.loaded().or_else(|| self.stand_in().loaded()).unwrap_or_else(last_resort)
     }
+}
+
+/// The face drawn when neither a sans face nor Source Sans 3 Regular arrived. The web build
+/// compiles in VS Sans Fallback, Source Sans 3 Regular cut to Latin text (57 KiB instead of
+/// 421 KiB) and renamed as the OFL requires of a modified "Source" font
+/// (`tools/make_sans_fallback.py`); natively Source Sans 3 Regular is always there.
+pub fn last_resort() -> &'static [u8] {
+    #[cfg(target_arch = "wasm32")]
+    {
+        include_bytes!("../assets/fonts/VSSansFallback-Regular.ttf")
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Face::SansRegular.compiled_in().unwrap_or_default()
+    }
+}
+
+/// The family name a font's `name` table gives (typographic family first), e.g. "Source Sans 3".
+pub fn family_name(bytes: &[u8]) -> Option<String> {
+    let f = ttf_parser::Face::parse(bytes, 0).ok()?;
+    let find = |id: u16| f.names().into_iter().find(|n| n.name_id == id && n.is_unicode()).and_then(|n| n.to_string());
+    find(ttf_parser::name_id::TYPOGRAPHIC_FAMILY).or_else(|| find(ttf_parser::name_id::FAMILY))
 }
 
 /// Faces fetched at startup (web build), fixed once anything reads a face.
@@ -725,16 +747,55 @@ mod tests {
     }
 
     /// The web build must always have something to draw with: a fetched face stands in with a
-    /// compiled-in one, and the faces it compiles in are the ones the first frame needs.
+    /// compiled-in one, or with Source Sans 3 Regular, which falls back to the compiled-in
+    /// `last_resort`. The serif faces equaSHion compiles in anyway stay compiled in.
     #[test]
     fn web_stand_ins_are_compiled_in() {
         for &f in Face::ALL {
-            assert!(!f.stand_in().web_fetched(), "{f:?} stands in with a face the web build fetches");
-            assert_eq!(f.stand_in() == f, !f.web_fetched(), "{f:?}");
+            let s = f.stand_in();
+            assert!(!s.web_fetched() || s == Face::SansRegular, "{f:?} stands in with {s:?}, which the web build fetches");
+            assert_eq!(s.stand_in(), s, "{f:?}: one step to a stand-in");
+            if !f.web_fetched() {
+                assert_eq!(s, f, "{f:?} is compiled in");
+            }
         }
-        for f in [Face::SansRegular, Face::SerifRegular, Face::SerifItalic, Face::SerifBold, Face::SerifBoldItalic] {
+        for f in [Face::SerifRegular, Face::SerifItalic, Face::SerifBold, Face::SerifBoldItalic] {
             assert!(!f.web_fetched(), "{f:?} must be compiled into the web build");
         }
+    }
+
+    /// The web build's last resort is Source Sans 3 Regular cut to Latin text and renamed (OFL
+    /// Reserved Font Name "Source"): same advances for every character it keeps.
+    #[test]
+    fn web_last_resort_is_a_renamed_latin_cut_of_the_ui_face() {
+        let cut = std::fs::read(format!("{}/assets/fonts/VSSansFallback-Regular.ttf", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        assert!(cut.len() < 80_000, "{} bytes", cut.len());
+        assert_eq!(family_name(&cut).as_deref(), Some("VS Sans Fallback"));
+        let small = ttf_parser::Face::parse(&cut, 0).unwrap();
+        for n in small.names() {
+            if let Some(s) = n.to_string()
+                && ![0, 7, 13, 14].contains(&n.name_id)
+            {
+                assert!(!s.contains("Source"), "name {} is {s:?}", n.name_id);
+            }
+        }
+        let full = ttf_parser::Face::parse(Face::SansRegular.bytes(), 0).unwrap();
+        assert_eq!(small.units_per_em(), full.units_per_em());
+        for c in (' '..='~').chain('\u{a0}'..='\u{17f}').chain("–—‘’“”•…€™−≤≥".chars()) {
+            let g = small.glyph_index(c).unwrap_or_else(|| panic!("{c:?} missing"));
+            let h = full.glyph_index(c).unwrap();
+            assert_eq!(small.glyph_hor_advance(g), full.glyph_hor_advance(h), "{c:?}");
+        }
+        assert_eq!(family_name(last_resort()).as_deref(), Some("Source Sans 3"), "natively the full face");
+    }
+
+    #[test]
+    fn family_names_match_what_the_svg_stacks_ask_for() {
+        assert_eq!(family_name(Face::SansRegular.bytes()).as_deref(), Some("Source Sans 3"));
+        assert_eq!(family_name(Face::SerifRegular.bytes()).as_deref(), Some(SERIF_FAMILY));
+        assert_eq!(family_name(Face::Mono.bytes()).as_deref(), Some("Liberation Mono"));
+        assert_eq!(family_name(Face::LiberationSansBold.bytes()).as_deref(), Some("Liberation Sans"));
+        assert_eq!(family_name(b"not a font"), None);
     }
 
     /// The faces the web build fetches are copied next to index.html and preloaded, so their

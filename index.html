@@ -19,6 +19,7 @@
   <!-- Faces the wasm does not compile in (src/fonts.rs, `fetch`): fetched before the app starts,
        preloaded so they download alongside the wasm. Keep in step with src/fonts.rs (a test checks). -->
   <link data-trunk rel="copy-dir" href="assets/fonts" data-target-path="fonts" />
+  <link rel="preload" href="fonts/SourceSans3-Regular.ttf" as="fetch" crossorigin />
   <link rel="preload" href="fonts/SourceSerif4-Semibold.ttf" as="fetch" crossorigin />
   <link rel="preload" href="fonts/SourceSans3-It.ttf" as="fetch" crossorigin />
   <link rel="preload" href="fonts/SourceSans3-Semibold.ttf" as="fetch" crossorigin />

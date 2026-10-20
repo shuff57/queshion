@@ -6,10 +6,12 @@ says where each file came from. verSHion bundles nothing under an unknown or non
 licence, and nothing is downloaded from anywhere else at build or run time.
 
 **Web build.** The desktop app compiles every face in. The web build compiles in only the four
-Source Serif 4 faces (equaSHion compiles the same files in, so they cost nothing) and Source Sans
-3 Regular; Trunk copies `assets/fonts/` (licences included) to `fonts/` next to index.html, and
-the page fetches the other faces from there before the app starts. See `src/fonts.rs` (`Face`,
-marked `embed` or `fetch`) and docs/progress.md, "web fonts".
+Source Serif 4 faces (equaSHion compiles the same files in, so they cost nothing) and VS Sans
+Fallback, a Latin cut of Source Sans 3 Regular renamed as the OFL requires
+(`tools/make_sans_fallback.py`), used only if the real UI face cannot be fetched. Trunk copies
+`assets/fonts/` (licences included) to `fonts/` next to index.html, and the page fetches the
+other faces from there before the app starts. See `src/fonts.rs` (`Face`, marked `embed` or
+`fetch`) and docs/progress.md, "web fonts".
 
 | Family | Faces | Licence | Used for |
 |---|---|---|---|

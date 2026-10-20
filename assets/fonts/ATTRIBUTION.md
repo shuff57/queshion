@@ -31,3 +31,9 @@ See docs/fonts.md for which face is used where.
   punctuation with pyftsubset (no other change). Licence: OFL-NotoSans.txt.
 
 - Liberation Serif Regular, Italic and Bold (Times-metric face for the biology figure genotypes): copied from Fedora liberation-serif-fonts, subset to Latin with pyftsubset. Licence: OFL-LiberationSerif.txt.
+
+- VS Sans Fallback Regular (VSSansFallback-Regular.ttf): Source Sans 3 Regular from this folder,
+  cut to Latin text with pyftsubset and renamed, because the OFL reserves the name "Source" for
+  unmodified versions (tools/make_sans_fallback.py rebuilds it). Only the web build compiles it
+  in, as the stand-in for the UI face when the full face could not be fetched. Licence:
+  OFL-SourceSans3.txt.
