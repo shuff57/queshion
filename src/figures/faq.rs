@@ -72,6 +72,7 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "data-structure" => DATA_STRUCTURE,
         "flowchart" => FLOWCHART,
         "boolean-table" => BOOLEAN_TABLE,
+        "probability-tree" => PROBABILITY_TREE,
         "state-machine" => STATE_MACHINE,
         "trace-table" => TRACE_TABLE,
         "sorting-passes" => SORTING_PASSES,
@@ -1496,6 +1497,29 @@ const STATE_MACHINE: &[Faq] = &[
     Faq {
         q: "Why are two arrows drawn side by side?",
         a: "A transition each way between the same two states is drawn as two arrows next to each other so both stay visible. Labels for the same pair of states in the same direction share one arrow.",
+    },
+];
+
+const PROBABILITY_TREE: &[Faq] = &[
+    Faq {
+        q: "How do I enter the branches?",
+        a: "Each stage is a list of outcomes with their probabilities, separated by commas: Rain 0.3, Dry 0.7. Probabilities can be decimals (0.3), percentages (30%) or fractions (3/10). The second stage is one line used after every first-stage outcome, or one line per first-stage outcome, in order, when the probabilities change (such as drawing without replacement). The third stage is one line used after every second-stage outcome.",
+    },
+    Faq {
+        q: "What does Work out each path show?",
+        a: "On the right, each whole path from left to right is listed with its probability, found by multiplying the probabilities along its branches: Rain, Late = 0.3 x 0.4 = 0.12. The paths always add to 1 when every set of branches does.",
+    },
+    Faq {
+        q: "Why does it say the probabilities do not add to 1?",
+        a: "The branches leaving any one point must add to 1. The figure still draws what you typed and notes the first place it found, so you can fix the numbers or leave it for a student to spot.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The tree stays and the path probabilities are left as blank lines. Tick Leave the branch probabilities blank in the student copy as well to have students fill in the branches. Student + key saves both copies.",
+    },
+    Faq {
+        q: "How big can the tree be?",
+        a: "Up to five outcomes per stage, three stages, and 30 paths in all.",
     },
 ];
 

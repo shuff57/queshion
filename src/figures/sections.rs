@@ -554,6 +554,13 @@ static NETWORK_TOPOLOGY: [RefSection; 4] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static PROBABILITY_TREE: [RefSection; 4] = [
+    s("Branches", &["first", "second", "third"], "Outcomes with their probabilities, stage by stage."),
+    s("Work out", &["products", "blank_probs", "show_answers"], "Turn off Show answers to leave the path probabilities blank."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -565,6 +572,7 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "data-structure" => &DATA_STRUCTURE,
         "flowchart" => &FLOWCHART,
         "boolean-table" => &BOOLEAN_TABLE,
+        "probability-tree" => &PROBABILITY_TREE,
         "state-machine" => &STATE_MACHINE,
         "trace-table" => &TRACE_TABLE,
         "sorting-passes" => &SORTING_PASSES,
