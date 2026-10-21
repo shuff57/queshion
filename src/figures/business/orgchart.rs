@@ -178,6 +178,10 @@ fn render(p: &Params) -> String {
         }
         let (px, py) = (x_of(i), y_of(n.depth) + bh);
         let my = py + vgap / 2.0;
+        if n.children.len() == 1 {
+            d.line(px, py, x_of(n.children[0]), y_of(nodes[n.children[0]].depth), INK, 1.6);
+            continue;
+        }
         d.line(px, py, px, my, INK, 1.6);
         let (a, b) = (x_of(n.children[0]), x_of(*n.children.last().unwrap()));
         d.line(a.min(px), my, b.max(px), my, INK, 1.6);
