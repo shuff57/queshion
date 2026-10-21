@@ -547,6 +547,13 @@ static ER_DIAGRAM: [RefSection; 4] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static NETWORK_TOPOLOGY: [RefSection; 4] = [
+    s("Network", &["kind", "devices", "names", "centre"], "Choose the layout and how many computers."),
+    s("Notes", &["facts", "show_answers"], "Turn off Show answers to leave the name and the notes empty."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -563,6 +570,7 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "sorting-passes" => &SORTING_PASSES,
         "recursion-tree" => &RECURSION_TREE,
         "er-diagram" => &ER_DIAGRAM,
+        "network-topology" => &NETWORK_TOPOLOGY,
         "two-way-table" => &TWO_WAY_TABLE,
         "stem-and-leaf" => &STEM_AND_LEAF,
         "dot-plot" => &DOT_PLOT,

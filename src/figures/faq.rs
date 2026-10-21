@@ -77,6 +77,7 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "sorting-passes" => SORTING_PASSES,
         "recursion-tree" => RECURSION_TREE,
         "er-diagram" => ER_DIAGRAM,
+        "network-topology" => NETWORK_TOPOLOGY,
         "dot-plot" => DOT_PLOT,
         "normal-curve" => NORMAL_CURVE,
         "scatterplot" => SCATTERPLOT,
@@ -1357,6 +1358,29 @@ const GRAPH_DIAGRAM: &[Faq] = &[
     Faq {
         q: "How is the shortest path decided?",
         a: "By the total of the edge weights (every edge counts 1 if no weights are given), following arrows on directed edges. It is not available if any weight is negative. Ties are broken by node order.",
+    },
+];
+
+const NETWORK_TOPOLOGY: &[Faq] = &[
+    Faq {
+        q: "Which topologies are there?",
+        a: "Star (every device to a central switch), ring (each device to its two neighbours, round a loop), bus (every device off one backbone cable with a terminator at each end), mesh (every device to every other) and tree (a switch at the top with switches below it and computers below those).",
+    },
+    Faq {
+        q: "How is the number of cables worked out?",
+        a: "Star and ring need one cable per device. A bus has one cable (a drop) per device plus the backbone. A full mesh needs n(n - 1) / 2 cables for n devices, so 5 devices need 10 and 8 need 28, which is why meshes are limited to 8 here. A tree needs one cable per device plus the cables between the switches.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The diagram stays and the topology name, the cable count and the strength and weakness lines are left as empty lines to write on. Student + key saves both copies.",
+    },
+    Faq {
+        q: "Can I name the devices?",
+        a: "Yes: type the names separated by commas (Anna, Ben, Cara). Any you leave out are called PC 1, PC 2 and so on. Names are cut at 10 characters. The central device of a star or tree can be renamed too, for example Hub or Server.",
+    },
+    Faq {
+        q: "How many devices can there be?",
+        a: "From 2 to 12. A ring or mesh needs at least 3, and a mesh is limited to 8 so the diagram stays readable.",
     },
 ];
 
