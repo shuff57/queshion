@@ -102,17 +102,20 @@ fn message(msg: &str) -> String {
 }
 
 /// Size of a gate body (without the output bubble) and where its pins sit.
-struct Dim {
-    w: f64,
-    h: f64,
-    bubble: bool,
+pub(crate) struct Dim {
+    pub w: f64,
+    pub h: f64,
+    pub bubble: bool,
     /// How far the input pins stand left of the body (the extra curve of an XOR).
-    back: f64,
+    pub back: f64,
 }
 
-const BUB: f64 = 5.0;
+pub(crate) const BUB: f64 = 5.0;
+/// World pixels per grid unit across and down: the spacing the figure and the canvas both use.
+pub(crate) const COL_W: f64 = 136.0;
+pub(crate) const ROW_H: f64 = 76.0;
 
-fn dim(g: Gate, n: usize, iec: bool) -> Dim {
+pub(crate) fn dim(g: Gate, n: usize, iec: bool) -> Dim {
     let one = matches!(g, Gate::Not | Gate::Buf);
     let h = if one { 36.0 } else { 40.0 + n.saturating_sub(2) as f64 * 14.0 };
     let w = match (one, iec) {
@@ -127,11 +130,11 @@ fn dim(g: Gate, n: usize, iec: bool) -> Dim {
 }
 
 impl Dim {
-    fn total(&self) -> f64 { self.w + self.back + if self.bubble { 2.0 * BUB } else { 0.0 } }
+    pub fn total(&self) -> f64 { self.w + self.back + if self.bubble { 2.0 * BUB } else { 0.0 } }
 }
 
 /// The input pin `k` of `n` and the output pin of a gate whose whole symbol is centred at (x, y).
-fn pins(dm: &Dim, n: usize, x: f64, y: f64) -> (Vec<(f64, f64)>, (f64, f64)) {
+pub(crate) fn pins(dm: &Dim, n: usize, x: f64, y: f64) -> (Vec<(f64, f64)>, (f64, f64)) {
     let left = x - dm.total() / 2.0;
     let ins = (0..n).map(|k| (left, y - dm.h / 2.0 + dm.h * (k as f64 + 0.5) / n as f64)).collect();
     (ins, (x + dm.total() / 2.0, y))
@@ -197,7 +200,7 @@ fn render(p: &Params) -> String {
     let title = p.s("title").trim();
 
     // diagram geometry
-    let (cw, rh) = (136.0, 76.0);
+    let (cw, rh) = (COL_W, ROW_H);
     let (npos, opos, routes) = circ.layout();
     let all: Vec<(f64, f64)> = npos.iter().chain(opos.iter()).copied().collect();
     let min_x = all.iter().map(|q| q.0).fold(f64::INFINITY, f64::min);

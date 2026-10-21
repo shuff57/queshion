@@ -3,7 +3,7 @@
 //! (`svg::Doc`, `Fills`-style print rules, `show_answers`); the circuit model lives in `logic`.
 use super::{Example, FigureDef, Params};
 
-mod logic_circuit;
+pub(crate) mod logic_circuit;
 
 pub fn defs() -> Vec<FigureDef> {
     vec![logic_circuit::def()]

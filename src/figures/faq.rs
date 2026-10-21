@@ -1329,7 +1329,7 @@ const NORMAL_CURVE: &[Faq] = &[
 const LOGIC_CIRCUIT: &[Faq] = &[
     Faq {
         q: "How do I write a circuit?",
-        a: "One item per line. List the inputs with in A, B. Write each gate as a name, an equals sign and the gate with what it reads, such as g1 = AND(A, B). Mark an output with out Q = g1. Gates can read inputs or other gates, in any order. Add @x,y to a line to place that part yourself.",
+        a: "One item per line. List the inputs with in A, B. Write each gate as a name, an equals sign and the gate with what it reads, such as g1 = AND(A, B). Mark an output with out Q = g1. Gates can read inputs or other gates, in any order. Add @x,y to a line to place that part yourself. Or build it on the canvas: pick a part and click to place it, drag from an output pin onto an input pin to wire, click an input to flip it, double-click a name to rename, and the text is written for you.",
     },
     Faq {
         q: "Can I type a boolean expression instead?",

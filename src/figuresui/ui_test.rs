@@ -8,7 +8,8 @@ use egui_kittest::Harness;
 /// draws nothing; the harness then runs on to a settled frame.
 pub fn harness<'a, S>(mut app: impl FnMut(&mut egui::Ui, &mut S) + 'a, state: S) -> Harness<'a, S> {
     let mut first = true;
-    Harness::new_ui_state(
+    // short frames, so two clicks a few frames apart still count as a double-click
+    Harness::builder().with_step_dt(0.01).build_ui_state(
         move |ui, s: &mut S| {
             if std::mem::take(&mut first) {
                 crate::theme::setup(ui.ctx());

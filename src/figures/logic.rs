@@ -168,12 +168,17 @@ impl Circuit {
             let at = |m: String| format!("Line {ln}: {m}");
             let lower = line.to_ascii_lowercase();
             if let Some(rest) = ["inputs ", "input ", "in "].iter().find_map(|p| lower.starts_with(p).then(|| &line[p.len()..])) {
-                for n in rest.split(|ch: char| ch == ',' || ch.is_whitespace()).filter(|s| !s.is_empty()) {
+                let (rest, pos) = split_pos(rest).map_err(&at)?;
+                let names: Vec<&str> = rest.split(|ch: char| ch == ',' || ch.is_whitespace()).filter(|s| !s.is_empty()).collect();
+                if pos.is_some() && names.len() != 1 {
+                    return Err(at("only a single input can be placed: in A @ 0,1".into()));
+                }
+                for n in names {
                     valid_name(n).map_err(&at)?;
                     if c.name_taken(n) || gates.iter().any(|g| g.0 == n) || outs.iter().any(|o| o.0 == n) {
                         return Err(at(format!("\u{201c}{n}\u{201d} is already used")));
                     }
-                    c.nodes.push(Node { name: n.into(), kind: Kind::Input, pos: None });
+                    c.nodes.push(Node { name: n.into(), kind: Kind::Input, pos });
                 }
             } else if lower.starts_with("out ") || lower.starts_with("output ") {
                 let rest = line.split_once(char::is_whitespace).map_or("", |x| x.1);
@@ -270,13 +275,215 @@ impl Circuit {
         Ok(order)
     }
 
+    // ----- editing (the canvas): each edit keeps the circuit valid or is refused -----
+
+    /// A name not yet used by any input, gate or output: `base`, else `base2`, `base3` ...
+    pub fn fresh_name(&self, base: &str) -> String {
+        if !self.name_taken(base) {
+            return base.to_string();
+        }
+        (2..).map(|k| format!("{base}{k}")).find(|n| !self.name_taken(n)).unwrap_or_else(|| base.to_string())
+    }
+
+    /// The next free input letter: A, B, C ... then X1, X2 ...
+    pub fn fresh_input_name(&self) -> String {
+        ('A'..='Z').map(|c| c.to_string()).find(|n| !self.name_taken(n)).unwrap_or_else(|| self.fresh_name("X"))
+    }
+
+    fn room(&self) -> Result<(), String> {
+        if self.nodes.len() >= MAX_NODES { Err(format!("A circuit is limited to {MAX_NODES} inputs and gates")) } else { Ok(()) }
+    }
+
+    pub fn add_input(&mut self, pos: Option<(f64, f64)>) -> Result<usize, String> {
+        self.room()?;
+        let name = self.fresh_input_name();
+        self.nodes.push(Node { name, kind: Kind::Input, pos });
+        self.order = self.topo_order()?;
+        Ok(self.nodes.len() - 1)
+    }
+
+    /// A gate reading `srcs` (a gate has to read something, so it is made with its inputs wired).
+    pub fn add_gate(&mut self, g: Gate, srcs: Vec<usize>, pos: Option<(f64, f64)>) -> Result<usize, String> {
+        self.room()?;
+        let (lo, hi) = g.arity();
+        if srcs.len() < lo || srcs.len() > hi || srcs.iter().any(|s| *s >= self.nodes.len()) {
+            return Err(format!("{} takes {lo} to {hi} inputs", g.name()));
+        }
+        let name = self.fresh_name("g1");
+        // g1, g2, ...: the first free number
+        let name = if name == "g1" { name } else { (1..).map(|k| format!("g{k}")).find(|n| !self.name_taken(n)).unwrap() };
+        self.nodes.push(Node { name, kind: Kind::Gate(g, srcs), pos });
+        self.order = self.topo_order()?;
+        Ok(self.nodes.len() - 1)
+    }
+
+    pub fn add_output(&mut self, src: usize, pos: Option<(f64, f64)>) -> Result<usize, String> {
+        if src >= self.nodes.len() {
+            return Err("That part is gone".into());
+        }
+        let name = self.fresh_name("Q");
+        self.outputs.push(Output { name, src, pos });
+        Ok(self.outputs.len() - 1)
+    }
+
+    /// Whether `a` reads `b`, directly or through other gates (or is `b`).
+    pub fn depends_on(&self, a: usize, b: usize) -> bool {
+        let mut seen = vec![false; self.nodes.len()];
+        let mut stack = vec![a];
+        while let Some(n) = stack.pop() {
+            if n == b {
+                return true;
+            }
+            if std::mem::replace(&mut seen[n], true) {
+                continue;
+            }
+            if let Kind::Gate(_, args) = &self.nodes[n].kind {
+                stack.extend(args.iter().copied());
+            }
+        }
+        false
+    }
+
+    /// Wire `src` into input `pin` of `gate`, replacing what was there. Refused if it would make
+    /// a loop. `pin` one past the last appends (while the gate has room).
+    pub fn set_pin(&mut self, gate: usize, pin: usize, src: usize) -> Result<(), String> {
+        if gate >= self.nodes.len() || src >= self.nodes.len() {
+            return Err("That part is gone".into());
+        }
+        if self.depends_on(src, gate) {
+            return Err("That wire would make a loop".into());
+        }
+        let Kind::Gate(g, args) = &mut self.nodes[gate].kind else { return Err("Only a gate has inputs to wire".into()) };
+        if pin < args.len() {
+            args[pin] = src;
+        } else if args.len() < g.arity().1 {
+            args.push(src);
+        } else {
+            return Err(format!("{} takes at most {} inputs", g.name(), g.arity().1));
+        }
+        self.order = self.topo_order()?;
+        Ok(())
+    }
+
+    pub fn set_output_src(&mut self, out: usize, src: usize) -> Result<(), String> {
+        if out >= self.outputs.len() || src >= self.nodes.len() {
+            return Err("That part is gone".into());
+        }
+        self.outputs[out].src = src;
+        Ok(())
+    }
+
+    /// Removes the nodes in `gone` and every gate left with too few inputs, and the outputs that
+    /// read them. Returns how many nodes went.
+    pub fn delete_nodes(&mut self, gone: &[usize]) -> usize {
+        let n = self.nodes.len();
+        let mut dead = vec![false; n];
+        for g in gone {
+            if *g < n {
+                dead[*g] = true;
+            }
+        }
+        loop {
+            let mut changed = false;
+            for i in 0..n {
+                if dead[i] {
+                    continue;
+                }
+                if let Kind::Gate(g, a) = &self.nodes[i].kind {
+                    if a.iter().filter(|s| !dead[**s]).count() < g.arity().0 {
+                        dead[i] = true;
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let remap: Vec<Option<usize>> = {
+            let mut next = 0;
+            dead.iter().map(|d| if *d { None } else { next += 1; Some(next - 1) }).collect()
+        };
+        let removed = dead.iter().filter(|d| **d).count();
+        let old = std::mem::take(&mut self.nodes);
+        for (i, mut node) in old.into_iter().enumerate() {
+            if dead[i] {
+                continue;
+            }
+            if let Kind::Gate(_, a) = &mut node.kind {
+                *a = a.iter().filter_map(|s| remap[*s]).collect();
+            }
+            self.nodes.push(node);
+        }
+        self.outputs.retain_mut(|o| match remap[o.src] {
+            Some(s) => {
+                o.src = s;
+                true
+            }
+            None => false,
+        });
+        self.order = self.topo_order().unwrap_or_default();
+        removed
+    }
+
+    pub fn delete_output(&mut self, k: usize) {
+        if k < self.outputs.len() {
+            self.outputs.remove(k);
+        }
+    }
+
+    /// Cuts the wire into input `pin` of `gate` (a gate left with too few inputs goes too).
+    pub fn disconnect(&mut self, gate: usize, pin: usize) -> usize {
+        let Some(Node { kind: Kind::Gate(g, args), .. }) = self.nodes.get_mut(gate) else { return 0 };
+        if pin >= args.len() {
+            return 0;
+        }
+        if args.len() - 1 >= g.arity().0 {
+            args.remove(pin);
+            self.order = self.topo_order().unwrap_or_default();
+            0
+        } else {
+            self.delete_nodes(&[gate])
+        }
+    }
+
+    /// Renames an input or gate (`Ok` only for a usable, unused name).
+    pub fn rename_node(&mut self, i: usize, name: &str) -> Result<(), String> {
+        let name = name.trim();
+        valid_name(name)?;
+        if self.nodes.get(i).is_some_and(|n| n.name == name) {
+            return Ok(());
+        }
+        if self.name_taken(name) {
+            return Err(format!("\u{201c}{name}\u{201d} is already used"));
+        }
+        self.nodes.get_mut(i).ok_or("That part is gone")?.name = name.to_string();
+        Ok(())
+    }
+
+    pub fn rename_output(&mut self, k: usize, name: &str) -> Result<(), String> {
+        let name = name.trim();
+        valid_name(name)?;
+        if self.outputs.get(k).is_some_and(|o| o.name == name) {
+            return Ok(());
+        }
+        if self.name_taken(name) {
+            return Err(format!("\u{201c}{name}\u{201d} is already used"));
+        }
+        self.outputs.get_mut(k).ok_or("That part is gone")?.name = name.to_string();
+        Ok(())
+    }
+
     /// The spec text for this circuit (parses back to an equal circuit).
     pub fn to_spec(&self) -> String {
         let pos = |p: Option<(f64, f64)>| p.map_or(String::new(), |(x, y)| format!(" @ {},{}", crate::figures::data::fmt_num(x), crate::figures::data::fmt_num(y)));
         let mut s = String::new();
-        let ins: Vec<&str> = self.nodes.iter().filter(|n| matches!(n.kind, Kind::Input)).map(|n| n.name.as_str()).collect();
+        let ins: Vec<&str> = self.nodes.iter().filter(|n| matches!(n.kind, Kind::Input) && n.pos.is_none()).map(|n| n.name.as_str()).collect();
         if !ins.is_empty() {
             s += &format!("in {}\n", ins.join(", "));
+        }
+        for n in self.nodes.iter().filter(|n| matches!(n.kind, Kind::Input) && n.pos.is_some()) {
+            s += &format!("in {}{}\n", n.name, pos(n.pos));
         }
         for n in &self.nodes {
             if let Kind::Gate(g, a) = &n.kind {
@@ -777,6 +984,7 @@ mod tests {
             ("in AND", "reserved"),
             ("in A\ng = AND(A, A", "closing"),
             ("in A\ng = NOT(A) @ x", "@x,y"),
+            ("in A, B @ 1,1", "only a single input"),
             ("in A\ng = NOT(A) @ 1e9,0", "@x,y"),
             ("in AAAAAAAAAAAAAAAAAAAA", "longer than"),
         ] {
@@ -879,6 +1087,79 @@ mod tests {
         assert!(Circuit::from_exprs(&"A AND ".repeat(300)).is_err());
         let deep = format!("Q = {}A{}", "(".repeat(100), ")".repeat(100));
         assert!(Circuit::from_exprs(&deep).unwrap_err().contains("deeply"));
+    }
+
+    #[test]
+    fn editing_keeps_the_circuit_valid() {
+        let mut c = Circuit::parse(HALF).unwrap();
+        // a new input, a gate reading it, an output
+        let c0 = c.add_input(Some((0.0, 2.0))).unwrap();
+        assert_eq!(c.nodes[c0].name, "D", "C is taken by an output");
+        let g = c.add_gate(Gate::Or, vec![0, c0], Some((2.0, 2.0))).unwrap();
+        assert_eq!(c.nodes[g].name, "g3");
+        let o = c.add_output(g, None).unwrap();
+        assert_eq!(c.outputs[o].name, "Q");
+        // the spec reads back to the same circuit (the parts may be listed in a new order)
+        let back = Circuit::parse(&c.to_spec()).unwrap();
+        assert_eq!(Circuit::parse(&back.to_spec()).unwrap(), back);
+        assert_eq!(back.nodes.iter().find(|n| n.name == "D").unwrap().pos, Some((0.0, 2.0)), "an input's place is kept");
+        assert_eq!(table(&back), table(&c));
+        // wiring replaces a pin, a loop is refused, and nothing changed by the refusal
+        let h = c.add_gate(Gate::Not, vec![g], None).unwrap();
+        let before = c.clone();
+        let e = c.set_pin(g, 0, h).unwrap_err();
+        assert!(e.contains("loop"), "{e}");
+        assert_eq!(c, before);
+        c.set_pin(g, 1, 1).unwrap();
+        assert_eq!(c.expr(o), "A OR B");
+        // one past the end appends, up to the gate's limit
+        c.set_pin(g, 2, c0).unwrap();
+        assert_eq!(c.expr(o), "A OR B OR D");
+        c.set_pin(g, 3, c0).unwrap();
+        assert!(c.set_pin(g, 4, c0).unwrap_err().contains("at most"));
+        assert!(c.set_pin(0, 0, 1).unwrap_err().contains("Only a gate"));
+    }
+
+    #[test]
+    fn deleting_takes_dependents_with_it() {
+        let mut c = Circuit::parse(HALF).unwrap();
+        // A feeds both gates, each of which needs two inputs: everything but B goes, with its outputs
+        let gone = c.delete_nodes(&[0]);
+        assert_eq!(gone, 3);
+        assert_eq!(c.nodes.len(), 1);
+        assert!(c.outputs.is_empty());
+        assert_eq!(Circuit::parse(&c.to_spec()).unwrap(), c);
+        // a gate with spare inputs keeps going
+        let mut c = Circuit::parse("in A, B, C\ng = AND(A, B, C)\nout Q = g").unwrap();
+        assert_eq!(c.delete_nodes(&[2]), 1);
+        assert_eq!(c.expr(0), "A AND B");
+        // cutting one wire of a two-input gate removes the gate; of a three-input gate does not
+        let mut c = Circuit::parse("in A, B, C\ng = AND(A, B, C)\nh = OR(A, g)\nout Q = h").unwrap();
+        assert_eq!(c.disconnect(3, 2), 0);
+        assert_eq!(c.expr(0), "A OR A AND B");
+        assert_eq!(c.disconnect(4, 1), 1, "OR left with one input goes");
+        assert!(c.outputs.is_empty());
+        // out of range is a no-op
+        assert_eq!(c.delete_nodes(&[99]), 0);
+        c.delete_output(9);
+    }
+
+    #[test]
+    fn renaming_checks_names() {
+        let mut c = Circuit::parse(HALF).unwrap();
+        c.rename_node(0, "X").unwrap();
+        assert!(c.rename_node(1, "X").unwrap_err().contains("already used"));
+        assert!(c.rename_node(1, "9").is_err());
+        assert!(c.rename_output(0, "g1").unwrap_err().contains("already used"));
+        c.rename_output(0, "Sum").unwrap();
+        assert_eq!(c.expr(0), "X XOR B");
+        assert_eq!(Circuit::parse(&c.to_spec()).unwrap(), c);
+        let mut full = Circuit::default();
+        for _ in 0..MAX_NODES {
+            full.add_input(None).unwrap();
+        }
+        assert!(full.add_input(None).unwrap_err().contains("limited to"));
+        assert_eq!(full.nodes[26].name, "X2");
     }
 
     #[test]
