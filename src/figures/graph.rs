@@ -437,7 +437,7 @@ impl Tree {
         }
         let mut t = Tree::default();
         let mut idx: HashMap<String, usize> = HashMap::new();
-        let mut get = |t: &mut Tree, idx: &mut HashMap<String, usize>, name: &str| -> Result<usize, String> {
+        let get = |t: &mut Tree, idx: &mut HashMap<String, usize>, name: &str| -> Result<usize, String> {
             if let Some(i) = idx.get(name) {
                 return Ok(*i);
             }

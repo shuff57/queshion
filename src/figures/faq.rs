@@ -66,6 +66,8 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "two-way-table" => TWO_WAY_TABLE,
         "stem-and-leaf" => STEM_AND_LEAF,
         "logic-circuit" => LOGIC_CIRCUIT,
+        "graph-diagram" => GRAPH_DIAGRAM,
+        "tree-diagram" => TREE_DIAGRAM,
         "dot-plot" => DOT_PLOT,
         "normal-curve" => NORMAL_CURVE,
         "scatterplot" => SCATTERPLOT,
@@ -1323,6 +1325,52 @@ const NORMAL_CURVE: &[Faq] = &[
     Faq {
         q: "How is the area found?",
         a: "The area under the whole curve is 1, so the shaded area is the probability. It is computed exactly from the normal distribution function, not read off a table, so it can differ from a table value in the last digit.",
+    },
+];
+
+const GRAPH_DIAGRAM: &[Faq] = &[
+    Faq {
+        q: "How do I write a graph?",
+        a: "One item per line. List nodes with nodes A, B, C (a node also appears when an edge uses it). A - B is an edge, A -> B is a directed one, and A - B : 4 gives it a weight. To place a node yourself add a line such as node A @ 2,1; the rest stay where the layout puts them.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Choose what to Work out (adjacency list or matrix, degrees, a traversal or the shortest path) and turn off Show answers. The graph stays, the heading stays and the answer is left blank for students to fill in; the adjacency matrix keeps its empty grid. Student + key saves both versions.",
+    },
+    Faq {
+        q: "In what order are neighbours visited?",
+        a: "In the order the nodes were listed, so a traversal is the same every time. List the nodes yourself (nodes A, B, C ...) if you want a particular order rather than the order the edges mention them.",
+    },
+    Faq {
+        q: "What does Layers from the first node do?",
+        a: "It draws the graph like a tree: the first node on top, the nodes one step away on the next row, and so on, with any node that cannot be reached starting a new tree to the right. Circle spaces the nodes round a ring instead. Either way a node you placed with @ stays put.",
+    },
+    Faq {
+        q: "How is the shortest path decided?",
+        a: "By the total of the edge weights (every edge counts 1 if no weights are given), following arrows on directed edges. It is not available if any weight is negative. Ties are broken by node order.",
+    },
+];
+
+const TREE_DIAGRAM: &[Faq] = &[
+    Faq {
+        q: "How is a binary search tree built from the values?",
+        a: "The values are inserted one at a time in the order given. Each goes left if it is smaller than the node it meets and right if it is larger, until it finds an empty place. A repeated value is ignored. Change the order and the tree changes shape: sorted values make a lopsided chain.",
+    },
+    Faq {
+        q: "How do I draw a tree that is not a search tree?",
+        a: "Choose Parent lines and write one line per parent, such as A: B, C. The root is the one node nobody lists as a child. Use _ for an empty slot (B: D, _) to make a binary tree with a gap, which is drawn with the single child on its own side.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Choose what to Work out and turn off Show answers. The tree and the heading stay and the answer is left blank, with the node numbers hidden. Student + key saves both versions.",
+    },
+    Faq {
+        q: "Why does In-order say it needs a binary tree?",
+        a: "In-order means left, node, right, which only makes sense with at most two children each. Pre-order, post-order and level-order work for any tree.",
+    },
+    Faq {
+        q: "What are height and depth?",
+        a: "Depth is how many edges a node is below the root (the root is 0). Height is the largest depth, so a single node has height 0 and the default tree has height 3.",
     },
 ];
 

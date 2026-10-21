@@ -473,11 +473,27 @@ static LOGIC_CIRCUIT: [RefSection; 5] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static GRAPH_DIAGRAM: [RefSection; 4] = [
+    s("Graph", &["spec", "layout", "weights"], "List the nodes, then the edges, one per line. Directed edges use ->, weights follow a colon."),
+    s("Work out", &["answer", "start", "end", "mark", "show_answers"], "Turn off Show answers for a student copy: the answer and the marks on the graph are hidden and the heading stays."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static TREE_DIAGRAM: [RefSection; 4] = [
+    s("Tree", &["source", "values", "spec"], "Grow a binary search tree from values, or write any tree as parent lines."),
+    s("Work out", &["answer", "mark", "show_answers"], "Turn off Show answers for a student copy: the answer and the numbers on the tree are hidden and the heading stays."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
         "histogram" => &HISTOGRAM,
         "logic-circuit" => &LOGIC_CIRCUIT,
+        "graph-diagram" => &GRAPH_DIAGRAM,
+        "tree-diagram" => &TREE_DIAGRAM,
         "two-way-table" => &TWO_WAY_TABLE,
         "stem-and-leaf" => &STEM_AND_LEAF,
         "dot-plot" => &DOT_PLOT,
