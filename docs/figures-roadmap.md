@@ -60,10 +60,10 @@ Money figures share a small helper for currency formatting and column alignment.
 - Hertzsprung-Russell diagram with stars plotted (done)
 
 ### Geography
-- Climate graph: rainfall bars and temperature line on twin axes
-- Population pyramid from age-band counts
-- Grid references and compass bearings on a blank grid
-- Map scale bar and distance workings
+- Climate graph: rainfall bars and temperature line on twin axes (done)
+- Population pyramid from age-band counts (done)
+- Grid references and compass bearings on a blank grid (done)
+- Map scale bar and distance workings (done)
 
 ### Music
 - Staff with clef, key signature and notes from a text spec (`C4 q, E4 q, G4 h`)

@@ -754,6 +754,31 @@ static HR_DIAGRAM: [RefSection; 3] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static CLIMATE_GRAPH: [RefSection; 3] = [
+    s("Data", &["data", "place"], "Temperature then rainfall for each month, January first."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the graph and summary for students."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static POPULATION_PYRAMID: [RefSection; 3] = [
+    s("Data", &["data", "width", "unit"], "Males then females for each age band, youngest first."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the bars and summary for students."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static GRID_REFERENCE: [RefSection; 4] = [
+    s("Map", &["cols", "rows", "origin"], "The size of the grid and the number of its first line."),
+    s("Features", &["features", "bearings"], "What is on the map and the bearings to work out."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the references and bearings empty."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static MAP_SCALE: [RefSection; 3] = [
+    s("Scale", &["ratio", "lengths"], "The scale and the measured map distances."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the workings empty."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -794,6 +819,10 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "moon-seasons" => &MOON_SEASONS,
         "topo-contours" => &TOPO_CONTOURS,
         "hr-diagram" => &HR_DIAGRAM,
+        "climate-graph" => &CLIMATE_GRAPH,
+        "population-pyramid" => &POPULATION_PYRAMID,
+        "grid-reference" => &GRID_REFERENCE,
+        "map-scale" => &MAP_SCALE,
         "kirchhoff-loops" => &KIRCHHOFF_LOOPS,
         "state-machine" => &STATE_MACHINE,
         "trace-table" => &TRACE_TABLE,

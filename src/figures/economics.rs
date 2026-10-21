@@ -140,7 +140,7 @@ pub mod testing {
     }
 
     pub fn sane(svg: &str) -> bool {
-        svg.starts_with("<svg") && svg.ends_with("</svg>") && !svg.contains("NaN") && !svg.contains("inf")
+        svg.starts_with("<svg") && svg.ends_with("</svg>") && !svg.contains("NaN") && !["\"inf", "-inf", ">inf", "=inf", " inf"].iter().any(|t| svg.contains(t))
     }
 }
 

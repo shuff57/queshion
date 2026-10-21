@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 
 pub mod accounting;
 pub mod earth;
+pub mod geography;
 pub mod economics;
 pub mod biology;
 pub mod cards;
@@ -236,12 +237,12 @@ impl FigureDef {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Subject { Physics, Biology, Chemistry, Math, Computing, Accounting, Economics, EarthScience }
+pub enum Subject { Physics, Biology, Chemistry, Math, Computing, Accounting, Economics, EarthScience, Geography }
 
 impl Subject {
-    pub const ALL: [Subject; 8] = [Subject::Physics, Subject::Biology, Subject::Chemistry, Subject::Math, Subject::Computing, Subject::Accounting, Subject::Economics, Subject::EarthScience];
+    pub const ALL: [Subject; 9] = [Subject::Physics, Subject::Biology, Subject::Chemistry, Subject::Math, Subject::Computing, Subject::Accounting, Subject::Economics, Subject::EarthScience, Subject::Geography];
     pub fn name(self) -> &'static str {
-        match self { Subject::Physics => "Physics", Subject::Biology => "Biology", Subject::Chemistry => "Chemistry", Subject::Math => "Math", Subject::Computing => "Computing", Subject::Accounting => "Accounting", Subject::Economics => "Economics", Subject::EarthScience => "Earth science" }
+        match self { Subject::Physics => "Physics", Subject::Biology => "Biology", Subject::Chemistry => "Chemistry", Subject::Math => "Math", Subject::Computing => "Computing", Subject::Accounting => "Accounting", Subject::Economics => "Economics", Subject::EarthScience => "Earth science", Subject::Geography => "Geography" }
     }
 }
 
@@ -327,6 +328,7 @@ pub fn registry() -> Vec<FigureDef> {
     v.extend(accounting::defs());
     v.extend(economics::defs());
     v.extend(earth::defs());
+    v.extend(geography::defs());
     v
 }
 
@@ -557,6 +559,7 @@ pub fn examples_for(id: &str) -> Vec<Example> {
         .or_else(|| accounting::examples(id))
         .or_else(|| economics::examples(id))
         .or_else(|| earth::examples(id))
+        .or_else(|| geography::examples(id))
         .unwrap_or_default()
 }
 

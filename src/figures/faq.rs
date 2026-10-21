@@ -101,6 +101,10 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "moon-seasons" => MOON_SEASONS,
         "topo-contours" => TOPO_CONTOURS,
         "hr-diagram" => HR_DIAGRAM,
+        "climate-graph" => CLIMATE_GRAPH,
+        "population-pyramid" => POPULATION_PYRAMID,
+        "grid-reference" => GRID_REFERENCE,
+        "map-scale" => MAP_SCALE,
         "kirchhoff-loops" => KIRCHHOFF_LOOPS,
         "state-machine" => STATE_MACHINE,
         "trace-table" => TRACE_TABLE,
@@ -2399,5 +2403,81 @@ const HR_DIAGRAM: &[Faq] = &[
     Faq {
         q: "How is a star classed?",
         a: "By its place on the diagram: main sequence along the diagonal band, giants and supergiants above it, white dwarfs below it and to the left.",
+    },
+];
+
+const CLIMATE_GRAPH: &[Faq] = &[
+    Faq {
+        q: "What do I enter?",
+        a: "Twelve rows, January first, each with the month's mean temperature in degrees Celsius then its rainfall in millimetres.",
+    },
+    Faq {
+        q: "How is it drawn?",
+        a: "Rainfall is bars read from the left axis and temperature is a line read from the right axis; the two axes share their gridlines.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn off Show answers. The table stays and the axes are left empty to plot on, with the summary left as blank lines. Student + key saves both copies.",
+    },
+    Faq {
+        q: "Can I print it in black and white?",
+        a: "Yes. The Print style uses a grey pattern for the bars and a black line.",
+    },
+];
+
+const POPULATION_PYRAMID: &[Faq] = &[
+    Faq {
+        q: "What do I enter?",
+        a: "One row per age band, youngest first: the number of males then the number of females, from 2 to 21 bands. Choose 5 or 10 years for the band width.",
+    },
+    Faq {
+        q: "What does the shape tell you?",
+        a: "A wide base means many children, a young and growing population. A narrow base means few children, an ageing or shrinking one. The summary says which.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn off Show answers. The table stays and the axes are left empty for students to draw the bars, with the summary left blank. Student + key saves both copies.",
+    },
+    Faq {
+        q: "Can I print it in black and white?",
+        a: "Yes. The Print style uses two grey patterns for males and females.",
+    },
+];
+
+const GRID_REFERENCE: &[Faq] = &[
+    Faq {
+        q: "How are the references read?",
+        a: "A four-figure reference gives the line to the left of the square, then the line below it. A six-figure reference adds tenths along and up inside the square.",
+    },
+    Faq {
+        q: "What are the position numbers?",
+        a: "Counts in grid squares from the bottom-left corner, so 3.4 is four tenths of the way across the fourth square.",
+    },
+    Faq {
+        q: "How are bearings measured?",
+        a: "Clockwise from north in three digits, so due east is 090° and due south is 180°. List pairs as feature numbers, such as 1 3.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn off Show answers. The map and positions stay and the reference and bearing boxes are left empty. Student + key saves both copies.",
+    },
+];
+
+const MAP_SCALE: &[Faq] = &[
+    Faq {
+        q: "What is the scale?",
+        a: "1 : 50 000 means 1 cm on the map is 50 000 cm, which is 500 m, on the ground.",
+    },
+    Faq {
+        q: "How is the scale bar drawn?",
+        a: "To the scale, with the longest round length that fits in 10 cm, and the lines are drawn at their true length so a ruler agrees with the numbers when the page is printed at full size.",
+    },
+    Faq {
+        q: "How are the workings set out?",
+        a: "Map distance times the scale gives the ground distance in cm, shown in metres or kilometres.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn off Show answers. The scale, the bar and the lines stay and the workings and ground distances are left empty. Student + key saves both copies.",
     },
 ];
