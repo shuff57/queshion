@@ -76,6 +76,7 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "trace-table" => TRACE_TABLE,
         "sorting-passes" => SORTING_PASSES,
         "recursion-tree" => RECURSION_TREE,
+        "er-diagram" => ER_DIAGRAM,
         "dot-plot" => DOT_PLOT,
         "normal-curve" => NORMAL_CURVE,
         "scatterplot" => SCATTERPLOT,
@@ -1356,6 +1357,29 @@ const GRAPH_DIAGRAM: &[Faq] = &[
     Faq {
         q: "How is the shortest path decided?",
         a: "By the total of the edge weights (every edge counts 1 if no weights are given), following arrows on directed edges. It is not available if any weight is negative. Ties are broken by node order.",
+    },
+];
+
+const ER_DIAGRAM: &[Faq] = &[
+    Faq {
+        q: "How do I write an ER diagram?",
+        a: "Entities are one line each: entity Student: id*, name, year, where a * marks the key (underlined) and a ^ marks a foreign key (tagged FK). Relationships are A 1:N B : label, the two cardinalities being how many of each side take part: 1, N, M, 0..1, 0..N or 1..N.",
+    },
+    Faq {
+        q: "Which end does each cardinality belong to?",
+        a: "The first sits next to the first entity and the second next to the second. In Teacher 1:N Course, one teacher is joined to many courses, so the 1 is by Teacher and the N by Course.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. Each cardinality becomes an empty box to fill in, and the entities, attributes and relationship labels stay. Tick Hide the attributes in the student copy as well to ask for the attributes too. Student + key saves both copies.",
+    },
+    Faq {
+        q: "How is the diagram laid out?",
+        a: "In layers from the first entity, with the entities joined to it on the next row; Circle spaces them round a ring instead. Two relationships between the same pair of entities are drawn side by side.",
+    },
+    Faq {
+        q: "What are the limits?",
+        a: "Up to 10 entities with 8 attributes each and 14 relationships.",
     },
 ];
 

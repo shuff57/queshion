@@ -540,6 +540,13 @@ static RECURSION_TREE: [RefSection; 4] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static ER_DIAGRAM: [RefSection; 4] = [
+    s("Diagram", &["spec", "layout", "attributes"], "Entities with their attributes, then the relationships between them."),
+    s("Student copy", &["hide_attrs", "show_answers"], "Turn off Show answers to leave empty boxes where the cardinalities go."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -555,6 +562,7 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "trace-table" => &TRACE_TABLE,
         "sorting-passes" => &SORTING_PASSES,
         "recursion-tree" => &RECURSION_TREE,
+        "er-diagram" => &ER_DIAGRAM,
         "two-way-table" => &TWO_WAY_TABLE,
         "stem-and-leaf" => &STEM_AND_LEAF,
         "dot-plot" => &DOT_PLOT,
