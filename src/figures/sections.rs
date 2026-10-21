@@ -519,6 +519,13 @@ static STATE_MACHINE: [RefSection; 4] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static TRACE_TABLE: [RefSection; 4] = [
+    s("Program", &["program", "rows", "numbers"], "A few lines of pseudocode with at most one loop."),
+    s("Student copy", &["given", "show_answers"], "Turn off Show answers to leave the later rows empty."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -531,6 +538,7 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "flowchart" => &FLOWCHART,
         "boolean-table" => &BOOLEAN_TABLE,
         "state-machine" => &STATE_MACHINE,
+        "trace-table" => &TRACE_TABLE,
         "two-way-table" => &TWO_WAY_TABLE,
         "stem-and-leaf" => &STEM_AND_LEAF,
         "dot-plot" => &DOT_PLOT,

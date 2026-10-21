@@ -73,6 +73,7 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "flowchart" => FLOWCHART,
         "boolean-table" => BOOLEAN_TABLE,
         "state-machine" => STATE_MACHINE,
+        "trace-table" => TRACE_TABLE,
         "dot-plot" => DOT_PLOT,
         "normal-curve" => NORMAL_CURVE,
         "scatterplot" => SCATTERPLOT,
@@ -1353,6 +1354,29 @@ const GRAPH_DIAGRAM: &[Faq] = &[
     Faq {
         q: "How is the shortest path decided?",
         a: "By the total of the edge weights (every edge counts 1 if no weights are given), following arrows on directed edges. It is not available if any weight is negative. Ties are broken by node order.",
+    },
+];
+
+const TRACE_TABLE: &[Faq] = &[
+    Faq {
+        q: "What can the pseudocode do?",
+        a: "Assignments (total = total + i), print, and one loop: while condition ... end, or for i = 1 to 5 ... end (add step 2 or step -1). Expressions use + - * /, div and mod (or // and %), brackets, comparisons, and, or and not. Lines after the loop's end run once afterwards. Start a line with # for a comment.",
+    },
+    Faq {
+        q: "What does one row mean?",
+        a: "With One row per Loop pass, the first row (start) is the variables after the lines before the loop, and each later row is the values at the end of a pass round the loop. With Every statement there is a row after each statement, labelled by its line number.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The program, the headings and the number of rows stay; the first rows (set by Rows filled in for students, one by default) keep their values and the rest of the cells are empty. Student + key saves both copies.",
+    },
+    Faq {
+        q: "Why does it stop with a note?",
+        a: "A line it cannot run (dividing by zero, using a variable before it has a value) ends the trace at that line and says so under the table. A loop that never finishes stops after 40 rows. The figure is limited to 24 lines and 8 variables.",
+    },
+    Faq {
+        q: "Why is i one more than the last value in the loop?",
+        a: "A for loop adds the step after each pass, so when the loop ends i has gone past the end value, as it does in most languages. The table shows that value in the last row.",
     },
 ];
 
