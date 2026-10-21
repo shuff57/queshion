@@ -603,6 +603,27 @@ static KIRCHHOFF_LOOPS: [RefSection; 4] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static T_ACCOUNT: [RefSection; 4] = [
+    s("Accounts", &["spec", "descriptions", "balance"], "The accounts and their debits and credits."),
+    s("Money", &["currency", "cents", "show_answers"], "Turn off Show answers to leave the balancing figure and totals empty."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static JOURNAL_ENTRY: [RefSection; 4] = [
+    s("Entries", &["spec", "totals"], "Dates, debits, credits and narrations."),
+    s("Money", &["currency", "cents", "show_answers"], "Turn off Show answers to leave the accounts and amounts empty."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static TRIAL_BALANCE: [RefSection; 4] = [
+    s("Balances", &["spec", "totals"], "Each account with the side its balance is on."),
+    s("Money", &["currency", "cents", "show_answers"], "Turn off Show answers to leave the columns and totals empty."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -620,6 +641,9 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "confidence-interval" => &CONFIDENCE_INTERVAL,
         "residual-plot" => &RESIDUAL_PLOT,
         "rc-curve" => &RC_CURVE,
+        "t-account" => &T_ACCOUNT,
+        "journal-entry" => &JOURNAL_ENTRY,
+        "trial-balance" => &TRIAL_BALANCE,
         "kirchhoff-loops" => &KIRCHHOFF_LOOPS,
         "state-machine" => &STATE_MACHINE,
         "trace-table" => &TRACE_TABLE,

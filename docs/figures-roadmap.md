@@ -30,10 +30,10 @@ A subject is a tab in the Figures screen (`Subject::ALL` in `src/figures/mod.rs`
 needs the enum variant, its label, the gallery card order and a module under `src/figures/`.
 Money figures share a small helper for currency formatting and column alignment.
 
-### Accounting
-- T-account: debits and credits per account, running balance, blank cells for students
-- Journal entry: date, accounts, debit, credit, narration; balanced check as the answer
-- Trial balance: accounts listed, totals, the out-of-balance difference as the answer
+### Accounting (tab added; shared money helpers in `src/figures/accounting.rs`)
+- T-account: debits and credits per account, balanced off with totals and balance b/d (done)
+- Journal entry: date, accounts, debit, credit, narration; balanced check as the answer (done)
+- Trial balance: accounts listed, totals, the out-of-balance difference as the answer (done)
 - Income statement and balance sheet: standard layouts from a list of accounts and amounts
 - Accounting equation: assets = liabilities + equity with transactions applied one by one
 - Depreciation schedule: straight-line and declining balance, book value column

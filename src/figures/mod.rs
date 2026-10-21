@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 
+pub mod accounting;
 pub mod biology;
 pub mod cards;
 #[cfg(test)]
@@ -233,12 +234,12 @@ impl FigureDef {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Subject { Physics, Biology, Chemistry, Math, Computing }
+pub enum Subject { Physics, Biology, Chemistry, Math, Computing, Accounting }
 
 impl Subject {
-    pub const ALL: [Subject; 5] = [Subject::Physics, Subject::Biology, Subject::Chemistry, Subject::Math, Subject::Computing];
+    pub const ALL: [Subject; 6] = [Subject::Physics, Subject::Biology, Subject::Chemistry, Subject::Math, Subject::Computing, Subject::Accounting];
     pub fn name(self) -> &'static str {
-        match self { Subject::Physics => "Physics", Subject::Biology => "Biology", Subject::Chemistry => "Chemistry", Subject::Math => "Math", Subject::Computing => "Computing" }
+        match self { Subject::Physics => "Physics", Subject::Biology => "Biology", Subject::Chemistry => "Chemistry", Subject::Math => "Math", Subject::Computing => "Computing", Subject::Accounting => "Accounting" }
     }
 }
 
@@ -321,6 +322,7 @@ pub fn registry() -> Vec<FigureDef> {
     v.extend(math::defs());
     v.extend(stats::defs());
     v.extend(computing::defs());
+    v.extend(accounting::defs());
     v
 }
 
@@ -548,6 +550,7 @@ pub fn examples_for(id: &str) -> Vec<Example> {
         .or_else(|| stats::examples(id))
         .or_else(|| computing::examples(id))
         .or_else(|| electric::examples(id))
+        .or_else(|| accounting::examples(id))
         .unwrap_or_default()
 }
 

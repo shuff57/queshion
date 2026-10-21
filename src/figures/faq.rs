@@ -78,6 +78,9 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "confidence-interval" => CONFIDENCE_INTERVAL,
         "residual-plot" => RESIDUAL_PLOT,
         "rc-curve" => RC_CURVE,
+        "t-account" => T_ACCOUNT,
+        "journal-entry" => JOURNAL_ENTRY,
+        "trial-balance" => TRIAL_BALANCE,
         "kirchhoff-loops" => KIRCHHOFF_LOOPS,
         "state-machine" => STATE_MACHINE,
         "trace-table" => TRACE_TABLE,
@@ -1503,6 +1506,75 @@ const STATE_MACHINE: &[Faq] = &[
     Faq {
         q: "Why are two arrows drawn side by side?",
         a: "A transition each way between the same two states is drawn as two arrows next to each other so both stay visible. Labels for the same pair of states in the same direction share one arrow.",
+    },
+];
+
+const T_ACCOUNT: &[Faq] = &[
+    Faq {
+        q: "How do I write the accounts?",
+        a: "Start each account with a line such as account Cash, then one line per entry: Dr 5000 Capital for a debit (left side) or Cr 1200 Rent for a credit (right side), with an optional short description. Up to four accounts, each with up to 12 entries a side, are laid out two to a row.",
+    },
+    Faq {
+        q: "How is an account balanced off?",
+        a: "The two sides are added. The smaller side gets a balancing figure (Balance c/d) so both totals match, the totals are ruled off with a double line, and the balance is carried down below as Balance b/d, a debit balance if the debits were larger. An account that already balances shows Balance nil.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The entries stay as the question; the balancing figure, the two totals and the balance carried down are left as empty boxes and a blank line. Student + key saves both copies.",
+    },
+    Faq {
+        q: "Can I leave the accounts unbalanced?",
+        a: "Yes: untick Balance off each account and each side shows just its own total, which is useful for a first lesson on debits and credits.",
+    },
+    Faq {
+        q: "What amounts can I use?",
+        a: "Positive amounts up to a trillion, with or without commas and a currency symbol (1,200.50, $300). A debit or credit is never negative, so put an amount on the other side instead. Cents are shown automatically when an amount has them, or always if you tick Always show cents.",
+    },
+];
+
+const JOURNAL_ENTRY: &[Faq] = &[
+    Faq {
+        q: "How do I write a journal entry?",
+        a: "A date line, then Dr Account amount for each account debited and Cr Account amount for each credited, then the narration in brackets, for example (Paid wages and rent). A blank line, or a new date, starts the next entry. An entry can have up to six lines, so compound entries are fine.",
+    },
+    Faq {
+        q: "What does the check show?",
+        a: "The two totals are written under the table with Debits equal credits when they match, or Out of balance by an amount and which side is larger when they do not, so a typing slip in a worked example shows up.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The dates and narrations stay as the description of each transaction; the accounts, amounts and totals are left empty, and a Do debits equal credits? line is left to fill in. Student + key saves both copies.",
+    },
+    Faq {
+        q: "How is the table laid out?",
+        a: "Date, Account, Debit and Credit columns with the debit accounts at the left of the account column and the credit accounts indented, the narration in brackets beneath, and a ruled line between entries. Up to eight entries fit.",
+    },
+    Faq {
+        q: "Can I use another currency?",
+        a: "Yes: choose $, \u{a3}, \u{20ac} or None. The symbol is written on the totals line; the table columns show plain amounts as is usual.",
+    },
+];
+
+const TRIAL_BALANCE: &[Faq] = &[
+    Faq {
+        q: "How do I enter the balances?",
+        a: "One line per account: the name, then Dr or Cr for the side its balance is on, then the amount, for example Accounts payable Cr 900. Up to 20 accounts. The Balance column shows each as given.",
+    },
+    Faq {
+        q: "What does the figure work out?",
+        a: "Each balance goes into the Debit or Credit column, both columns are added, and the line underneath says either The totals agree or Out of balance by an amount with the side that is larger. Try the Out of balance example to see a difference reported.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The accounts and balances stay; the Debit and Credit columns and both totals are left empty and the difference is a blank line. Student + key saves both copies.",
+    },
+    Faq {
+        q: "Does the order matter?",
+        a: "Accounts are listed in the order you type them, so use the usual order of assets, liabilities, capital, income and expenses if you want a conventional trial balance.",
+    },
+    Faq {
+        q: "What are the limits?",
+        a: "Up to 20 accounts, names cut at 28 characters, and positive amounts up to a trillion.",
     },
 ];
 
