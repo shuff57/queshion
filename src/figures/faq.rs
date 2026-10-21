@@ -74,6 +74,7 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "boolean-table" => BOOLEAN_TABLE,
         "probability-tree" => PROBABILITY_TREE,
         "venn-diagram" => VENN_DIAGRAM,
+        "discrete-distribution" => DISCRETE_DISTRIBUTION,
         "state-machine" => STATE_MACHINE,
         "trace-table" => TRACE_TABLE,
         "sorting-passes" => SORTING_PASSES,
@@ -1498,6 +1499,29 @@ const STATE_MACHINE: &[Faq] = &[
     Faq {
         q: "Why are two arrows drawn side by side?",
         a: "A transition each way between the same two states is drawn as two arrows next to each other so both stay visible. Labels for the same pair of states in the same direction share one arrow.",
+    },
+];
+
+const DISCRETE_DISTRIBUTION: &[Faq] = &[
+    Faq {
+        q: "Which distributions are there?",
+        a: "Binomial (n trials, each with probability p of success, counting the successes) and Poisson (events at an average rate, counting how many happen). A binomial has bars from 0 to n; a Poisson has bars up to about four standard deviations above its mean, and any probability beyond the last bar is still included in the answer.",
+    },
+    Faq {
+        q: "What do the shading options mean?",
+        a: "Exactly k shades one bar. At most k shades k and everything below it. At least k shades k and everything above it. Between shades both values and all those between. If you give the bounds the wrong way round they are swapped.",
+    },
+    Faq {
+        q: "How is the probability worked out?",
+        a: "By adding the exact probability of each shaded bar, so it is exact rather than a normal approximation. It is shown to four decimals, and as < 0.0001 or > 0.9999 when it is that close to 0 or 1.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The bars and the shading stay and the probability is hidden for students to work out. Student + key saves both copies. Write the probability above each bar gives a table of values on the key.",
+    },
+    Faq {
+        q: "What are the limits?",
+        a: "Up to 60 trials, a Poisson mean up to 30, and p between 0 and 1. The values above the bars are shown only when there are 24 bars or fewer.",
     },
 ];
 

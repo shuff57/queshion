@@ -568,6 +568,13 @@ static VENN_DIAGRAM: [RefSection; 4] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static DISCRETE_DISTRIBUTION: [RefSection; 4] = [
+    s("Distribution", &["dist", "n", "p", "lambda"], "Binomial or Poisson, with its parameters."),
+    s("Shading", &["region", "a", "b", "show_prob", "values", "show_answers"], "Turn off Show answers to hide the probability and keep the shaded bars."),
+    s("Labels and text", &["title", "x_title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -581,6 +588,7 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "boolean-table" => &BOOLEAN_TABLE,
         "probability-tree" => &PROBABILITY_TREE,
         "venn-diagram" => &VENN_DIAGRAM,
+        "discrete-distribution" => &DISCRETE_DISTRIBUTION,
         "state-machine" => &STATE_MACHINE,
         "trace-table" => &TRACE_TABLE,
         "sorting-passes" => &SORTING_PASSES,
