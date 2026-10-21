@@ -71,6 +71,7 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "number-base" => NUMBER_BASE,
         "data-structure" => DATA_STRUCTURE,
         "flowchart" => FLOWCHART,
+        "boolean-table" => BOOLEAN_TABLE,
         "dot-plot" => DOT_PLOT,
         "normal-curve" => NORMAL_CURVE,
         "scatterplot" => SCATTERPLOT,
@@ -1351,6 +1352,29 @@ const GRAPH_DIAGRAM: &[Faq] = &[
     Faq {
         q: "How is the shortest path decided?",
         a: "By the total of the edge weights (every edge counts 1 if no weights are given), following arrows on directed edges. It is not available if any weight is negative. Ties are broken by node order.",
+    },
+];
+
+const BOOLEAN_TABLE: &[Faq] = &[
+    Faq {
+        q: "How do I give the function?",
+        a: "Either as an expression (Q = (A AND B) OR (NOT A AND C), one per line, words or the symbols & | ^ !) or as a list of minterms: the row numbers where the output is 1, counting the first variable as the top bit, so with A, B, C the row A=1, B=0, C=1 is number 5. Don't-cares are rows where the output does not matter and are shown as X.",
+    },
+    Faq {
+        q: "How is the simplified expression found?",
+        a: "By the Quine-McCluskey method: all the biggest groups of rows are found, the essential ones are taken and then the group that covers the most that is left, so the result is a small sum of products (a minimal one for the usual textbook sizes). A prime means NOT, so A'C + AB reads (NOT A AND C) OR (A AND B). Don't-cares are used when they make a group bigger and are never required.",
+    },
+    Faq {
+        q: "How do I read the Karnaugh map?",
+        a: "The side and top labels run in Gray code (00, 01, 11, 10) so neighbouring cells differ in one variable. The map is for 2 to 4 variables. The coloured loops are the groups of 1s (and X) that make the terms of the simplified expression; a group that reaches the edge wraps round and is drawn as two loops.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The inputs, the empty table cells, the empty map and the heading stay and the outputs, the groups and the simplified expression are left for students to fill in. Student + key saves both copies.",
+    },
+    Faq {
+        q: "What if the expression has several outputs?",
+        a: "The truth table shows a column for each. The Karnaugh map shows one: pick which under Output for the map.",
     },
 ];
 

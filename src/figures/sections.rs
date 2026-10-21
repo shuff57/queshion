@@ -505,6 +505,13 @@ static FLOWCHART: [RefSection; 3] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static BOOLEAN_TABLE: [RefSection; 4] = [
+    s("Function", &["source", "expr", "vars", "minterms", "dontcares", "output"], "Give an expression, or the rows where the output is 1."),
+    s("Display", &["show", "row_numbers", "groups", "simplify", "show_answers"], "Turn off Show answers for a student copy: outputs, groups and the simplified form are left empty."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -515,6 +522,7 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "number-base" => &NUMBER_BASE,
         "data-structure" => &DATA_STRUCTURE,
         "flowchart" => &FLOWCHART,
+        "boolean-table" => &BOOLEAN_TABLE,
         "two-way-table" => &TWO_WAY_TABLE,
         "stem-and-leaf" => &STEM_AND_LEAF,
         "dot-plot" => &DOT_PLOT,
