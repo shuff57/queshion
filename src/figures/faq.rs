@@ -69,6 +69,7 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "graph-diagram" => GRAPH_DIAGRAM,
         "tree-diagram" => TREE_DIAGRAM,
         "number-base" => NUMBER_BASE,
+        "data-structure" => DATA_STRUCTURE,
         "dot-plot" => DOT_PLOT,
         "normal-curve" => NORMAL_CURVE,
         "scatterplot" => SCATTERPLOT,
@@ -1349,6 +1350,29 @@ const GRAPH_DIAGRAM: &[Faq] = &[
     Faq {
         q: "How is the shortest path decided?",
         a: "By the total of the edge weights (every edge counts 1 if no weights are given), following arrows on directed edges. It is not available if any weight is negative. Ties are broken by node order.",
+    },
+];
+
+const DATA_STRUCTURE: &[Faq] = &[
+    Faq {
+        q: "How do I show what push and pop do?",
+        a: "Choose Stack (or Queue, Linked list), list the starting values and type the operations separated by commas, such as push 5, push 9, pop. The starting structure is drawn first and the result below it.",
+    },
+    Faq {
+        q: "Which operations does each structure understand?",
+        a: "Stack: push and pop. Queue: enqueue and dequeue. Linked list: addfirst, addlast, removefirst and removelast. An array has no operations; it shows its values and indices. Anything else is skipped and listed under the result.",
+    },
+    Faq {
+        q: "Which end is which?",
+        a: "Values run bottom to top for a stack (the top is marked), front to back for a queue and head to tail for a linked list (ending in null). The first value of an array is index 0.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The starting structure and the operations stay and the result is replaced by an empty dashed box of the same size, for students to draw in. Student + key saves both copies.",
+    },
+    Faq {
+        q: "What happens when an operation cannot be done?",
+        a: "Popping an empty stack, or pushing past 14 items, is skipped and listed under the result as skipped, so you can see why the answer is what it is. At most 14 values and 24 operations are used.",
     },
 ];
 
