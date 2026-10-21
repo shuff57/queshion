@@ -579,36 +579,49 @@ pub fn params_from_json(def: &FigureDef, over: &serde_json::Value) -> Params {
 pub(crate) fn fontdb() -> std::sync::Arc<resvg::usvg::fontdb::Database> {
     static DB: std::sync::OnceLock<std::sync::Arc<resvg::usvg::fontdb::Database>> = std::sync::OnceLock::new();
     DB.get_or_init(|| {
+        use crate::fonts::{Face, family_name};
         let mut db = resvg::usvg::fontdb::Database::new();
         db.load_system_fonts();
+        // Each distinct face once: on the web a face that was not fetched shares its stand-in's
+        // bytes, so it adds nothing and its text falls back to the generic family below.
+        let mut seen: Vec<*const u8> = Vec::new();
+        let mut load = |db: &mut resvg::usvg::fontdb::Database, bytes: &'static [u8]| {
+            if !seen.contains(&bytes.as_ptr()) {
+                seen.push(bytes.as_ptr());
+                db.load_font_data(bytes.to_vec());
+            }
+        };
         // The print serif (page thumbnails draw the PDF's text in it).
         for face in crate::fonts::Style::ALL {
-            db.load_font_data(face.bytes().to_vec());
+            load(&mut db, face.bytes());
         }
         // The house sans and mono, plus the math fallback. The browser has no system fonts,
         // and figure SVGs ask for Noto/Liberation/DejaVu/sans-serif; the generic mappings below
         // make those resolve to the bundled faces so numbers and axis titles still draw.
-        for bytes in [
-            crate::fonts::SANS_REGULAR,
-            crate::fonts::SANS_ITALIC,
-            crate::fonts::SANS_SEMIBOLD,
-            crate::fonts::SANS_BOLD,
-            crate::fonts::SERIF_SEMIBOLD,
-            crate::fonts::MONO_REGULAR,
-            crate::fonts::LIBERATION_SANS_REGULAR,
-            crate::fonts::LIBERATION_SANS_BOLD,
-            crate::fonts::LIBERATION_SERIF_REGULAR,
-            crate::fonts::LIBERATION_SERIF_ITALIC,
-            crate::fonts::LIBERATION_SERIF_BOLD,
+        for face in [
+            Face::SansRegular,
+            Face::SansItalic,
+            Face::SansSemibold,
+            Face::SansBold,
+            Face::SerifSemibold,
+            Face::Mono,
+            Face::LiberationSansRegular,
+            Face::LiberationSansBold,
+            Face::LiberationSerifRegular,
+            Face::LiberationSerifItalic,
+            Face::LiberationSerifBold,
         ] {
-            db.load_font_data(bytes.to_vec());
+            load(&mut db, face.bytes());
         }
         if let Some(b) = crate::fonts::fallback_bytes() {
             db.load_font_data(b.to_vec());
         }
-        db.set_sans_serif_family("Source Sans 3");
-        db.set_serif_family("Source Serif 4");
-        db.set_monospace_family("Liberation Mono");
+        // "Source Sans 3", "Source Serif 4" and "Liberation Mono"; on the web, a stand-in's
+        // family when that face did not arrive.
+        let family = |face: Face, or: &str| family_name(face.bytes()).unwrap_or_else(|| or.to_string());
+        db.set_sans_serif_family(family(Face::SansRegular, "Source Sans 3"));
+        db.set_serif_family(family(Face::SerifRegular, "Source Serif 4"));
+        db.set_monospace_family(family(Face::Mono, "Liberation Mono"));
         std::sync::Arc::new(db)
     })
     .clone()

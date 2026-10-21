@@ -736,8 +736,8 @@ impl Workspace {
         self.reset_history();
         self.examples_open = false;
         self.sel = Some(i);
-        // the reference's chemistry figures open bare (no drag knobs); the Handles chip turns them on
-        self.hide_handles = matches!(reg()[i].subject, figures::Subject::Chemistry | figures::Subject::Physics);
+        // the drag knobs show on every figure; the Handles chip hides them
+        self.hide_handles = false;
         self.params = figures::start_params(&reg()[i]);
         // the composite shape opens on a blank canvas with its "Start with" screen, as the
         // reference does. Its opening state (share links, Reset all) keeps the arch, so links

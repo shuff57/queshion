@@ -287,7 +287,39 @@ fn render_with_hayro(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {
     const DPI: f32 = 150.0;
 
     let pdf = Pdf::new(data.to_vec()).map_err(|e| format!("{e:?}"))?;
+    #[cfg(not(target_arch = "wasm32"))]
     let interpreter = InterpreterSettings::default();
+    // The web build does not compile hayro's standard fonts in; it fetched the same files at
+    // startup (fonts::PDF_STANDARD_FONTS) and picks them the way hayro's default does. If one
+    // did not arrive, a house face of the same kind draws that text rather than none.
+    #[cfg(target_arch = "wasm32")]
+    let interpreter = {
+        use crate::fonts::Face;
+        use hayro::hayro_interpret::font::{FontData, FontQuery, StandardFont as S};
+        InterpreterSettings {
+            font_resolver: std::sync::Arc::new(|query: &FontQuery| {
+                let font = match query {
+                    FontQuery::Standard(s) => *s,
+                    FontQuery::Fallback(f) => f.pick_standard_font(),
+                };
+                let stand_in = || match font {
+                    S::Helvetica | S::HelveticaOblique => Some(Face::SansRegular.bytes()),
+                    S::HelveticaBold | S::HelveticaBoldOblique => Some(Face::SansBold.bytes()),
+                    S::TimesRoman => Some(Face::SerifRegular.bytes()),
+                    S::TimesBold => Some(Face::SerifBold.bytes()),
+                    S::TimesItalic => Some(Face::SerifItalic.bytes()),
+                    S::TimesBoldItalic => Some(Face::SerifBoldItalic.bytes()),
+                    S::Courier | S::CourierBold | S::CourierOblique | S::CourierBoldOblique => Some(Face::Mono.bytes()),
+                    S::Symbol => crate::fonts::fallback_bytes(),
+                    S::ZapfDingBats => None,
+                };
+                crate::fonts::pdf_standard_font(crate::fonts::pdf_standard_font_file(font))
+                    .or_else(stand_in)
+                    .map(|bytes| (std::sync::Arc::new(bytes) as FontData, 0))
+            }),
+            ..InterpreterSettings::default()
+        }
+    };
     let cache = RenderCache::new();
     let settings = RenderSettings::default();
     let pixmap = PixmapSettings { x_scale: DPI / 72.0, y_scale: DPI / 72.0, bg_color: WHITE };

@@ -34,8 +34,10 @@ egui = "0.36"
 log = "0.4"
 # std clocks panic on wasm32; this is std's clock natively and the browser's in a page.
 web-time = "1"
-# Pure-Rust PDF rasterizer: page previews and PDF imports on the web (no pdftoppm).
-hayro = { version = "0.8", default-features = false, features = ["embed-fonts", "embed-cmaps"] }
+# Pure-Rust PDF rasterizer: page previews and PDF imports on the web (no pdftoppm). Its 14
+# standard fonts (`embed-fonts`) are compiled in natively only; the web build fetches the same
+# files (assets/pdf-fonts, src/fonts.rs `PDF_STANDARD_FONTS`).
+hayro = { version = "0.8", default-features = false, features = ["embed-cmaps"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp"] }
@@ -50,7 +52,9 @@ equashion-font = { git = "https://github.com/shuff57/equaSHion", rev = "3d3b840c
 resvg = { version = "0.45", default-features = false, features = ["text", "system-fonts"] }
 ttf-parser = "0.25"  # already in the tree via resvg/fontdb; PDF font metrics + subsetting (src/fonts.rs)
 flate2 = "1"         # already in the tree via zip/png; FlateDecode for embedded PDF fonts
-egui-phosphor = { version = "0.14", default-features = false, features = ["regular"] }
+# "subset" cuts the icon face down to the icons the app uses (theme::icons) at compile time; it
+# turns on every variant's constants, but only the subset's bytes reach the binary.
+egui-phosphor = { version = "0.14", default-features = false, features = ["regular", "subset"] }
 # Shared-pool client (src/share): secrets are wiped from memory when dropped; the server address is parsed strictly.
 zeroize = "1"
 url = "2"
@@ -64,7 +68,8 @@ share-core = { path = "server/share-core" }
 egui_kittest = "0.36"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11", "links"] }
+hayro = { version = "0.8", default-features = false, features = ["embed-fonts"] }
+eframe ={ version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11", "links"] }
 rfd = "0.17"
 ureq = { version = "3", features = ["platform-verifier"] }
 # Shared-pool refresh and device tokens live in the OS keychain (src/share/vault.rs): macOS Keychain,
@@ -89,6 +94,41 @@ web-sys = { version = "0.3", features = [
     "RequestCredentials", "RequestRedirect", "History",
 ] }
 
+# Size first: Cloudflare Pages rejects any file over 25 MiB, and the web build's wasm is one file.
+# Measured on the wasm after wasm-opt -Oz: thin LTO + opt-level 3 gave 27.3 MiB, this 19.9 MiB;
+# opt-level "z" came out larger (20.4 MiB).
 [profile.release]
 strip = true
-lto = "thin"
+lto = "fat"
+opt-level = "s"
+codegen-units = 1
+panic = "abort"
+
+# opt-level "z" shrinks some crates' wasm and grows others', so it is set per package (measured
+# on the wasm after wasm-opt, against everything at "s"): verSHion's own code -1.0 MiB, the
+# equaSHion crates -0.07 MiB, hayro -0.12 MiB. Every other dependency at "z" came out 1.85 MiB
+# larger, so they stay at "s". egui/epaint at "z" would save another 0.19 MiB but they run every
+# frame, so they stay at "s" too.
+[profile.release.package.vershion]
+opt-level = "z"
+strip = true  # restated: with only opt-level here, the linked binaries kept their symbol names
+[profile.release.package.equashion-math]
+opt-level = "z"
+[profile.release.package.equashion-layout]
+opt-level = "z"
+[profile.release.package.equashion-render]
+opt-level = "z"
+[profile.release.package.equashion-font]
+opt-level = "z"
+[profile.release.package.equashion-egui]
+opt-level = "z"
+[profile.release.package.hayro]
+opt-level = "z"
+[profile.release.package.hayro-interpret]
+opt-level = "z"
+[profile.release.package.hayro-syntax]
+opt-level = "z"
+[profile.release.package.hayro-jbig2]
+opt-level = "z"
+[profile.release.package.hayro-jpeg2000]
+opt-level = "z"
