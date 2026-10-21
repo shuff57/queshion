@@ -83,9 +83,9 @@ Money figures share a small helper for currency formatting and column alignment.
 - Government structure and trade-route charts (boxes and arrows, no maps) (done)
 
 ### Health, PE and technology
-- Body systems with labelled blanks (simplified original outlines)
-- Food plate, heart-rate zones, court and field layouts with positions
-- Engineering: block diagram, free-body and truss, gear and pulley, orthographic views
+- Body systems with labelled blanks (simplified original outlines) (done)
+- Food plate, heart-rate zones, court and field layouts with positions (done)
+- Engineering: block diagram, free-body, gear train, orthographic views (done); truss not built
 
 ### Art, psychology and sociology
 - Colour wheel and perspective grids

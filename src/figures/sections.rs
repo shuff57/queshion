@@ -892,6 +892,56 @@ static STRUCTURE_CHART: [RefSection; 3] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static FOOD_PLATE: [RefSection; 4] = [
+    s("Plate", &["veg", "grains", "protein", "fruit", "dairy"], "Shares are relative; they need not add to 100."),
+    s("Foods", &["foods"], "name: group, one per line."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the table empty."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static HEART_ZONES: [RefSection; 3] = [
+    s("Person", &["age", "resting"], "A resting rate of 0 uses the simple percentage method."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the ranges blank."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static COURT_LAYOUT: [RefSection; 3] = [
+    s("Court", &["sport", "formation"], "The formation only applies to soccer."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the position names blank."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static BODY_MAP: [RefSection; 3] = [
+    s("Organs", &["show"], ""),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the names blank."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static BLOCK_DIAGRAM: [RefSection; 3] = [
+    s("System", &["description", "blocks", "signals", "feedback"], "One more signal than blocks at most."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave names and labels blank."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static FREE_BODY: [RefSection; 4] = [
+    s("Object", &["object", "mass"], "A mass above 0 adds the acceleration."),
+    s("Forces", &["forces"], "name size direction, one per line."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the arrows and results out."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static GEAR_TRAIN: [RefSection; 3] = [
+    s("Gears", &["teeth", "rpm", "clockwise"], "The first gear is the one that is turned."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the results blank."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static ORTHOGRAPHIC: [RefSection; 3] = [
+    s("Stack", &["heights"], "Back row first, one row per line."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the views empty."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -954,6 +1004,14 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "family-tree" => &FAMILY_TREE,
         "sentence-diagram" => &SENTENCE_DIAGRAM,
         "structure-chart" => &STRUCTURE_CHART,
+        "food-plate" => &FOOD_PLATE,
+        "heart-zones" => &HEART_ZONES,
+        "court-layout" => &COURT_LAYOUT,
+        "body-map" => &BODY_MAP,
+        "block-diagram" => &BLOCK_DIAGRAM,
+        "free-body" => &FREE_BODY,
+        "gear-train" => &GEAR_TRAIN,
+        "orthographic" => &ORTHOGRAPHIC,
         "kirchhoff-loops" => &KIRCHHOFF_LOOPS,
         "state-machine" => &STATE_MACHINE,
         "trace-table" => &TRACE_TABLE,

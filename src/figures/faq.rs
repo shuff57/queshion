@@ -123,6 +123,14 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "family-tree" => FAMILY_TREE,
         "sentence-diagram" => SENTENCE_DIAGRAM,
         "structure-chart" => STRUCTURE_CHART,
+        "food-plate" => FOOD_PLATE,
+        "heart-zones" => HEART_ZONES,
+        "court-layout" => COURT_LAYOUT,
+        "body-map" => BODY_MAP,
+        "block-diagram" => BLOCK_DIAGRAM,
+        "free-body" => FREE_BODY,
+        "gear-train" => GEAR_TRAIN,
+        "orthographic" => ORTHOGRAPHIC,
         "kirchhoff-loops" => KIRCHHOFF_LOOPS,
         "state-machine" => STATE_MACHINE,
         "trace-table" => TRACE_TABLE,
@@ -2859,5 +2867,157 @@ const STRUCTURE_CHART: &[Faq] = &[
     Faq {
         q: "How do I make a worksheet?",
         a: "Turn Show answers off to keep the boxes and arrows and leave the label boxes blank for students to write.",
+    },
+];
+
+const FOOD_PLATE: &[Faq] = &[
+    Faq {
+        q: "How do I list my foods?",
+        a: "One per line as name: group, for example Apple: Fruits. The groups are Vegetables, Grains, Protein, Fruits and Dairy, up to 14 foods.",
+    },
+    Faq {
+        q: "What do the shares control?",
+        a: "The size of each slice of the plate. They are relative, so 2, 2, 1, 1 gives the same plate as 40, 40, 20, 20.",
+    },
+    Faq {
+        q: "What does Show answers do?",
+        a: "On, the table shows the food numbers in the right group. Off, the table is empty and the foods are listed mixed up, for students to sort.",
+    },
+    Faq {
+        q: "Is the dairy circle optional?",
+        a: "Yes. Turn Dairy off to draw the plate without the side circle.",
+    },
+];
+
+const HEART_ZONES: &[Faq] = &[
+    Faq {
+        q: "How is the maximum heart rate found?",
+        a: "As 220 minus age. It is an estimate; real maximums vary from person to person.",
+    },
+    Faq {
+        q: "What does the resting rate do?",
+        a: "At 0 the zones are plain percentages of the maximum. Give a resting rate and they use the heart rate reserve method, which suits fit people better.",
+    },
+    Faq {
+        q: "What does Show answers do?",
+        a: "On, each zone shows its beats-per-minute range. Off, those ranges are blank for students to work out.",
+    },
+    Faq {
+        q: "Why do I get a message about the resting rate?",
+        a: "The resting rate must be below the maximum for the age given.",
+    },
+];
+
+const COURT_LAYOUT: &[Faq] = &[
+    Faq {
+        q: "Which sports are there?",
+        a: "Basketball, soccer and volleyball. Each shows its court or field markings and numbered positions.",
+    },
+    Faq {
+        q: "What is the formation for?",
+        a: "It only applies to soccer: 4-4-2, 4-3-3 or 3-5-2 move the players into those lines.",
+    },
+    Faq {
+        q: "What does Show answers do?",
+        a: "On, the list names each numbered position. Off, the numbers stay on the court and the names are blank lines.",
+    },
+    Faq {
+        q: "Is the court to scale?",
+        a: "It is a simplified diagram with the main markings, not an exact scale drawing.",
+    },
+];
+
+const BODY_MAP: &[Faq] = &[
+    Faq {
+        q: "What can I show?",
+        a: "All organs, only the digestive system, or only breathing and circulation.",
+    },
+    Faq {
+        q: "What does Show answers do?",
+        a: "On, the numbered organs are named in the list. Off, the list is blank lines for students to fill in.",
+    },
+    Faq {
+        q: "Is the outline accurate?",
+        a: "It is simplified so every organ can be seen. Sizes and positions are approximate.",
+    },
+    Faq {
+        q: "Can I add organs?",
+        a: "No, the set is fixed. Choose a view to show the ones you want.",
+    },
+];
+
+const BLOCK_DIAGRAM: &[Faq] = &[
+    Faq {
+        q: "How do I enter blocks and signals?",
+        a: "Blocks go one per line, left to right, up to 6. Signals go one per line: the input first, then one for each arrow after a block.",
+    },
+    Faq {
+        q: "How many signals can I give?",
+        a: "At most one more than the number of blocks. Missing ones are left blank.",
+    },
+    Faq {
+        q: "How do I add feedback?",
+        a: "Type a feedback signal. It is drawn from the output back to a summing junction at the start. Leave it empty for an open loop.",
+    },
+    Faq {
+        q: "What does Show answers do?",
+        a: "Off, the block names and signal labels are blank for students. The description stays.",
+    },
+];
+
+const FREE_BODY: &[Faq] = &[
+    Faq {
+        q: "How do I enter forces?",
+        a: "One per line as name, size in newtons, direction: Weight 49 270. Up to 6 forces.",
+    },
+    Faq {
+        q: "How are directions measured?",
+        a: "In degrees anticlockwise from pointing right: 0 right, 90 up, 180 left, 270 down.",
+    },
+    Faq {
+        q: "When is the acceleration shown?",
+        a: "When you give a mass above 0. It is the net force divided by the mass.",
+    },
+    Faq {
+        q: "What does Show answers do?",
+        a: "On, the arrows, net force and acceleration are drawn and worked out. Off, only the object and the list remain.",
+    },
+];
+
+const GEAR_TRAIN: &[Faq] = &[
+    Faq {
+        q: "How do I enter the gears?",
+        a: "List the tooth counts in order, from the gear that is turned to the last one, 2 to 4 gears with 8 to 60 teeth each.",
+    },
+    Faq {
+        q: "How is the speed worked out?",
+        a: "Speed times the first gear's teeth divided by the gear's own teeth. Meshing gears turn in opposite directions.",
+    },
+    Faq {
+        q: "What is an idler gear?",
+        a: "A gear between two others. It reverses nothing overall but changes the direction of the last gear.",
+    },
+    Faq {
+        q: "What does Show answers do?",
+        a: "Off, the ratio, speeds and directions are blank lines for students. The first gear's speed and turn are given.",
+    },
+];
+
+const ORTHOGRAPHIC: &[Faq] = &[
+    Faq {
+        q: "How do I describe the stack?",
+        a: "A grid of numbers, one row per line, the back row first. Each number is how many cubes are stacked there, 0 to 5, up to 5 by 5.",
+    },
+    Faq {
+        q: "What are the three views?",
+        a: "Top, front and right: what you would see looking straight at the stack from each side.",
+    },
+    Faq {
+        q: "What does Show answers do?",
+        a: "On, the views are filled in. Off, empty grids of the right size are left for students to draw in.",
+    },
+    Faq {
+        q: "Why are some rows shorter than others?",
+        a: "Short rows are padded with zeros, so a missing number means no cubes.",
     },
 ];
