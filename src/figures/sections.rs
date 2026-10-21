@@ -561,6 +561,13 @@ static PROBABILITY_TREE: [RefSection; 4] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static VENN_DIAGRAM: [RefSection; 4] = [
+    s("Sets", &["sets", "a_name", "b_name", "c_name", "counts"], "How many sets, their names and the value in each region."),
+    s("Work out", &["shade", "totals", "show_answers"], "Turn off Show answers to leave the regions and totals empty."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -573,6 +580,7 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "flowchart" => &FLOWCHART,
         "boolean-table" => &BOOLEAN_TABLE,
         "probability-tree" => &PROBABILITY_TREE,
+        "venn-diagram" => &VENN_DIAGRAM,
         "state-machine" => &STATE_MACHINE,
         "trace-table" => &TRACE_TABLE,
         "sorting-passes" => &SORTING_PASSES,

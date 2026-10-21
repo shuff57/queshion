@@ -13,9 +13,10 @@ mod prob_tree;
 mod scatter;
 mod stem;
 mod twoway;
+mod venn;
 
 pub fn defs() -> Vec<FigureDef> {
-    vec![dot::def(), normal::def(), prob_tree::def(), scatter::def(), stem::def(), twoway::def(), FigureDef {
+    vec![dot::def(), normal::def(), prob_tree::def(), scatter::def(), stem::def(), twoway::def(), venn::def(), FigureDef {
         id: "histogram",
         subject: Subject::Math,
         title: "Histogram",
@@ -33,7 +34,7 @@ pub fn relevant(fig: &str, key: &str, p: &Params) -> bool {
     match (fig, key) {
         ("histogram", "bin_width" | "bin_start") => !p.b("auto_bins"),
         ("histogram", "y_max") => !p.b("auto_y"),
-        _ => scatter::relevant(fig, key, p) && normal::relevant(fig, key, p) && dot::relevant(fig, key, p) && stem::relevant(fig, key, p) && twoway::relevant(fig, key, p) && prob_tree::relevant(fig, key, p),
+        _ => scatter::relevant(fig, key, p) && normal::relevant(fig, key, p) && dot::relevant(fig, key, p) && stem::relevant(fig, key, p) && twoway::relevant(fig, key, p) && prob_tree::relevant(fig, key, p) && venn::relevant(fig, key, p),
     }
 }
 
@@ -51,7 +52,7 @@ pub fn examples(id: &str) -> Option<Vec<Example>> {
             },
             Example { name: "Relative frequency", params: vec![("measure", s("Relative frequency")), ("values", Value::B(true))] },
         ],
-        _ => return scatter::examples(id).or_else(|| normal::examples(id)).or_else(|| dot::examples(id)).or_else(|| stem::examples(id)).or_else(|| twoway::examples(id)).or_else(|| prob_tree::examples(id)),
+        _ => return scatter::examples(id).or_else(|| normal::examples(id)).or_else(|| dot::examples(id)).or_else(|| stem::examples(id)).or_else(|| twoway::examples(id)).or_else(|| prob_tree::examples(id)).or_else(|| venn::examples(id)),
     })
 }
 

@@ -73,6 +73,7 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "flowchart" => FLOWCHART,
         "boolean-table" => BOOLEAN_TABLE,
         "probability-tree" => PROBABILITY_TREE,
+        "venn-diagram" => VENN_DIAGRAM,
         "state-machine" => STATE_MACHINE,
         "trace-table" => TRACE_TABLE,
         "sorting-passes" => SORTING_PASSES,
@@ -1497,6 +1498,29 @@ const STATE_MACHINE: &[Faq] = &[
     Faq {
         q: "Why are two arrows drawn side by side?",
         a: "A transition each way between the same two states is drawn as two arrows next to each other so both stay visible. Labels for the same pair of states in the same direction share one arrow.",
+    },
+];
+
+const VENN_DIAGRAM: &[Faq] = &[
+    Faq {
+        q: "In what order do I enter the region values?",
+        a: "Two sets: A only, B only, both, neither. Three sets: A only, B only, C only, A and B only, A and C only, B and C only, all three, none. Separate them with commas. A value can be a count or short text such as 2 4 6 to list elements.",
+    },
+    Faq {
+        q: "How are the totals worked out?",
+        a: "From the region values when they are all numbers: n(A) adds every region inside A, so with 12 in A only and 5 in both, n(A) = 17. If a value is text, the totals are left out.",
+    },
+    Faq {
+        q: "How do I shade a region?",
+        a: "Choose one under Shade: a set, both sets, either set, one set only, outside a set, or everything outside all the circles. The shading stays in the student copy so it can be the question.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The circles, names and shading stay and the region values and totals are left empty. Student + key saves both copies.",
+    },
+    Faq {
+        q: "Can I name the sets?",
+        a: "Yes, up to 12 characters each. Set C is only used with three sets.",
     },
 ];
 
