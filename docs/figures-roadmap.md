@@ -72,10 +72,10 @@ Money figures share a small helper for currency formatting and column alignment.
 - Rhythm grid and time-signature bar counting (done)
 
 ### Business and finance
-- Break-even chart: fixed cost, total cost, revenue, break-even point
-- Time value of money timeline with cash flows and discount factors
-- Loan amortisation table: payment, interest, principal, balance
-- Org chart, SWOT grid, marketing funnel
+- Break-even chart: fixed cost, total cost, revenue, break-even point (done)
+- Time value of money timeline with cash flows and discount factors (done)
+- Loan amortisation table: payment, interest, principal, balance (done)
+- Org chart, SWOT grid, marketing funnel (done)
 
 ### Language and humanities
 - Sentence diagram, plot arc, graphic organisers (T-chart, KWL, Venn comparison)

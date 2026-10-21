@@ -810,6 +810,44 @@ static RHYTHM_COUNTING: [RefSection; 3] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static BREAK_EVEN: [RefSection; 3] = [
+    s("Costs and price", &["fixed", "price", "variable", "expected", "currency", "cents"], "The costs, the price and optional expected sales."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers for empty axes, a blank table and blank readouts."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static TIME_VALUE: [RefSection; 4] = [
+    s("Cash flows", &["flows", "rate", "mode", "unit"], "Period and amount per row, the rate and what to work out."),
+    s("Money", &["currency", "cents"], ""),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the factors, values and total empty."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static LOAN_AMORTISATION: [RefSection; 4] = [
+    s("The loan", &["principal", "rate", "years", "per_year"], "The amount, the yearly rate, the term and how often it is repaid."),
+    s("Table", &["rows", "currency"], "How many rows to show."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the payment and every cell blank."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static ORG_CHART: [RefSection; 3] = [
+    s("Roles", &["roles"], "Indent a role under who it reports to."),
+    s("Display", &["title", "show_answers", "hide"], "Turn off Show answers to blank the questions; choose Role titles to empty the boxes too."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static SWOT: [RefSection; 3] = [
+    s("Points", &["strengths", "weaknesses", "opportunities", "threats"], "One point per line."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the boxes empty."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static MARKETING_FUNNEL: [RefSection; 3] = [
+    s("Funnel", &["stages", "spend", "currency", "cents"], "A name and a count per stage, widest first."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the rates and cost blank."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -859,6 +897,12 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "piano-keyboard" => &PIANO_KEYBOARD,
         "guitar-chords" => &GUITAR_CHORDS,
         "rhythm-counting" => &RHYTHM_COUNTING,
+        "break-even" => &BREAK_EVEN,
+        "time-value" => &TIME_VALUE,
+        "loan-amortisation" => &LOAN_AMORTISATION,
+        "org-chart" => &ORG_CHART,
+        "swot" => &SWOT,
+        "marketing-funnel" => &MARKETING_FUNNEL,
         "kirchhoff-loops" => &KIRCHHOFF_LOOPS,
         "state-machine" => &STATE_MACHINE,
         "trace-table" => &TRACE_TABLE,

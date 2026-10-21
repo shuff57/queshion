@@ -128,7 +128,7 @@ pub fn relevant(fig: &str, key: &str, p: &Params) -> bool {
         ("lewis-structures", "lone" | "expand" | "resonance" | "resonance_pick") => super::chemistry::lewis_relevant(key, p),
         ("circuit-diagram", "show_answers") => p.s("solve") != "Off",
         ("ph-reading", "places" | "meter") => p.s("instrument") == "Digital meter",
-        _ => super::stats::relevant(fig, key, p) && super::computing::relevant(fig, key, p) && super::electric::relevant(fig, key, p) && super::accounting::relevant(fig, key, p) && super::economics::relevant(fig, key, p) && super::earth::relevant(fig, key, p) && super::geography::relevant(fig, key, p) && super::music::relevant(fig, key, p),
+        _ => super::stats::relevant(fig, key, p) && super::computing::relevant(fig, key, p) && super::electric::relevant(fig, key, p) && super::accounting::relevant(fig, key, p) && super::economics::relevant(fig, key, p) && super::earth::relevant(fig, key, p) && super::geography::relevant(fig, key, p) && super::music::relevant(fig, key, p) && super::business::relevant(fig, key, p),
     }
 }
 

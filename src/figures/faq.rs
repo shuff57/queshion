@@ -110,6 +110,12 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "piano-keyboard" => PIANO_KEYBOARD,
         "guitar-chords" => GUITAR_CHORDS,
         "rhythm-counting" => RHYTHM_COUNTING,
+        "break-even" => BREAK_EVEN,
+        "time-value" => TIME_VALUE,
+        "loan-amortisation" => LOAN_AMORTISATION,
+        "org-chart" => ORG_CHART,
+        "swot" => SWOT,
+        "marketing-funnel" => MARKETING_FUNNEL,
         "kirchhoff-loops" => KIRCHHOFF_LOOPS,
         "state-machine" => STATE_MACHINE,
         "trace-table" => TRACE_TABLE,
@@ -2579,5 +2585,139 @@ const RHYTHM_COUNTING: &[Faq] = &[
     Faq {
         q: "How do I make a worksheet?",
         a: "Turn off Show answers. The notes and the grid stay and the counts and the beats in each bar are left as blank lines. Student + key saves both copies.",
+    },
+];
+
+const BREAK_EVEN: &[Faq] = &[
+    Faq {
+        q: "What does the chart show?",
+        a: "Revenue and total cost against the units sold. Where the two lines cross is the break-even point: below it the business makes a loss, above it a profit.",
+    },
+    Faq {
+        q: "How is the break-even point worked out?",
+        a: "Fixed costs divided by the contribution per unit, which is the price minus the variable cost. Whole units are needed, so a fractional answer is rounded up.",
+    },
+    Faq {
+        q: "What if it never breaks even?",
+        a: "If the price is not above the variable cost per unit, each sale loses money, so the figure says so instead of drawing lines.",
+    },
+    Faq {
+        q: "What does expected sales add?",
+        a: "The margin of safety (how far sales can fall before a loss, in units and as a share of expected sales) and the profit at that level.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn Show answers off for a copy with empty axes, a blank table and blank lines, and keep it on for the key. Both are the same size.",
+    },
+];
+
+const TIME_VALUE: &[Faq] = &[
+    Faq {
+        q: "How do I enter cash flows?",
+        a: "One row per flow: the period, then the amount. Period 0 is now, and money paid out is negative, such as 0, -1000.",
+    },
+    Faq {
+        q: "How is a present value worked out?",
+        a: "Each flow is multiplied by the discount factor 1 divided by (1 + rate) to the power of the period. The values added up are the net present value.",
+    },
+    Faq {
+        q: "What does Future value do?",
+        a: "It compounds each flow forward to the last period using (1 + rate) to the power of the periods remaining, and adds them up.",
+    },
+    Faq {
+        q: "What does a positive NPV mean?",
+        a: "The flows are worth more than the money put in at that rate, so the project earns more than the rate asked for.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn Show answers off to leave the factors, values and total empty. The given cash flows and the timeline stay.",
+    },
+];
+
+const LOAN_AMORTISATION: &[Faq] = &[
+    Faq {
+        q: "How is the repayment worked out?",
+        a: "The same payment each period clears the loan: amount times the periodic rate, divided by 1 minus (1 + rate) to the power of minus the number of periods. It is rounded to the cent.",
+    },
+    Faq {
+        q: "What are interest and principal?",
+        a: "Interest is the balance times the periodic rate. The rest of the repayment is principal, which lowers the balance.",
+    },
+    Faq {
+        q: "Why does the last payment differ a little?",
+        a: "Rounding to the cent each period leaves a few cents over, so the last payment is adjusted to bring the balance to exactly zero.",
+    },
+    Faq {
+        q: "How many rows are shown?",
+        a: "Up to the number you choose, with a note of how many repayments are left out. Long loans show only the first rows.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn Show answers off to leave the payment, the totals and every cell of the table empty. The opening balance stays.",
+    },
+];
+
+const ORG_CHART: &[Faq] = &[
+    Faq {
+        q: "How do I write the roles?",
+        a: "One role per line, indented under the role it reports to. Use spaces or tabs, and a dash at the start of a line is fine.",
+    },
+    Faq {
+        q: "What are the limits?",
+        a: "One role at the top, up to 30 roles, 6 levels, and 10 roles at the ends of branches so the chart stays readable.",
+    },
+    Faq {
+        q: "What is span of control?",
+        a: "The number of people reporting directly to one manager. The figure finds the role with the most.",
+    },
+    Faq {
+        q: "What are levels?",
+        a: "The rows of the hierarchy from the top role down. A chart with a director, managers and staff has three.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn Show answers off to leave the questions blank, and choose Role titles to empty the boxes too, so students can write the roles in.",
+    },
+];
+
+const SWOT: &[Faq] = &[
+    Faq {
+        q: "What do the four boxes mean?",
+        a: "Strengths and weaknesses are inside the business; opportunities and threats come from outside it. Strengths and opportunities help, weaknesses and threats harm.",
+    },
+    Faq {
+        q: "How do I enter the points?",
+        a: "One point per line in each box, up to 6 each. Long points are shortened to fit.",
+    },
+    Faq {
+        q: "Why are the points numbered in a different order?",
+        a: "The list below the grid is mixed up on purpose, so a student has to decide which box each point belongs in.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn Show answers off for a copy with empty boxes and the mixed-up list. The key places each numbered point in its box.",
+    },
+];
+
+const MARKETING_FUNNEL: &[Faq] = &[
+    Faq {
+        q: "How do I enter the stages?",
+        a: "One stage per line: a name then a count, such as Visited the website 4000. Give 2 to 7 stages, the widest first.",
+    },
+    Faq {
+        q: "What is conversion?",
+        a: "The share of one stage that reached the next. 800 of 4000 is 20%.",
+    },
+    Faq {
+        q: "What is overall conversion?",
+        a: "The last stage as a share of the first, so 120 of 20000 is 0.6%.",
+    },
+    Faq {
+        q: "What does advertising spend add?",
+        a: "The cost per customer, the spend divided by the count at the last stage.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn Show answers off to leave the conversion rates, the overall rate and the cost per customer blank.",
     },
 ];

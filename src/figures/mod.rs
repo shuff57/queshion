@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 
 pub mod accounting;
+pub mod business;
 pub mod earth;
 pub mod geography;
 pub mod music;
@@ -238,12 +239,12 @@ impl FigureDef {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Subject { Physics, Biology, Chemistry, Math, Computing, Accounting, Economics, EarthScience, Geography, Music }
+pub enum Subject { Physics, Biology, Chemistry, Math, Computing, Accounting, Economics, EarthScience, Geography, Music, Business }
 
 impl Subject {
-    pub const ALL: [Subject; 10] = [Subject::Physics, Subject::Biology, Subject::Chemistry, Subject::Math, Subject::Computing, Subject::Accounting, Subject::Economics, Subject::EarthScience, Subject::Geography, Subject::Music];
+    pub const ALL: [Subject; 11] = [Subject::Physics, Subject::Biology, Subject::Chemistry, Subject::Math, Subject::Computing, Subject::Accounting, Subject::Economics, Subject::EarthScience, Subject::Geography, Subject::Music, Subject::Business];
     pub fn name(self) -> &'static str {
-        match self { Subject::Physics => "Physics", Subject::Biology => "Biology", Subject::Chemistry => "Chemistry", Subject::Math => "Math", Subject::Computing => "Computing", Subject::Accounting => "Accounting", Subject::Economics => "Economics", Subject::EarthScience => "Earth science", Subject::Geography => "Geography", Subject::Music => "Music" }
+        match self { Subject::Physics => "Physics", Subject::Biology => "Biology", Subject::Chemistry => "Chemistry", Subject::Math => "Math", Subject::Computing => "Computing", Subject::Accounting => "Accounting", Subject::Economics => "Economics", Subject::EarthScience => "Earth science", Subject::Geography => "Geography", Subject::Music => "Music", Subject::Business => "Business and finance" }
     }
 }
 
@@ -331,6 +332,7 @@ pub fn registry() -> Vec<FigureDef> {
     v.extend(earth::defs());
     v.extend(geography::defs());
     v.extend(music::defs());
+    v.extend(business::defs());
     v
 }
 
@@ -563,6 +565,7 @@ pub fn examples_for(id: &str) -> Vec<Example> {
         .or_else(|| earth::examples(id))
         .or_else(|| geography::examples(id))
         .or_else(|| music::examples(id))
+        .or_else(|| business::examples(id))
         .unwrap_or_default()
 }
 
