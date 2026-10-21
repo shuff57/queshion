@@ -17,6 +17,7 @@ pub mod composite;
 pub mod computing;
 pub mod data;
 pub mod faq;
+pub mod graph;
 pub mod interact;
 pub mod items;
 pub mod labels;
