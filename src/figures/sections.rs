@@ -533,6 +533,13 @@ static SORTING_PASSES: [RefSection; 4] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static RECURSION_TREE: [RefSection; 4] = [
+    s("Function", &["func", "a", "b"], "Choose the function and its starting values."),
+    s("Display", &["number", "returns", "show_answers"], "Turn off Show answers to leave the return values and numbers empty."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -547,6 +554,7 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "state-machine" => &STATE_MACHINE,
         "trace-table" => &TRACE_TABLE,
         "sorting-passes" => &SORTING_PASSES,
+        "recursion-tree" => &RECURSION_TREE,
         "two-way-table" => &TWO_WAY_TABLE,
         "stem-and-leaf" => &STEM_AND_LEAF,
         "dot-plot" => &DOT_PLOT,

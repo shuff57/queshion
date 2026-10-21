@@ -75,6 +75,7 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "state-machine" => STATE_MACHINE,
         "trace-table" => TRACE_TABLE,
         "sorting-passes" => SORTING_PASSES,
+        "recursion-tree" => RECURSION_TREE,
         "dot-plot" => DOT_PLOT,
         "normal-curve" => NORMAL_CURVE,
         "scatterplot" => SCATTERPLOT,
@@ -1355,6 +1356,29 @@ const GRAPH_DIAGRAM: &[Faq] = &[
     Faq {
         q: "How is the shortest path decided?",
         a: "By the total of the edge weights (every edge counts 1 if no weights are given), following arrows on directed edges. It is not available if any weight is negative. Ties are broken by node order.",
+    },
+];
+
+const RECURSION_TREE: &[Faq] = &[
+    Faq {
+        q: "What do the boxes mean?",
+        a: "Each box is one call of the function, with the call on top and the value it returns underneath. A call's children are the calls it makes, left to right. Shaded boxes are base cases, which return without calling anything.",
+    },
+    Faq {
+        q: "Which functions are there?",
+        a: "fib(n) (fib(n-1) + fib(n-2)), factorial(n), sum(n) (the sum of 1 to n), gcd(a, b) (Euclid's algorithm with a mod b) and power(x, n), which squares the result of power(x, n div 2) and multiplies by x when n is odd. Set the starting numbers with the n / a / x box and the b box.",
+    },
+    Faq {
+        q: "What do the numbers on the boxes show?",
+        a: "Order the calls start numbers the boxes in the order the calls are made (a call starts before its children). Order the calls return numbers them in the order the calls finish, children before their parent, so the first call returns last.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The calls and the boxes stay and the return values and numbers are left empty to fill in. Student + key saves both copies.",
+    },
+    Faq {
+        q: "Why does it say there are too many calls?",
+        a: "A tree is limited to 80 calls so it stays readable; fib(8) is the largest Fibonacci that fits. Choose a smaller number. Results too big to show (a huge power) are refused the same way.",
     },
 ];
 
