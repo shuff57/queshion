@@ -34,9 +34,9 @@ Money figures share a small helper for currency formatting and column alignment.
 - T-account: debits and credits per account, balanced off with totals and balance b/d (done)
 - Journal entry: date, accounts, debit, credit, narration; balanced check as the answer (done)
 - Trial balance: accounts listed, totals, the out-of-balance difference as the answer (done)
-- Income statement and balance sheet: standard layouts from a list of accounts and amounts
-- Accounting equation: assets = liabilities + equity with transactions applied one by one
-- Depreciation schedule: straight-line and declining balance, book value column
+- Income statement and balance sheet: standard layouts from a list of accounts and amounts (done)
+- Accounting equation: assets = liabilities + equity with transactions applied one by one (done)
+- Depreciation schedule: straight-line, double-declining and sum of the years' digits, book value column (done)
 - Bank reconciliation: two columns, adjustments, the reconciled balance
 - Cash-flow statement skeleton: operating, investing, financing sections
 

@@ -81,6 +81,9 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "t-account" => T_ACCOUNT,
         "journal-entry" => JOURNAL_ENTRY,
         "trial-balance" => TRIAL_BALANCE,
+        "financial-statement" => FINANCIAL_STATEMENT,
+        "accounting-equation" => ACCOUNTING_EQUATION,
+        "depreciation-schedule" => DEPRECIATION_SCHEDULE,
         "kirchhoff-loops" => KIRCHHOFF_LOOPS,
         "state-machine" => STATE_MACHINE,
         "trace-table" => TRACE_TABLE,
@@ -1506,6 +1509,75 @@ const STATE_MACHINE: &[Faq] = &[
     Faq {
         q: "Why are two arrows drawn side by side?",
         a: "A transition each way between the same two states is drawn as two arrows next to each other so both stay visible. Labels for the same pair of states in the same direction share one arrow.",
+    },
+];
+
+const FINANCIAL_STATEMENT: &[Faq] = &[
+    Faq {
+        q: "How do I write the accounts?",
+        a: "A heading line such as Revenue, then one Account amount line for each account under it, then the next heading. For an income statement the first section is revenue and every later section is an expense. For a balance sheet the first is assets and the later ones are liabilities and equity. Up to six sections of ten accounts.",
+    },
+    Faq {
+        q: "What does it work out?",
+        a: "A total for each section, then the net income (or net loss, written in brackets) for an income statement, or the total of each side of the balance sheet with a check that assets equal liabilities plus equity. If they do not, it says by how much and which side is larger.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The accounts and amounts stay; every total, the net income and the check become empty boxes and a blank line. Student + key saves both copies.",
+    },
+    Faq {
+        q: "Can I keep two statements for the same business?",
+        a: "Yes: the income statement and the balance sheet have separate account boxes, and the business name and period are shared, so switch the Statement choice to move between them.",
+    },
+    Faq {
+        q: "How are the amounts laid out?",
+        a: "Account amounts sit in the inner column and totals in the outer column with a rule above, the totals carrying the currency symbol and a double rule under the final figure, as is usual on printed statements.",
+    },
+];
+
+const ACCOUNTING_EQUATION: &[Faq] = &[
+    Faq {
+        q: "How do I enter the transactions?",
+        a: "One line each: a description, a colon, then the effects as letters and amounts, for example Buy equipment on credit: A +3000, L +3000. A is assets, L liabilities and E equity; a minus sign reduces it. Two effects on the same letter, such as A +400, A -400, are added, which is how an asset swap shows as no change.",
+    },
+    Faq {
+        q: "What is checked?",
+        a: "Each transaction must keep the equation balanced: the change in assets equals the change in liabilities plus the change in equity. A row that does not is named under the table. The totals then show assets = liabilities + equity.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The numbered descriptions stay and the effect cells, the totals and the check are empty for students to fill. Student + key saves both copies.",
+    },
+    Faq {
+        q: "How many transactions can there be?",
+        a: "Up to ten, with descriptions cut at 40 characters.",
+    },
+    Faq {
+        q: "Why are the amounts signed?",
+        a: "Because the table shows the change each transaction makes, a plus for an increase and a minus for a decrease. The totals row shows the net result for each part.",
+    },
+];
+
+const DEPRECIATION_SCHEDULE: &[Faq] = &[
+    Faq {
+        q: "Which methods are there?",
+        a: "Straight-line (the same expense each year), double-declining balance (twice the straight-line rate applied to the opening book value, never taking the asset below its salvage value) and sum of the years' digits (a falling fraction of cost less salvage: for 5 years 5/15, 4/15, and so on).",
+    },
+    Faq {
+        q: "What do the columns mean?",
+        a: "Expense is the depreciation charged that year, accumulated depreciation is the total so far, and book value is cost less accumulated depreciation. Year 0 shows the starting book value, which is the cost.",
+    },
+    Faq {
+        q: "How are rounding and the last year handled?",
+        a: "Each year's expense is rounded to the cent, and the last year takes whatever brings the book value exactly to the salvage value, so the total expense is always cost less salvage.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The asset, cost, salvage value, life and method stay, along with the year-0 line; every expense, accumulated depreciation and book value cell and the total are left empty. Student + key saves both copies.",
+    },
+    Faq {
+        q: "What are the limits?",
+        a: "A life of 1 to 15 years, a cost above 0 and a salvage value of at least 0 and below the cost, up to a trillion.",
     },
 ];
 

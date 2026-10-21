@@ -624,6 +624,26 @@ static TRIAL_BALANCE: [RefSection; 4] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static FINANCIAL_STATEMENT: [RefSection; 3] = [
+    s("Statement", &["kind", "is_spec", "bs_spec"], "Which statement, and the accounts under each heading."),
+    s("Labels and money", &["business", "period", "currency", "cents", "show_answers"], "Turn off Show answers to leave the totals empty."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static ACCOUNTING_EQUATION: [RefSection; 4] = [
+    s("Transactions", &["spec", "totals"], "What happens, and its effect on assets, liabilities and equity."),
+    s("Money", &["currency", "cents", "show_answers"], "Turn off Show answers to leave the effects empty."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static DEPRECIATION_SCHEDULE: [RefSection; 4] = [
+    s("Asset", &["asset", "cost", "salvage", "life", "method"], "What is depreciated, and how."),
+    s("Money", &["currency", "cents", "show_answers"], "Turn off Show answers to leave the table empty."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -644,6 +664,9 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "t-account" => &T_ACCOUNT,
         "journal-entry" => &JOURNAL_ENTRY,
         "trial-balance" => &TRIAL_BALANCE,
+        "financial-statement" => &FINANCIAL_STATEMENT,
+        "accounting-equation" => &ACCOUNTING_EQUATION,
+        "depreciation-schedule" => &DEPRECIATION_SCHEDULE,
         "kirchhoff-loops" => &KIRCHHOFF_LOOPS,
         "state-machine" => &STATE_MACHINE,
         "trace-table" => &TRACE_TABLE,
