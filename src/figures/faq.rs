@@ -105,6 +105,11 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "population-pyramid" => POPULATION_PYRAMID,
         "grid-reference" => GRID_REFERENCE,
         "map-scale" => MAP_SCALE,
+        "music-staff" => MUSIC_STAFF,
+        "circle-of-fifths" => CIRCLE_OF_FIFTHS,
+        "piano-keyboard" => PIANO_KEYBOARD,
+        "guitar-chords" => GUITAR_CHORDS,
+        "rhythm-counting" => RHYTHM_COUNTING,
         "kirchhoff-loops" => KIRCHHOFF_LOOPS,
         "state-machine" => STATE_MACHINE,
         "trace-table" => TRACE_TABLE,
@@ -2479,5 +2484,100 @@ const MAP_SCALE: &[Faq] = &[
     Faq {
         q: "How do I make a worksheet?",
         a: "Turn off Show answers. The scale, the bar and the lines stay and the workings and ground distances are left empty. Student + key saves both copies.",
+    },
+];
+
+const MUSIC_STAFF: &[Faq] = &[
+    Faq {
+        q: "How do I write the notes?",
+        a: "A pitch then a length, separated by commas: C4 q, F#4 e, Bb3 h. Middle C is C4. Lengths are w (whole), h (half), q (quarter), e (eighth) and s (sixteenth); a dot after, as in q., makes a note half as long again. r is a rest, as in r q.",
+    },
+    Faq {
+        q: "How are the bars made?",
+        a: "A bar is closed when it holds as many beats as the time signature says, or where you write a | . The beats in each bar are listed below, and a bar that is too short or long is pointed out in the key.",
+    },
+    Faq {
+        q: "When does an accidental appear?",
+        a: "Only when a note differs from the key signature, and it carries on for the same pitch until the bar line. Write the pitch you want to hear: in G major write F#4 for the note in the signature and F4 for the natural.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn off Show answers. The staff stays and the note names and the beats in each bar are left as blank lines. Student + key saves both copies.",
+    },
+];
+
+const CIRCLE_OF_FIFTHS: &[Faq] = &[
+    Faq {
+        q: "How is the circle read?",
+        a: "Each step clockwise goes up a fifth and adds a sharp, from C at the top; each step anticlockwise adds a flat. The outer ring has the major keys, the middle ring their relative minors and the inner ring the key signatures.",
+    },
+    Faq {
+        q: "What does choosing a key do?",
+        a: "It shades that key, the key a fifth above (V) and the key a fifth below (IV), and its relative minor (vi), and writes them out in the middle.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn off Show answers and pick in Leave blank whether the key names, the key signatures or both are left empty. Student + key saves both copies.",
+    },
+    Faq {
+        q: "Why are some sectors split?",
+        a: "Six sharps and six flats name the same key, so F# major and Gb major share a sector.",
+    },
+];
+
+const PIANO_KEYBOARD: &[Faq] = &[
+    Faq {
+        q: "What can be marked?",
+        a: "The notes of a major or natural minor scale, a major or minor triad or a dominant 7th chord from any root, or any keys you list such as C4 E4 G4.",
+    },
+    Faq {
+        q: "What are the two worksheets?",
+        a: "Name the keys marks the keys and leaves their names as blank lines. Mark the keys names the scale or chord and leaves the keyboard empty.",
+    },
+    Faq {
+        q: "Why are notes spelled with flats or sharps?",
+        a: "By scale degree: the third of D major is F#, and the seventh of C7 is Bb, as it would be written on a staff.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn off Show answers. Whichever half is the answer is left out. Student + key saves both copies.",
+    },
+];
+
+const GUITAR_CHORDS: &[Faq] = &[
+    Faq {
+        q: "How do I write a chord?",
+        a: "A name then six characters, low E string first: C x32010 means: low E not played, A string at fret 3, D at fret 2, G open, B at fret 1, high E open. x is not played, 0 is open and 1 to 9 is the fret.",
+    },
+    Faq {
+        q: "What are the two worksheets?",
+        a: "Name the chord shows the dots and leaves the name as a blank line. Mark the chord shows the name and leaves the box empty for students to fill.",
+    },
+    Faq {
+        q: "What if the chord is high up the neck?",
+        a: "The box starts at the lowest fret used and is labelled, such as 7fr. You can also set the first fret yourself.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn off Show answers. Whichever half is the answer is left out. Student + key saves both copies.",
+    },
+];
+
+const RHYTHM_COUNTING: &[Faq] = &[
+    Faq {
+        q: "How do I write a rhythm?",
+        a: "Lengths separated by spaces: w h q e s, with a dot for longer and r before one for a rest, such as q. e r q. A | ends a bar.",
+    },
+    Faq {
+        q: "How is the count worked out?",
+        a: "A beat is the note the bottom number names, so in 6/8 an eighth note is one beat. Notes on the beat are counted 1 2 3, halves of a beat are &, and quarters of a beat are e and a.",
+    },
+    Faq {
+        q: "What if a bar does not add up?",
+        a: "The key shows how many beats it has and how many it needs. A bar also ends at the | you write, so you can set a trap on purpose.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn off Show answers. The notes and the grid stay and the counts and the beats in each bar are left as blank lines. Student + key saves both copies.",
     },
 ];

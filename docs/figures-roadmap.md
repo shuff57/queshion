@@ -66,10 +66,10 @@ Money figures share a small helper for currency formatting and column alignment.
 - Map scale bar and distance workings (done)
 
 ### Music
-- Staff with clef, key signature and notes from a text spec (`C4 q, E4 q, G4 h`)
-- Circle of fifths with keys blankable
-- Scale and chord diagrams, guitar chord boxes, piano keyboard with keys marked
-- Rhythm grid and time-signature bar counting
+- Staff with clef, key signature and notes from a text spec (`C4 q, E4 q, G4 h`) (done)
+- Circle of fifths with keys blankable (done)
+- Scale and chord diagrams, guitar chord boxes, piano keyboard with keys marked (done)
+- Rhythm grid and time-signature bar counting (done)
 
 ### Business and finance
 - Break-even chart: fixed cost, total cost, revenue, break-even point

@@ -779,6 +779,37 @@ static MAP_SCALE: [RefSection; 3] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static MUSIC_STAFF: [RefSection; 3] = [
+    s("Music", &["notes", "clef", "key", "time"], "The notes, clef, key signature and time signature."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the note names and beats blank."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static CIRCLE_OF_FIFTHS: [RefSection; 3] = [
+    s("Circle", &["key"], "A key to shade with its neighbours."),
+    s("Display", &["hide", "title", "show_answers"], "Turn off Show answers to blank the names or signatures."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static PIANO_KEYBOARD: [RefSection; 4] = [
+    s("Keys", &["task", "mode", "root", "keys"], "What to mark and which worksheet to make."),
+    s("Keyboard", &["octaves", "start"], "How many octaves and where the lowest C is."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave out the answer half."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static GUITAR_CHORDS: [RefSection; 3] = [
+    s("Chords", &["chords", "task", "fret"], "The chords and which worksheet to make."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave out the answer half."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static RHYTHM_COUNTING: [RefSection; 3] = [
+    s("Rhythm", &["rhythm", "time"], "The rhythm and its time signature."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the counts and beat totals blank."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -823,6 +854,11 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "population-pyramid" => &POPULATION_PYRAMID,
         "grid-reference" => &GRID_REFERENCE,
         "map-scale" => &MAP_SCALE,
+        "music-staff" => &MUSIC_STAFF,
+        "circle-of-fifths" => &CIRCLE_OF_FIFTHS,
+        "piano-keyboard" => &PIANO_KEYBOARD,
+        "guitar-chords" => &GUITAR_CHORDS,
+        "rhythm-counting" => &RHYTHM_COUNTING,
         "kirchhoff-loops" => &KIRCHHOFF_LOOPS,
         "state-machine" => &STATE_MACHINE,
         "trace-table" => &TRACE_TABLE,
