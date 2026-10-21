@@ -163,31 +163,64 @@ fn covers(t: (u32, u32), m: usize) -> bool {
     (m as u32 & !t.1) == t.0
 }
 
-/// A small sum of products: the essential primes, then the prime covering the most that is
-/// left. `ones` includes the don't-cares (they may be grouped); `must` are the rows that need
-/// covering.
+/// A smallest sum of products: the essential primes, then the fewest further primes that cover
+/// the rest (an exact search), preferring fewer literals when several covers are as small.
+/// `ones` includes the don't-cares (they may be grouped); `must` are the rows that need covering.
 fn minimize(n: usize, ones: &[usize], must: &[usize]) -> Vec<(u32, u32)> {
     let ps = primes(n, ones);
     let mut chosen: Vec<(u32, u32)> = Vec::new();
-    let mut left: Vec<usize> = must.to_vec();
     for m in must {
         let c: Vec<&(u32, u32)> = ps.iter().filter(|t| covers(**t, *m)).collect();
         if c.len() == 1 && !chosen.contains(c[0]) {
             chosen.push(*c[0]);
         }
     }
-    left.retain(|m| !chosen.iter().any(|t| covers(*t, *m)));
-    while !left.is_empty() {
-        let best = ps.iter().filter(|t| !chosen.contains(t)).max_by_key(|t| (left.iter().filter(|m| covers(**t, **m)).count(), t.1.count_ones()));
-        match best {
-            Some(t) if left.iter().any(|m| covers(*t, *m)) => {
+    let left: Vec<usize> = must.iter().copied().filter(|m| !chosen.iter().any(|t| covers(*t, *m))).collect();
+    let lits = |t: &(u32, u32)| n as u32 - t.1.count_ones();
+    // cost: number of terms, then literals
+    fn search(ps: &[(u32, u32)], left: &[usize], picked: &mut Vec<(u32, u32)>, best: &mut Option<(usize, u32, Vec<(u32, u32)>)>, lits: &dyn Fn(&(u32, u32)) -> u32, budget: &mut u32) {
+        if *budget == 0 {
+            return;
+        }
+        *budget -= 1;
+        let cost = (picked.len(), picked.iter().map(lits).sum::<u32>());
+        if best.as_ref().is_some_and(|b| (b.0, b.1) <= cost) {
+            return;
+        }
+        let Some(m) = left.first() else {
+            let mut v = picked.clone();
+            v.sort_unstable();
+            if best.as_ref().is_none_or(|b| cost < (b.0, b.1) || (cost == (b.0, b.1) && v < b.2)) {
+                *best = Some((cost.0, cost.1, v));
+            }
+            return;
+        };
+        for t in ps.iter().filter(|t| covers(**t, *m)) {
+            let rest: Vec<usize> = left.iter().copied().filter(|x| !covers(*t, *x)).collect();
+            picked.push(*t);
+            search(ps, &rest, picked, best, lits, budget);
+            picked.pop();
+        }
+    }
+    let mut best = None;
+    let mut budget = 200_000u32;
+    search(&ps, &left, &mut Vec::new(), &mut best, &lits, &mut budget);
+    match best {
+        Some((_, _, v)) => chosen.extend(v),
+        None => {
+            // search budget spent without a cover (cannot happen for small maps): greedy fallback
+            let mut left = left;
+            while let Some(t) = ps.iter().filter(|t| !chosen.contains(t)).max_by_key(|t| left.iter().filter(|m| covers(**t, **m)).count()) {
+                if !left.iter().any(|m| covers(*t, *m)) {
+                    break;
+                }
                 chosen.push(*t);
                 left.retain(|m| !covers(*t, *m));
             }
-            _ => break,
         }
     }
     chosen.sort_unstable();
+    chosen.dedup();
     chosen
 }
 
@@ -366,7 +399,7 @@ fn render(p: &Params) -> String {
                 rs.dedup();
                 cs.sort_unstable();
                 cs.dedup();
-                let runs = |v: &[usize]| -> Vec<(usize, usize)> {
+                let runs = |v: &[usize], len: usize| -> Vec<(usize, usize, bool, bool)> {
                     let mut out: Vec<(usize, usize)> = Vec::new();
                     for x in v {
                         match out.last_mut() {
@@ -374,19 +407,58 @@ fn render(p: &Params) -> String {
                             _ => out.push((*x, *x)),
                         }
                     }
-                    out
+                    // a group that leaves one edge of the map and comes back on the other is
+                    // drawn as two loops, each left open on the edge it continues over
+                    let wrapped = out.len() > 1 && out[0].0 == 0 && out[out.len() - 1].1 == len - 1;
+                    let last = out.len() - 1;
+                    out.iter().enumerate().map(|(i, (a, b))| (*a, *b, wrapped && i == 0, wrapped && i == last)).collect()
                 };
                 let inset = 4.0 + 2.5 * (gi % 3) as f64;
-                for (r0, r1) in runs(&rs) {
-                    for (c0, c1) in runs(&cs) {
+                for (r0, r1, r_open0, r_open1) in runs(&rs, nr) {
+                    for (c0, c1, c_open0, c_open1) in runs(&cs, nc) {
                         let (x, y) = (mx + lab_w + c0 as f64 * cell + inset, my + lab_h + r0 as f64 * cell + inset);
                         let (gw, gh) = ((c1 - c0 + 1) as f64 * cell - inset * 2.0, (r1 - r0 + 1) as f64 * cell - inset * 2.0);
                         let dash = if print && gi % 2 == 1 { " stroke-dasharray=\"6 4\"" } else { "" };
-                        d.raw(&format!(
-                            r##"<rect x="{x:.2}" y="{y:.2}" width="{gw:.2}" height="{gh:.2}" rx="{:.1}" fill="none" stroke="{}" stroke-width="2.4"{dash}/>"##,
-                            cell * 0.25,
-                            colors[gi % 6]
-                        ));
+                        let rr = cell * 0.25;
+                        if !(r_open0 || r_open1 || c_open0 || c_open1) {
+                            d.raw(&format!(
+                                r##"<rect x="{x:.2}" y="{y:.2}" width="{gw:.2}" height="{gh:.2}" rx="{rr:.1}" fill="none" stroke="{}" stroke-width="2.4"{dash}/>"##,
+                                colors[gi % 6]
+                            ));
+                        } else {
+                            let (l, r, t, b) = (x, x + gw, y, y + gh);
+                            let (has_t, has_b, has_l, has_r) = (!r_open0, !r_open1, !c_open0, !c_open1);
+                            let mut path = String::new();
+                            let ins = |on: bool| if on { rr } else { 0.0 };
+                            if has_t {
+                                path.push_str(&format!("M{:.2},{t:.2} H{:.2} ", l + ins(has_l), r - ins(has_r)));
+                            }
+                            if has_b {
+                                path.push_str(&format!("M{:.2},{b:.2} H{:.2} ", l + ins(has_l), r - ins(has_r)));
+                            }
+                            if has_l {
+                                path.push_str(&format!("M{l:.2},{:.2} V{:.2} ", t + ins(has_t), b - ins(has_b)));
+                            }
+                            if has_r {
+                                path.push_str(&format!("M{r:.2},{:.2} V{:.2} ", t + ins(has_t), b - ins(has_b)));
+                            }
+                            if has_t && has_l {
+                                path.push_str(&format!("M{l:.2},{:.2} A{rr:.2},{rr:.2} 0 0 1 {:.2},{t:.2} ", t + rr, l + rr));
+                            }
+                            if has_t && has_r {
+                                path.push_str(&format!("M{:.2},{t:.2} A{rr:.2},{rr:.2} 0 0 1 {r:.2},{:.2} ", r - rr, t + rr));
+                            }
+                            if has_b && has_r {
+                                path.push_str(&format!("M{r:.2},{:.2} A{rr:.2},{rr:.2} 0 0 1 {:.2},{b:.2} ", b - rr, r - rr));
+                            }
+                            if has_b && has_l {
+                                path.push_str(&format!("M{:.2},{b:.2} A{rr:.2},{rr:.2} 0 0 1 {l:.2},{:.2} ", l + rr, b - rr));
+                            }
+                            d.raw(&format!(
+                                r##"<path d="{path}" fill="none" stroke="{}" stroke-width="2.4" stroke-linecap="round"{dash}/>"##,
+                                colors[gi % 6]
+                            ));
+                        }
                     }
                 }
             }
@@ -438,10 +510,34 @@ mod tests {
         // the four corners of a 4-variable map are one group: B'D'
         assert_eq!(simplified("A, B, C, D", "0, 2, 8, 10", ""), "B'D'");
         // don't-cares may be grouped but need not be covered
-        // A'B' + CD is just as small; the tie goes to whichever group is found first
-        assert_eq!(simplified("A, B, C, D", "1, 3, 7, 11, 15", "0, 2, 5"), "A'D + CD");
+        // A'D + CD is just as small; ties are broken the same way every time
+        assert_eq!(simplified("A, B, C, D", "1, 3, 7, 11, 15", "0, 2, 5"), "A'B' + CD");
         assert_eq!(simplified("A, B", "3", ""), "AB");
         assert_eq!(simplified("X1, X2", "3", ""), "X1\u{b7}X2");
+    }
+
+    #[test]
+    fn the_cover_is_never_larger_than_any_other_cover() {
+        // 0, 1, 2, 5, 6, 7 on three variables is a six-cycle: no cover has fewer than three terms
+        let f = build(&minterms("A, B, C", "0, 1, 2, 5, 6, 7", "")).unwrap();
+        assert_eq!(sop(&f, 0).1.len(), 3);
+        // a function whose first-found prime is not part of any smallest cover
+        let f = build(&minterms("A, B, C, D", "0, 1, 2, 5, 6, 7, 8, 9, 10, 14", "")).unwrap();
+        let n = sop(&f, 0).1.len();
+        assert!(n <= 4, "{n}");
+    }
+
+    #[test]
+    fn wrapped_groups_are_open_where_they_continue() {
+        // the four corners of a 4-variable map: one group split over all four corners
+        let mut p = minterms("A, B, C, D", "0, 2, 8, 10", "");
+        p.set_s("show", "Both");
+        let svg = render(&p);
+        assert!(svg.matches("<path d=\"M").count() >= 4, "four open corner pieces");
+        // a group that does not wrap stays a closed rounded box
+        let mut q = minterms("A, B, C", "1, 3", "");
+        q.set_s("show", "Both");
+        assert!(!render(&q).contains("<path d=\"M"), "closed boxes stay rectangles");
     }
 
     #[test]

@@ -296,11 +296,27 @@ fn render(p: &Params) -> String {
     let (grid, back) = layers(&ch);
     let cell = (mw + 56.0, mh + 44.0);
     let top = if title.is_empty() { 14.0 } else { 38.0 + fs * 1.3 };
-    let loops = back.iter().any(|b| *b);
     let (pts, dw, dh) = gd::to_px(&grid, cell, (mw / 2.0 + 20.0, mh / 2.0 + 10.0));
-    let w = (dw + if loops { 70.0 } else { 0.0 }).max(300.0);
+    // forward arrows whose straight line would cross another box go round the right side too
+    let blocked: Vec<bool> = ch
+        .links
+        .iter()
+        .enumerate()
+        .map(|(li, (a, b, _))| {
+            if back[li] || a == b {
+                return false;
+            }
+            (0..=40).any(|t| {
+                let f = t as f64 / 40.0;
+                let (x, y) = (pts[*a].0 + (pts[*b].0 - pts[*a].0) * f, pts[*a].1 + (pts[*b].1 - pts[*a].1) * f);
+                (0..n).any(|o| o != *a && o != *b && (x - pts[o].0).abs() < dims[o].0 / 2.0 + 4.0 && (y - pts[o].1).abs() < dims[o].1 / 2.0 + 4.0)
+            })
+        })
+        .collect();
+    let loops = back.iter().chain(blocked.iter()).any(|b| *b);
+    let w = (dw + if loops { 90.0 } else { 0.0 }).max(300.0);
     let h = top + dh + 6.0;
-    let ox = (w - dw - if loops { 70.0 } else { 0.0 }) / 2.0;
+    let ox = (w - dw - if loops { 90.0 } else { 0.0 }) / 2.0;
     let mut d = Doc::new(w, h);
     if !title.is_empty() {
         chart::text(&mut d, w / 2.0, 14.0 + fs * 1.3, fs * 1.3, "middle", title);
@@ -309,16 +325,18 @@ fn render(p: &Params) -> String {
     let right = shapes.iter().map(|s| s.c.0 + s.hw).fold(0.0, f64::max);
 
     // arrows first, under the boxes
+    let mut lanes = 0usize;
     for (li, (a, b, label)) in ch.links.iter().enumerate() {
         let (sa, sb) = (&shapes[*a], &shapes[*b]);
-        if back[li] {
-            let lane = right + 26.0 + 10.0 * (a % 3) as f64;
+        if back[li] || blocked[li] {
+            let lane = right + 28.0 + 16.0 * (lanes % 3) as f64;
+            lanes += 1;
             let p0 = (sa.c.0 + sa.hw, sa.c.1);
             let p3 = (sb.c.0 + sb.hw + 1.0, sb.c.1);
             d.polyline(&[p0, (lane, p0.1), (lane, p3.1), (p3.0 + 12.0, p3.1)], INK, 2.0);
             d.arrow(p3.0 + 14.0, p3.1, p3.0, p3.1, INK, 2.0);
             if !label.is_empty() {
-                gd::tag(&mut d, (lane, (p0.1 + p3.1) / 2.0), fs * 0.9, label);
+                gd::tag(&mut d, ((p0.0 + lane) / 2.0, p0.1 - fs * 0.8), fs * 0.9, label);
             }
         } else {
             let (p0, p1) = (sa.exit(sb.c), sb.exit(sa.c));
@@ -418,6 +436,17 @@ mod tests {
         let svg = render(&p);
         assert!(svg.contains(">yes<") && svg.contains("<polyline"));
         assert!(!svg.contains("NaN"));
+    }
+
+    #[test]
+    fn arrows_that_skip_layers_go_round_the_boxes_between() {
+        let mut p = defaults();
+        p.set_s("spec", "A: start s\nB: process x\nC: process y\nD: end e\nA -> B -> C -> D\nA -> D : skip");
+        let svg = render(&p);
+        assert!(svg.contains(">skip<") && svg.contains("<polyline"), "the long arrow is routed, not straight");
+        let mut q = defaults();
+        q.set_s("spec", "A: start s\nB: process x\nC: end e\nA -> B -> C");
+        assert!(!render(&q).contains("<polyline"), "short arrows stay straight");
     }
 
     #[test]
