@@ -25,6 +25,7 @@ mod chem_shell;
 mod lucide;
 mod composite_canvas;
 mod graph_canvas;
+mod graph_edit;
 mod logic_canvas;
 mod data_entry;
 #[cfg(test)]
@@ -501,6 +502,9 @@ pub struct Workspace {
     /// Canvas editor of the logic-circuit figure, and whether the preview (not the canvas) shows.
     logic: logic_canvas::Canvas,
     logic_preview: bool,
+    /// Canvas editor of the graph figure, and whether the preview shows instead.
+    graph: graph_edit::Canvas,
+    graph_preview: bool,
     /// Where the last preview drew the figure: top-left on screen and points per SVG unit
     /// (lets tests aim synthetic pointer events at a label).
     preview_map: Option<(egui::Pos2, f64)>,
@@ -748,6 +752,8 @@ impl Workspace {
         self.comp = Default::default();
         self.logic = Default::default();
         self.logic_preview = false;
+        self.graph = Default::default();
+        self.graph_preview = false;
         self.ped_sel = None;
         self.kinds_keep = [false; 4];
         self.editing = None;
@@ -1547,6 +1553,23 @@ impl Workspace {
         }
     }
 
+    /// The graph canvas editor; same undo handling as the logic canvas.
+    fn graph_canvas(&mut self, ui: &mut Ui) {
+        let before = self.params.clone();
+        let ch = ui.vertical(|ui| self.graph.show(ui, &mut self.params)).inner;
+        if let Some(si) = self.sel {
+            self.params.normalize(&(reg()[si].params)(), false);
+        }
+        match ch {
+            composite_canvas::Change::Step if format!("{:?}", before.0) != format!("{:?}", self.params.0) => {
+                let after = std::mem::replace(&mut self.params, before);
+                self.set_params_with_history(after);
+            }
+            composite_canvas::Change::Live => self.live = true,
+            _ => {}
+        }
+    }
+
     /// The preview with its interaction layer: draws the texture fitted into the frame, then
     /// the figure's handles; pointer input is mapped back into `self.params`.
     fn preview_interactive(&mut self, ui: &mut Ui, tex: &TextureHandle) {
@@ -1823,6 +1846,24 @@ impl Workspace {
                             ui.add_space(2.0);
                             match (self.logic_preview, preview) {
                                 (false, _) => self.logic_canvas(ui),
+                                (true, Some(t)) => self.preview_interactive(ui, t),
+                                _ => {}
+                            }
+                        });
+                    } else if generated && !self.hide_handles && self.sel.is_some_and(|si| reg()[si].id == "graph-diagram") {
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing = egui::vec2(3.0, 4.0);
+                                if ui.add(graph_canvas::seg_btn("Edit graph", !self.graph_preview)).on_hover_text("Drag nodes, add nodes, draw edges and arrows").clicked() {
+                                    self.graph_preview = false;
+                                }
+                                if ui.add(graph_canvas::seg_btn("Preview", self.graph_preview)).on_hover_text("The figure as it will be exported").clicked() {
+                                    self.graph_preview = true;
+                                }
+                            });
+                            ui.add_space(2.0);
+                            match (self.graph_preview, preview) {
+                                (false, _) => self.graph_canvas(ui),
                                 (true, Some(t)) => self.preview_interactive(ui, t),
                                 _ => {}
                             }

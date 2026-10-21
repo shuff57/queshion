@@ -143,6 +143,83 @@ impl Graph {
         Ok(g)
     }
 
+    // ----- editing (the canvas): each edit keeps the graph valid or is refused -----
+
+    /// A name not used by any node: A, B, ... Z, then N1, N2 ...
+    pub fn fresh_name(&self) -> String {
+        ('A'..='Z').map(|c| c.to_string()).find(|n| self.index(n).is_none()).unwrap_or_else(|| (1..).map(|k| format!("N{k}")).find(|n| self.index(n).is_none()).unwrap())
+    }
+
+    pub fn push_node(&mut self, pos: Option<(f64, f64)>) -> Result<usize, String> {
+        if self.nodes.len() >= MAX_NODES {
+            return Err(format!("A graph is limited to {MAX_NODES} nodes"));
+        }
+        let name = self.fresh_name();
+        self.nodes.push(Node { name, pos });
+        Ok(self.nodes.len() - 1)
+    }
+
+    pub fn add_edge(&mut self, a: usize, b: usize, directed: bool) -> Result<usize, String> {
+        if a >= self.nodes.len() || b >= self.nodes.len() {
+            return Err("That node is gone".into());
+        }
+        if a == b {
+            return Err("A node cannot connect to itself".into());
+        }
+        if self.edges.iter().any(|e| e.directed == directed && ((e.a, e.b) == (a, b) || (!directed && (e.a, e.b) == (b, a)))) {
+            return Err(format!("{} and {} are already connected", self.nodes[a].name, self.nodes[b].name));
+        }
+        if self.edges.len() >= MAX_EDGES {
+            return Err(format!("A graph is limited to {MAX_EDGES} edges"));
+        }
+        self.edges.push(Edge { a, b, directed, weight: None });
+        Ok(self.edges.len() - 1)
+    }
+
+    /// Removes a node and every edge that touches it.
+    pub fn remove_node(&mut self, i: usize) {
+        if i >= self.nodes.len() {
+            return;
+        }
+        self.nodes.remove(i);
+        self.edges.retain(|e| e.a != i && e.b != i);
+        for e in &mut self.edges {
+            if e.a > i {
+                e.a -= 1;
+            }
+            if e.b > i {
+                e.b -= 1;
+            }
+        }
+    }
+
+    pub fn remove_edge(&mut self, k: usize) {
+        if k < self.edges.len() {
+            self.edges.remove(k);
+        }
+    }
+
+    pub fn set_weight(&mut self, k: usize, w: Option<f64>) -> Result<(), String> {
+        if w.is_some_and(|w| !w.is_finite() || w.abs() > 1e9) {
+            return Err("That is not a usable weight".into());
+        }
+        self.edges.get_mut(k).ok_or("That edge is gone")?.weight = w;
+        Ok(())
+    }
+
+    pub fn rename_node(&mut self, i: usize, name: &str) -> Result<(), String> {
+        let name = name.trim();
+        valid_name(name)?;
+        if self.nodes.get(i).is_some_and(|n| n.name == name) {
+            return Ok(());
+        }
+        if self.index(name).is_some() {
+            return Err(format!("\u{201c}{name}\u{201d} is already used"));
+        }
+        self.nodes.get_mut(i).ok_or("That node is gone")?.name = name.to_string();
+        Ok(())
+    }
+
     /// The spec text for this graph (parses back to an equal graph).
     pub fn to_spec(&self) -> String {
         let pos = |p: Option<(f64, f64)>| p.map_or(String::new(), |(x, y)| format!(" @ {},{}", fmt_num(x), fmt_num(y)));
@@ -681,6 +758,37 @@ mod tests {
         assert_eq!(Graph::parse(&placed.to_spec()).unwrap(), placed, "the order of the nodes survives");
         let mixed = Graph::parse("nodes A, B\nnode C @ 1,1\nnodes D").unwrap();
         assert_eq!(Graph::parse(&mixed.to_spec()).unwrap(), mixed);
+    }
+
+    #[test]
+    fn editing_keeps_the_graph_valid() {
+        let mut g = Graph::parse("A - B").unwrap();
+        let c = g.push_node(Some((2.0, 1.0))).unwrap();
+        assert_eq!(g.nodes[c].name, "C");
+        let e = g.add_edge(1, c, true).unwrap();
+        assert!(g.add_edge(1, c, true).unwrap_err().contains("already"));
+        assert!(g.add_edge(0, 0, false).unwrap_err().contains("itself"));
+        assert!(g.add_edge(1, 0, false).unwrap_err().contains("already"), "A - B is the same edge both ways");
+        assert!(g.add_edge(c, 1, true).is_ok(), "an arrow each way is allowed");
+        g.set_weight(e, Some(3.0)).unwrap();
+        assert!(g.set_weight(e, Some(f64::NAN)).is_err() && g.set_weight(99, None).is_err());
+        assert_eq!(Graph::parse(&g.to_spec()).unwrap(), g);
+        // removing a node takes its edges and renumbers the rest
+        g.remove_node(0);
+        assert_eq!(g.edges.len(), 2);
+        assert_eq!(g.nodes.iter().map(|n| n.name.as_str()).collect::<Vec<_>>(), ["B", "C"]);
+        assert_eq!((g.edges[0].a, g.edges[0].b), (0, 1));
+        g.rename_node(0, "X").unwrap();
+        assert!(g.rename_node(1, "X").unwrap_err().contains("already used"));
+        assert!(g.rename_node(1, "a b").is_err());
+        g.remove_edge(9);
+        g.remove_node(9);
+        let mut full = Graph::default();
+        for _ in 0..MAX_NODES {
+            full.push_node(None).unwrap();
+        }
+        assert!(full.push_node(None).unwrap_err().contains("limited"));
+        assert_eq!(full.nodes[26].name, "N1");
     }
 
     #[test]

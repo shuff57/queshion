@@ -4,7 +4,7 @@
 use super::{Example, FigureDef, Params};
 
 mod graph_diagram;
-mod graph_draw;
+pub(crate) mod graph_draw;
 pub(crate) mod logic_circuit;
 mod tree_diagram;
 
