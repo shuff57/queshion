@@ -68,6 +68,7 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "logic-circuit" => LOGIC_CIRCUIT,
         "graph-diagram" => GRAPH_DIAGRAM,
         "tree-diagram" => TREE_DIAGRAM,
+        "number-base" => NUMBER_BASE,
         "dot-plot" => DOT_PLOT,
         "normal-curve" => NORMAL_CURVE,
         "scatterplot" => SCATTERPLOT,
@@ -1348,6 +1349,29 @@ const GRAPH_DIAGRAM: &[Faq] = &[
     Faq {
         q: "How is the shortest path decided?",
         a: "By the total of the edge weights (every edge counts 1 if no weights are given), following arrows on directed edges. It is not available if any weight is negative. Ties are broken by node order.",
+    },
+];
+
+const NUMBER_BASE: &[Faq] = &[
+    Faq {
+        q: "How do I choose which column is given?",
+        a: "Set Given in to decimal, binary, hexadecimal or octal and type the values in that base, separated by commas or spaces. That column is filled in for every row and the other three are the answers.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The given column stays and the other columns become empty boxes of the same size. Student + key saves both copies.",
+    },
+    Faq {
+        q: "What does Binary width do?",
+        a: "It pads binary answers with zeros to a whole number of bytes (or 4, 12 or 16 bits) and puts a space every four digits, so 13 reads 0000 1101 with 8 bits and 1101 with 4. Shortest shows no padding.",
+    },
+    Faq {
+        q: "What is the strip of numbers above the table?",
+        a: "Show binary place values adds a row of 128, 64, 32 ... 1 (as many as the grouping, or 8) with an empty row under it, for students to write the bits of a number in.",
+    },
+    Faq {
+        q: "What happens with a value that is not a number in that base?",
+        a: "Its row stays, with a question mark after what was typed and dashes in the other columns, so you can see which entry to fix. Values above 4,294,967,295 are treated the same way, and at most 24 rows are drawn.",
     },
 ];
 

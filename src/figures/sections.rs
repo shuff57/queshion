@@ -487,6 +487,12 @@ static TREE_DIAGRAM: [RefSection; 4] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static NUMBER_BASE: [RefSection; 3] = [
+    s("Table", &["values", "given", "width", "place_values", "show_answers"], "Give one column; turn off Show answers for empty boxes in the others."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -494,6 +500,7 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "logic-circuit" => &LOGIC_CIRCUIT,
         "graph-diagram" => &GRAPH_DIAGRAM,
         "tree-diagram" => &TREE_DIAGRAM,
+        "number-base" => &NUMBER_BASE,
         "two-way-table" => &TWO_WAY_TABLE,
         "stem-and-leaf" => &STEM_AND_LEAF,
         "dot-plot" => &DOT_PLOT,
