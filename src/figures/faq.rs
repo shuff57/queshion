@@ -70,6 +70,7 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "tree-diagram" => TREE_DIAGRAM,
         "number-base" => NUMBER_BASE,
         "data-structure" => DATA_STRUCTURE,
+        "flowchart" => FLOWCHART,
         "dot-plot" => DOT_PLOT,
         "normal-curve" => NORMAL_CURVE,
         "scatterplot" => SCATTERPLOT,
@@ -1350,6 +1351,29 @@ const GRAPH_DIAGRAM: &[Faq] = &[
     Faq {
         q: "How is the shortest path decided?",
         a: "By the total of the edge weights (every edge counts 1 if no weights are given), following arrows on directed edges. It is not available if any weight is negative. Ties are broken by node order.",
+    },
+];
+
+const FLOWCHART: &[Faq] = &[
+    Faq {
+        q: "How do I write a flowchart?",
+        a: "One box per line as id: kind text, for example B: decision n > 0?. The kinds are start, end, process, input, output and decision. Arrows are A -> B, which can chain (A -> B -> C), and A -> B : yes puts a label on the arrow. Lines starting after a # are ignored.",
+    },
+    Faq {
+        q: "How is the chart laid out?",
+        a: "Top to bottom in layers from the first box, with the boxes that follow a decision side by side. An arrow that goes back up to an earlier box (a loop) is drawn round the right-hand side so it does not cross the boxes.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "List the ids of the boxes to hide under Blank in student copy (for example D, P) and turn off Show answers. Those boxes stay, at full size, with nothing inside, and the arrows and labels stay. Student + key saves both copies.",
+    },
+    Faq {
+        q: "What are the shapes?",
+        a: "Start and end are rounded, process is a rectangle, input and output are slanted boxes and a decision is a diamond. Long text wraps onto two lines, and text is cut at 40 characters.",
+    },
+    Faq {
+        q: "Why does it say a box is missing?",
+        a: "An arrow names a box id that has no line of its own. Define every box (A: process ...) before or after the arrows; the ids are case-sensitive and up to 8 letters, digits or underscores. A chart is limited to 30 boxes and 60 arrows.",
     },
 ];
 

@@ -499,6 +499,12 @@ static DATA_STRUCTURE: [RefSection; 3] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static FLOWCHART: [RefSection; 3] = [
+    s("Flowchart", &["spec", "blank", "show_answers"], "One box per line, then the arrows; name boxes to leave empty in the student copy."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -508,6 +514,7 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "tree-diagram" => &TREE_DIAGRAM,
         "number-base" => &NUMBER_BASE,
         "data-structure" => &DATA_STRUCTURE,
+        "flowchart" => &FLOWCHART,
         "two-way-table" => &TWO_WAY_TABLE,
         "stem-and-leaf" => &STEM_AND_LEAF,
         "dot-plot" => &DOT_PLOT,
