@@ -526,6 +526,13 @@ static TRACE_TABLE: [RefSection; 4] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static SORTING_PASSES: [RefSection; 4] = [
+    s("Sort", &["algorithm", "values", "descending", "counts"], "Choose the algorithm and the values to sort."),
+    s("Student copy", &["given", "show_answers"], "Turn off Show answers to leave the passes empty."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -539,6 +546,7 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "boolean-table" => &BOOLEAN_TABLE,
         "state-machine" => &STATE_MACHINE,
         "trace-table" => &TRACE_TABLE,
+        "sorting-passes" => &SORTING_PASSES,
         "two-way-table" => &TWO_WAY_TABLE,
         "stem-and-leaf" => &STEM_AND_LEAF,
         "dot-plot" => &DOT_PLOT,

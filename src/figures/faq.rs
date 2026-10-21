@@ -74,6 +74,7 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "boolean-table" => BOOLEAN_TABLE,
         "state-machine" => STATE_MACHINE,
         "trace-table" => TRACE_TABLE,
+        "sorting-passes" => SORTING_PASSES,
         "dot-plot" => DOT_PLOT,
         "normal-curve" => NORMAL_CURVE,
         "scatterplot" => SCATTERPLOT,
@@ -1354,6 +1355,29 @@ const GRAPH_DIAGRAM: &[Faq] = &[
     Faq {
         q: "How is the shortest path decided?",
         a: "By the total of the edge weights (every edge counts 1 if no weights are given), following arrows on directed edges. It is not available if any weight is negative. Ties are broken by node order.",
+    },
+];
+
+const SORTING_PASSES: &[Faq] = &[
+    Faq {
+        q: "What does each row show?",
+        a: "The start is the array as typed. Each Pass row is the array when that pass has finished. The cells that changed in that pass are highlighted, and the sorted part is lightly shaded. The last column counts the comparisons made and the swaps (or, for insertion sort, shifts) done in that pass.",
+    },
+    Faq {
+        q: "How does each sort work here?",
+        a: "Bubble sort sweeps from the left swapping neighbours that are out of order, so the largest settles at the end each pass, and stops after a pass with no swaps. Selection sort finds the smallest of what is left and swaps it into the next place. Insertion sort takes the next value and shifts the sorted values along to open a gap for it.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The start row and the headings stay and the other rows are empty boxes of the same size. Rows filled in for students keeps more than the start row if you want to give a worked pass. Student + key saves both copies.",
+    },
+    Faq {
+        q: "Can it sort largest first?",
+        a: "Yes, tick Largest first. Equal values keep their original order in selection and insertion sort and in bubble sort.",
+    },
+    Faq {
+        q: "How many values can it take?",
+        a: "Up to 12 numbers, separated by commas or spaces or one per line. Values that are not numbers are ignored.",
     },
 ];
 
