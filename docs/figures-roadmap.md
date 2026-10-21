@@ -4,25 +4,25 @@ What exists, what is being built, and the new subject tabs planned after it. Eve
 `docs/new-figure.md`: original design, text spec the figure agent can write, answers hideable with
 `show_answers`, paired Student + key export, grey-only Print style, FAQ and examples.
 
-## Built (63 + this round)
+## Built (63 + the 12 of this round)
 
 Physics, Biology, Chemistry, Math (geometry, stats), Computing: logic circuit, graph, tree,
 number bases, data structure, flowchart, truth table and Karnaugh map.
 
-## This round (in order)
+## This round (all 12 done)
 
-1. Truth table and Karnaugh map (done)
-2. State machine (finite automaton): states, labelled arrows, trace an input string
-3. Trace table: variables across, one row per step, blank cells
-4. Sorting passes: array after each pass of bubble, selection, insertion
-5. Recursion tree: call tree for fib(n), factorial and similar, return values as answers
-6. Network and ER diagrams
-7. Probability tree: branches, probabilities, product per path
-8. Venn diagram: two or three sets with counts
-9. Binomial / discrete distribution bars with a shaded region
+1. Truth table and Karnaugh map
+2. State machine (finite automaton)
+3. Trace table
+4. Sorting passes
+5. Recursion tree
+6. Network topology and ER diagrams
+7. Probability tree
+8. Venn diagram
+9. Binomial and Poisson bars with a shaded region
 10. Confidence interval on a number line
 11. Regression residuals (pairs with the scatterplot)
-12. Circuits: capacitor and RC curve, Kirchhoff loops
+12. RC charging curve and Kirchhoff two-loop circuit (Physics)
 
 ## New subject tabs
 
