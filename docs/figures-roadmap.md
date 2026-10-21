@@ -50,10 +50,59 @@ Money figures share a small helper for currency formatting and column alignment.
 - Aggregate demand and supply: shifts and the new equilibrium
 - Lorenz curve and Gini coefficient from income shares
 
-### Later candidates (ask before starting)
-- Business and finance: break-even chart, time value of money timeline, loan amortisation
-- Statistics extras: sampling distribution, hypothesis test region, chi-square table
-- Earth science, geography, music (staff and chords), language (sentence diagram)
+### Earth science
+- Rock cycle and water cycle: labelled arrows between stages, labels blankable
+- Plate boundaries: convergent, divergent, transform cross-sections
+- Layers of the Earth: concentric layers with thickness and state
+- Strata cross-section with fault and fold, for relative dating
+- Moon phases and seasons: orbit diagrams with the lit half shaded
+- Topographic contours from a small height grid
+- Hertzsprung-Russell diagram with stars plotted
+
+### Geography
+- Climate graph: rainfall bars and temperature line on twin axes
+- Population pyramid from age-band counts
+- Grid references and compass bearings on a blank grid
+- Map scale bar and distance workings
+
+### Music
+- Staff with clef, key signature and notes from a text spec (`C4 q, E4 q, G4 h`)
+- Circle of fifths with keys blankable
+- Scale and chord diagrams, guitar chord boxes, piano keyboard with keys marked
+- Rhythm grid and time-signature bar counting
+
+### Business and finance
+- Break-even chart: fixed cost, total cost, revenue, break-even point
+- Time value of money timeline with cash flows and discount factors
+- Loan amortisation table: payment, interest, principal, balance
+- Org chart, SWOT grid, marketing funnel
+
+### Language and humanities
+- Sentence diagram, plot arc, graphic organisers (T-chart, KWL, Venn comparison)
+- Timeline with dated events, cause-and-effect web, family tree
+- Government structure and trade-route charts (boxes and arrows, no maps)
+
+### Health, PE and technology
+- Body systems with labelled blanks (simplified original outlines)
+- Food plate, heart-rate zones, court and field layouts with positions
+- Engineering: block diagram, free-body and truss, gear and pulley, orthographic views
+
+### Art, psychology and sociology
+- Colour wheel and perspective grids
+- Maslow's hierarchy, brain regions (simplified), experimental design flow
+
+### Statistics extras (cheap: reuse the existing chart code)
+- Sampling distribution, hypothesis-test rejection region, chi-square table
+
+### Build order and limits
+1. Earth science, Geography climate graphs, Business and finance, Music staff: the closest fit to
+   what exists (diagrams, charts, tables from a text spec).
+2. Language and humanities, Health and technology, Art and psychology: boxes-and-arrows layouts
+   built on the graph and tree code.
+3. Real maps and detailed anatomy are out of scope: the drawing is geometric, so those would need
+   simplified original outlines, never traced or copied artwork.
+
+Ask before starting any of these tabs; each needs a `Subject` variant, label and gallery order.
 
 ## Rules that keep the tabs consistent
 - Numbers in a figure come from params and are rounded in one place, so a student copy and its
