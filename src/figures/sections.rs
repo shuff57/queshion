@@ -712,6 +712,48 @@ static LORENZ: [RefSection; 3] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static EARTH_CYCLES: [RefSection; 3] = [
+    s("Cycle", &["cycle", "extras"], "Rock or water cycle, and whether to add the shortcuts or transpiration."),
+    s("Display", &["hide", "title", "show_answers"], "Turn off Show answers to leave labels as empty boxes."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static EARTH_LAYERS: [RefSection; 3] = [
+    s("Layout", &["view", "widen"], "Whole circle or cutaway, and a widened crust."),
+    s("Display", &["hide", "title", "show_answers"], "Turn off Show answers to blank the chosen column."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static PLATE_BOUNDARIES: [RefSection; 3] = [
+    s("Boundary", &["kind"], "Which boundary to draw."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave each name blank."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static STRATA: [RefSection; 3] = [
+    s("Layers", &["layers", "structure", "dyke"], "The rocks, how they are folded or faulted, and an optional dyke."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the order of formation blank."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static MOON_SEASONS: [RefSection; 3] = [
+    s("Diagram", &["mode", "hemisphere"], "Moon phases or seasons."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave names as empty boxes."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static TOPO_CONTOURS: [RefSection; 3] = [
+    s("Heights", &["grid", "interval", "unit"], "The grid of heights and the contour interval."),
+    s("Display", &["labels", "title", "show_answers"], "Turn off Show answers to leave the contours for students to draw."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static HR_DIAGRAM: [RefSection; 3] = [
+    s("Stars", &["stars"], "Name, temperature and luminosity for each star."),
+    s("Display", &["table", "title", "show_answers"], "Turn off Show answers to blank the regions and the Class column."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -745,6 +787,13 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "circular-flow" => &CIRCULAR_FLOW,
         "ad-as" => &AD_AS,
         "lorenz" => &LORENZ,
+        "earth-cycles" => &EARTH_CYCLES,
+        "earth-layers" => &EARTH_LAYERS,
+        "plate-boundaries" => &PLATE_BOUNDARIES,
+        "strata" => &STRATA,
+        "moon-seasons" => &MOON_SEASONS,
+        "topo-contours" => &TOPO_CONTOURS,
+        "hr-diagram" => &HR_DIAGRAM,
         "kirchhoff-loops" => &KIRCHHOFF_LOOPS,
         "state-machine" => &STATE_MACHINE,
         "trace-table" => &TRACE_TABLE,

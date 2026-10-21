@@ -94,6 +94,13 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "circular-flow" => CIRCULAR_FLOW,
         "ad-as" => AD_AS,
         "lorenz" => LORENZ,
+        "earth-cycles" => EARTH_CYCLES,
+        "earth-layers" => EARTH_LAYERS,
+        "plate-boundaries" => PLATE_BOUNDARIES,
+        "strata" => STRATA,
+        "moon-seasons" => MOON_SEASONS,
+        "topo-contours" => TOPO_CONTOURS,
+        "hr-diagram" => HR_DIAGRAM,
         "kirchhoff-loops" => KIRCHHOFF_LOOPS,
         "state-machine" => STATE_MACHINE,
         "trace-table" => TRACE_TABLE,
@@ -2259,5 +2266,138 @@ const TWO_WAY_TABLE: &[Faq] = &[
     Faq {
         q: "Can I print it in black and white?",
         a: "Set Style to Print. The shaded header, side and total cells become light grey.",
+    },
+];
+
+const EARTH_CYCLES: &[Faq] = &[
+    Faq {
+        q: "Which cycles are there?",
+        a: "The rock cycle (igneous, sedimentary and metamorphic rock, magma and sediment, with the processes between them) and the water cycle. The extras tick adds the rock cycle's shortcuts or the water cycle's transpiration.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn off Show answers. The stages stay and the process labels are left as empty boxes. Use Hide to blank the stage names instead. Student + key saves both copies.",
+    },
+    Faq {
+        q: "Why is it drawn as a loop?",
+        a: "Rock and water are never used up, they move from one stage to the next, and the arrows show which way.",
+    },
+    Faq {
+        q: "Can I print it in black and white?",
+        a: "Yes. The Print style uses greys only, with the same labels and arrows.",
+    },
+];
+
+const EARTH_LAYERS: &[Faq] = &[
+    Faq {
+        q: "Which layers are drawn?",
+        a: "Crust, mantle, outer core and inner core, with their depths in kilometres and whether each is solid or liquid.",
+    },
+    Faq {
+        q: "Why is the crust so thin?",
+        a: "It is only about 35 km of 6371 km. Widen the crust makes it thick enough to see; the table keeps the real figures.",
+    },
+    Faq {
+        q: "How do I blank part of the table?",
+        a: "Turn off Show answers and pick in Hide whether the names, the thicknesses or the states are left empty.",
+    },
+    Faq {
+        q: "Can I print it in black and white?",
+        a: "Yes. The Print style uses greys only, and the table stays readable.",
+    },
+];
+
+const PLATE_BOUNDARIES: &[Faq] = &[
+    Faq {
+        q: "Which boundaries are there?",
+        a: "A divergent boundary (mid-ocean ridge), three convergent ones (ocean and continent, two continents, two oceans) and a transform boundary seen from above.",
+    },
+    Faq {
+        q: "What do the numbers mean?",
+        a: "Each numbered circle marks a feature on the drawing and the same number names it in the list below.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn off Show answers. The drawing, arrows and numbers stay and each name is left as a blank line. Student + key saves both copies.",
+    },
+    Faq {
+        q: "Can I print it in black and white?",
+        a: "Yes. The Print style swaps the colours for greys; the arrows and numbers are unchanged.",
+    },
+];
+
+const STRATA: &[Faq] = &[
+    Faq {
+        q: "How are the layers dated?",
+        a: "The lowest layer formed first, so the order runs from the bottom up (the law of superposition). A fault or dyke that cuts layers is younger than every layer it cuts.",
+    },
+    Faq {
+        q: "What do I enter?",
+        a: "One rock name per line, from 2 to 6 layers, top to bottom.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn off Show answers. The layers and list stay and the order of formation is left as a blank line. Student + key saves both copies.",
+    },
+    Faq {
+        q: "Can I print it in black and white?",
+        a: "Yes. The Print style fills each layer with a different grey pattern so the layers can still be told apart.",
+    },
+];
+
+const MOON_SEASONS: &[Faq] = &[
+    Faq {
+        q: "What does it show?",
+        a: "Either the Moon at eight places round the Earth, with the lit half facing the Sun and how each phase looks from Earth, or the Earth at four places round the Sun with its tilted axis.",
+    },
+    Faq {
+        q: "Why does the tilt cause seasons?",
+        a: "The axis points the same way all year, so each hemisphere leans toward the Sun for part of the orbit and away for the rest. Choose which hemisphere the seasons are named for.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn off Show answers. The phase names, or the dates and seasons, are left as empty boxes. Student + key saves both copies.",
+    },
+    Faq {
+        q: "Can I print it in black and white?",
+        a: "Yes. The Print style shades the dark and lit halves in greys.",
+    },
+];
+
+const TOPO_CONTOURS: &[Faq] = &[
+    Faq {
+        q: "What do I enter?",
+        a: "A grid of heights, rows of numbers separated by spaces or commas, from 2 by 2 up to 12 by 12 with the same number of values in each row.",
+    },
+    Faq {
+        q: "How are the lines found?",
+        a: "A contour is drawn every interval, joining points of equal height, by interpolating between grid values.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn off Show answers. The grid numbers stay and the contour lines are left for students to draw. Student + key saves both copies.",
+    },
+    Faq {
+        q: "What is marked as the highest point?",
+        a: "A triangle on the grid cell with the largest height, named by its row and column in the caption below the map.",
+    },
+];
+
+const HR_DIAGRAM: &[Faq] = &[
+    Faq {
+        q: "What do I enter?",
+        a: "One star per line as name, temperature in kelvin and luminosity in times the Sun's, up to 10 stars.",
+    },
+    Faq {
+        q: "Why is the temperature axis backwards?",
+        a: "By convention hot stars are on the left, so temperature falls from left to right.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn off Show answers. The stars stay and the shaded regions and the Class column are left blank. Student + key saves both copies.",
+    },
+    Faq {
+        q: "How is a star classed?",
+        a: "By its place on the diagram: main sequence along the diagonal band, giants and supergiants above it, white dwarfs below it and to the left.",
     },
 ];

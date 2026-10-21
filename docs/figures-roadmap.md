@@ -51,13 +51,13 @@ Money figures share a small helper for currency formatting and column alignment.
 - Lorenz curve and Gini coefficient from income shares (done)
 
 ### Earth science
-- Rock cycle and water cycle: labelled arrows between stages, labels blankable
-- Plate boundaries: convergent, divergent, transform cross-sections
-- Layers of the Earth: concentric layers with thickness and state
-- Strata cross-section with fault and fold, for relative dating
-- Moon phases and seasons: orbit diagrams with the lit half shaded
-- Topographic contours from a small height grid
-- Hertzsprung-Russell diagram with stars plotted
+- Rock cycle and water cycle: labelled arrows between stages, labels blankable (done)
+- Plate boundaries: convergent, divergent, transform cross-sections (done)
+- Layers of the Earth: concentric layers with thickness and state (done)
+- Strata cross-section with fault and fold, for relative dating (done)
+- Moon phases and seasons: orbit diagrams with the lit half shaded (done)
+- Topographic contours from a small height grid (done)
+- Hertzsprung-Russell diagram with stars plotted (done)
 
 ### Geography
 - Climate graph: rainfall bars and temperature line on twin axes
