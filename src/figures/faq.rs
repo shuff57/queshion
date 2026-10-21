@@ -116,6 +116,13 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "org-chart" => ORG_CHART,
         "swot" => SWOT,
         "marketing-funnel" => MARKETING_FUNNEL,
+        "plot-arc" => PLOT_ARC,
+        "organiser" => ORGANISER,
+        "timeline" => TIMELINE,
+        "cause-effect" => CAUSE_EFFECT,
+        "family-tree" => FAMILY_TREE,
+        "sentence-diagram" => SENTENCE_DIAGRAM,
+        "structure-chart" => STRUCTURE_CHART,
         "kirchhoff-loops" => KIRCHHOFF_LOOPS,
         "state-machine" => STATE_MACHINE,
         "trace-table" => TRACE_TABLE,
@@ -2719,5 +2726,138 @@ const MARKETING_FUNNEL: &[Faq] = &[
     Faq {
         q: "How do I make a worksheet?",
         a: "Turn Show answers off to leave the conversion rates, the overall rate and the cost per customer blank.",
+    },
+];
+
+const PLOT_ARC: &[Faq] = &[
+    Faq {
+        q: "What are the five stages?",
+        a: "Exposition sets the scene, rising action builds the problem, the climax is the turning point, falling action follows its results, and the resolution ties things up.",
+    },
+    Faq {
+        q: "How do I fill it in?",
+        a: "One line per stage in story order. Leave a line empty to skip a stage, and its box stays blank.",
+    },
+    Faq {
+        q: "Why is the climax the highest point?",
+        a: "It is where the tension peaks. The arc rises to it and falls away after it.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn Show answers off for a copy with the events in their boxes and blank lines where the stage names go. The key names every stage.",
+    },
+];
+
+const ORGANISER: &[Faq] = &[
+    Faq {
+        q: "Which organisers are there?",
+        a: "A T-chart (two columns), a KWL chart (Know, Want to know, Learned) and a Venn diagram (two circles that overlap).",
+    },
+    Faq {
+        q: "Where does each item go?",
+        a: "The key places every numbered item in its box. In the Venn diagram the third list goes in the overlap, the part both circles share.",
+    },
+    Faq {
+        q: "Why are the items numbered in a mixed order?",
+        a: "The list under the organiser is mixed up on purpose, so students must decide where each item belongs.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn Show answers off for empty columns or circles with the mixed-up list. Each box holds up to 8 items.",
+    },
+];
+
+const TIMELINE: &[Faq] = &[
+    Faq {
+        q: "How do I enter events?",
+        a: "One per line: a number then the event, such as 1066 Battle of Hastings. Use a negative number for BC dates. Events can be in any order.",
+    },
+    Faq {
+        q: "Is it drawn to scale?",
+        a: "Yes. The gap between two events on the line follows the gap between their dates, and events too close together are lifted to different levels.",
+    },
+    Faq {
+        q: "What are the readouts?",
+        a: "The time from the first event to the last, and the longest gap between neighbouring events.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn Show answers off and choose to hide the dates or the event names, and the readouts are left blank too.",
+    },
+];
+
+const CAUSE_EFFECT: &[Faq] = &[
+    Faq {
+        q: "What does the web show?",
+        a: "Causes arrow into the central event, and the event arrows out to its effects.",
+    },
+    Faq {
+        q: "How do I enter them?",
+        a: "One cause or effect per line, up to 5 of each. Arrows show which side an item belongs on.",
+    },
+    Faq {
+        q: "Why are the events numbered in a mixed order?",
+        a: "The list below is mixed up, so students sort each event into the cause or effect boxes.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn Show answers off for empty boxes and the mixed-up list. The key writes each numbered event in its box.",
+    },
+];
+
+const FAMILY_TREE: &[Faq] = &[
+    Faq {
+        q: "How do I write a family?",
+        a: "One person per line, or a couple joined by a plus, such as Anna + Ben. Indent their children underneath.",
+    },
+    Faq {
+        q: "What is counted?",
+        a: "Generations (rows), people (every name) and descendants of the first couple (everyone in a box below them, counting a child and their partner as one line).",
+    },
+    Faq {
+        q: "What are the limits?",
+        a: "One person or couple at the top, up to 24 lines, 5 generations and 8 ends of branches.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn Show answers off to leave the counts blank, and choose Names to empty the boxes so students can write the family in.",
+    },
+];
+
+const SENTENCE_DIAGRAM: &[Faq] = &[
+    Faq {
+        q: "How is a sentence diagram drawn?",
+        a: "The subject, verb and object sit on a base line, split by upright lines. Words that describe them hang below on slanted lines.",
+    },
+    Faq {
+        q: "How do I enter the parts?",
+        a: "Type the sentence, then the subject, the verb and the object, and the describing words for each, one per line, up to 3.",
+    },
+    Faq {
+        q: "Why does the object have a short divider?",
+        a: "A line that stops at the base line separates the verb from its object. The line between subject and verb goes right through.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn Show answers off to show the sentence and an empty frame of the same shape, with no words in it.",
+    },
+];
+
+const STRUCTURE_CHART: &[Faq] = &[
+    Faq {
+        q: "How do I enter the links?",
+        a: "One per line: Box A -> Box B : what the arrow means. The text after the colon is optional. Boxes with the same name are one box.",
+    },
+    Faq {
+        q: "What are the limits?",
+        a: "Up to 10 boxes and 14 links. Arrows that go both ways curve apart so you can read each one.",
+    },
+    Faq {
+        q: "How are the boxes arranged?",
+        a: "Boxes are in rows following the arrows, so what comes first is at the top. An arrow that would loop back is still drawn.",
+    },
+    Faq {
+        q: "How do I make a worksheet?",
+        a: "Turn Show answers off to keep the boxes and arrows and leave the label boxes blank for students to write.",
     },
 ];

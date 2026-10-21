@@ -848,6 +848,50 @@ static MARKETING_FUNNEL: [RefSection; 3] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static PLOT_ARC: [RefSection; 3] = [
+    s("Story", &["events", "story"], "One line per stage, in story order."),
+    s("Display", &["show_answers"], "Turn off Show answers to leave the stage names blank."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static ORGANISER: [RefSection; 4] = [
+    s("Organiser", &["kind", "title_a", "title_b"], "Which organiser, and the headings of the first two boxes."),
+    s("Items", &["items_a", "items_b", "items_c"], "One item per line. The third list is the overlap for a Venn diagram, or Learned for KWL."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers for empty boxes and a mixed-up list."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static TIMELINE: [RefSection; 3] = [
+    s("Events", &["events", "unit"], "A date then the event, one per line."),
+    s("Display", &["title", "show_answers", "hide"], "Turn off Show answers to hide the dates or the event names."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static CAUSE_EFFECT: [RefSection; 3] = [
+    s("Web", &["event", "causes", "effects"], "The central event, and its causes and effects."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers for empty boxes and a mixed-up list."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static FAMILY_TREE: [RefSection; 3] = [
+    s("People", &["people"], "Indent children under their parents; join a couple with a plus."),
+    s("Display", &["title", "show_answers", "hide"], "Turn off Show answers to blank the counts, and the names too if chosen."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static SENTENCE_DIAGRAM: [RefSection; 4] = [
+    s("Sentence", &["sentence", "subject", "verb", "object"], "The sentence and its subject, verb and object."),
+    s("Describing words", &["subject_mods", "verb_mods", "object_mods"], "One word per line, up to 3 each."),
+    s("Display", &["show_answers"], "Turn off Show answers for an empty frame with no words in it."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static STRUCTURE_CHART: [RefSection; 3] = [
+    s("Links", &["links"], "Box A -> Box B : what the arrow means."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the arrow labels blank."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -903,6 +947,13 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "org-chart" => &ORG_CHART,
         "swot" => &SWOT,
         "marketing-funnel" => &MARKETING_FUNNEL,
+        "plot-arc" => &PLOT_ARC,
+        "organiser" => &ORGANISER,
+        "timeline" => &TIMELINE,
+        "cause-effect" => &CAUSE_EFFECT,
+        "family-tree" => &FAMILY_TREE,
+        "sentence-diagram" => &SENTENCE_DIAGRAM,
+        "structure-chart" => &STRUCTURE_CHART,
         "kirchhoff-loops" => &KIRCHHOFF_LOOPS,
         "state-machine" => &STATE_MACHINE,
         "trace-table" => &TRACE_TABLE,

@@ -78,9 +78,9 @@ Money figures share a small helper for currency formatting and column alignment.
 - Org chart, SWOT grid, marketing funnel (done)
 
 ### Language and humanities
-- Sentence diagram, plot arc, graphic organisers (T-chart, KWL, Venn comparison)
-- Timeline with dated events, cause-and-effect web, family tree
-- Government structure and trade-route charts (boxes and arrows, no maps)
+- Sentence diagram, plot arc, graphic organisers (T-chart, KWL, Venn comparison) (done)
+- Timeline with dated events, cause-and-effect web, family tree (done)
+- Government structure and trade-route charts (boxes and arrows, no maps) (done)
 
 ### Health, PE and technology
 - Body systems with labelled blanks (simplified original outlines)
