@@ -75,6 +75,10 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "probability-tree" => PROBABILITY_TREE,
         "venn-diagram" => VENN_DIAGRAM,
         "discrete-distribution" => DISCRETE_DISTRIBUTION,
+        "confidence-interval" => CONFIDENCE_INTERVAL,
+        "residual-plot" => RESIDUAL_PLOT,
+        "rc-curve" => RC_CURVE,
+        "kirchhoff-loops" => KIRCHHOFF_LOOPS,
         "state-machine" => STATE_MACHINE,
         "trace-table" => TRACE_TABLE,
         "sorting-passes" => SORTING_PASSES,
@@ -1499,6 +1503,98 @@ const STATE_MACHINE: &[Faq] = &[
     Faq {
         q: "Why are two arrows drawn side by side?",
         a: "A transition each way between the same two states is drawn as two arrows next to each other so both stay visible. Labels for the same pair of states in the same direction share one arrow.",
+    },
+];
+
+const RC_CURVE: &[Faq] = &[
+    Faq {
+        q: "What is the time constant?",
+        a: "\u{3c4} = R \u{d7} C, the time a capacitor takes to reach about 63% of its final voltage when charging, or to fall to about 37% when discharging. The axis is in time constants so every circuit has the same shape; the working under the graph gives \u{3c4} in seconds, milliseconds or microseconds.",
+    },
+    Faq {
+        q: "What do the percentages on the curve mean?",
+        a: "With Mark each time constant on, the curve is marked at 1\u{3c4} to 5\u{3c4} with how far it has got: 63.2%, 86.5%, 95.0%, 98.2% and 99.3% when charging up, or the amounts left, 36.8%, 13.5%, 5.0%, 1.8% and 0.7%, when falling. After about 5\u{3c4} a capacitor is treated as fully charged or discharged.",
+    },
+    Faq {
+        q: "Which quantities can I graph?",
+        a: "Capacitor voltage, current (in mA) or charge (in \u{b5}C). While charging, the voltage and charge rise and the current falls; while discharging all three fall. Current is drawn as its size, whichever way it flows.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The axes, the given values of R, C and the battery stay; the curve, the marks and the working are removed, with a blank line for \u{3c4}. Student + key saves both copies.",
+    },
+    Faq {
+        q: "What units do I enter?",
+        a: "Resistance in kilohms, capacitance in microfarads and the battery in volts, so the defaults of 10 k\u{3a9} and 100 \u{b5}F give \u{3c4} = 1 s.",
+    },
+];
+
+const KIRCHHOFF_LOOPS: &[Faq] = &[
+    Faq {
+        q: "What circuit is this?",
+        a: "Three branches joined at a top and bottom junction: a battery and R1 on the left, R2 in the middle, and R3 with a second battery on the right. It is the standard two-loop problem for Kirchhoff's laws.",
+    },
+    Faq {
+        q: "Which equations are used?",
+        a: "The junction rule, I\u{2081} + I\u{2083} = I\u{2082}, and the loop rule round each loop, V1 \u{2212} R1 I\u{2081} \u{2212} R2 I\u{2082} = 0 and V2 \u{2212} R3 I\u{2083} \u{2212} R2 I\u{2082} = 0. The three are solved together for the currents.",
+    },
+    Faq {
+        q: "Why is a current negative?",
+        a: "The arrows are only assumed directions: I\u{2081} and I\u{2083} up their branches and I\u{2082} down the middle. A negative answer means the real current runs against its arrow, which happens when one battery is much stronger than the other.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The circuit, every value and the assumed directions stay, and the junction equation, both loop equations and the currents become blank lines. Student + key saves both copies.",
+    },
+    Faq {
+        q: "Can I change the values?",
+        a: "Yes: both batteries and all three resistors. They must be above 0, and the answers are exact to three decimals.",
+    },
+];
+
+const RESIDUAL_PLOT: &[Faq] = &[
+    Faq {
+        q: "What is a residual?",
+        a: "The vertical distance from a point to the line of best fit: the actual y minus the predicted y. A point above the line has a positive residual and a point below it a negative one, and the residuals always add up to 0.",
+    },
+    Faq {
+        q: "What does each view show?",
+        a: "Scatter with residuals draws the line and a dashed segment from every point to it. Residual plot draws each residual against x around a dashed zero line, where a random scatter means a line fits well and a curve means it does not. Both stacks the two with the same x axis.",
+    },
+    Faq {
+        q: "How do I get the table and the sum of squares?",
+        a: "Tick Table of predicted values and residuals (up to 15 points) for x, y, predicted y and residual, and Write the sum of squared residuals for the total the line minimises.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The scatterplot keeps its points and loses the line and segments, the residual plot keeps empty axes with the zero line, and the predicted y, residual and sum of squares are blank. Student + key saves both copies.",
+    },
+    Faq {
+        q: "Does it pair with the scatterplot?",
+        a: "Yes. It reads pairs the same way, so paste the same data into both. Enter at least two points with different x values.",
+    },
+];
+
+const CONFIDENCE_INTERVAL: &[Faq] = &[
+    Faq {
+        q: "Which intervals can I draw?",
+        a: "A mean when the population standard deviation is known (uses z*), a mean when only the sample standard deviation is known (uses t* with n - 1 degrees of freedom), and a proportion (uses z*). The level can be 90%, 95% or 99%.",
+    },
+    Faq {
+        q: "How is it worked out?",
+        a: "The margin of error is the critical value times the standard error: z* or t* times the standard deviation over the square root of n, or times the square root of p(1 - p)/n for a proportion. The interval is the estimate plus and minus the margin. The working is written under the number line.",
+    },
+    Faq {
+        q: "What does Mark a value do?",
+        a: "Type a claimed mean or proportion to draw a dashed line at it. The working then says whether it lies inside the interval, which is the usual test of a claim. Leave it empty for no mark.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The number line, the estimate and the facts about the sample stay; the interval, its ends, the margin of error and the working become blank lines. Student + key saves both copies.",
+    },
+    Faq {
+        q: "What are the limits?",
+        a: "n from 2 up, a standard deviation above 0, and a proportion between 0 and 1. The t values are found numerically and agree with the printed tables to about four significant figures.",
     },
 ];
 

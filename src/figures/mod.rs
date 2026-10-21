@@ -16,6 +16,7 @@ pub mod chemistry;
 pub mod composite;
 pub mod computing;
 pub mod data;
+pub mod electric;
 pub mod faq;
 pub mod graph;
 pub mod interact;
@@ -314,6 +315,7 @@ pub fn key_path(student: &std::path::Path) -> std::path::PathBuf {
 pub fn registry() -> Vec<FigureDef> {
     let mut v = Vec::new();
     v.extend(physics::defs());
+    v.extend(electric::defs());
     v.extend(biology::defs());
     v.extend(chemistry::defs());
     v.extend(math::defs());
@@ -545,6 +547,7 @@ pub fn examples_for(id: &str) -> Vec<Example> {
         .or_else(|| math::examples(id))
         .or_else(|| stats::examples(id))
         .or_else(|| computing::examples(id))
+        .or_else(|| electric::examples(id))
         .unwrap_or_default()
 }
 

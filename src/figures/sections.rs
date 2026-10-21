@@ -575,6 +575,34 @@ static DISCRETE_DISTRIBUTION: [RefSection; 4] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static CONFIDENCE_INTERVAL: [RefSection; 4] = [
+    s("Sample", &["kind", "estimate", "sd", "n", "level"], "What was measured and the confidence level."),
+    s("Marking", &["mark", "show_answers"], "Turn off Show answers to hide the interval and the working."),
+    s("Labels and text", &["title", "x_title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static RESIDUAL_PLOT: [RefSection; 4] = [
+    s("Data and view", &["pts", "view", "table", "sse", "point_size", "grid"], "The pairs, which panels to draw and what to work out."),
+    s("Marking", &["show_answers"], "Turn off Show answers to leave the line and the residuals for students."),
+    s("Labels and text", &["title", "x_title", "y_title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static RC_CURVE: [RefSection; 4] = [
+    s("Circuit", &["mode", "quantity", "v", "r", "c"], "The capacitor, the resistor and the battery."),
+    s("Working", &["marks", "readout", "grid", "show_answers"], "Turn off Show answers to hide the curve and the working."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static KIRCHHOFF_LOOPS: [RefSection; 4] = [
+    s("Circuit", &["v1", "v2", "r1", "r2", "r3", "loops"], "Two batteries and three resistors."),
+    s("Working", &["working", "show_answers"], "Turn off Show answers to leave the equations and currents blank."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -589,6 +617,10 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "probability-tree" => &PROBABILITY_TREE,
         "venn-diagram" => &VENN_DIAGRAM,
         "discrete-distribution" => &DISCRETE_DISTRIBUTION,
+        "confidence-interval" => &CONFIDENCE_INTERVAL,
+        "residual-plot" => &RESIDUAL_PLOT,
+        "rc-curve" => &RC_CURVE,
+        "kirchhoff-loops" => &KIRCHHOFF_LOOPS,
         "state-machine" => &STATE_MACHINE,
         "trace-table" => &TRACE_TABLE,
         "sorting-passes" => &SORTING_PASSES,
