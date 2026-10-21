@@ -603,6 +603,106 @@ impl Tree {
         s
     }
 
+    // ----- editing (the canvas) -----
+
+    pub fn index(&self, name: &str) -> Option<usize> {
+        self.labels.iter().position(|l| l == name)
+    }
+
+    fn fresh_name(&self) -> String {
+        ('A'..='Z').map(|c| c.to_string()).find(|n| self.index(n).is_none()).unwrap_or_else(|| (1..).map(|k| format!("N{k}")).find(|n| self.index(n).is_none()).unwrap())
+    }
+
+    /// Hangs a new node under `p`: in a binary tree in its first empty slot (left first), in
+    /// any other tree after the last child.
+    pub fn add_child(&mut self, p: usize) -> Result<usize, String> {
+        if p >= self.labels.len() {
+            return Err("That node is gone".into());
+        }
+        if self.labels.len() >= MAX_NODES {
+            return Err(format!("A tree is limited to {MAX_NODES} nodes"));
+        }
+        let new = self.labels.len();
+        if self.binary {
+            let slot = self.kids[p].iter().position(Option::is_none);
+            match (slot, self.kids[p].len()) {
+                (Some(s), _) => self.kids[p][s] = Some(new),
+                (None, n) if n < 2 => self.kids[p].push(Some(new)),
+                _ => return Err(format!("{} already has two children", self.labels[p])),
+            }
+        } else {
+            self.kids[p].push(Some(new));
+        }
+        let name = self.fresh_name();
+        self.labels.push(name);
+        self.kids.push(vec![]);
+        Ok(new)
+    }
+
+    /// Removes a node and everything under it (never the root, which would leave no tree).
+    pub fn remove_subtree(&mut self, i: usize) -> Result<(), String> {
+        if i == 0 || i >= self.labels.len() {
+            return Err(if i == 0 { "The root cannot be deleted".into() } else { "That node is gone".into() });
+        }
+        let mut gone = vec![false; self.labels.len()];
+        let mut stack = vec![i];
+        while let Some(u) = stack.pop() {
+            gone[u] = true;
+            stack.extend(self.children(u));
+        }
+        for k in self.kids.iter_mut() {
+            if self.binary {
+                for slot in k.iter_mut() {
+                    if slot.is_some_and(|c| gone[c]) {
+                        *slot = None;
+                    }
+                }
+                while k.last() == Some(&None) {
+                    k.pop();
+                }
+            } else {
+                k.retain(|c| !c.is_some_and(|c| gone[c]));
+            }
+        }
+        let mut map = vec![usize::MAX; gone.len()];
+        let mut next = 0;
+        for (u, g) in gone.iter().enumerate() {
+            if !g {
+                map[u] = next;
+                next += 1;
+            }
+        }
+        let mut idx = 0;
+        self.labels.retain(|_| {
+            idx += 1;
+            !gone[idx - 1]
+        });
+        let mut idx = 0;
+        self.kids.retain(|_| {
+            idx += 1;
+            !gone[idx - 1]
+        });
+        for k in self.kids.iter_mut() {
+            for c in k.iter_mut().flatten() {
+                *c = map[*c];
+            }
+        }
+        Ok(())
+    }
+
+    pub fn rename(&mut self, i: usize, name: &str) -> Result<(), String> {
+        let name = name.trim();
+        valid_name(name)?;
+        if self.labels.get(i).is_some_and(|l| l == name) {
+            return Ok(());
+        }
+        if self.index(name).is_some() {
+            return Err(format!("\u{201c}{name}\u{201d} is already used"));
+        }
+        *self.labels.get_mut(i).ok_or("That node is gone")? = name.to_string();
+        Ok(())
+    }
+
     fn children(&self, i: usize) -> impl Iterator<Item = usize> + '_ {
         self.kids[i].iter().flatten().copied()
     }
@@ -915,6 +1015,30 @@ mod tests {
         assert_eq!(b.inorder().unwrap().iter().map(|i| b.labels[*i].as_str()).collect::<String>(), "ACB");
         assert_eq!(Tree::parse(&b.to_spec()).unwrap(), b);
         assert!(Tree::parse("A: B, C, D").unwrap().inorder().is_none());
+    }
+
+    #[test]
+    fn tree_editing_keeps_the_tree_valid() {
+        let mut t = Tree::parse("A: B, C\nB: D, E").unwrap();
+        let f = t.add_child(2).unwrap();
+        assert_eq!(t.labels[f], "F");
+        assert_eq!(Tree::parse(&t.to_spec()).unwrap(), t);
+        t.remove_subtree(t.index("B").unwrap()).unwrap();
+        assert_eq!(t.labels, ["A", "C", "F"]);
+        assert_eq!(t.to_spec(), "A: C\nC: F\n");
+        assert!(t.remove_subtree(0).is_err() && t.remove_subtree(9).is_err());
+        t.rename(1, "X").unwrap();
+        assert!(t.rename(2, "X").unwrap_err().contains("already") && t.rename(2, "a b").is_err());
+        // a binary tree fills the empty side first and refuses a third child
+        let mut b = Tree::parse("A: _, C").unwrap();
+        let n = b.add_child(0).unwrap();
+        assert_eq!(b.kids[0], vec![Some(n), Some(1)]);
+        assert!(b.add_child(0).unwrap_err().contains("two children"));
+        b.remove_subtree(1).unwrap();
+        assert_eq!(b.to_spec(), "A: B\n");
+        let mut full = Tree::parse("A: B").unwrap();
+        while full.add_child(0).is_ok() {}
+        assert_eq!(full.labels.len(), MAX_NODES);
     }
 
     #[test]
