@@ -72,6 +72,7 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "data-structure" => DATA_STRUCTURE,
         "flowchart" => FLOWCHART,
         "boolean-table" => BOOLEAN_TABLE,
+        "state-machine" => STATE_MACHINE,
         "dot-plot" => DOT_PLOT,
         "normal-curve" => NORMAL_CURVE,
         "scatterplot" => SCATTERPLOT,
@@ -1352,6 +1353,29 @@ const GRAPH_DIAGRAM: &[Faq] = &[
     Faq {
         q: "How is the shortest path decided?",
         a: "By the total of the edge weights (every edge counts 1 if no weights are given), following arrows on directed edges. It is not available if any weight is negative. Ties are broken by node order.",
+    },
+];
+
+const STATE_MACHINE: &[Faq] = &[
+    Faq {
+        q: "How do I write a state machine?",
+        a: "One item per line. start q0 marks the start state and accept q2, q3 marks accepting states (drawn as a double circle). A transition is q0 -> q1 : 0, 1, which moves on either symbol. A state appears as soon as a line mentions it; a line states A, B, C fixes the order they are listed in.",
+    },
+    Faq {
+        q: "What does Trace an input string do?",
+        a: "It runs the machine on the input and shows the state after each symbol, then Accepted or Rejected. A symbol with no transition leaves the empty set and rejects. If a state has two transitions on the same symbol (a nondeterministic machine) the trace follows every branch and shows the set of states.",
+    },
+    Faq {
+        q: "How do I write the input?",
+        a: "Together when each symbol is one character (0110) or separated by spaces when symbols are longer words (coin push coin). Up to 24 symbols are used.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Choose a transition table or a trace and turn off Show answers. The diagram stays, the table keeps its states and symbols with empty cells, and the trace keeps the input with blank lines to write on. Student + key saves both copies.",
+    },
+    Faq {
+        q: "Why are two arrows drawn side by side?",
+        a: "A transition each way between the same two states is drawn as two arrows next to each other so both stay visible. Labels for the same pair of states in the same direction share one arrow.",
     },
 ];
 

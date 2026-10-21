@@ -512,6 +512,13 @@ static BOOLEAN_TABLE: [RefSection; 4] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static STATE_MACHINE: [RefSection; 4] = [
+    s("Machine", &["spec", "direction"], "Name the start and accepting states, then the transitions."),
+    s("Work out", &["answer", "input", "show_answers"], "Turn off Show answers for a student copy: the table cells and the trace are left empty."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -523,6 +530,7 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "data-structure" => &DATA_STRUCTURE,
         "flowchart" => &FLOWCHART,
         "boolean-table" => &BOOLEAN_TABLE,
+        "state-machine" => &STATE_MACHINE,
         "two-way-table" => &TWO_WAY_TABLE,
         "stem-and-leaf" => &STEM_AND_LEAF,
         "dot-plot" => &DOT_PLOT,
