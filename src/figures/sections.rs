@@ -657,6 +657,61 @@ static CASH_FLOW_STATEMENT: [RefSection; 3] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static SUPPLY_DEMAND: [RefSection; 4] = [
+    s("Curves", &["d_int", "d_slope", "s_int", "s_slope"], "Each curve from its price at quantity 0 and its slope."),
+    s("Shifts and price controls", &["d_shift", "d_shift_by", "s_shift", "s_shift_by", "control", "control_at"], "Move a curve, or add a ceiling or floor."),
+    s("Display", &["shading", "numbers", "title", "show_answers"], "Turn off Show answers to draw only the curves."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static ELASTICITY: [RefSection; 4] = [
+    s("Two points", &["p1", "q1", "p2", "q2"], "A price and the quantity demanded at it, twice."),
+    s("Working", &["method", "show_answers"], "Turn off Show answers to leave the working blank."),
+    s("Display", &["numbers", "title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static PPF: [RefSection; 4] = [
+    s("Frontier", &["x_name", "y_name", "x_max", "y_max", "shape"], "The goods and the most of each."),
+    s("Points", &["points", "from", "to"], "Named points to class, and a move to cost."),
+    s("Display", &["numbers", "title", "show_answers"], "Turn off Show answers to leave the classes blank."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static COST_CURVES: [RefSection; 4] = [
+    s("Costs", &["fc", "a", "b", "c"], "Fixed cost and the variable cost function."),
+    s("Price and axis", &["price", "qmax"], "The market price, and how far the graph runs."),
+    s("Display", &["numbers", "title", "show_answers"], "Turn off Show answers to draw only the curves."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static MONOPOLY: [RefSection; 4] = [
+    s("Demand", &["d_int", "d_slope"], "The demand curve; marginal revenue is worked out."),
+    s("Costs", &["mc_int", "mc_slope", "fixed"], "Marginal cost and the fixed cost."),
+    s("Display", &["dwl", "numbers", "title", "show_answers"], "Turn off Show answers to draw only the curves."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static CIRCULAR_FLOW: [RefSection; 4] = [
+    s("Model", &["model", "real", "money"], "Which sectors, and which flows to draw."),
+    s("Student copy", &["hide", "show_answers"], "Turn off Show answers to blank the labels or the names."),
+    s("Labels", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static AD_AS: [RefSection; 4] = [
+    s("Curves", &["ad_int", "ad_slope", "as_int", "as_slope", "full"], "AD, short-run AS and the full-employment output."),
+    s("Shifts", &["ad_shift", "ad_by", "sras_shift", "sras_by"], "Move AD or SRAS."),
+    s("Display", &["numbers", "title", "show_answers"], "Turn off Show answers to draw only the curves."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static LORENZ: [RefSection; 3] = [
+    s("Incomes", &["incomes", "group"], "The income of each equal-sized group."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the cumulative columns and the curve for students."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -682,6 +737,14 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "depreciation-schedule" => &DEPRECIATION_SCHEDULE,
         "bank-reconciliation" => &BANK_RECONCILIATION,
         "cash-flow-statement" => &CASH_FLOW_STATEMENT,
+        "supply-demand" => &SUPPLY_DEMAND,
+        "elasticity" => &ELASTICITY,
+        "ppf" => &PPF,
+        "cost-curves" => &COST_CURVES,
+        "monopoly" => &MONOPOLY,
+        "circular-flow" => &CIRCULAR_FLOW,
+        "ad-as" => &AD_AS,
+        "lorenz" => &LORENZ,
         "kirchhoff-loops" => &KIRCHHOFF_LOOPS,
         "state-machine" => &STATE_MACHINE,
         "trace-table" => &TRACE_TABLE,

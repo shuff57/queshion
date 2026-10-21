@@ -41,14 +41,14 @@ Money figures share a small helper for currency formatting and column alignment.
 - Cash-flow statement skeleton: operating, investing, financing sections (done)
 
 ### Economics
-- Supply and demand: curves from intercept and slope, shifts, equilibrium and surplus shading
-- Elasticity: price change to quantity change, midpoint formula worked out
-- Production possibilities frontier: points inside, on and outside, opportunity cost
-- Cost curves: MC, ATC, AVC, with the profit-maximising quantity marked
-- Market structures: monopoly revenue and cost with the profit rectangle
-- Circular flow diagram: households, firms, markets, government, flows labelled or blank
-- Aggregate demand and supply: shifts and the new equilibrium
-- Lorenz curve and Gini coefficient from income shares
+- Supply and demand: curves from intercept and slope, shifts, equilibrium and surplus shading (done)
+- Elasticity: price change to quantity change, midpoint formula worked out (done)
+- Production possibilities frontier: points inside, on and outside, opportunity cost (done)
+- Cost curves: MC, ATC, AVC, with the profit-maximising quantity marked (done)
+- Market structures: monopoly revenue and cost with the profit rectangle (done)
+- Circular flow diagram: households, firms, markets, government, flows labelled or blank (done)
+- Aggregate demand and supply: shifts and the new equilibrium (done)
+- Lorenz curve and Gini coefficient from income shares (done)
 
 ### Earth science
 - Rock cycle and water cycle: labelled arrows between stages, labels blankable

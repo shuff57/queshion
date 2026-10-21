@@ -86,6 +86,14 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "depreciation-schedule" => DEPRECIATION_SCHEDULE,
         "bank-reconciliation" => BANK_RECONCILIATION,
         "cash-flow-statement" => CASH_FLOW_STATEMENT,
+        "supply-demand" => SUPPLY_DEMAND,
+        "elasticity" => ELASTICITY,
+        "ppf" => PPF,
+        "cost-curves" => COST_CURVES,
+        "monopoly" => MONOPOLY,
+        "circular-flow" => CIRCULAR_FLOW,
+        "ad-as" => AD_AS,
+        "lorenz" => LORENZ,
         "kirchhoff-loops" => KIRCHHOFF_LOOPS,
         "state-machine" => STATE_MACHINE,
         "trace-table" => TRACE_TABLE,
@@ -1511,6 +1519,190 @@ const STATE_MACHINE: &[Faq] = &[
     Faq {
         q: "Why are two arrows drawn side by side?",
         a: "A transition each way between the same two states is drawn as two arrows next to each other so both stay visible. Labels for the same pair of states in the same direction share one arrow.",
+    },
+];
+
+const SUPPLY_DEMAND: &[Faq] = &[
+    Faq {
+        q: "How are the curves defined?",
+        a: "Each is a straight line from its price at quantity 0 and its slope: demand falls by the slope for each extra unit, supply rises by it. The axes are chosen so both curves and the equilibrium fit.",
+    },
+    Faq {
+        q: "How do I shift a curve?",
+        a: "Pick Right (increase) or Left (decrease) for demand or supply and say how many units of quantity to move it. The original curve stays as a dashed grey line labelled D1 or S1, the new one is D2 or S2, and the readout gives the new and the old equilibrium.",
+    },
+    Faq {
+        q: "How do price controls work?",
+        a: "Choose a ceiling or a floor and a price. A ceiling above the equilibrium price, or a floor below it, does nothing and the readout says it is not binding. Otherwise the figure marks the shortage or the surplus between the quantity supplied and demanded.",
+    },
+    Faq {
+        q: "What are the shaded areas?",
+        a: "Consumer surplus is the triangle between the demand curve and the equilibrium price, producer surplus the triangle between that price and the supply curve. Their sizes are in the readout. Choose which to shade, or none.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The curves, their labels and any price control stay; the equilibrium, shading, guide lines, shortage and readout go. Student + key saves both copies at the same size.",
+    },
+];
+
+const ELASTICITY: &[Faq] = &[
+    Faq {
+        q: "How is elasticity worked out?",
+        a: "By the midpoint formula: the change in quantity over the average quantity, divided by the change in price over the average price, taken as a positive number. The starting-point formula divides by the first point instead. The working is shown line by line.",
+    },
+    Faq {
+        q: "What do the verdicts mean?",
+        a: "Above 1 is elastic (quantity responds more than price), below 1 is inelastic, and within half a percent of 1 is unit elastic. The last line compares total revenue (price times quantity) at the two points, which rises when price falls only if demand is elastic.",
+    },
+    Faq {
+        q: "Why must the two points differ?",
+        a: "Elasticity compares a change in price with a change in quantity, so both must change; the figure says so if they do not. A starting-point formula also needs a first price and quantity above 0.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The two points and the demand line stay, with a blank line after each step of the working for the student to fill in. Student + key saves both copies.",
+    },
+    Faq {
+        q: "Can I hide the axis numbers?",
+        a: "Yes: turn off Number the axes for a plain sketch with the points and guide lines only.",
+    },
+];
+
+const PPF: &[Faq] = &[
+    Faq {
+        q: "How is the frontier drawn?",
+        a: "From the most of each good that could be made if all resources went to it. Bowed out is a quarter ellipse (rising opportunity cost); a straight line has a constant opportunity cost.",
+    },
+    Faq {
+        q: "How are the points classed?",
+        a: "Each point is compared with the frontier: inside means attainable but not efficient, on it means efficient, outside means unattainable with current resources. A point within one percent of the curve counts as on it.",
+    },
+    Faq {
+        q: "How do I work out an opportunity cost?",
+        a: "Give a from point and a to point by name. The readout is what is given up of one good per unit gained of the other. If the move gains or loses both goods it is not a trade-off along the frontier and the readout says so.",
+    },
+    Faq {
+        q: "How do I add points?",
+        a: "One per line in the Points box: a name (up to 8 characters) and the two quantities, like A 40 60. Up to six.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The frontier and the points stay; each point's class and the opportunity cost are left as blank lines. Student + key saves both copies.",
+    },
+];
+
+const COST_CURVES: &[Faq] = &[
+    Faq {
+        q: "What cost function does it use?",
+        a: "Fixed cost plus variable cost = a q − b q² + c q³. From it the figure works out marginal cost (the slope of variable cost), average variable cost and average total cost. It checks that marginal cost never goes below zero.",
+    },
+    Faq {
+        q: "Where is the profit-maximising quantity?",
+        a: "Where marginal cost, on its rising part, equals the price. Below the lowest average variable cost the firm shuts down and produces nothing, losing its fixed cost.",
+    },
+    Faq {
+        q: "What is the rectangle?",
+        a: "The profit or loss: the gap between the price and average total cost at that quantity, times the quantity. Green is a profit, red a loss.",
+    },
+    Faq {
+        q: "What are the small circles?",
+        a: "The lowest points of the average total cost and average variable cost curves, where marginal cost crosses them. They are part of the answer, so a student copy leaves them out.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The three curves and the price line stay; the quantity, rectangle, markers and readout go. Student + key saves both copies.",
+    },
+];
+
+const MONOPOLY: &[Faq] = &[
+    Faq {
+        q: "How are the curves worked out?",
+        a: "Demand is a straight line; marginal revenue starts at the same price but falls twice as fast. Marginal cost is a line from its intercept, and average total cost comes from the fixed cost plus the cost of the units.",
+    },
+    Faq {
+        q: "Where does the monopolist produce?",
+        a: "Where marginal revenue equals marginal cost, with the price read up to the demand curve from that output. The profit rectangle is price minus average total cost, times the output.",
+    },
+    Faq {
+        q: "What is the deadweight loss?",
+        a: "The triangle between demand and marginal cost, from the monopoly output to the output a competitive market would produce, where price equals marginal cost. It can be turned off.",
+    },
+    Faq {
+        q: "What if marginal cost starts above demand?",
+        a: "Then no output is worth making; the figure says so instead of drawing.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The four curves stay; the output, price, rectangle, triangle and readout go. Student + key saves both copies.",
+    },
+];
+
+const CIRCULAR_FLOW: &[Faq] = &[
+    Faq {
+        q: "Which models are there?",
+        a: "Two sectors with markets: households and firms joined by the product market and the factor market, with real flows (goods, services, factors) as solid blue arrows and money flows (spending, revenue, payments, income) as dashed orange ones. Three sectors adds government and shows the money flows between households, firms and government.",
+    },
+    Faq {
+        q: "Can I show only one loop?",
+        a: "Yes, in the two-sector model turn the real flows or the money flows off.",
+    },
+    Faq {
+        q: "What can I leave blank?",
+        a: "Choose Flow labels or Sector names under Leave blank in the student copy. With Show answers off that part becomes empty boxes of the same size, for students to label.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The arrows stay, with the part you chose left blank. Student + key saves both copies at the same size.",
+    },
+    Faq {
+        q: "What does Print style change?",
+        a: "Everything becomes black and grey; the real and money flows are told apart by solid and dashed lines.",
+    },
+];
+
+const AD_AS: &[Faq] = &[
+    Faq {
+        q: "What curves are drawn?",
+        a: "A downward aggregate demand curve, an upward short-run aggregate supply curve, and a vertical long-run aggregate supply at the full-employment output.",
+    },
+    Faq {
+        q: "How do shifts work?",
+        a: "Move AD or SRAS right or left by a number of units of output. The old curve stays dashed and grey as AD1 or SRAS1, the new one is AD2 or SRAS2, and the readout says whether output and the price level rise or fall.",
+    },
+    Faq {
+        q: "What is the gap?",
+        a: "The difference between the equilibrium output and full employment. Below it is a recessionary gap, above it an inflationary gap; within half a percent is no gap.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The curves and their labels stay; the equilibrium, guide lines, gap and readout go. Student + key saves both copies.",
+    },
+    Faq {
+        q: "Why can the figure refuse a shift?",
+        a: "If a shift would push a curve below a price level of 0, or the curves would not cross, it says so instead of drawing a misleading graph.",
+    },
+];
+
+const LORENZ: &[Faq] = &[
+    Faq {
+        q: "What do I enter?",
+        a: "The income of each equal-sized group of the population, from 2 to 10 numbers separated by spaces, commas or new lines. They are put in order from lowest to highest.",
+    },
+    Faq {
+        q: "How is the Gini coefficient worked out?",
+        a: "From the area between the line of equality and the Lorenz curve, as a share of the area under the line of equality. 0 is perfect equality; the nearer to 1, the more one group has.",
+    },
+    Faq {
+        q: "What does the table show?",
+        a: "Each group's income and share of the total, the cumulative population share and the cumulative income share, which are the points of the Lorenz curve.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The incomes and the line of equality stay; the share and cumulative columns, the curve, the shading and the Gini are left for the student to work out and plot. Student + key saves both copies.",
+    },
+    Faq {
+        q: "What are the limits?",
+        a: "Up to ten groups, incomes up to a trillion, and at least some income somewhere.",
     },
 ];
 

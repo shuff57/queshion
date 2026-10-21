@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 
 pub mod accounting;
+pub mod economics;
 pub mod biology;
 pub mod cards;
 #[cfg(test)]
@@ -234,12 +235,12 @@ impl FigureDef {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Subject { Physics, Biology, Chemistry, Math, Computing, Accounting }
+pub enum Subject { Physics, Biology, Chemistry, Math, Computing, Accounting, Economics }
 
 impl Subject {
-    pub const ALL: [Subject; 6] = [Subject::Physics, Subject::Biology, Subject::Chemistry, Subject::Math, Subject::Computing, Subject::Accounting];
+    pub const ALL: [Subject; 7] = [Subject::Physics, Subject::Biology, Subject::Chemistry, Subject::Math, Subject::Computing, Subject::Accounting, Subject::Economics];
     pub fn name(self) -> &'static str {
-        match self { Subject::Physics => "Physics", Subject::Biology => "Biology", Subject::Chemistry => "Chemistry", Subject::Math => "Math", Subject::Computing => "Computing", Subject::Accounting => "Accounting" }
+        match self { Subject::Physics => "Physics", Subject::Biology => "Biology", Subject::Chemistry => "Chemistry", Subject::Math => "Math", Subject::Computing => "Computing", Subject::Accounting => "Accounting", Subject::Economics => "Economics" }
     }
 }
 
@@ -323,6 +324,7 @@ pub fn registry() -> Vec<FigureDef> {
     v.extend(stats::defs());
     v.extend(computing::defs());
     v.extend(accounting::defs());
+    v.extend(economics::defs());
     v
 }
 
@@ -551,6 +553,7 @@ pub fn examples_for(id: &str) -> Vec<Example> {
         .or_else(|| computing::examples(id))
         .or_else(|| electric::examples(id))
         .or_else(|| accounting::examples(id))
+        .or_else(|| economics::examples(id))
         .unwrap_or_default()
 }
 
