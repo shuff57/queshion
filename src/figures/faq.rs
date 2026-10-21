@@ -84,6 +84,8 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "financial-statement" => FINANCIAL_STATEMENT,
         "accounting-equation" => ACCOUNTING_EQUATION,
         "depreciation-schedule" => DEPRECIATION_SCHEDULE,
+        "bank-reconciliation" => BANK_RECONCILIATION,
+        "cash-flow-statement" => CASH_FLOW_STATEMENT,
         "kirchhoff-loops" => KIRCHHOFF_LOOPS,
         "state-machine" => STATE_MACHINE,
         "trace-table" => TRACE_TABLE,
@@ -1509,6 +1511,52 @@ const STATE_MACHINE: &[Faq] = &[
     Faq {
         q: "Why are two arrows drawn side by side?",
         a: "A transition each way between the same two states is drawn as two arrows next to each other so both stay visible. Labels for the same pair of states in the same direction share one arrow.",
+    },
+];
+
+const BANK_RECONCILIATION: &[Faq] = &[
+    Faq {
+        q: "How do I enter the balances and adjustments?",
+        a: "One line for each balance, bank 5200 for the bank statement and book 5250 for the cash book, then adjustment lines: bank + Deposits in transit 800 adds to the bank side and book - Bank charges 35 deducts from the cash book side. Each side has up to six adjustments.",
+    },
+    Faq {
+        q: "Which items go on which side?",
+        a: "Timing differences adjust the bank statement: deposits in transit are added and outstanding cheques deducted. Items the bank has recorded that the business has not adjust the cash book: interest and direct credits are added, charges and dishonoured cheques deducted. The figure draws whatever you type; it does not decide the side for you.",
+    },
+    Faq {
+        q: "What does the check say?",
+        a: "When the two adjusted balances are equal it says Reconciled and shows the balance. When they are not it says how far apart they are and which side is higher, which is the cue to look for a missed item.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. Both opening balances and every adjustment stay; the two adjusted balances are empty boxes and the check is a blank line. Student + key saves both copies.",
+    },
+    Faq {
+        q: "Can I change the labels?",
+        a: "The two panels are always headed Bank statement and Cash book. The adjustment names are your own, cut at 26 characters, and the whole statement can have a title.",
+    },
+];
+
+const CASH_FLOW_STATEMENT: &[Faq] = &[
+    Faq {
+        q: "How do I write the activities?",
+        a: "A heading such as Operating activities, then one Description amount line for each cash flow. A plain or + amount is cash in; a - amount, or an amount in (brackets), is cash out and is shown in brackets. Up to four sections of eight lines. Investing and financing activities follow the same way.",
+    },
+    Faq {
+        q: "What does it work out?",
+        a: "The net cash from each section, the net increase (or decrease) in cash, and the closing cash, which is the opening cash plus the net change. The opening cash is a separate setting, given on the statement.",
+    },
+    Faq {
+        q: "What is the closing cash check?",
+        a: "If you type the closing cash from the balance sheet, the statement checks that it agrees with the closing cash worked out and says so, or by how much it differs. Leave it empty for no check.",
+    },
+    Faq {
+        q: "How do I make a student copy?",
+        a: "Turn off Show answers. The cash flows and the opening cash stay; every net total, the net change, the closing cash and the check become empty boxes. Student + key saves both copies.",
+    },
+    Faq {
+        q: "Does it show the direct or the indirect method?",
+        a: "It lays out whatever lines you type, so the operating section can list cash received and paid (the direct method) or start from net income with adjustments (the indirect method): in either case the totals work the same way.",
     },
 ];
 

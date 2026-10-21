@@ -644,6 +644,19 @@ static DEPRECIATION_SCHEDULE: [RefSection; 4] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static BANK_RECONCILIATION: [RefSection; 4] = [
+    s("Reconciliation", &["spec", "check"], "The two balances and the adjustments to each."),
+    s("Money", &["currency", "cents", "show_answers"], "Turn off Show answers to leave the adjusted balances empty."),
+    s("Labels and text", &["title"], ""),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static CASH_FLOW_STATEMENT: [RefSection; 3] = [
+    s("Activities", &["spec", "opening", "closing_given"], "The cash flows by activity, and the opening cash."),
+    s("Labels and money", &["business", "period", "currency", "cents", "show_answers"], "Turn off Show answers to leave the totals empty."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -667,6 +680,8 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "financial-statement" => &FINANCIAL_STATEMENT,
         "accounting-equation" => &ACCOUNTING_EQUATION,
         "depreciation-schedule" => &DEPRECIATION_SCHEDULE,
+        "bank-reconciliation" => &BANK_RECONCILIATION,
+        "cash-flow-statement" => &CASH_FLOW_STATEMENT,
         "kirchhoff-loops" => &KIRCHHOFF_LOOPS,
         "state-machine" => &STATE_MACHINE,
         "trace-table" => &TRACE_TABLE,

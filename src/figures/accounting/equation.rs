@@ -192,7 +192,7 @@ fn render(p: &Params) -> String {
             chart::text(&mut d, x0, cy, fs * if bad_rows.is_empty() { 1.0 } else { 0.9 }, "start", &t);
         } else {
             chart::text(&mut d, x0, cy, fs, "start", "Does the equation balance?");
-            d.line(x0 + fs * 12.5, cy + 2.0, x0 + tw, cy + 2.0, INK, 1.0);
+            d.line(x0 + fs * 15.0, cy + 2.0, x0 + tw, cy + 2.0, INK, 1.0);
         }
     }
     d.finish()

@@ -37,8 +37,8 @@ Money figures share a small helper for currency formatting and column alignment.
 - Income statement and balance sheet: standard layouts from a list of accounts and amounts (done)
 - Accounting equation: assets = liabilities + equity with transactions applied one by one (done)
 - Depreciation schedule: straight-line, double-declining and sum of the years' digits, book value column (done)
-- Bank reconciliation: two columns, adjustments, the reconciled balance
-- Cash-flow statement skeleton: operating, investing, financing sections
+- Bank reconciliation: two columns, adjustments, the reconciled balance (done)
+- Cash-flow statement skeleton: operating, investing, financing sections (done)
 
 ### Economics
 - Supply and demand: curves from intercept and slope, shifts, equilibrium and surplus shading

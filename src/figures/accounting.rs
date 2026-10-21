@@ -1,9 +1,12 @@
 //! Accounting figures (the Accounting tab): T-accounts, journal entries, trial balances,
-//! financial statements, the accounting equation and depreciation schedules. Original designs on the shared pieces (`svg::Doc`, `show_answers`, print rules). Every
+//! financial statements, the accounting equation, depreciation schedules, bank reconciliations and
+//! cash-flow statements. Original designs on the shared pieces (`svg::Doc`, `show_answers`, print rules). Every
 //! figure reads money the same way and writes it with the same formatter, so a student copy and
 //! its key are always the same size.
 use super::{Example, FigureDef, ParamDef, Params};
 
+mod bank_rec;
+mod cash_flow;
 mod depreciation;
 mod equation;
 mod journal;
@@ -12,16 +15,16 @@ mod t_account;
 mod trial_balance;
 
 pub fn defs() -> Vec<FigureDef> {
-    vec![t_account::def(), journal::def(), trial_balance::def(), statements::def(), equation::def(), depreciation::def()]
+    vec![t_account::def(), journal::def(), trial_balance::def(), statements::def(), equation::def(), depreciation::def(), bank_rec::def(), cash_flow::def()]
 }
 
 /// Params that only matter in some states of a figure.
 pub fn relevant(fig: &str, key: &str, p: &Params) -> bool {
-    t_account::relevant(fig, key, p) && journal::relevant(fig, key, p) && trial_balance::relevant(fig, key, p) && statements::relevant(fig, key, p) && equation::relevant(fig, key, p) && depreciation::relevant(fig, key, p)
+    t_account::relevant(fig, key, p) && journal::relevant(fig, key, p) && trial_balance::relevant(fig, key, p) && statements::relevant(fig, key, p) && equation::relevant(fig, key, p) && depreciation::relevant(fig, key, p) && bank_rec::relevant(fig, key, p) && cash_flow::relevant(fig, key, p)
 }
 
 pub fn examples(id: &str) -> Option<Vec<Example>> {
-    t_account::examples(id).or_else(|| journal::examples(id)).or_else(|| trial_balance::examples(id)).or_else(|| statements::examples(id)).or_else(|| equation::examples(id)).or_else(|| depreciation::examples(id))
+    t_account::examples(id).or_else(|| journal::examples(id)).or_else(|| trial_balance::examples(id)).or_else(|| statements::examples(id)).or_else(|| equation::examples(id)).or_else(|| depreciation::examples(id)).or_else(|| bank_rec::examples(id)).or_else(|| cash_flow::examples(id))
 }
 
 pub const MAX_AMOUNT: f64 = 1.0e12;
