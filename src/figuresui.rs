@@ -448,7 +448,8 @@ fn help_fab(ctx: &egui::Context, left: bool) {
     let open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
     // The reference puts it bottom-left of the page; the skinned pages hide our rail, so they use it.
     // The unskinned pages keep it bottom-right, clear of the rail.
-    let x = if sr.width() < 500.0 || left { sr.left() + 17.0 } else { sr.right() - 53.0 };
+    // (a phone in the app's own layout keeps it bottom-right too: bottom-left sat on Save to question…)
+    let x = if left { sr.left() + 17.0 } else { sr.right() - 53.0 };
     let pos = egui::Pos2::new(x, sr.bottom() - 54.0);
     let r = egui::Area::new(egui::Id::new("fig_help_fab")).order(egui::Order::Foreground).fixed_pos(pos).show(ctx, |ui| {
         let (rect, resp) = ui.allocate_exact_size(Vec2::splat(36.0), Sense::click());
@@ -1317,7 +1318,10 @@ impl Workspace {
         } else if skin {
             ui.available_height().max(240.0)
         } else {
-            (ui.available_height() - 64.0).max(240.0)
+            // room for the action row under the figure: last frame's height, so a row that wraps
+            // to two lines on a phone is not cut off at the window's bottom edge
+            let row_h = ctx.data(|d| d.get_temp::<f32>(egui::Id::new("fig_action_row_h"))).unwrap_or(0.0);
+            (ui.available_height() - (row_h + 12.0).max(64.0)).max(240.0)
         };
         // A phone-width frame stacks the figure above its controls, as the reference does, and
         // scrolls as a whole; a wide one puts the controls beside the figure.
@@ -1471,7 +1475,11 @@ impl Workspace {
 
         // Action row.
         let have_svg = self.imp.as_ref().map(|i| i.svg.is_some()).unwrap_or(true);
-        ui.horizontal_wrapped(|ui| {
+        let row = ui.horizontal_wrapped(|ui| {
+            // a phone keeps the help button's corner (bottom right) clear of the row
+            if !self.modal && ctx.content_rect().width() < 500.0 {
+                ui.set_max_width((ui.available_width() - 46.0).max(120.0));
+            }
             if self.modal {
                 if accent_btn(ui, if self.imp.is_some() { "Attach picture" } else { "Insert figure" }).clicked() {
                     act = match self.output() {
@@ -1517,6 +1525,12 @@ impl Workspace {
                 act = Act::Close;
             }
         });
+        let row_h = row.response.rect.height();
+        let row_id = egui::Id::new("fig_action_row_h");
+        if ctx.data(|d| d.get_temp::<f32>(row_id)).is_none_or(|h| (h - row_h).abs() > 0.5) {
+            ctx.data_mut(|d| d.insert_temp(row_id, row_h));
+            ctx.request_repaint();
+        }
         if self.examples_open && self.imp.is_none() && self.sel.is_some() {
             let a = self.examples_gallery(&ctx);
             if !matches!(a, Act::None) {
