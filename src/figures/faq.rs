@@ -145,6 +145,9 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "network-topology" => NETWORK_TOPOLOGY,
         "dot-plot" => DOT_PLOT,
         "normal-curve" => NORMAL_CURVE,
+        "sampling-distribution" => SAMPLING_DISTRIBUTION,
+        "rejection-region" => REJECTION_REGION,
+        "chi-square-table" => CHI_SQUARE_TABLE,
         "scatterplot" => SCATTERPLOT,
         "mapping-diagram" => MAPPING_DIAGRAM,
         "ruler-reading" => RULER_READING,
@@ -3119,5 +3122,74 @@ const EXPERIMENT_FLOW: &[Faq] = &[
     Faq {
         q: "Why a control group?",
         a: "It shows what happens without the treatment, so any difference can be put down to the treatment.",
+    },
+];
+
+const SAMPLING_DISTRIBUTION: &[Faq] = &[
+    Faq {
+        q: "What is the standard error?",
+        a: "The standard deviation of the sample means: the population standard deviation divided by the square root of the sample size.",
+    },
+    Faq {
+        q: "Why is the sample-means curve narrower?",
+        a: "Averages vary less than single values. A bigger sample makes the curve narrower still, by the square root of n.",
+    },
+    Faq {
+        q: "How do I find a probability for a sample mean?",
+        a: "Shade a region, then use the standard error instead of the population standard deviation. Turn Show answers on to see the result.",
+    },
+    Faq {
+        q: "What does Show answers do?",
+        a: "On, the standard error and the probability are written in. Off, the curves and shading stay and those two are blank lines for students.",
+    },
+    Faq {
+        q: "Is the curve always a bell?",
+        a: "Here it is drawn as a normal curve, which is exact for a normal population and a good approximation for large samples (the central limit theorem).",
+    },
+];
+
+const REJECTION_REGION: &[Faq] = &[
+    Faq {
+        q: "Which distributions can I use?",
+        a: "The standard normal (z), Student t with degrees of freedom, and chi-square with degrees of freedom.",
+    },
+    Faq {
+        q: "What does the tail choice mean?",
+        a: "Two-tailed splits α between both tails, right-tailed puts it all on the right and left-tailed all on the left.",
+    },
+    Faq {
+        q: "What does Show answers do?",
+        a: "On, the rejection region is shaded and the critical value, p-value and decision are written in. Off, only the curve and the test statistic remain, with blank lines.",
+    },
+    Faq {
+        q: "How is the decision made?",
+        a: "Reject H0 when the p-value is below α, which is the same as the statistic landing in the shaded region.",
+    },
+    Faq {
+        q: "Why does the axis change?",
+        a: "It widens to include the critical values and the statistic, up to a limit. A statistic far outside is not marked but the decision still works.",
+    },
+];
+
+const CHI_SQUARE_TABLE: &[Faq] = &[
+    Faq {
+        q: "How do I enter the counts?",
+        a: "One row per line, numbers separated by spaces or commas. Use whole numbers, 2 to 5 rows and 2 to 5 columns.",
+    },
+    Faq {
+        q: "How are the expected counts found?",
+        a: "Row total times column total divided by the grand total, assuming the two variables are independent.",
+    },
+    Faq {
+        q: "What do the degrees of freedom mean?",
+        a: "(rows - 1) times (columns - 1). The p-value is the chance of a chi-square this large or larger.",
+    },
+    Faq {
+        q: "What does Show answers do?",
+        a: "On, the expected counts, contributions, chi-square, critical value, p-value and decision are filled in. Off, those cells are empty for students.",
+    },
+    Faq {
+        q: "What if an expected count is small?",
+        a: "The key warns when the smallest expected count is below 5, since the chi-square approximation is then unreliable.",
     },
 ];

@@ -466,6 +466,8 @@ struct Imported {
 pub struct Workspace {
     pub modal: bool,
     subject: Option<Subject>,
+    /// The major topic whose subject tabs are showing (None: the All view).
+    group: Option<figures::Group>,
     search: String,
     sel: Option<usize>,
     params: Params,
@@ -869,13 +871,18 @@ impl Workspace {
         }
         let ctx = ui.ctx().clone();
         ui.horizontal_wrapped(|ui| {
-            if tab(ui, "All", self.subject.is_none()) {
+            if tab(ui, "All", self.subject.is_none() && self.group.is_none()) {
                 self.subject = None;
+                self.group = None;
             }
-            // a subject with no figures yet (Computing, until its first figure lands) shows no tab
-            for s in Subject::ALL.into_iter().filter(|s| reg().iter().any(|d| figures::listed_under(d, *s))) {
-                if tab(ui, s.name(), self.subject == Some(s)) {
-                    self.subject = Some(s);
+            // a topic with no figures yet shows no tab
+            let has = |s: Subject| reg().iter().any(|d| figures::listed_under(d, s));
+            for g in figures::Group::ALL.into_iter().filter(|g| g.subjects().iter().any(|s| has(*s))) {
+                if tab(ui, g.name(), self.group == Some(g)) {
+                    self.group = Some(g);
+                    // a topic with a single subject goes straight to it
+                    let own: Vec<Subject> = g.subjects().iter().copied().filter(|s| has(*s)).collect();
+                    self.subject = if own.len() == 1 { Some(own[0]) } else { None };
                 }
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -892,6 +899,23 @@ impl Workspace {
                 );
             });
         });
+        if let Some(g) = self.group {
+            let has = |s: Subject| reg().iter().any(|d| figures::listed_under(d, s));
+            let own: Vec<Subject> = g.subjects().iter().copied().filter(|s| has(*s)).collect();
+            if own.len() > 1 {
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    if tab(ui, &format!("All {}", g.name().to_lowercase()), self.subject.is_none()) {
+                        self.subject = None;
+                    }
+                    for s in own {
+                        if tab(ui, s.name(), self.subject == Some(s)) {
+                            self.subject = Some(s);
+                        }
+                    }
+                });
+            }
+        }
         ui.add_space(8.0);
 
         if self.import_open {
@@ -921,7 +945,11 @@ impl Workspace {
         let mut list: Vec<(usize, &FigureDef)> = reg()
             .iter()
             .enumerate()
-            .filter(|(_, d)| self.subject.is_none_or(|s| figures::listed_under(d, s)))
+            .filter(|(_, d)| match (self.subject, self.group) {
+                (Some(s), _) => figures::listed_under(d, s),
+                (None, Some(g)) => g.subjects().iter().any(|s| figures::listed_under(d, *s)),
+                (None, None) => true,
+            })
             .filter(|(_, d)| {
                 q.is_empty()
                     || d.title.to_lowercase().contains(&q)
@@ -932,6 +960,9 @@ impl Workspace {
         // cross-listed figures come after the subject's own, as on the reference home pages
         if let Some(s) = self.subject {
             list.sort_by_key(|(_, d)| d.subject != s);
+        } else if let Some(g) = self.group {
+            let order = |d: &FigureDef| g.subjects().iter().position(|s| *s == d.subject).unwrap_or(usize::MAX);
+            list.sort_by_key(|(_, d)| order(d));
         }
 
         let max_h = if self.modal {

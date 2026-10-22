@@ -251,6 +251,33 @@ impl Subject {
     }
 }
 
+/// The major topics the subject tabs are grouped under in the browser.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Group { Science, MathComputing, Business, Humanities, Health }
+
+impl Group {
+    pub const ALL: [Group; 5] = [Group::Science, Group::MathComputing, Group::Business, Group::Humanities, Group::Health];
+    pub fn name(self) -> &'static str {
+        match self { Group::Science => "Science", Group::MathComputing => "Math and computing", Group::Business => "Business and economics", Group::Humanities => "Humanities and arts", Group::Health => "Health and technology" }
+    }
+    /// The subject tabs inside the group, in display order.
+    pub fn subjects(self) -> &'static [Subject] {
+        match self {
+            Group::Science => &[Subject::Physics, Subject::Biology, Subject::Chemistry, Subject::EarthScience],
+            Group::MathComputing => &[Subject::Math, Subject::Computing],
+            Group::Business => &[Subject::Accounting, Subject::Economics, Subject::Business],
+            Group::Humanities => &[Subject::Language, Subject::Geography, Subject::Music, Subject::Art],
+            Group::Health => &[Subject::Health],
+        }
+    }
+}
+
+impl Subject {
+    pub fn group(self) -> Group {
+        Group::ALL.into_iter().find(|g| g.subjects().contains(&self)).unwrap_or(Group::Science)
+    }
+}
+
 #[derive(Clone)]
 pub struct FigureDef {
     /// Stable slug, e.g. "free-body-diagram".
@@ -766,6 +793,22 @@ pub fn to_rgba_at(svg: &str, scale: f32, phase: (f32, f32)) -> Result<(u32, u32,
 /// Import path for the hybrid mode: accept pasted/loaded SVG text from anywhere.
 pub fn validate_svg(svg: &str) -> Result<(), String> {
     to_png(svg, 0.25).map(|_| ())
+}
+
+#[cfg(test)]
+mod group_tests {
+    use super::*;
+
+    #[test]
+    fn every_subject_is_in_exactly_one_group() {
+        for s in Subject::ALL {
+            let n = Group::ALL.iter().filter(|g| g.subjects().contains(&s)).count();
+            assert_eq!(n, 1, "{}", s.name());
+            assert!(s.group().subjects().contains(&s));
+        }
+        let listed: usize = Group::ALL.iter().map(|g| g.subjects().len()).sum();
+        assert_eq!(listed, Subject::ALL.len());
+    }
 }
 
 #[cfg(test)]

@@ -92,7 +92,7 @@ Money figures share a small helper for currency formatting and column alignment.
 - Maslow's hierarchy, brain regions (simplified), experimental design flow (done)
 
 ### Statistics extras (cheap: reuse the existing chart code)
-- Sampling distribution, hypothesis-test rejection region, chi-square table
+- Sampling distribution, hypothesis-test rejection region, chi-square table (done)
 
 ### Build order and limits
 1. Earth science, Geography climate graphs, Business and finance, Music staff: the closest fit to

@@ -972,6 +972,27 @@ static EXPERIMENT_FLOW: [RefSection; 3] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static SAMPLING_DISTRIBUTION: [RefSection; 4] = [
+    s("Population", &["mean", "sd", "n", "show_pop"], "The sample size sets the standard error, sd divided by the square root of n."),
+    s("Shading", &["region", "a", "b"], "Shades a region of sample means."),
+    s("Display", &["title", "x_title", "show_answers"], "Turn off Show answers to leave the standard error and probability blank."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static REJECTION_REGION: [RefSection; 4] = [
+    s("Test", &["dist", "df", "tail", "alpha"], "Two-tailed splits alpha between the tails."),
+    s("Statistic", &["stat", "show_stat"], ""),
+    s("Display", &["title", "x_title", "show_answers"], "Turn off Show answers to leave the shading and results blank."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static CHI_SQUARE_TABLE: [RefSection; 4] = [
+    s("Counts", &["observed", "row_names", "col_names"], "One row per line."),
+    s("Test", &["alpha"], ""),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the working empty."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -1058,6 +1079,9 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "stem-and-leaf" => &STEM_AND_LEAF,
         "dot-plot" => &DOT_PLOT,
         "normal-curve" => &NORMAL_CURVE,
+        "sampling-distribution" => &SAMPLING_DISTRIBUTION,
+        "rejection-region" => &REJECTION_REGION,
+        "chi-square-table" => &CHI_SQUARE_TABLE,
         "scatterplot" => &SCATTERPLOT,
         "bohr-model" => &FIG_1,
         "box-plot" => &FIG_2,
