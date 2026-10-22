@@ -942,6 +942,36 @@ static ORTHOGRAPHIC: [RefSection; 3] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static COLOUR_WHEEL: [RefSection; 3] = [
+    s("Scheme", &["scheme", "base"], "Counts the colours from yellow, clockwise."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the names and scheme blank."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static PERSPECTIVE_GRID: [RefSection; 3] = [
+    s("Grid", &["kind", "horizon", "rays"], "The horizon is the eye level."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the box off."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static MASLOW: [RefSection; 3] = [
+    s("Levels", &["levels"], "name: example, bottom first."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the level names blank."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static BRAIN_REGIONS: [RefSection; 3] = [
+    s("Regions", &["show"], ""),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the names blank."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
+static EXPERIMENT_FLOW: [RefSection; 3] = [
+    s("Experiment", &["question", "sample", "treatment", "control", "measure"], "What each group gets and what is measured."),
+    s("Display", &["title", "show_answers"], "Turn off Show answers to leave the role labels blank."),
+    s("Appearance", &["style", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -1012,6 +1042,11 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "free-body" => &FREE_BODY,
         "gear-train" => &GEAR_TRAIN,
         "orthographic" => &ORTHOGRAPHIC,
+        "colour-wheel" => &COLOUR_WHEEL,
+        "perspective-grid" => &PERSPECTIVE_GRID,
+        "maslow" => &MASLOW,
+        "brain-regions" => &BRAIN_REGIONS,
+        "experiment-flow" => &EXPERIMENT_FLOW,
         "kirchhoff-loops" => &KIRCHHOFF_LOOPS,
         "state-machine" => &STATE_MACHINE,
         "trace-table" => &TRACE_TABLE,

@@ -11,6 +11,7 @@ pub mod accounting;
 pub mod business;
 pub mod earth;
 pub mod geography;
+pub mod art;
 pub mod health;
 pub mod language;
 pub mod music;
@@ -241,12 +242,12 @@ impl FigureDef {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Subject { Physics, Biology, Chemistry, Math, Computing, Accounting, Economics, EarthScience, Geography, Music, Business, Language, Health }
+pub enum Subject { Physics, Biology, Chemistry, Math, Computing, Accounting, Economics, EarthScience, Geography, Music, Business, Language, Health, Art }
 
 impl Subject {
-    pub const ALL: [Subject; 13] = [Subject::Physics, Subject::Biology, Subject::Chemistry, Subject::Math, Subject::Computing, Subject::Accounting, Subject::Economics, Subject::EarthScience, Subject::Geography, Subject::Music, Subject::Business, Subject::Language, Subject::Health];
+    pub const ALL: [Subject; 14] = [Subject::Physics, Subject::Biology, Subject::Chemistry, Subject::Math, Subject::Computing, Subject::Accounting, Subject::Economics, Subject::EarthScience, Subject::Geography, Subject::Music, Subject::Business, Subject::Language, Subject::Health, Subject::Art];
     pub fn name(self) -> &'static str {
-        match self { Subject::Physics => "Physics", Subject::Biology => "Biology", Subject::Chemistry => "Chemistry", Subject::Math => "Math", Subject::Computing => "Computing", Subject::Accounting => "Accounting", Subject::Economics => "Economics", Subject::EarthScience => "Earth science", Subject::Geography => "Geography", Subject::Music => "Music", Subject::Business => "Business and finance", Subject::Language => "Language and humanities", Subject::Health => "Health, PE and technology" }
+        match self { Subject::Physics => "Physics", Subject::Biology => "Biology", Subject::Chemistry => "Chemistry", Subject::Math => "Math", Subject::Computing => "Computing", Subject::Accounting => "Accounting", Subject::Economics => "Economics", Subject::EarthScience => "Earth science", Subject::Geography => "Geography", Subject::Music => "Music", Subject::Business => "Business and finance", Subject::Language => "Language and humanities", Subject::Health => "Health, PE and technology", Subject::Art => "Art and psychology" }
     }
 }
 
@@ -337,6 +338,7 @@ pub fn registry() -> Vec<FigureDef> {
     v.extend(business::defs());
     v.extend(language::defs());
     v.extend(health::defs());
+    v.extend(art::defs());
     v
 }
 
@@ -572,6 +574,7 @@ pub fn examples_for(id: &str) -> Vec<Example> {
         .or_else(|| business::examples(id))
         .or_else(|| language::examples(id))
         .or_else(|| health::examples(id))
+        .or_else(|| art::examples(id))
         .unwrap_or_default()
 }
 

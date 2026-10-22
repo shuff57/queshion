@@ -88,8 +88,8 @@ Money figures share a small helper for currency formatting and column alignment.
 - Engineering: block diagram, free-body, gear train, orthographic views (done); truss not built
 
 ### Art, psychology and sociology
-- Colour wheel and perspective grids
-- Maslow's hierarchy, brain regions (simplified), experimental design flow
+- Colour wheel and perspective grids (done)
+- Maslow's hierarchy, brain regions (simplified), experimental design flow (done)
 
 ### Statistics extras (cheap: reuse the existing chart code)
 - Sampling distribution, hypothesis-test rejection region, chi-square table

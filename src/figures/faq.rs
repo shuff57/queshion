@@ -131,6 +131,11 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "free-body" => FREE_BODY,
         "gear-train" => GEAR_TRAIN,
         "orthographic" => ORTHOGRAPHIC,
+        "colour-wheel" => COLOUR_WHEEL,
+        "perspective-grid" => PERSPECTIVE_GRID,
+        "maslow" => MASLOW,
+        "brain-regions" => BRAIN_REGIONS,
+        "experiment-flow" => EXPERIMENT_FLOW,
         "kirchhoff-loops" => KIRCHHOFF_LOOPS,
         "state-machine" => STATE_MACHINE,
         "trace-table" => TRACE_TABLE,
@@ -3019,5 +3024,100 @@ const ORTHOGRAPHIC: &[Faq] = &[
     Faq {
         q: "Why are some rows shorter than others?",
         a: "Short rows are padded with zeros, so a missing number means no cubes.",
+    },
+];
+
+const COLOUR_WHEEL: &[Faq] = &[
+    Faq {
+        q: "Which colour wheel is this?",
+        a: "The artist's red-yellow-blue wheel: yellow, red and blue are primary, orange, violet and green are secondary, and the six between are tertiary.",
+    },
+    Faq {
+        q: "How do I mark a colour scheme?",
+        a: "Choose a scheme and a starting colour. Complementary marks two opposite colours, triadic three evenly spaced, analogous three neighbours, split complementary one and the two beside its opposite.",
+    },
+    Faq {
+        q: "What does Show answers do?",
+        a: "On, the colours are named and the scheme is drawn. Off, the wheel is left with blank lines to fill in.",
+    },
+    Faq {
+        q: "Why does the Print style look different?",
+        a: "It uses greys, so colours become lightness steps and the names matter more than the shades.",
+    },
+];
+
+const PERSPECTIVE_GRID: &[Faq] = &[
+    Faq {
+        q: "What is the difference between one-point and two-point?",
+        a: "One-point has a single vanishing point and a box facing you. Two-point has two, and the box is seen corner-on.",
+    },
+    Faq {
+        q: "What does the horizon height do?",
+        a: "It is the eye level. A box above it is seen from below, a box below it from above.",
+    },
+    Faq {
+        q: "What does Show answers do?",
+        a: "On, a box is drawn on the guides. Off, only the horizon, the vanishing points and the guide lines are shown, for students to draw on.",
+    },
+    Faq {
+        q: "Can I get more guide lines?",
+        a: "Yes, raise the number of guide lines from each vanishing point, up to 24.",
+    },
+];
+
+const MASLOW: &[Faq] = &[
+    Faq {
+        q: "How do I enter the levels?",
+        a: "One per line from the bottom up as name: example. The example is optional. Two to seven levels.",
+    },
+    Faq {
+        q: "Can I use my own pyramid?",
+        a: "Yes. Any list of levels works, such as stages of learning or of a food chain.",
+    },
+    Faq {
+        q: "What does Show answers do?",
+        a: "On, each band is named. Off, the bands are empty and the examples beside them remain, for students to match.",
+    },
+    Faq {
+        q: "Why are the top bands cut flat?",
+        a: "The pyramid is truncated so the top level's name still fits.",
+    },
+];
+
+const BRAIN_REGIONS: &[Faq] = &[
+    Faq {
+        q: "Is this an anatomical drawing?",
+        a: "No. It is a simplified original sketch that shows where the main regions sit, front on the left.",
+    },
+    Faq {
+        q: "What can I show?",
+        a: "The four lobes with the cerebellum and brain stem, or the four lobes only.",
+    },
+    Faq {
+        q: "What does Show answers do?",
+        a: "On, the numbered regions are named. Off, the names are blank and what each region does is listed to match.",
+    },
+    Faq {
+        q: "Which regions are named?",
+        a: "Frontal, parietal, occipital and temporal lobes, the cerebellum and the brain stem.",
+    },
+];
+
+const EXPERIMENT_FLOW: &[Faq] = &[
+    Faq {
+        q: "What does the diagram show?",
+        a: "A controlled experiment: a sample is randomly split into a treatment group and a control group, both are measured and the results compared.",
+    },
+    Faq {
+        q: "What goes in the boxes?",
+        a: "Your sample, what each group gets, and what is measured. The teacher's text fills the boxes; the roles are the answers.",
+    },
+    Faq {
+        q: "What does Show answers do?",
+        a: "On, the roles are labelled: random assignment, treatment and control group, independent and dependent variable. Off, those are blank lines.",
+    },
+    Faq {
+        q: "Why a control group?",
+        a: "It shows what happens without the treatment, so any difference can be put down to the treatment.",
     },
 ];
