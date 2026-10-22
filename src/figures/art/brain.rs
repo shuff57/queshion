@@ -52,55 +52,99 @@ fn params() -> Vec<ParamDef> {
     ]
 }
 
-/// The outline of the cerebrum from the side: front on the left, flatter underneath, with a gentle
-/// ripple so it reads as folded.
-fn outline(c: (f64, f64)) -> Vec<(f64, f64)> {
-    (0..120)
-        .map(|k| {
-            let a = (k as f64 * 3.0).to_radians();
-            let flat = if a.sin() < 0.0 { 0.78 } else { 1.0 };
-            let r = 1.0 + 0.022 * (13.0 * a).sin();
-            (c.0 + 235.0 * r * a.cos(), c.1 - 150.0 * flat * r * a.sin())
-        })
-        .collect()
-}
+type Pt = (f64, f64);
 
-/// The part of `poly` on one side of the line through `a` and `b` (`side` is 1.0 or -1.0).
-fn half(poly: &[(f64, f64)], a: (f64, f64), b: (f64, f64), side: f64) -> Vec<(f64, f64)> {
-    let f = |p: (f64, f64)| side * ((b.0 - a.0) * (p.1 - a.1) - (b.1 - a.1) * (p.0 - a.0));
+/// A smooth curve through control points (Catmull-Rom), closed or open.
+fn spline(ctrl: &[Pt], closed: bool, per: usize) -> Vec<Pt> {
+    let n = ctrl.len();
+    let at = |i: isize| -> Pt {
+        if closed { ctrl[i.rem_euclid(n as isize) as usize] } else { ctrl[i.clamp(0, n as isize - 1) as usize] }
+    };
+    let segs = if closed { n } else { n - 1 };
     let mut out = Vec::new();
-    for i in 0..poly.len() {
-        let (p, q) = (poly[i], poly[(i + 1) % poly.len()]);
-        let (fp, fq) = (f(p), f(q));
-        if fp >= 0.0 {
-            out.push(p);
+    for i in 0..segs as isize {
+        let (p0, p1, p2, p3) = (at(i - 1), at(i), at(i + 1), at(i + 2));
+        for k in 0..per {
+            let t = k as f64 / per as f64;
+            let f = |a: f64, b: f64, c: f64, d: f64| 0.5 * (2.0 * b + (c - a) * t + (2.0 * a - 5.0 * b + 4.0 * c - d) * t * t + (3.0 * b - a - 3.0 * c + d) * t * t * t);
+            out.push((f(p0.0, p1.0, p2.0, p3.0), f(p0.1, p1.1, p2.1, p3.1)));
         }
-        if (fp >= 0.0) != (fq >= 0.0) {
-            let t = fp / (fp - fq);
-            out.push((p.0 + (q.0 - p.0) * t, p.1 + (q.1 - p.1) * t));
-        }
+    }
+    if !closed {
+        out.push(ctrl[n - 1]);
     }
     out
 }
 
-fn centroid(poly: &[(f64, f64)]) -> (f64, f64) {
-    let n = poly.len().max(1) as f64;
-    (poly.iter().map(|p| p.0).sum::<f64>() / n, poly.iter().map(|p| p.1).sum::<f64>() / n)
+fn nearest(path: &[Pt], p: Pt) -> usize {
+    let d = |q: &Pt| (q.0 - p.0).powi(2) + (q.1 - p.1).powi(2);
+    (0..path.len()).min_by(|&a, &b| d(&path[a]).total_cmp(&d(&path[b]))).unwrap_or(0)
 }
 
-/// The four lobes as polygons: frontal, parietal, occipital, temporal.
-pub fn lobes(c: (f64, f64)) -> [Vec<(f64, f64)>; 4] {
+/// The points of a closed path from index `i` forward to index `j`, wrapping round.
+fn arc(path: &[Pt], i: usize, j: usize) -> Vec<Pt> {
+    let n = path.len();
+    let mut v = vec![path[i]];
+    let mut k = i;
+    while k != j {
+        k = (k + 1) % n;
+        v.push(path[k]);
+    }
+    v
+}
+
+fn shift(v: &[Pt], c: Pt) -> Vec<Pt> {
+    v.iter().map(|p| (p.0 + c.0, p.1 + c.1)).collect()
+}
+
+/// The outline of the cerebrum from the side, front on the left: a rounded frontal pole, a long
+/// top, the occipital pole, and the underside with the temporal lobe bulging below and pointing
+/// forward.
+pub fn outline(c: Pt) -> Vec<Pt> {
+    let ctrl = [(-236.0, 12.0), (-228.0, -45.0), (-196.0, -95.0), (-140.0, -132.0), (-65.0, -150.0), (20.0, -154.0), (105.0, -144.0), (170.0, -114.0), (214.0, -65.0), (236.0, -5.0), (228.0, 48.0), (196.0, 80.0), (150.0, 92.0), (95.0, 98.0), (40.0, 106.0), (-20.0, 118.0), (-80.0, 122.0), (-132.0, 112.0), (-166.0, 92.0), (-172.0, 66.0), (-196.0, 52.0), (-226.0, 38.0)];
+    spline(&shift(&ctrl, c), true, 10)
+}
+
+/// The curves that divide the lobes: lateral fissure, central sulcus and parieto-occipital line.
+pub fn dividers(c: Pt) -> [Vec<Pt>; 3] {
+    let f = spline(&shift(&[(-180.0, 58.0), (-120.0, 44.0), (-55.0, 32.0), (15.0, 10.0), (75.0, -8.0), (120.0, -30.0)], c), false, 10);
+    let cc = spline(&shift(&[(12.0, -154.0), (2.0, -112.0), (-18.0, -72.0), (-28.0, -36.0), (-44.0, 10.0)], c), false, 10);
+    let pp = spline(&shift(&[(128.0, -134.0), (112.0, -92.0), (120.0, -45.0), (138.0, 5.0), (158.0, 50.0), (178.0, 92.0)], c), false, 10);
+    [f, cc, pp]
+}
+
+/// The four lobes as polygons: frontal, parietal, occipital, temporal. Each is bounded by the
+/// outline and the curved dividers, which are snapped onto the outline and onto each other.
+pub fn lobes(c: Pt) -> [Vec<Pt>; 4] {
     let o = outline(c);
-    // the lateral fissure rises from the front underside to the back; the central sulcus crosses the top
-    let (l1, l2) = ((c.0 - 260.0, c.1 + 60.0), (c.0 + 120.0, c.1 - 5.0));
-    let (c1, c2) = ((c.0 + 20.0, c.1 - 170.0), (c.0 - 50.0, c.1 + 30.0));
-    let (o1, o2) = ((c.0 + 120.0, c.1 - 170.0), (c.0 + 150.0, c.1 + 90.0));
-    let above = half(&o, l1, l2, -1.0);
-    let frontal = half(&above, c1, c2, 1.0);
-    let rest = half(&above, c1, c2, -1.0);
-    let parietal = half(&rest, o1, o2, 1.0);
-    let occipital = half(&o, o1, o2, -1.0);
-    let temporal = half(&half(&o, l1, l2, 1.0), o1, o2, 1.0);
+    let [mut f, mut cc, mut pp] = dividers(c);
+    let (i_f, i_c, i_p0) = (nearest(&o, f[0]), nearest(&o, cc[0]), nearest(&o, pp[0]));
+    let i_p1 = nearest(&o, *pp.last().unwrap());
+    f[0] = o[i_f];
+    cc[0] = o[i_c];
+    pp[0] = o[i_p0];
+    let last = pp.len() - 1;
+    pp[last] = o[i_p1];
+    let m = nearest(&pp, *f.last().unwrap());
+    *f.last_mut().unwrap() = pp[m];
+    let j = nearest(&f, *cc.last().unwrap()).min(f.len() - 2);
+    *cc.last_mut().unwrap() = f[j];
+
+    let mut frontal = arc(&o, i_f, i_c);
+    frontal.extend(cc[1..].iter());
+    frontal.extend(f[..j].iter().rev());
+
+    let mut parietal = arc(&o, i_c, i_p0);
+    parietal.extend(pp[1..=m].iter());
+    parietal.extend(f[j..].iter().rev());
+    parietal.extend(cc[..cc.len() - 1].iter().rev());
+
+    let mut occipital = arc(&o, i_p0, i_p1);
+    occipital.extend(pp[..last].iter().rev());
+
+    let mut temporal = f.clone();
+    temporal.extend(pp[m + 1..].iter());
+    temporal.extend(arc(&o, i_p1, i_f).iter().skip(1));
     [frontal, parietal, occipital, temporal]
 }
 
@@ -120,27 +164,34 @@ fn render(p: &Params) -> String {
     let tint = |i: usize| -> &'static str {
         if print { ["#eeeeee", "#d6d6d6", "#bdbdbd", "#a4a4a4", "#e2e2e2", "#8c8c8c"][i] } else { ["#f4c7c3", "#fbe3a1", "#c7e3b8", "#bcd8f0", "#e0c8ec", "#c9c9c9"][i] }
     };
-    let mut extra: Vec<(f64, f64)> = Vec::new();
+    let at = |x: f64, y: f64| (c.0 + x, c.1 + y);
+    let ink2 = if print { "#666666" } else { "#7a6a8a" };
+    let mut anchors: Vec<(f64, f64)> = vec![at(-110.0, -30.0), at(60.0, -85.0), at(185.0, -20.0), at(-45.0, 80.0)];
     if count == 6 {
-        let cb = (c.0 + 135.0, c.1 + 135.0);
-        let pts: Vec<(f64, f64)> = (0..36)
+        // brain stem behind, leaning back, then the cerebellum with its folds
+        let stem = [at(-8.0, 60.0), at(46.0, 66.0), at(78.0, 150.0), at(82.0, 240.0), at(36.0, 240.0), at(30.0, 160.0)];
+        d.poly(&spline(&stem, true, 6), tint(5), INK, 2.0);
+        let (cb, rx, ry) = (at(150.0, 112.0), 78.0, 46.0);
+        let pts: Vec<(f64, f64)> = (0..48)
             .map(|k| {
-                let a = (k as f64 * 10.0).to_radians();
-                (cb.0 + 85.0 * a.cos(), cb.1 - 45.0 * a.sin() * if a.sin() < 0.0 { 0.9 } else { 1.0 } + 2.5 * (9.0 * a).sin())
+                let a = k as f64 * std::f64::consts::TAU / 48.0;
+                (cb.0 + rx * a.cos(), cb.1 - ry * a.sin() * if a.sin() < 0.0 { 0.85 } else { 1.0 })
             })
             .collect();
-        let stem = [(c.0 + 5.0, c.1 + 60.0), (c.0 + 70.0, c.1 + 80.0), (c.0 + 66.0, c.1 + 235.0), (c.0 + 26.0, c.1 + 235.0)];
-        d.poly(&stem, tint(5), INK, 2.0);
         d.poly(&pts, tint(4), INK, 2.0);
-        extra.push((cb.0 + 25.0, cb.1 + 22.0));
-        extra.push((c.0 + 46.0, c.1 + 190.0));
+        for t in -2..=2 {
+            let dy = t as f64 * 11.0;
+            let w = rx * (1.0 - (dy / ry).powi(2)).max(0.0).sqrt() * 0.92;
+            let line: Vec<(f64, f64)> = (0..=10).map(|k| { let x = -w + 2.0 * w * k as f64 / 10.0; (cb.0 + x, cb.1 + dy + 3.0 * (x / w.max(1.0) * 3.0).sin()) }).collect();
+            d.polyline(&line, ink2, 1.2);
+        }
+        anchors.push(at(150.0, 128.0));
+        anchors.push(at(58.0, 200.0));
     }
     let regions = lobes(c);
     for (i, poly) in regions.iter().enumerate() {
         d.poly(poly, tint(i), INK, 2.0);
     }
-    let mut anchors: Vec<(f64, f64)> = regions.iter().map(|r| centroid(r)).collect();
-    anchors.extend(extra);
     for (i, a) in anchors.iter().enumerate() {
         d.circle(a.0, a.1, 14.0, "#fff", INK, 1.8);
         chart::text(&mut d, a.0, a.1 + fs * 0.35, fs, "middle", &(i + 1).to_string());
@@ -194,7 +245,7 @@ mod tests {
         let l = lobes((0.0, 0.0));
         for (i, r) in l.iter().enumerate() {
             assert!(r.len() >= 4, "lobe {i}");
-            assert!(r.iter().all(|p| p.0.abs() <= 245.0 && p.1.abs() <= 160.0), "lobe {i}");
+            assert!(r.iter().all(|p| p.0.abs() <= 245.0 && p.1.abs() <= 160.0 && p.0.is_finite() && p.1.is_finite()), "lobe {i}");
         }
         let area = |r: &Vec<(f64, f64)>| (0..r.len()).map(|i| r[i].0 * r[(i + 1) % r.len()].1 - r[(i + 1) % r.len()].0 * r[i].1).sum::<f64>().abs() / 2.0;
         assert!(l.iter().all(|r| area(r) > 4000.0), "every lobe is big enough to number");

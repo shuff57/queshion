@@ -3087,7 +3087,7 @@ const MASLOW: &[Faq] = &[
 const BRAIN_REGIONS: &[Faq] = &[
     Faq {
         q: "Is this an anatomical drawing?",
-        a: "No. It is a simplified original sketch that shows where the main regions sit, front on the left.",
+        a: "It is an original side-view drawing, simplified: the outline, the lateral fissure, the central sulcus and the parieto-occipital line are drawn where they sit, front on the left, but folds and fine detail are left out.",
     },
     Faq {
         q: "What can I show?",
