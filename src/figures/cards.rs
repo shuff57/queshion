@@ -17,6 +17,8 @@ pub enum Card {
     Forces,
     Motion,
     Vectors,
+    /// The motion graphs' Segment 1..n blocks.
+    Segments,
     GrowthFit,
     /// A predator-prey axis "fit" checkbox (true = x-axis) that keeps the range when unticked.
     PpFit(bool),
@@ -34,6 +36,7 @@ pub fn replaces(fig: &str, key: &str) -> Option<Card> {
         ("free-body-diagram", "n") => Card::Forces,
         ("free-body-diagram", "motion") => Card::Motion,
         ("vector-diagram", "n") => Card::Vectors,
+        ("motion-graphs", "n") => Card::Segments,
         ("population-growth", "fit") => Card::GrowthFit,
         ("predator-prey", "x_fit") => Card::PpFit(true),
         ("predator-prey", "y_fit") => Card::PpFit(false),
@@ -63,6 +66,7 @@ pub fn owner(fig: &str, key: &str) -> Option<Card> {
         "free-body-diagram" if item_of(key).is_some_and(|(l, _)| l == "f") => Card::Forces,
         "free-body-diagram" if FBD_MOTION.contains(&key) => Card::Motion,
         "vector-diagram" if item_of(key).is_some_and(|(l, _)| l == "v") => Card::Vectors,
+        "motion-graphs" if item_of(key).is_some_and(|(l, _)| l == "s") => Card::Segments,
         "line-spectrum" if SPECTRUM_OLD.contains(&key) => Card::Strips,
         "particle-diagram" if atoms::is_kind_key(key) => Card::Particles,
         _ => return None,
@@ -77,7 +81,7 @@ pub fn owns(fig: &str, key: &str) -> bool {
 
 /// Figures whose "Add ..." chips live inside a card instead of their own card above the sections.
 pub fn embeds_chips(fig: &str) -> bool {
-    matches!(fig, "free-body-diagram" | "vector-diagram" | "particle-diagram")
+    matches!(fig, "free-body-diagram" | "vector-diagram" | "particle-diagram" | "motion-graphs")
 }
 
 /// The section header summary when the section holds a card's anchor `key`.
@@ -93,12 +97,19 @@ pub fn summary(fig: &str, key: &str, p: &Params) -> Option<String> {
         Card::GelLanes => gel::lanes_summary(p),
         Card::Forces => quoted("f"),
         Card::Vectors => quoted("v"),
-        Card::Motion => match p.s("motion") {
-            "Velocity" => "velocity".into(),
-            "Acceleration" => "acceleration".into(),
-            "Both" => "velocity and acceleration".into(),
-            _ => "none".into(),
-        },
+        Card::Segments => return None,
+        Card::Motion => {
+            // the reference: "velocity 0°, acceleration 90°" (an acceleration with no direction of its own follows the velocity)
+            let deg = |v: f64| format!("{}\u{b0}", (v * 10.0).round() / 10.0 + 0.0);
+            let vel = format!("velocity {}", deg(p.f("mdir")));
+            let acc = format!("acceleration {}", deg(if p.f("adir") < 0.0 { p.f("mdir") } else { p.f("adir") }));
+            match p.s("motion") {
+                "Velocity" => vel,
+                "Acceleration" => acc,
+                "Both" => format!("{vel}, {acc}"),
+                _ => "none".into(),
+            }
+        }
         Card::Strips => spectra::strip_cards(p).iter().map(|c| c.name().to_string()).collect::<Vec<_>>().join(", "),
         Card::Particles => (0..4).filter(|&i| atoms::kind_used(p, i)).map(|i| atoms::kind_summary(p, i)).collect::<Vec<_>>().join(", "),
         _ => return None,
@@ -155,7 +166,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(anchors, 12);
+        assert_eq!(anchors, 13);
     }
 
     #[test]

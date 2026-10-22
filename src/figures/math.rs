@@ -398,7 +398,7 @@ fn draw_poly_inner(s: PolySpec, dec: i64, unit: &str) -> String {
         }
     }
     // side labels
-    let ssz = 17.0 * fs;
+    let ssz = 17.3 * fs;
     for i in 0..n {
         if let Some(t) = s.side_txt.get(i).and_then(|t| t.clone()) {
             let (a, b) = (sp[i], sp[(i + 1) % n]);
@@ -407,7 +407,7 @@ fn draw_poly_inner(s: PolySpec, dec: i64, unit: &str) -> String {
             let mut nn = (-u.1, u.0);
             if nn.0 * (mid.0 - cen.0) + nn.1 * (mid.1 - cen.1) < 0.0 { nn = (-nn.0, -nn.1); }
             let marked = s.ticks.get(i).copied().unwrap_or(0) > 0 || s.arrows.get(i).copied().unwrap_or(0) > 0;
-            let off = if marked { 12.0 } else { 9.0 } + 0.5 * (tw(&t, ssz) * 0.85 * nn.0.abs() + ssz * 0.9 * nn.1.abs());
+            let off = if marked { 8.2 } else { 0.3 * ssz } + 0.5 * (tw(&t, ssz) * 0.85 * nn.0.abs() + ssz * 0.7 * nn.1.abs());
             mlabel_id(&mut doc, &format!("s{i}"), mid.0 + nn.0 * off, mid.1 + nn.1 * off, ssz, &t, unit);
         }
     }
@@ -457,7 +457,7 @@ fn draw_poly_inner(s: PolySpec, dec: i64, unit: &str) -> String {
             let mut b = (-(u.0 + wv.0), -(u.1 + wv.1));
             let bl = (b.0 * b.0 + b.1 * b.1).sqrt();
             if bl < 1e-6 { b = (u.1, -u.0); } else { b = (b.0 / bl, b.1 / bl); }
-            let off = 10.0 + 0.5 * vsz * 0.75;
+            let off = 7.0 + 0.5 * vsz * 0.75; // reference: letter centre ~16 of 440 units from the vertex
             mlabel_id(&mut doc, &format!("v{i}"), v.0 + b.0 * off, v.1 + b.1 * off, vsz, &s.names[i], "");
         }
     }
@@ -884,7 +884,7 @@ pub(crate) fn flat_skin_summary(id: &str, title: &str, p: &Params) -> Option<Str
             let unit = p.s("unit").trim();
             let mut parts = vec![if unit.is_empty() { "no unit".to_string() } else { format!("in {unit}") }];
             parts.push(format!("rounded to {}", match p.i("dec") { 0 => "whole numbers", 1 => "tenths", 2 => "hundredths", _ => "thousandths" }));
-            if p.b("right") { parts.push("right-angle marks".into()); }
+            if p.b("right") { parts.push("right-angle squares".into()); }
             Some(parts.join(" \u{b7} "))
         }
         "Heights" if id == "triangle" => Some(p.s("height").to_string()),
@@ -901,15 +901,20 @@ pub(crate) fn flat_skin_summary(id: &str, title: &str, p: &Params) -> Option<Str
 
 fn shared_tail(v: &mut Vec<ParamDef>, right_default: bool, vertices: bool) {
     v.extend([
-        ParamDef::text("unit", "Unit (e.g. cm)", ""),
-        ParamDef::int("dec", "Round to (decimal places)", 0, 3, 1),
+        ParamDef::text("unit", "Unit", "")
+            .hint("For example cm."),
+        ParamDef::int("dec", "Round to", 0, 3, 1)
+            .hint("Decimal places."),
         ParamDef::bool("right", "Right-angle squares at 90\u{b0} angles and where heights meet a side", right_default),
         ParamDef::bool("vertices", "Corner letters", vertices),
-        ParamDef::float("rotate", "Turn (degrees)", -180.0, 180.0, 1.0, 0.0),
+        ParamDef::float("rotate", "Turn", -180.0, 180.0, 1.0, 0.0)
+            .hint("Degrees."),
         ParamDef::color("fill", "Fill colour", &["#e9f1fb", "#fdf0d5", "#e3f4e1", "#fbe3e3", "#efe5f7", "#ffffff"], "#e9f1fb"),
-        ParamDef::bool("flip", "Flip (mirror left to right)", false),
+        ParamDef::bool("flip", "Flip", false)
+            .hint("Mirror left to right."),
         ParamDef::choice("label_size", "Label size", &["Large", "Medium", "Small"], "Medium"),
-        ParamDef::choice("line_style", "Construction lines (diagonals, heights)", &["Solid", "Dashed", "Dotted"], "Dashed"),
+        ParamDef::choice("line_style", "Construction lines", &["Solid", "Dashed", "Dotted"], "Dashed")
+            .hint("Diagonals, heights."),
     ]);
 }
 
@@ -927,19 +932,26 @@ pub(crate) fn triangle_params() -> Vec<ParamDef> {
         ParamDef::text("name_a", "Name of corner A", "A"),
         ParamDef::text("name_b", "Name of corner B", "B"),
         ParamDef::text("name_c", "Name of corner C", "C"),
-        ParamDef::text("m_a", "Angle A (blank = worked out)", "24"),
-        ParamDef::text("m_b", "Angle B (blank = worked out)", "90"),
-        ParamDef::text("m_c", "Angle C (blank = worked out)", ""),
-        ParamDef::text("m_ab", "Side AB (blank = worked out)", "12"),
-        ParamDef::text("m_bc", "Side BC (blank = worked out)", ""),
-        ParamDef::text("m_ca", "Side CA (blank = worked out)", ""),
+        ParamDef::text("m_a", "Angle A", "24")
+            .hint("Blank = worked out."),
+        ParamDef::text("m_b", "Angle B", "90")
+            .hint("Blank = worked out."),
+        ParamDef::text("m_c", "Angle C", "")
+            .hint("Blank = worked out."),
+        ParamDef::text("m_ab", "Side AB", "12")
+            .hint("Blank = worked out."),
+        ParamDef::text("m_bc", "Side BC", "")
+            .hint("Blank = worked out."),
+        ParamDef::text("m_ca", "Side CA", "")
+            .hint("Blank = worked out."),
     ];
     label_params(&mut v, &TRI_LAB, &TRI_TXT, &TRI_MARK, true, 3);
     for d in v.iter_mut() {
         match d.key { "a_lab" | "b_lab" | "ab_lab" => d.default = Value::S("Measure".into()), "bc_lab" => d.default = Value::S("Text".into()), _ => {} }
     }
     v.extend([
-        ParamDef::bool("other", "Show the other triangle (when the measures make two)", false),
+        ParamDef::bool("other", "Show the other triangle", false)
+            .hint("When the measures make two."),
         ParamDef::choice("height", "Height", &["None", "From A", "From B", "From C", "From A and B", "From A and C", "From B and C", "From all three"], "None"),
         ParamDef::choice("bottom", "Side at the bottom", &["AB", "BC", "CA"], "AB"),
     ]);
@@ -1274,7 +1286,8 @@ fn diag_params() -> Vec<ParamDef> {
         ParamDef::text("ac_label", "Diagonal AC label text", "d"),
         ParamDef::choice("bd_lab", "Diagonal BD label", &LAB_OPTS, "None"),
         ParamDef::text("bd_label", "Diagonal BD label text", "e"),
-        ParamDef::list("arrow_marks", "Parallel arrows per side, e.g. AB 1, CD 1 (or none; blank = the figure's default)", ""),
+        ParamDef::list("arrow_marks", "Parallel arrows per side", "")
+            .hint("For example AB 1, CD 1, or none; blank is the figure\u{2019}s default."),
         ParamDef::choice("ab_arrows", "Parallel arrows on AB", &ARROW_OPTS, "Auto"),
         ParamDef::choice("bc_arrows", "Parallel arrows on BC", &ARROW_OPTS, "Auto"),
         ParamDef::choice("cd_arrows", "Parallel arrows on CD", &ARROW_OPTS, "Auto"),
@@ -1398,9 +1411,10 @@ pub(crate) fn parallelogram_render(p: &Params) -> String {
 pub(crate) fn trapezoid_params() -> Vec<ParamDef> {
     let mut v = vec![ParamDef::choice("kind", "Kind", &["Trapezoid", "Isosceles trapezoid", "Right trapezoid"], "Right trapezoid")];
     v.extend(quad_params("trapezoid", &[("m_ab", "12"), ("m_cd", "7"), ("m_da", "5"), ("ab_lab", "Measure"), ("cd_lab", "Measure"), ("da_lab", "Measure"), ("bc_lab", "Text")]));
-    v.push(ParamDef::text("m_h", "Height between the bases (blank = worked out)", ""));
+    v.push(ParamDef::text("m_h", "Height between the bases", "").hint("Blank = worked out."));
     v.extend([
-        ParamDef::bool("show_height", "Draw the height", false),
+        ParamDef::bool("show_height", "Height dashed", false)
+            .hint("Straight down to the base."),
         ParamDef::choice("hfrom", "Height drawn from", &["D", "C", "D and C"], "D"),
     ]);
     v.extend(diag_params());
@@ -1498,29 +1512,41 @@ pub(crate) fn regular_polygon_params() -> Vec<ParamDef> {
         ParamDef::float("value", "Size", 0.5, 100.0, 0.5, 8.0),
         ParamDef::choice("side_lab", "Side label", &LAB_OPTS, "Measure"),
         ParamDef::text("side_label", "Side label text", "s"),
-        ParamDef::choice("side_ticks", "Congruence ticks (every side)", &TICKS, "None"),
+        ParamDef::choice("side_ticks", "Congruence ticks", &TICKS, "None")
+            .hint("Every side."),
         ParamDef::choice("ang_lab", "Angle label", &LAB_OPTS, "None"),
         ParamDef::text("ang_label", "Angle label text", "x"),
-        ParamDef::choice("ang_arcs", "Congruence arcs (every angle)", &TICKS, "None"),
+        ParamDef::choice("ang_arcs", "Congruence arcs", &TICKS, "None")
+            .hint("Every angle."),
         ParamDef::bool("center_dot", "Center dot", true),
-        ParamDef::text("center_name", "Name the center (e.g. O)", ""),
-        ParamDef::bool("apothem", "Apothem (center to the middle of the bottom side)", true),
+        ParamDef::text("center_name", "Name the center", "")
+            .hint("Optional, for example O."),
+        ParamDef::bool("apothem", "Apothem", true)
+            .hint("Center to the middle of the bottom side."),
         ParamDef::choice("apothem_label", "Apothem label", &["a = measure", "Measure", "Text", "None"], "Text"),
         ParamDef::text("apothem_text", "Apothem name / text", "a"),
-        ParamDef::bool("radius", "Radius (center to the bottom right corner)", false),
+        ParamDef::bool("radius", "Radius", false)
+            .hint("Center to the bottom right corner."),
         ParamDef::choice("radius_label", "Radius label", &["r = measure", "Measure", "Text", "None"], "Text"),
         ParamDef::text("radius_text", "Radius name / text", "r"),
-        ParamDef::bool("all_radii", "All the radii (center to every corner)", false),
-        ParamDef::bool("vertices", "Letter the corners A, B, C... from the bottom left", false),
-        ParamDef::text("vnames", "Corner letters in order (e.g. P, Q, R; blank = A, B, C)", ""),
-        ParamDef::text("unit", "Unit (e.g. cm)", ""),
-        ParamDef::int("dec", "Round to (decimal places)", 0, 3, 1),
+        ParamDef::bool("all_radii", "All the radii", false)
+            .hint("Center to every corner."),
+        ParamDef::bool("vertices", "Letter the corners A, B, C\u{2026} from the bottom left", false),
+        ParamDef::text("vnames", "Corner letters", "")
+            .hint("In order, for example P, Q, R; blank gives A, B, C."),
+        ParamDef::text("unit", "Unit", "")
+            .hint("For example cm."),
+        ParamDef::int("dec", "Round to", 0, 3, 1)
+            .hint("Decimal places."),
         ParamDef::bool("right", "Right-angle squares where the apothem meets its side", true),
-        ParamDef::float("rotate", "Turn (degrees)", -180.0, 180.0, 1.0, 0.0),
+        ParamDef::float("rotate", "Turn", -180.0, 180.0, 1.0, 0.0)
+            .hint("Degrees."),
         ParamDef::color("fill", "Fill colour", &["#e9f1fb", "#fdf0d5", "#e3f4e1", "#fbe3e3", "#efe5f7", "#ffffff"], "#e9f1fb"),
-        ParamDef::bool("flip", "Flip (mirror left to right)", false),
+        ParamDef::bool("flip", "Flip", false)
+            .hint("Mirror left to right."),
         ParamDef::choice("label_size", "Label size", &["Large", "Medium", "Small"], "Medium"),
-        ParamDef::choice("line_style", "Construction lines (radius, apothem)", &["Solid", "Dashed", "Dotted"], "Dashed"),
+        ParamDef::choice("line_style", "Construction lines", &["Solid", "Dashed", "Dotted"], "Dashed")
+            .hint("Radius, apothem."),
     ]
 }
 
@@ -1621,14 +1647,17 @@ pub(crate) fn angles_params() -> Vec<ParamDef> {
         v.push(ParamDef::choice(RAY_LINE[i], "Drawn as", &["Ray", "Line"], "Ray"));
     }
     v.extend([
-        ParamDef::bool("around", "Angle back around to the baseline (angles around a point)", false),
+        ParamDef::bool("around", "Angle back around to the baseline", false)
+            .hint("Angles around a point."),
         ParamDef::list("unknown", "Sector numbers shown as x (counterclockwise from baseline, e.g. 2)", ""),
         ParamDef::list("hide", "Sector numbers left unlabelled", ""),
         ParamDef::long("sector_text", "Text labels for sectors, e.g. 1 = 2x + 10; 3 = y", ""),
         ParamDef::bool("right", "Right-angle squares", true),
         ParamDef::bool("letters", "Point letters on the rays", true),
-        ParamDef::int("dec", "Round measures to (decimal places)", 0, 3, 1),
-        ParamDef::float("turn", "Turn the figure (degrees)", -180.0, 180.0, 1.0, 0.0),
+        ParamDef::int("dec", "Round measures to", 0, 3, 1)
+            .hint("Decimal places."),
+        ParamDef::float("turn", "Turn the figure", -180.0, 180.0, 1.0, 0.0)
+            .hint("Degrees."),
         ParamDef::choice("ray_ends", "Ray ends", &["Arrows", "Plain", "Points"], "Arrows"),
         ParamDef::bool("shade", "Shade the angles", true),
         ParamDef::choice("label_size", "Label size", &["Large", "Medium", "Small"], "Medium"),
@@ -1770,8 +1799,10 @@ pub(crate) fn parallel_lines_params() -> Vec<ParamDef> {
         ParamDef::text("name_p", "Name of the third line", "p"),
         ParamDef::text("name_t", "Name of the transversal", "t"),
         ParamDef::text("name_u", "Name of the second transversal", "u"),
-        ParamDef::float("angle", "Angle above m, right of the transversal (degrees)", 10.0, 170.0, 1.0, 65.0),
-        ParamDef::float("angle_b", "Second transversal angle (degrees; its angles number on after the first's)", 10.0, 170.0, 1.0, 115.0),
+        ParamDef::float("angle", "Angle above m, right of the transversal", 10.0, 170.0, 1.0, 65.0)
+            .hint("Degrees."),
+        ParamDef::float("angle_b", "Second transversal angle", 10.0, 170.0, 1.0, 115.0)
+            .hint("Degrees; its angles number on after the first's."),
     ];
     for i in 0..5 {
         v.push(ParamDef::choice(PL_STYLE[i], "Line", &STYLES, "Solid"));
@@ -1780,12 +1811,16 @@ pub(crate) fn parallel_lines_params() -> Vec<ParamDef> {
     v.extend([
         ParamDef::float("gap", "Gap between lines", 0.5, 3.0, 0.1, 1.0),
         ParamDef::choice("labels", "Label style", &["Degrees", "Numbers"], "Degrees"),
-        ParamDef::list("marked", "Angles to label (1-8 at the first two crossings, 5-8 at m and n, 9-12 at the third line), e.g. 2, 6", "2, 6"),
+        ParamDef::list("marked", "Angles to label", "2, 6")
+            .hint("1-8 at the first two crossings, 5-8 at m and n, 9-12 at the third line, for example 2, 6."),
         ParamDef::list("unknown", "Marked angles shown as x", "6"),
         ParamDef::long("angle_text", "Text labels for marked angles, e.g. 2 = 3x + 5; 6 = y", ""),
-        ParamDef::bool("names", "Line names (m, n, t)", true),
-        ParamDef::int("dec", "Round measures to (decimal places)", 0, 3, 1),
-        ParamDef::float("turn", "Turn the figure (degrees)", -180.0, 180.0, 1.0, 0.0),
+        ParamDef::bool("names", "Line names", true)
+            .hint("M, n, t."),
+        ParamDef::int("dec", "Round measures to", 0, 3, 1)
+            .hint("Decimal places."),
+        ParamDef::float("turn", "Turn the figure", -180.0, 180.0, 1.0, 0.0)
+            .hint("Degrees."),
         ParamDef::choice("line_ends", "Line ends", &["Arrowheads", "Plain"], "Arrowheads"),
         ParamDef::choice("label_size", "Label size", &["Large", "Medium", "Small"], "Medium"),
     ]);
@@ -1915,7 +1950,8 @@ pub(crate) fn card(id: &str) -> Option<MeasureCard> {
         let arrows = (0..4).map(|i| MeasureRow { equals: Some("\u{203a}"), ..row(side_names[i], Q_PAR[i], "", Q_ARROW[i], "", None) }).collect();
         vec![MeasureGroup { title: "Sides", rows: sides }, MeasureGroup { title: "Angles", rows: angs }, MeasureGroup { title: "Parallel arrows", rows: arrows }]
     };
-    let help_quad = "Fill in the kind's measures; the rest are worked out and shown faintly. Type sqrt for \u{221a}, / for a fraction and pi for \u{3c0}. Rename a corner in the box before its angle. The button after each measure sets its label and congruence marks.";
+    let help_quad = "Pick a kind, then fill in its measures; the rest are worked out and shown faintly. Type sqrt for \u{221a}, / for a fraction and pi for \u{3c0}. Rename a corner in the box before its angle. The button after each measure sets its label, congruence marks and parallel arrows.";
+    let help_kite = "Fill in the measures; the rest are worked out and shown faintly. Type sqrt for \u{221a}, / for a fraction and pi for \u{3c0}. Rename a corner in the box before its angle. The button after each measure sets its label, congruence marks and parallel arrows.";
     Some(match id {
         "triangle" => {
             let mut angs = Vec::new();
@@ -1931,7 +1967,7 @@ pub(crate) fn card(id: &str) -> Option<MeasureCard> {
                 groups: vec![MeasureGroup { title: "Angles", rows: angs }, MeasureGroup { title: "Sides", rows: sides }],
             }
         }
-        "rectangle" | "parallelogram" | "trapezoid" | "kite" => MeasureCard { title: "Measures", help: help_quad, groups: quad_rows(id) },
+        "rectangle" | "parallelogram" | "trapezoid" | "kite" => MeasureCard { title: "Measures", help: if id == "kite" { help_kite } else { help_quad }, groups: quad_rows(id) },
         "regular-polygon" => {
             let rows = vec![
                 row("Sides", "n", "", "", "", None),
@@ -1947,7 +1983,7 @@ pub(crate) fn card(id: &str) -> Option<MeasureCard> {
             rad.equals = Some("worked out");
             MeasureCard {
                 title: "Polygon",
-                help: "Pick the number of sides, then give one measure: the side, the radius (center to a corner) or the apothem (center to the middle of a side) under Size from. The rest are worked out. The side's label goes on the bottom side and the angle's in the bottom left corner; their marks go on every side or angle.",
+                help: "Pick the number of sides, then give one measure: the side, the radius (center to a corner) or the apothem (center to the middle of a side). The rest are worked out. Type sqrt for \u{221a} and / for a fraction. The button after the side and the angle sets their label and congruence marks, which go on every side or angle.",
                 groups: vec![MeasureGroup { title: "", rows }, MeasureGroup { title: "Measures", rows: vec![side, ang, apo, rad] }],
             }
         }
@@ -1958,7 +1994,7 @@ pub(crate) fn card(id: &str) -> Option<MeasureCard> {
             for i in 1..6 { rows.push(row(["", "Ray 2", "Ray 3", "Ray 4", "Ray 5", "Ray 6"][i], RAY_V[i], "\u{b0}", RAY_STYLE[i], "", Some(RAY_LINE[i]))); }
             MeasureCard {
                 title: "Rays",
-                help: "Every ray starts at the vertex. The baseline points right, and each other ray's direction is its angle from the baseline, counterclockwise, as a protractor reads it: 90\u{b0} points straight up. Leave a direction blank for no ray. The button after a ray sets its line style and whether it runs through the vertex as a line. Click an angle on the figure to label it.",
+                help: "Every ray starts at the vertex. The baseline points right, and each other ray's direction is its angle from the baseline, counterclockwise, as a protractor reads it: 90\u{b0} points straight up. Turn a ray into a line through the vertex with the button after it. Click any angle on the figure to label, mark or shade it, or click the vertex or near a ray's end to put a named point there.",
                 groups: vec![MeasureGroup { title: "", rows }],
             }
         }
@@ -1977,7 +2013,7 @@ pub(crate) fn card(id: &str) -> Option<MeasureCard> {
             }).collect();
             MeasureCard {
                 title: "Parallel lines",
-                help: "The parallel lines run across the page, evenly spaced. Each transversal crosses them at the angle you give: the angle above the top line, to the right of the transversal. The button after a line sets its style and parallel arrows. Click an angle on the figure to label it.",
+                help: "The parallel lines run across the page, evenly spaced. Each transversal crosses them at the angle you give: the angle above the top line, to the right of the transversal. Click any angle or line on the figure to label or style it. Click where lines cross, or near the end of a line, to put a named point there.",
                 groups: vec![MeasureGroup { title: "Parallel lines", rows: lines }, MeasureGroup { title: "Transversals", rows: trans }],
             }
         }
@@ -2546,22 +2582,27 @@ const NUM_EVERY_LINE: [&str; 5] = ["Every line", "Every 2nd line", "Every 5th li
 
 fn coordinate_grid_params() -> Vec<ParamDef> {
     vec![
-        ParamDef::float("xmin", "x-axis minimum (from)", -1000.0, 1000.0, 1.0, 0.0),
-        ParamDef::float("xmax", "x-axis maximum (to)", -1000.0, 1000.0, 1.0, 15.0),
-        ParamDef::float("xstep", "x-axis step (count by)", 0.05, 180.0, 0.5, 1.0),
-        ParamDef::float("ymin", "y-axis minimum (from)", -1000.0, 1000.0, 1.0, 0.0),
-        ParamDef::float("ymax", "y-axis maximum (to)", -1000.0, 1000.0, 1.0, 15.0),
-        ParamDef::float("ystep", "y-axis step (count by)", 0.05, 180.0, 0.5, 1.0),
-        ParamDef::int("minor", "Minor gridlines per step (0 = none)", 0, 10, 0),
+        ParamDef::float("xmin", "x-axis from", -1000.0, 1000.0, 1.0, 0.0),
+        ParamDef::float("xmax", "x-axis to", -1000.0, 1000.0, 1.0, 15.0),
+        ParamDef::float("xstep", "x-axis count by", 0.05, 180.0, 0.5, 1.0),
+        ParamDef::float("ymin", "y-axis from", -1000.0, 1000.0, 1.0, 0.0),
+        ParamDef::float("ymax", "y-axis to", -1000.0, 1000.0, 1.0, 15.0),
+        ParamDef::float("ystep", "y-axis count by", 0.05, 180.0, 0.5, 1.0),
+        ParamDef::int("minor", "Minor gridlines per step", 0, 10, 0)
+            .hint("0 = none."),
         ParamDef::bool("numbers", "Number the axes", true),
         ParamDef::bool("arrows", "Arrowheads on axes", true),
         ParamDef::bool("square", "Square cells", true),
-        ParamDef::text("xlabel", "x-axis label (at the arrow; empty = none)", "x"),
-        ParamDef::text("ylabel", "y-axis label (at the arrow; empty = none)", "y"),
+        ParamDef::text("xlabel", "x-axis label", "x")
+            .hint("At the arrow; empty = none."),
+        ParamDef::text("ylabel", "y-axis label", "y")
+            .hint("At the arrow; empty = none."),
         ParamDef::text("title", "Title", ""),
-        ParamDef::long("equations", "Equations, one per ; - y = 2x + 1; 2x + 3y = 6; x = 4; y > x - 2; -2 < x <= 3; y = x + 2, x < 1 (piece with a domain)", "y = 2x + 1"),
+        ParamDef::long("equations", "Equations", "y = 2x + 1")
+            .hint("One per semicolon, for example y = 2x + 1; 2x + 3y = 6; x = 4; y > x - 2; -2 < x <= 3; y = x + 2, x < 1 (a piece with a domain)."),
         ParamDef::bool("eq_labels", "Write each equation on its line", false),
-        ParamDef::long("points", "Points - A(1, 2), B(-3, 4)  or  (2,3) A; (-1,4) B", ""),
+        ParamDef::long("points", "Points", "")
+            .hint("For example A(1, 2), B(-3, 4) or (2,3) A; (-1,4) B."),
         ParamDef::color("eq1_color", "Equation 1 colour", &SWATCHES, "#1f5fbf"),
         ParamDef::color("eq2_color", "Equation 2 colour", &SWATCHES, "#c0392b"),
         ParamDef::color("eq3_color", "Equation 3 colour", &SWATCHES, "#2a8a3e"),
@@ -2574,11 +2615,14 @@ fn coordinate_grid_params() -> Vec<ParamDef> {
         ParamDef::text("ytitle", "y-axis title text", "Distance (m)"),
         ParamDef::choice("xnum", "x-axis numbers", &NUM_EVERY_LINE, "Every line"),
         ParamDef::choice("ynum", "y-axis numbers", &NUM_EVERY_LINE, "Every line"),
-        ParamDef::choice("xunits", "x-axis units (range and step typed in these)", &["Numbers", "Multiples of \u{3c0}", "Degrees"], "Numbers"),
-        ParamDef::choice("grid", "Gridlines (bold for photocopies)", &["Light", "Standard", "Bold", "None"], "Standard"),
+        ParamDef::choice("xunits", "x-axis units", &["Numbers", "Multiples of \u{3c0}", "Degrees"], "Numbers")
+            .hint("Range and step typed in these."),
+        ParamDef::choice("grid", "Gridlines", &["Light", "Standard", "Bold", "None"], "Standard")
+            .hint("Bold for photocopies."),
         ParamDef::choice("line_width", "Graph line thickness", &["Thin", "Medium", "Thick"], "Medium"),
         ParamDef::choice("shading", "Inequality shading", &["Tint", "Hatching"], "Tint"),
-        ParamDef::bool("asymptotes", "Show vertical asymptotes (dotted)", false),
+        ParamDef::bool("asymptotes", "Show vertical asymptotes", false)
+            .hint("Dotted."),
         ParamDef::bool("endpoints", "Endpoint circles on pieces with a domain", true),
         ParamDef::choice("pt_style", "Point style", &["Dot", "Cross"], "Dot"),
         ParamDef::choice("pt_label", "Point labels", &["Letter", "Letter and coordinates", "None"], "Letter"),
@@ -2995,21 +3039,26 @@ pub(super) fn parse_ineq(s: &str) -> Vec<Interval> {
 
 fn number_line_params() -> Vec<ParamDef> {
     vec![
-        ParamDef::float("min", "Minimum (from)", -1000.0, 1000.0, 1.0, -10.0),
-        ParamDef::float("max", "Maximum (to)", -1000.0, 1000.0, 1.0, 10.0),
-        ParamDef::float("step", "Tick step (count by)", 0.05, 100.0, 0.5, 1.0),
+        ParamDef::float("min", "From", -1000.0, 1000.0, 1.0, -10.0),
+        ParamDef::float("max", "To", -1000.0, 1000.0, 1.0, 10.0),
+        ParamDef::float("step", "Count by", 0.05, 100.0, 0.5, 1.0),
         ParamDef::int("label_every", "Number every n-th tick", 1, 20, 1),
-        ParamDef::int("minor", "Minor ticks between ticks (0 = none)", 0, 9, 0),
+        ParamDef::int("minor", "Minor ticks between ticks", 0, 9, 0)
+            .hint("0 = none."),
         ParamDef::bool("numbers", "Show numbers", true),
         ParamDef::bool("arrows", "Arrowheads", true),
-        ParamDef::text("inequality", "Inequality to graph (e.g. -2 < x <= 5, x > 3, x < -4 or x >= 1, x != 2, all real numbers, no solution)", "-2 < x <= 5"),
-        ParamDef::list("points", "Points to mark: 3, -4, 5o (open), P(3/4), Q(3/2)", ""),
+        ParamDef::text("inequality", "Inequality to graph", "-2 < x <= 5")
+            .hint("For example -2 < x <= 5, x > 3, x < -4 or x >= 1, x != 2, all real numbers, no solution."),
+        ParamDef::list("points", "Points to mark", "")
+            .hint("For example 3, -4, 5o (open), P(3/4), Q(3/2)."),
         ParamDef::text("label", "Axis label", ""),
         ParamDef::color("ineq_color", "Inequality colour", &SWATCHES, "#1f5fbf"),
         ParamDef::color("pt_color", "Point colour", &SWATCHES, "#c0392b"),
-        ParamDef::text("step_text", "Count by as a fraction, e.g. 1/4 (overrides the tick step; numbers become fractions)", ""),
+        ParamDef::text("step_text", "Count by as a fraction", "")
+            .hint("For example 1/4. Overrides the tick step; the numbers become fractions."),
         ParamDef::choice("frac_style", "Fractions written as", &["Improper (5/4)", "Mixed (1 1/4)"], "Improper (5/4)"),
-        ParamDef::text("inequality2", "Second graph, drawn separately above the line (its own colour)", ""),
+        ParamDef::text("inequality2", "Second graph", "")
+            .hint("Drawn separately above the line, in its own colour."),
         ParamDef::choice("label_size", "Label size", &["Large", "Medium", "Small"], "Medium"),
         ParamDef::color("ineq2_color", "Second graph colour", &SWATCHES, "#c0392b"),
         ParamDef::bool("pt_values", "Write the value above unlettered points that are off the numbered ticks", false),
@@ -3375,10 +3424,12 @@ fn rmark3(d: &mut Doc, m: &Map, proj: &dyn Fn(P3) -> Pt, o: P3, e1: P3, e2: P3) 
 
 fn solid_common(unit: &str) -> Vec<ParamDef> {
     vec![
-        ParamDef::bool("hidden", "Show hidden edges (dashed)", true),
+        ParamDef::bool("hidden", "Hidden edges", true)
+            .hint("Dashed, for the edges round the back."),
         ParamDef::bool("right", "Right-angle squares", true),
         ParamDef::text("unit", "Unit", unit),
-        ParamDef::int("dec", "Decimal places", 0, 3, 1),
+        ParamDef::int("dec", "Round to", 0, 3, 1)
+            .hint("In decimal places."),
     ]
 }
 
@@ -3416,7 +3467,8 @@ fn ctext(p: &Params, v: f64) -> String { fmt(v, p.i("dec")) }
 /// Diameter row of the round solids: a linked row (= 2 x radius) with its own label.
 fn diameter_params() -> [ParamDef; 2] {
     [
-        ParamDef::choice("d_lab", "Diameter label (drawn right across the circle)", &LAB_OPTS, "None"),
+        ParamDef::choice("d_lab", "Diameter label", &LAB_OPTS, "None")
+            .hint("Drawn right across the circle."),
         ParamDef::text("d_label", "Diameter label text", "d"),
     ]
 }
@@ -3430,20 +3482,20 @@ fn measures_solid(id: &str) -> Option<super::MeasureCard> {
     // the Diameter row (value "diam") replaces Radius with "Give the diameter instead" (card_visible)
     let radius = || vec![row("Radius", "radius", "r_lab", "r_label"), row("Diameter", "diam", "r_lab", "d_label"), link("Diameter", "diameter", "d_lab", "d_label", "2 \u{d7} radius")];
     let (help, groups) = match id {
-        "sphere" => ("Give the radius. The diameter is worked out; its label button draws it right across the circle.", vec![g("", radius())]),
+        "sphere" => ("Give every measure. Worked-out measures are shown faintly. Type sqrt for \u{221a}, / for a fraction and pi for \u{3c0}.", vec![g("", radius())]),
         "cylinder" => (
-            "Give every measure. Worked-out measures are shown faintly. Oblique: give the slanted edge to have the height worked out from it and the lean. Type sqrt for \u{221a}, / for a fraction and pi for \u{3c0}.",
+            "Give every measure. Worked-out measures are shown faintly. Type sqrt for \u{221a}, / for a fraction and pi for \u{3c0}.",
             vec![g("", { let mut r = radius(); r.push(row("Height", "height", "h_lab", "h_label")); r }), g("Oblique", vec![row("Lean", "lean", "lean_lab", "lean_label"), row("Slanted edge", "edge", "edge_lab", "edge_label")])],
         ),
         "cone" => (
-            "Give the radius and the height, or type the slant height to have the height worked out. Worked-out measures are shown faintly. Type sqrt for \u{221a}, / for a fraction and pi for \u{3c0}.",
+            "Give the height or the slant height, and the other is worked out. Worked-out measures are shown faintly. Type sqrt for \u{221a}, / for a fraction and pi for \u{3c0}.",
             vec![
                 g("", { let mut r = radius(); r.extend([row("Height", "height", "h_lab", "h_label"), row("Slant height", "slant", "l_lab", "l_label")]); r }),
                 g("Oblique", vec![row("Lean", "lean", "lean_lab", "lean_label")]),
             ],
         ),
         "pyramid" => (
-            "Give every measure. Type the slant height to have the height worked out. Worked-out measures are shown faintly. Type sqrt for \u{221a}, / for a fraction and pi for \u{3c0}.",
+            "Give the height or the slant height, and the other is worked out. Worked-out measures are shown faintly. Type sqrt for \u{221a}, / for a fraction and pi for \u{3c0}.",
             vec![
                 g("Rectangle base", vec![row("Length", "length", "length_lab", "length_label"), row("Width", "width", "width_lab", "width_label")]),
                 g("Regular polygon base", vec![row("Side", "side", "side_lab", "side_label"), link("Apothem", "apothem", "apothem_lab", "apothem_label", "worked out")]),
@@ -3452,7 +3504,7 @@ fn measures_solid(id: &str) -> Option<super::MeasureCard> {
             ],
         ),
         "prism" => (
-            "Give every measure. For a triangle base, Length is the triangle's base and Width the triangle's height; when the prism lies on its side, Height is its length. Oblique: give the slanted edge to have the height worked out. Type sqrt for \u{221a}, / for a fraction and pi for \u{3c0}.",
+            "Give every measure. Worked-out measures are shown faintly. Type sqrt for \u{221a}, / for a fraction and pi for \u{3c0}.",
             vec![
                 g("Rectangle or triangle base", vec![
                     row("Length", "length", "length_lab", "length_label"),
@@ -3604,14 +3656,16 @@ fn prism_params() -> Vec<ParamDef> {
         ParamDef::choice("stands", "Stands", &["Right", "Oblique"], "Right"),
         ParamDef::float("lean", "Lean of the top when oblique", -20.0, 20.0, 0.5, 2.0),
         ParamDef::float("length", "Length", 0.5, 50.0, 0.5, 5.0),
-        ParamDef::float("width", "Width (depth, or triangle height)", 0.5, 50.0, 0.5, 3.0),
+        ParamDef::float("width", "Width", 0.5, 50.0, 0.5, 3.0)
+            .hint("Depth, or triangle height."),
         ParamDef::int("n", "Sides of regular-polygon base", 3, 12, 5),
         ParamDef::float("side", "Side of regular-polygon base", 0.5, 50.0, 0.5, 3.0),
         ParamDef::float("height", "Height", 0.5, 50.0, 0.5, 4.0),
     ];
     v.extend(solid_common("cm"));
     v.extend([
-        ParamDef::choice("sits", "Sits (triangle or polygon base)", &["Standing on its base", "Lying on its side"], "Standing on its base"),
+        ParamDef::choice("sits", "Sits", &["Standing on its base", "Lying on its side"], "Standing on its base")
+            .hint("For a triangle or polygon base."),
         ParamDef::choice("depth", "Position: depth goes back to the", &["Right", "Left"], "Right"),
         ParamDef::bool("names", "Name the corners around the base, then around the top", false),
         label_size_param(),
@@ -3623,14 +3677,19 @@ fn prism_params() -> Vec<ParamDef> {
         ParamDef::text("height_label", "Height label text", "h"),
         ParamDef::choice("side_lab", "Polygon side label", &LAB_OPTS, "Measure"),
         ParamDef::text("side_label", "Polygon side label text", "s"),
-        ParamDef::choice("hyp_lab", "Hypotenuse / slanted side label (worked out)", &LAB_OPTS, "None"),
+        ParamDef::choice("hyp_lab", "Hypotenuse / slanted side label", &LAB_OPTS, "None")
+            .hint("Worked out."),
         ParamDef::text("hyp_label", "Hypotenuse label text", "x"),
-        ParamDef::choice("apothem_lab", "Apothem label (worked out)", &LAB_OPTS, "None"),
+        ParamDef::choice("apothem_lab", "Apothem label", &LAB_OPTS, "None")
+            .hint("Worked out."),
         ParamDef::text("apothem_label", "Apothem label text", "a"),
-        ParamDef::choice("lean_lab", "Lean label (oblique)", &LAB_OPTS, "Measure"),
+        ParamDef::choice("lean_lab", "Lean label", &LAB_OPTS, "Measure")
+            .hint("Oblique."),
         ParamDef::text("lean_label", "Lean label text", "d"),
-        ParamDef::text("edge", "Slanted edge (oblique; empty = worked out, typed = the height is worked out)", ""),
-        ParamDef::choice("edge_lab", "Slanted edge label (oblique)", &LAB_OPTS, "None"),
+        ParamDef::text("edge", "Slanted edge", "")
+            .hint("Oblique; empty = worked out, typed = the height is worked out."),
+        ParamDef::choice("edge_lab", "Slanted edge label", &LAB_OPTS, "None")
+            .hint("Oblique."),
         ParamDef::text("edge_label", "Slanted edge label text", "e"),
     ]);
     v
@@ -3757,11 +3816,13 @@ fn pyramid_params() -> Vec<ParamDef> {
         ParamDef::int("n", "Sides of regular-polygon base", 3, 12, 5),
         ParamDef::float("side", "Side of regular-polygon base", 0.5, 50.0, 0.5, 4.0),
         ParamDef::float("height", "Height", 0.5, 50.0, 0.5, 4.0),
-        ParamDef::bool("show_height", "Draw the height", true),
+        ParamDef::bool("show_height", "Height dashed", true)
+            .hint("Straight down to the base."),
     ];
     v.extend(solid_common("cm"));
     v.extend([
-        ParamDef::text("slant", "Slant height (empty = worked out; typed = the height is worked out)", ""),
+        ParamDef::text("slant", "Slant height", "")
+            .hint("Empty = worked out; typed = the height is worked out."),
         ParamDef::choice("depth", "Position: depth goes back to the", &["Right", "Left"], "Right"),
         ParamDef::bool("names", "Name the corners around the base, then the tip", false),
         label_size_param(),
@@ -3773,11 +3834,14 @@ fn pyramid_params() -> Vec<ParamDef> {
         ParamDef::text("side_label", "Polygon side label text", "s"),
         ParamDef::choice("height_lab", "Height label", &LAB_OPTS, "Measure"),
         ParamDef::text("height_label", "Height label text", "h"),
-        ParamDef::choice("slant_lab", "Slant height label (drawn apex to the middle of the front edge)", &LAB_OPTS, "None"),
+        ParamDef::choice("slant_lab", "Slant height label", &LAB_OPTS, "None")
+            .hint("Drawn apex to the middle of the front edge."),
         ParamDef::text("slant_label", "Slant height label text", "l"),
-        ParamDef::choice("apothem_lab", "Apothem label (worked out)", &LAB_OPTS, "None"),
+        ParamDef::choice("apothem_lab", "Apothem label", &LAB_OPTS, "None")
+            .hint("Worked out."),
         ParamDef::text("apothem_label", "Apothem label text", "a"),
-        ParamDef::choice("lean_lab", "Lean label (oblique)", &LAB_OPTS, "Measure"),
+        ParamDef::choice("lean_lab", "Lean label", &LAB_OPTS, "Measure")
+            .hint("Oblique."),
         ParamDef::text("lean_label", "Lean label text", "d"),
     ]);
     v
@@ -3861,14 +3925,18 @@ fn mpts(m: &Map, pts: &[Pt]) -> Vec<Pt> { pts.iter().map(|q| m.p(*q)).collect() 
 
 fn round_common() -> Vec<ParamDef> {
     vec![
-        ParamDef::float("view", "View elevation (degrees above the horizon)", 8.0, 60.0, 0.1, 20.7),
-        ParamDef::bool("hidden", "Show hidden edges (dashed)", true),
+        ParamDef::float("view", "View elevation", 8.0, 60.0, 0.1, 20.7)
+            .hint("Degrees above the horizon."),
+        ParamDef::bool("hidden", "Hidden edges", true)
+            .hint("Dashed, for the edges round the back."),
         ParamDef::bool("right", "Right-angle squares", true),
         ParamDef::text("unit", "Unit", "cm"),
-        ParamDef::int("dec", "Decimal places", 0, 3, 1),
+        ParamDef::int("dec", "Round to", 0, 3, 1)
+            .hint("In decimal places."),
         // the reference's "Give the diameter instead": the Radius row becomes a Diameter row and the
         // diameter is drawn right across the circle with the radius row's label
-        ParamDef::bool("give_d", "Give the diameter instead (drawn right across the circle)", false),
+        ParamDef::bool("give_d", "Give the diameter instead", false)
+            .hint("Drawn right across the circle."),
         ParamDef::float("diam", "Diameter", 1.0, 100.0, 0.5, 6.0),
     ]
 }
@@ -3932,17 +4000,21 @@ fn cylinder_params() -> Vec<ParamDef> {
         ParamDef::float("lean", "Lean of the top when oblique", -20.0, 20.0, 0.5, 2.0),
         ParamDef::float("radius", "Radius", 0.5, 50.0, 0.5, 3.0),
         ParamDef::float("height", "Height", 0.5, 50.0, 0.5, 4.0),
-        ParamDef::bool("show_height", "Draw the height", false),
+        ParamDef::bool("show_height", "Height dashed", false)
+            .hint("Straight down to the base."),
     ];
     v.extend(round_common());
     v.extend(round_label_params());
     v.extend([
         ParamDef::choice("h_lab", "Height label", &LAB_OPTS, "Measure"),
         ParamDef::text("h_label", "Height label text", "h"),
-        ParamDef::choice("lean_lab", "Lean label (oblique)", &LAB_OPTS, "Measure"),
+        ParamDef::choice("lean_lab", "Lean label", &LAB_OPTS, "Measure")
+            .hint("Oblique."),
         ParamDef::text("lean_label", "Lean label text", "d"),
-        ParamDef::text("edge", "Slanted edge (oblique; empty = worked out, typed = the height is worked out)", ""),
-        ParamDef::choice("edge_lab", "Slanted edge label (oblique)", &LAB_OPTS, "None"),
+        ParamDef::text("edge", "Slanted edge", "")
+            .hint("Oblique; empty = worked out, typed = the height is worked out."),
+        ParamDef::choice("edge_lab", "Slanted edge label", &LAB_OPTS, "None")
+            .hint("Oblique."),
         ParamDef::text("edge_label", "Slanted edge label text", "e"),
     ]);
     v
@@ -4022,17 +4094,20 @@ fn cone_params() -> Vec<ParamDef> {
         ParamDef::float("lean", "Lean of the apex when oblique", -20.0, 20.0, 0.5, 2.0),
         ParamDef::float("radius", "Radius", 0.5, 50.0, 0.5, 3.0),
         ParamDef::float("height", "Height", 0.5, 50.0, 0.5, 4.0),
-        ParamDef::bool("show_height", "Draw the height", true),
+        ParamDef::bool("show_height", "Height dashed", true)
+            .hint("Straight down to the base."),
     ];
     v.extend(round_common());
     v.extend(round_label_params());
     v.extend([
-        ParamDef::text("slant", "Slant height (empty = worked out; typed = the height is worked out)", ""),
+        ParamDef::text("slant", "Slant height", "")
+            .hint("Empty = worked out; typed = the height is worked out."),
         ParamDef::choice("h_lab", "Height label", &LAB_OPTS, "Measure"),
         ParamDef::text("h_label", "Height label text", "h"),
         ParamDef::choice("l_lab", "Slant height label", &LAB_OPTS, "None"),
         ParamDef::text("l_label", "Slant height label text", "l"),
-        ParamDef::choice("lean_lab", "Lean label (oblique)", &LAB_OPTS, "Measure"),
+        ParamDef::choice("lean_lab", "Lean label", &LAB_OPTS, "Measure")
+            .hint("Oblique."),
         ParamDef::text("lean_label", "Lean label text", "d"),
     ]);
     v
@@ -4104,7 +4179,7 @@ fn sphere_params() -> Vec<ParamDef> {
     ];
     v.extend(round_common());
     v.extend(round_label_params());
-    v.push(ParamDef::choice("face", "Position (hemisphere): flat face", &["Down, like a dome", "Up, like a bowl"], "Down, like a dome"));
+    v.push(ParamDef::choice("face", "Flat face", &["Down, like a dome", "Up, like a bowl"], "Down, like a dome").hint("Which way the hemisphere sits."));
     v
 }
 
@@ -4404,22 +4479,29 @@ fn box_plot_params() -> Vec<ParamDef> {
         ParamDef::list("data", "Data set 1", "2, 4, 5, 5, 6, 7, 8, 9, 10"),
         ParamDef::list("summary", "Or five-number summary instead: min, Q1, median, Q3, max", ""),
         ParamDef::text("name1", "Name of set 1", ""),
-        ParamDef::list("data2", "Data set 2 (optional, to compare)", ""),
+        ParamDef::list("data2", "Data set 2", "")
+            .hint("Optional, to compare."),
         ParamDef::list("summary2", "Or five-number summary for set 2", ""),
         ParamDef::text("name2", "Name of set 2", ""),
         ParamDef::bool("values", "Write the five values", false),
-        ParamDef::bool("outliers", "Mark outliers (beyond 1.5 x IQR)", false),
+        ParamDef::bool("outliers", "Mark outliers", false)
+            .hint("Beyond 1.5 x IQR."),
         ParamDef::bool("auto", "Choose the number line automatically", false),
-        ParamDef::float("axis_min", "Number line minimum (if not automatic)", -1000.0, 1000.0, 1.0, 0.0),
-        ParamDef::float("axis_max", "Number line maximum (if not automatic)", -1000.0, 1000.0, 1.0, 10.0),
-        ParamDef::float("axis_step", "Number line step (if not automatic)", 0.05, 100.0, 0.5, 1.0),
+        ParamDef::float("axis_min", "Number line from", -1000.0, 1000.0, 1.0, 0.0)
+            .hint("Used when the number line is not automatic."),
+        ParamDef::float("axis_max", "Number line to", -1000.0, 1000.0, 1.0, 10.0)
+            .hint("Used when the number line is not automatic."),
+        ParamDef::float("axis_step", "Number line count by", 0.05, 100.0, 0.5, 1.0)
+            .hint("Used when the number line is not automatic."),
         ParamDef::text("title", "Title", ""),
         ParamDef::text("axis_title", "Number line label", ""),
         ParamDef::color("fill", "Box colour", &SWATCHES, "#e9f1fb"),
-        ParamDef::list("data3", "Data set 3 (optional)", ""),
+        ParamDef::list("data3", "Data set 3", "")
+            .hint("Optional."),
         ParamDef::list("summary3", "Or five-number summary for set 3", ""),
         ParamDef::text("name3", "Name of set 3", ""),
-        ParamDef::list("data4", "Data set 4 (optional)", ""),
+        ParamDef::list("data4", "Data set 4", "")
+            .hint("Optional."),
         ParamDef::list("summary4", "Or five-number summary for set 4", ""),
         ParamDef::text("name4", "Name of set 4", ""),
         ParamDef::bool("read5", "Read exactly five numbers as a five-number summary", false),
@@ -4636,9 +4718,11 @@ pub(super) const MATCH_IN_ORDER: &str = "in order";
 
 fn mapping_diagram_params() -> Vec<ParamDef> {
     vec![
-        ParamDef::list("inputs", "Inputs (order is top to bottom)", "1, 2, 3, 4"),
+        ParamDef::list("inputs", "Inputs", "1, 2, 3, 4")
+            .hint("Order is top to bottom."),
         ParamDef::list("outputs", "Outputs", "3, 5, 7, 9"),
-        ParamDef::long("pairs", "Arrows as ordered pairs, e.g. (1,3); (2,5)  or  1->3; 2->5", "(1,3); (2,5); (3,7); (4,9)"),
+        ParamDef::long("pairs", "Arrows as ordered pairs", "(1,3); (2,5); (3,7); (4,9)")
+            .hint("For example (1,3); (2,5) or 1->3; 2->5."),
         ParamDef::text("title_in", "Input title", "Input"),
         ParamDef::text("title_out", "Output title", "Output"),
         ParamDef::choice("shape", "Draw each side in", &["Ovals", "Boxes", "None"], "Ovals"),
@@ -4646,10 +4730,12 @@ fn mapping_diagram_params() -> Vec<ParamDef> {
         ParamDef::choice("in_mode", "Input title", &TITLE_MODES, "Text"),
         ParamDef::choice("out_mode", "Output title", &TITLE_MODES, "Text"),
         ParamDef::choice("title_mode", "Diagram title", &TITLE_MODES, "None"),
-        ParamDef::text("title", "Diagram title text (type ^ for a power, e.g. y = x^2)", "y = 2x + 1"),
+        ParamDef::text("title", "Diagram title text", "y = 2x + 1")
+            .hint("Type ^ for a power, for example y = x^2."),
         ParamDef::choice("fill", "Side fill", &["Tinted", "White"], "Tinted"),
         label_size_param(),
-        ParamDef::long("paste", "Ordered pairs, e.g. (1, 3), (2, 5), (3, 7): they replace both lists and the arrows", ""),
+        ParamDef::long("paste", "Ordered pairs", "")
+            .hint("For example (1, 3), (2, 5), (3, 7). They replace both lists and the arrows."),
     ]
 }
 
@@ -4785,9 +4871,11 @@ fn mapping_diagram_render(p: &Params) -> String {
 fn length_reading_params() -> Vec<ParamDef> {
     vec![
         ParamDef::choice("marks", "Smallest marks", &["1 cm", "5 mm", "1 mm", "1 in", "1/2 in", "1/4 in", "1/8 in", "1/16 in", "10 cm", "5 cm"], "1 mm"),
-        ParamDef::int("ruler", "Ruler length (cm or in)", 3, 100, 15),
+        ParamDef::int("ruler", "Ruler length", 3, 100, 15)
+            .hint("Cm or in."),
         ParamDef::choice("object", "Object", &["Bar", "Pencil", "None", "Marbles", "Rock", "Cube", "Metal cylinder"], "Bar"),
-        ParamDef::float("start", "Left end of the object (on the ruler)", 0.0, 100.0, 0.05, 0.0),
+        ParamDef::float("start", "Left end at", 0.0, 100.0, 0.05, 0.0)
+            .hint("Where the object starts on the ruler."),
         ParamDef::float("length", "Length of the object", 0.1, 100.0, 0.01, 4.37),
         ParamDef::bool("guides", "Dotted guides from the object's ends to the ruler", true),
         ParamDef::bool("show_value", "Write the length above the object", false),
@@ -5075,11 +5163,15 @@ fn composite_params() -> Vec<ParamDef> {
             "rect 0 0 6 4; semi 3 4 3 u; ra 0 0 NE; ra 6 0 NW"),
         ParamDef::bool("shade", "Shade the shape", true),
         ParamDef::color("fill_color", "Shade colour", &SWATCHES, "#e9f1fb"),
-        ParamDef::text("unit", "Unit for dims given without text (e.g. cm)", ""),
-        ParamDef::int("dec", "Round measured dims to (decimal places)", 0, 3, 1),
+        ParamDef::text("unit", "Unit", "")
+            .hint("For dimensions given without text, for example cm."),
+        ParamDef::int("dec", "Round measured dims to", 0, 3, 1)
+            .hint("Decimal places."),
         ParamDef::choice("label_size", "Label size", &["Large", "Medium", "Small"], "Medium"),
-        ParamDef::int("angle_dec", "Round angles to (decimal places)", 0, 2, 0),
-        ParamDef::float("rotate", "Turn (degrees)", -180.0, 180.0, 1.0, 0.0),
+        ParamDef::int("angle_dec", "Round angles to", 0, 2, 0)
+            .hint("Decimal places."),
+        ParamDef::float("rotate", "Turn", -180.0, 180.0, 1.0, 0.0)
+            .hint("Degrees."),
     ]
 }
 
@@ -5398,7 +5490,7 @@ pub fn measures(id: &str) -> Option<super::MeasureCard> {
         // the reference's INPUTS AND OUTPUTS card (its function check shows under it)
         "mapping-diagram" => Some(MeasureCard {
             title: "Inputs and outputs",
-            help: "Type or paste each list with commas or one item a line, like 1, 2, 3 or a column copied from a spreadsheet. Items can be numbers, math like 2x or 1/2, or words. Each side shows an item once, in the order typed.",
+            help: "Type or paste each list with commas, spaces or one item a line, like 1, 2, 3 or a column copied from a spreadsheet. Items can be numbers, math like 2x or 1/2, or words. Each side shows an item once, in the order typed.",
             groups: vec![MeasureGroup {
                 title: "",
                 rows: vec![
@@ -5421,14 +5513,14 @@ pub fn rows(id: &str) -> Option<super::RowsCard> {
     Some(match id {
         "coordinate-grid" => RowsCard {
             title: "Equations",
-            help: "One per row: y = 2x + 1; 2x + 3y = 6; x = 4; y > x - 2; -2 < x <= 3; y = x + 2, x < 1 (a piece with a domain).",
+            help: "Type a line like y = 2x + 1, 2x + 3y = 6 or x = 4, a curve like y = x^2 \u{2212} 4 or y = \u{2212}(x \u{2212} 2)^2 + 3, or points like (2, 3) or (1, 2), (3, 4). To draw only part of a line, give its domain after a comma: y = 3x, \u{2212}5 \u{2264} x < 7 (\u{2264} for a closed circle, < for an open one); a piecewise function is a row for each piece. To shade an inequality, type it with <, \u{2264}, > or \u{2265}, like y > 2x + 1, y \u{2264} x^2 or \u{2212}2 < x \u{2264} 3; for a system, give each inequality its own row. Name points by writing a letter first: A(1, 2), B'(3, 4). Functions work too: sin, cos, tan, sec, csc, cot, arcsin, ln, log, log_2 (type _ for the base), e^x and |x|. Type ^ for an exponent, / for a fraction and pi for \u{3c0}.",
             hint: "y = 2x + 1",
             add_label: "Add equation",
             source: RowsSource::Joined { key: "equations", sep: ";", color_keys: vec!["eq1_color", "eq2_color", "eq3_color", "eq4_color"] },
         },
         "number-line" => RowsCard {
             title: "Equations",
-            help: "An inequality such as -2 < x <= 5, or x < -1 or x >= 3. Leave empty to draw no graph.",
+            help: "Try x < \u{2212}1 or x \u{2265} 3, x \u{2260} 2, all real numbers or no solution, points like 3 or \u{2212}1, 2.5, \u{3c0}/2, labeled points like P(0.35), Q(\u{2212}2), or a sequence like a\u{2099} = 1/n. Type <= for \u{2264}, != for \u{2260}, pi for \u{3c0}, / for a fraction and _ for a subscript. Leave it empty for a blank line.",
             hint: "-2 < x <= 5",
             add_label: "Add equation",
             source: RowsSource::Slots(vec![slot("inequality", None, Some("ineq_color")), slot("inequality2", None, Some("ineq2_color"))]),
@@ -5436,7 +5528,7 @@ pub fn rows(id: &str) -> Option<super::RowsCard> {
         // one row per arrow; "Match in order" / "Clear arrows" are the chips under it
         "mapping-diagram" => RowsCard {
             title: "Arrows",
-            help: "One arrow a row, from an input to an output: 1 -> 3 or (1, 3). An input can go to more than one output, and an output can come from more than one input. Leave the arrows off for students to draw.",
+            help: "Under each input, click the outputs it goes to. Click one again to take its arrow away. An input can go to more than one output, and an output can come from more than one input. Leave the arrows off for students to draw.",
             hint: "1 -> 3",
             add_label: "Add an arrow",
             // no colours; the empty keys only lift the card's 8-row limit for longer lists
@@ -5451,7 +5543,7 @@ pub fn rows(id: &str) -> Option<super::RowsCard> {
         },
         "box-plot" => RowsCard {
             title: "Data",
-            help: "Type the numbers of each data set, separated by commas. Name a set to label its box.",
+            help: "Type or paste numbers separated by commas or spaces, like 12, 15, 15, 18, 22. Five numbers in order are read as a five-number summary: minimum, Q1, median, Q3 and maximum. Add a data set to compare box plots over the same line, and name each one. Leave it empty for a blank number line.",
             hint: "62, 68, 70, 75, 80",
             add_label: "Add a data set",
             source: RowsSource::Slots(vec![slot("data", Some("name1"), None), slot("data2", Some("name2"), None), slot("data3", Some("name3"), None), slot("data4", Some("name4"), None)]),

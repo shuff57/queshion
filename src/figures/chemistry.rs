@@ -104,6 +104,28 @@ pub fn mass_spectrum_info(p: &Params) -> Option<(String, String)> {
 
 /// The chemistry page's one-line section summaries ("100 mL graduated cylinder"), where the
 /// reference words them differently from the generic "value · value" digest.
+pub fn skin_summary_in(id: &str, title: &str, p: &Params, physics: bool) -> Option<String> {
+    if physics && id == "length-reading" {
+        // the physics page words these two rows plainly ("15 cm, 1 mm marks", "4.37 cm, from 0")
+        let imperial = p.s("units").starts_with("Imp");
+        let unit = if imperial { "in" } else { "cm" };
+        match title {
+            "Ruler" if !imperial => return Some(format!("{}, {} marks", p.s("ruler"), p.s("marks").replace(" cm", " cm").trim())),
+            "Length and position" => {
+                let off = p.f("offset");
+                return Some(format!("{} {unit}, {}", num(p.f("length"), 2), if off.abs() < 1e-9 { "from 0".to_string() } else { format!("from {}", num(off, 2)) }));
+            }
+            "Magnifiers" => return Some(if p.s("mag_show").starts_with("Ruler and") { "Ruler and magnifiers".to_string() } else { p.s("mag_show").to_string() }),
+            "Title and answer key" => {
+                let t = p.s("title").trim();
+                return Some(format!("{}, {}", if t.is_empty() { "No title".to_string() } else { format!("Title \u{201c}{t}\u{201d}") }, if p.b("answer") { "answer key" } else { "no answer key" }));
+            }
+            _ => {}
+        }
+    }
+    skin_summary(id, title, p)
+}
+
 pub fn skin_summary(id: &str, title: &str, p: &Params) -> Option<String> {
     if id == "lewis-structures" {
         return lewis::skin_summary(title, p);
@@ -173,6 +195,13 @@ fn atom_summary(id: &str, title: &str, p: &Params) -> Option<String> {
 }
 
 /// The chemistry page's intro line above "Start from an example", where known.
+pub fn skin_intro_in(id: &str, physics: bool) -> Option<&'static str> {
+    if physics && id == "length-reading" {
+        return Some("Make printable length measurement figures for physics tests.");
+    }
+    skin_intro(id)
+}
+
 pub fn skin_intro(id: &str) -> Option<&'static str> {
     match id {
         "triangle" => Some("Make a printable triangle drawn to scale for your class."),
@@ -224,8 +253,15 @@ pub fn skin_intro(id: &str) -> Option<&'static str> {
         "inclined-plane" => Some("Make printable inclined plane figures for physics tests."),
         "pulley" => Some("Make printable pulley figures for physics tests."),
         "projectile-motion" => Some("Make printable projectile motion figures for physics tests."),
+        "motion-map" => Some("Make printable motion maps for physics tests."),
+        "ray-diagram" => Some("Make printable ray diagrams for physics tests."),
         _ => None,
     }
+}
+
+/// The length reading's SVG (the answer-key note reads the printed value back from it).
+pub fn length_svg(p: &Params) -> String {
+    measure::length_render(p)
 }
 
 /// The Random button of the instrument readings.

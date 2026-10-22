@@ -177,7 +177,7 @@ fn lab_at(g: &mut G, x: f64, y: f64, t: &str, anchor: &str) {
         let (a, b) = match anchor { "start" => (x, x + 24.0), "end" => (x - 24.0, x), _ => (x - 12.0, x + 12.0) };
         g.line(a, y + 2.0, b, y + 2.0, INK, 1.4);
     } else {
-        g.tex(x, y, 19.0, anchor, t, ITALIC);
+        g.tex(x, y, 22.0, anchor, t, ITALIC);
     }
 }
 
@@ -198,7 +198,7 @@ fn weight_lab(p: &Params, obj: &str) -> String {
 fn mass_box(g: &mut G, cx: f64, top: f64, s: f64, lab: &str) {
     g.rect(cx - s / 2.0, top, s, s, FILL, INK, SW);
     if lab.trim().is_empty() { g.line(cx - 11.0, top + s / 2.0 + 6.0, cx + 11.0, top + s / 2.0 + 6.0, INK, 1.4); }
-    else if lab != "none" { g.tex(cx, top + s / 2.0 + 7.0, 19.0, "middle", lab, ITALIC); }
+    else if lab != "none" { g.tex(cx, top + s / 2.0 + 7.0, 22.0, "middle", lab, ITALIC); }
 }
 
 struct Style { col: bool, tens: String, acc: String }
@@ -367,7 +367,7 @@ fn slope_setup(g: &mut G, p: &Params, geo: &PGeo, st: &Style, llab: &str, rlab: 
         let th = p.f("angle").clamp(15.0, 60.0);
         g.polyline(&arc_pts(sl.ax, sl.ground, 46.0, 0.0, th), INK, 1.4);
         let m = pol(sl.ax, sl.ground, 64.0, th / 2.0);
-        g.label_at(m.0, m.1, 19.0, &lab_mode(p, "ang_lab", "ang_lab_mode"), ITALIC);
+        g.label_at(m.0, m.1, 22.0, &lab_mode(p, "ang_lab", "ang_lab_mode"), ITALIC);
     } else {
         let ground = geo.h - 24.0;
         g.hatch(10.0, geo.w - 10.0, ground, true);
@@ -398,7 +398,7 @@ fn slope_setup(g: &mut G, p: &Params, geo: &PGeo, st: &Style, llab: &str, rlab: 
             (loc(0.0, ls / 2.0), ls / 2.0, ls / 2.0, ls / 2.0)
         };
         if lab.trim().is_empty() { g.line(com.0 - 11.0, com.1 + 6.0, com.0 + 11.0, com.1 + 6.0, INK, 1.4); }
-        else if lab != "none" { g.tex(com.0, com.1 + 7.0, 19.0, "middle", lab, ITALIC); }
+        else if lab != "none" { g.tex(com.0, com.1 + 7.0, 22.0, "middle", lab, ITALIC); }
         (com, up, dn, hl)
     };
     let s_main = ramp_len * if ramp { 0.5 } else { 0.55 };
@@ -442,7 +442,7 @@ fn slope_setup(g: &mut G, p: &Params, geo: &PGeo, st: &Style, llab: &str, rlab: 
         let from = (com.0 + nn.0 * up, com.1 + nn.1 * up);
         let tip = (from.0 + nn.0 * 46.0, from.1 + nn.1 * 46.0);
         g.arrow(from.0, from.1, tip.0, tip.1, if st.col { PAL[3] } else { INK }, SW);
-        g.label_dir(tip.0, tip.1, nn.0, nn.1, 19.0, &lab_mode(p, "norm_lab", "norm_lab_mode"), ITALIC);
+        g.label_dir(tip.0, tip.1, nn.0, nn.1, 22.0, &lab_mode(p, "norm_lab", "norm_lab_mode"), ITALIC);
     }
     let fr = p.s("friction");
     if fr != "None" {
@@ -451,7 +451,7 @@ fn slope_setup(g: &mut G, p: &Params, geo: &PGeo, st: &Style, llab: &str, rlab: 
         let from = (com.0 + uu.0 * hl * sgn - nn.0 * dn * 0.6, com.1 + uu.1 * hl * sgn - nn.1 * dn * 0.6);
         let tip = (from.0 + d.0 * 40.0, from.1 + d.1 * 40.0);
         g.arrow(from.0, from.1, tip.0, tip.1, if st.col { PAL[4] } else { INK }, SW);
-        g.label_dir(tip.0, tip.1, d.0, d.1, 19.0, &lab_mode(p, "fric_lab", "fric_lab_mode"), ITALIC);
+        g.label_dir(tip.0, tip.1, d.0, d.1, 22.0, &lab_mode(p, "fric_lab", "fric_lab_mode"), ITALIC);
     }
     if accel != "None" {
         // on the surface object (above it, along the surface) and beside the hanging mass
@@ -459,7 +459,7 @@ fn slope_setup(g: &mut G, p: &Params, geo: &PGeo, st: &Style, llab: &str, rlab: 
         let c = (com.0 + nn.0 * (up + 30.0) + uu.0 * (hl * 0.6 + 10.0), com.1 + nn.1 * (up + 30.0) + uu.1 * (hl * 0.6 + 10.0));
         let (a, b) = ((c.0 - d.0 * 18.0, c.1 - d.1 * 18.0), (c.0 + d.0 * 18.0, c.1 + d.1 * 18.0));
         g.dash_arrow(a.0, a.1, b.0, b.1, st.ac(), 2.2);
-        g.label_dir(c.0 + nn.0 * 4.0, c.1 + nn.1 * 4.0, nn.0, nn.1, 19.0, &st.acc, ITALIC);
+        g.label_dir(c.0 + nn.0 * 4.0, c.1 + nn.1 * 4.0, nn.0, nn.1, 22.0, &st.acc, ITALIC);
         a_arrow(g, st, hb.cx + hb.s / 2.0 + 14.0, hb.top, hb.s, falls, 1.0);
     }
 }

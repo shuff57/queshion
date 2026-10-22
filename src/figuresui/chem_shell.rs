@@ -29,9 +29,14 @@ pub fn label_name(ctx: &egui::Context, text: &str, size: f32) -> RichText {
     t.family(if chem_page(ctx) || ctx.data(|d| d.get_temp::<bool>(egui::Id::new("bio_skin_page"))).unwrap_or(false) { theme::semibold_family() } else { theme::bold_family() })
 }
 
+/// A parameter label ("Size", "Liquid", "Reading"): the chemistry reference sets them 14.4 px, 700.
+pub fn param_name(ctx: &egui::Context, text: &str) -> RichText {
+    if chem_page(ctx) { RichText::new(text).size(14.4).family(theme::bold_family()).color(theme::ink()) } else { label_name(ctx, text, 14.08) }
+}
+
 /// The reference sites' page skins (top header instead of the rail, subject home pages) are off:
 /// a figure picked on the unified Figures tab opens in the app's own editor. Flip to bring them back.
-pub const SITE_SKINS: bool = false;
+pub const SITE_SKINS: bool = true;
 
 pub fn skinned(s: figures::Subject) -> bool {
     matches!(s, figures::Subject::Chemistry | figures::Subject::Biology | figures::Subject::Math | figures::Subject::Physics)
@@ -179,6 +184,13 @@ pub fn section_icon(title: &str, math: bool) -> &'static str {
     let has = |ks: &[&str]| ks.iter().any(|k| t.contains(k));
     if math {
         // the math reference's own glyphs: arrow for Heights, tag for Labels, a turn for Position
+        match t.as_str() {
+            "titles" => return ph::TEXT_H,
+            "x-axis" => return ph::ARROW_RIGHT,
+            "y-axis" => return ph::ARROW_UP,
+            "grid" => return ph::GRID_NINE,
+            _ => {}
+        }
         if has(&["height"]) {
             return ph::ARROW_DOWN;
         } else if has(&["label"]) {
@@ -267,6 +279,49 @@ fn chem_section_icon(title: &str) -> Option<&'static str> {
     }
 }
 
+/// The physics reference's own Lucide row glyphs, by figure and section title.
+fn phys_lucide_icon(fig: &str, title: &str) -> Option<&'static [lucide::Op]> {
+    use lucide::*;
+    let t = title.to_lowercase();
+    Some(match (fig, t.as_str()) {
+        (_, "figure") => PH_SLIDERS_HORIZONTAL,
+        (_, "forces") | (_, "forces and motion") | (_, "velocity and gravity") | (_, "vectors") => PH_MOVE_UP_RIGHT,
+        ("motion-graphs", "marks") => PH_MAP_PIN,
+        (_, "marks") | (_, "reading") | (_, "number line") => PH_RULER,
+        ("spring-scale" | "ray-diagram", "title and answer key") => PH_TYPE,
+        (_, "title and answer key") | (_, "titles") | (_, "chart title") => PH_HEADING,
+        (_, "grid and axes") | (_, "axes and grid") | (_, "grid") => PH_GRID_3X3,
+        ("free-body-diagram", "body") => PH_BOX,
+        ("free-body-diagram", "motion") => PH_GAUGE,
+        (_, "motion") => PH_ROUTE,
+        ("inclined-plane", "object") | ("pulley", "objects") => PH_BOX,
+        ("projectile-motion", "object") => PH_CIRCLE,
+        ("ray-diagram", "object") => PH_ARROW_UP_FROM_LINE,
+        (_, "ramp") => PH_TRIANGLE,
+        (_, "resultant") => PH_SIGMA,
+        (_, "setup") => PH_COG,
+        (_, "launch") => PH_MOUNTAIN,
+        (_, "path") => PH_SPLINE,
+        (_, "graphs") | (_, "graph") => PH_CHART_LINE,
+        (_, "spring scale") => PH_WEIGHT,
+        (_, "on the hook") => PH_PACKAGE,
+        (_, "magnifier") => PH_ZOOM_IN,
+        (_, "circuit") => PH_CIRCUIT_BOARD,
+        (_, "cell or battery") => PH_BATTERY_FULL,
+        (_, "switch and meters") => PH_GAUGE,
+        (_, "symbols") => PH_PALETTE,
+        (_, "wave") => PH_WAVES_HORIZONTAL,
+        (_, "x-axis") => PH_MOVE_RIGHT,
+        (_, "y-axis") => PH_MOVE_UP,
+        (_, "dots") => PH_CIRCLE_DOT,
+        (_, "arrows") => PH_MOVE_RIGHT,
+        (_, "lens or mirror") => PH_GLASSES,
+        (_, "rays and image") => PH_FLASHLIGHT,
+        (_, "labels") => PH_TAG,
+        _ => return None,
+    })
+}
+
 /// The physics reference's own row glyphs (wave, tag, chart, H, arrows, grid).
 fn phys_section_icon(title: &str) -> Option<&'static str> {
     let t = title.to_lowercase();
@@ -285,61 +340,113 @@ fn phys_section_icon(title: &str) -> Option<&'static str> {
 /// A faint hand-drawn physics doodle (wave, spring, resistor, lens, pulley, incline) scattered
 /// through the margins of the physics page, as the reference's page background has.
 pub fn paint_physics_doodles(painter: &egui::Painter, rect: Rect) {
-    let col = if theme::is_dark() { Color32::from_rgb(0x2f, 0x3a, 0x52) } else { Color32::from_rgb(0xdd, 0xe4, 0xf3) };
-    let st = Stroke::new(1.3, col);
-    let at = |fx: f32, fy: f32| Pos2::new(rect.left() + rect.width() * fx, rect.top() + rect.height() * fy);
-    // (fraction x, fraction y, kind): kept to the left and right margins
-    let spots: [(f32, f32, u8); 14] = [
-        (0.012, 0.07, 0), (0.972, 0.12, 1), (0.015, 0.22, 2), (0.968, 0.30, 3), (0.012, 0.38, 4), (0.975, 0.46, 5), (0.014, 0.55, 1),
-        (0.97, 0.62, 0), (0.016, 0.70, 3), (0.966, 0.78, 2), (0.012, 0.86, 5), (0.972, 0.92, 4), (0.05, 0.95, 0), (0.93, 0.04, 3),
-    ];
-    for (fx, fy, k) in spots {
-        let o = at(fx, fy);
-        match k {
-            // a sine wave
-            0 => {
-                let pts: Vec<Pos2> = (0..=24).map(|i| Pos2::new(o.x + i as f32 * 1.6, o.y + (i as f32 * 0.5).sin() * 7.0)).collect();
-                painter.add(egui::Shape::line(pts, st));
+    let painter = painter.with_clip_rect(rect);
+    let base = if theme::is_dark() { Color32::from_rgb(0x60, 0x8c, 0xff) } else { Color32::from_rgb(0x3b, 0x82, 0xf6) };
+    let mid = rect.right() / 2.0;
+    let mask = |x: f32| (((x - mid).abs() - 480.0) / 128.0).clamp(0.0, 1.0);
+    let tile = 240.0_f32;
+    // a polyline drawn in short pieces so the left/right fade follows it (`k` scales the alpha)
+    let line = |pts: &[Pos2], k: f32, dash: bool| {
+        for (i, w) in pts.windows(2).enumerate() {
+            if dash && i % 2 == 1 {
+                continue;
             }
-            // a spring
-            1 => {
-                let mut pts = vec![o];
-                for i in 0..8 {
-                    pts.push(Pos2::new(o.x + if i % 2 == 0 { 9.0 } else { -9.0 }, o.y + 4.0 + i as f32 * 4.5));
-                }
-                pts.push(Pos2::new(o.x, o.y + 42.0));
-                painter.add(egui::Shape::line(pts, st));
+            let m = mask((w[0].x + w[1].x) / 2.0) * k;
+            if m > 0.01 {
+                painter.line_segment([w[0], w[1]], Stroke::new(1.3, base.gamma_multiply(0.17 * m)));
             }
-            // a resistor
-            2 => {
-                let mut pts = vec![o];
-                for i in 0..6 {
-                    pts.push(Pos2::new(o.x + 6.0 + i as f32 * 4.0, o.y + if i % 2 == 0 { -6.0 } else { 6.0 }));
-                }
-                pts.push(Pos2::new(o.x + 36.0, o.y));
-                painter.add(egui::Shape::line(pts, st));
+        }
+    };
+    let ell = |c: Pos2, rx: f32, ry: f32, rot: f32, k: f32, dash: bool| {
+        let n = 36;
+        let pts: Vec<Pos2> = (0..=n)
+            .map(|i| {
+                let t = i as f32 / n as f32 * std::f32::consts::TAU;
+                let (x, y) = (rx * t.cos(), ry * t.sin());
+                Pos2::new(c.x + x * rot.cos() - y * rot.sin(), c.y + x * rot.sin() + y * rot.cos())
+            })
+            .collect();
+        line(&pts, k, dash);
+    };
+    let dot = |c: Pos2, r: f32, a: f32| {
+        let m = mask(c.x);
+        if m > 0.01 {
+            painter.circle_filled(c, r, base.gamma_multiply(a * m * 0.55));
+        }
+    };
+    // the tile is anchored at the window origin: its atom sits at (46, 289) on the 1440 page
+    let r0 = ((rect.top() - 300.0) / tile).floor() as i32;
+    let r1 = ((rect.bottom() + 100.0) / tile).ceil() as i32;
+    let cols: Vec<i32> = (0..=(rect.right() / tile).ceil() as i32).filter(|c| mask(*c as f32 * tile).max(mask(*c as f32 * tile + tile)) > 0.01).collect();
+    for cx in cols {
+        for ry in r0..=r1 {
+            let o = Pos2::new(cx as f32 * tile, 49.0 + ry as f32 * tile);
+            let p = |x: f32, y: f32| Pos2::new(o.x + x, o.y + y);
+            // atom: three orbits and a nucleus
+            let c = p(46.0, 240.0);
+            for rot in [0.0, 1.0472, 2.0944] {
+                ell(c, 24.0, 9.0, rot, 1.0, false);
             }
-            // a pulley wheel
-            3 => {
-                painter.circle_stroke(o, 11.0, st);
-                painter.circle_stroke(o, 2.0, st);
-                painter.vline(o.x - 11.0, o.y..=o.y + 30.0, st);
-                painter.vline(o.x + 11.0, o.y..=o.y + 22.0, st);
+            dot(c, 2.2, 0.55);
+            // sine wave, fading to the right
+            let wave: Vec<Pos2> = (0..=40).map(|i| p(103.0 + i as f32 * 2.6, 237.0 + (i as f32 / 40.0 * 1.5 * std::f32::consts::TAU).sin() * -9.0)).collect();
+            let n = wave.len();
+            for i in 0..n - 1 {
+                line(&wave[i..=i + 1], 1.0 - 0.7 * i as f32 / n as f32, false);
             }
-            // an incline
-            4 => {
-                painter.add(egui::Shape::line(vec![o, Pos2::new(o.x + 40.0, o.y), Pos2::new(o.x, o.y - 22.0), o], st));
+            // pendulum: support bar, rod, bob and its dashed swing
+            line(&[p(93.0, 43.0), p(130.0, 43.0)], 1.0, false);
+            line(&[p(105.0, 43.0), p(128.0, 89.0)], 1.0, false);
+            ell(p(128.0, 89.0), 5.0, 5.0, 0.0, 1.0, false);
+            let arc: Vec<Pos2> = (0..=10).map(|i| p(95.0 + i as f32 * 3.1, 88.0 + (i as f32 / 10.0 * 3.14).sin() * 3.0)).collect();
+            line(&arc, 1.0, true);
+            // spring and block, fading to the right
+            line(&[p(183.0, 35.0), p(220.0, 35.0)], 0.55, false);
+            let mut sp = vec![p(205.0, 35.0)];
+            for i in 0..6 {
+                sp.push(p(if i % 2 == 0 { 210.0 } else { 200.0 }, 41.0 + i as f32 * 5.0));
             }
-            // a lens
-            _ => {
-                painter.add(egui::Shape::line((0..=16).map(|i| {
-                    let t = i as f32 / 16.0 * std::f32::consts::PI;
-                    Pos2::new(o.x + t.sin() * 6.0, o.y - 16.0 + t.cos().mul_add(-16.0, 0.0) + 16.0)
-                }).collect(), st));
-                painter.vline(o.x, o.y - 18.0..=o.y + 18.0, Stroke::new(1.0, col));
+            sp.push(p(205.0, 78.0));
+            line(&sp, 0.55, false);
+            line(&[p(192.0, 79.0), p(212.0, 79.0), p(212.0, 95.0), p(192.0, 95.0), p(192.0, 79.0)], 0.5, false);
+            // converging rays and a lens
+            for dy in [-12.0, 0.0, 12.0] {
+                line(&[p(13.0, 101.0 + dy), p(42.0, 101.0 + dy), p(68.0, 101.0)], 1.0, false);
+            }
+            ell(p(42.0, 101.0), 4.0, 17.0, 0.0, 1.0, false);
+            dot(p(68.0, 101.0), 1.5, 0.6);
+            // an electron's dashed orbit
+            ell(p(62.0, 165.0), 27.0, 10.0, 0.0, 1.0, true);
+            dot(p(62.0, 165.0), 4.0, 0.7);
+            dot(p(88.0, 165.0), 2.0, 0.8);
+            // a block with four force arrows
+            let c = p(170.0, 147.0);
+            line(&[c + Vec2::new(-7.0, -7.0), c + Vec2::new(7.0, -7.0), c + Vec2::new(7.0, 7.0), c + Vec2::new(-7.0, 7.0), c + Vec2::new(-7.0, -7.0)], 0.7, false);
+            for (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+                let (u, v) = (Vec2::new(dx, dy), Vec2::new(-dy, dx));
+                let (a0, a1) = (c + u * 7.0, c + u * 25.0);
+                line(&[a0, a1], 0.7, false);
+                line(&[a1 - u * 5.0 + v * 4.0, a1, a1 - u * 5.0 - v * 4.0], 0.7, false);
             }
         }
     }
+}
+
+/// The reference's tooltip: a dark navy pill with white semibold text, 7 px under the button.
+pub fn dark_tip(ui: &Ui, resp: egui::Response, tip: &str) -> egui::Response {
+    if resp.hovered() {
+        egui::Area::new(resp.id.with("dark_tip"))
+            .order(egui::Order::Tooltip)
+            .interactable(false)
+            .fixed_pos(Pos2::new(resp.rect.center().x, resp.rect.bottom() + 6.0))
+            .pivot(egui::Align2::CENTER_TOP)
+            .show(ui.ctx(), |ui| {
+                Frame::new().fill(Color32::from_rgb(0x1f, 0x29, 0x37)).corner_radius(CornerRadius::same(6)).inner_margin(egui::Margin::symmetric(9, 4)).show(ui, |ui| {
+                    ui.add(egui::Label::new(RichText::new(tip).family(theme::semibold_family()).size(12.48).color(Color32::WHITE)).wrap_mode(egui::TextWrapMode::Extend));
+                });
+            });
+    }
+    resp
 }
 
 /// One square icon button (the preview toolbar): hover wash, disabled grey.
@@ -352,7 +459,7 @@ pub fn icon_btn(ui: &mut Ui, glyph: &str, tip: &str, enabled: bool) -> egui::Res
         let col = if enabled { theme::ink() } else { theme::rule().gamma_multiply(0.8) };
         ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, glyph, egui::FontId::new(20.0, theme::icon_font(20.0).family), col);
     }
-    if enabled { resp.on_hover_text(tip) } else { resp }
+    if enabled { dark_tip(ui, resp, tip) } else { resp }
 }
 
 fn tool_btn(ui: &mut Ui, chem: bool, ops: &[lucide::Op], glyph: &str, tip: &str, enabled: bool) -> egui::Response {
@@ -371,7 +478,7 @@ pub fn lucide_btn(ui: &mut Ui, ops: &[lucide::Op], tip: &str, enabled: bool) -> 
         let col = if enabled { theme::ink() } else { Color32::from_rgb(0xb4, 0xba, 0xc4) };
         lucide::paint(ui.painter(), Rect::from_center_size(rect.center(), Vec2::splat(19.0)), col, ops);
     }
-    if enabled { resp.on_hover_text(tip) } else { resp }
+    if enabled { dark_tip(ui, resp, tip) } else { resp }
 }
 
 /// A white pill of the header (Math Figures / Physics Figures); true when clicked.
@@ -406,6 +513,13 @@ fn header_pill_lucide(ui: &mut Ui, text: &str, lead: Option<&[lucide::Op]>, trai
         w += 14.0 + gap - 3.5;
     }
     let h = if wash { 28.6 } else { 31.3 };
+    // the physics reference's About chip is a pixel narrower and its Math Figures pill a pixel wider
+    let phys_hdr = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("phys_hdr"))).unwrap_or(false);
+    if phys_hdr && wash {
+        w -= 1.0;
+    } else if phys_hdr && text.starts_with("Math") {
+        w += 0.4;
+    }
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, h), Sense::click());
     let fill = if wash { theme::accent_faded() } else { theme::card() };
     p.rect(rect, CornerRadius::same(8), if resp.hovered() { theme::hover_bg() } else { fill }, if wash { Stroke::NONE } else { Stroke::new(1.0, pill_border()) }, egui::StrokeKind::Inside);
@@ -441,8 +555,9 @@ impl crate::App {
         let phys = subj == figures::Subject::Physics;
         let name = if phys { "Physics Figures" } else if bio { "Biology Figures" } else if math { "Math Figures" } else { "Chemistry Figures" };
         let narrow = root.max_rect().width() < 640.0;
-        let chem_hdr = !bio && !math && !phys;
+        let chem_hdr = !bio && !math;
         root.ctx().data_mut(|d| d.insert_temp(egui::Id::new("bio_hdr"), bio));
+        root.ctx().data_mut(|d| d.insert_temp(egui::Id::new("phys_hdr"), phys));
         let mut go_list = false;
         let mut jump: Option<figures::Subject> = None;
         let mut about = false;
@@ -470,7 +585,7 @@ impl crate::App {
                         }
                         let q = |x: f32, y: f32| Pos2::new(card.left() + card.width() * x, card.top() + card.height() * y);
                         pr.add(egui::Shape::line(vec![q(0.1, 0.8), q(0.4, 0.45), q(0.6, 0.62), q(0.9, 0.2)], Stroke::new(1.6, Color32::from_rgb(225, 40, 50))));
-                    } else if chem_hdr {
+                    } else if chem_hdr && !phys {
                         // the reference's flask emoji: a glass flask with a blue liquid line
                         let pr = ui.painter();
                         let o = tile.min;
@@ -482,37 +597,45 @@ impl crate::App {
                         pr.add(egui::Shape::convex_polygon(vec![q(8.6, 17.4), q(19.4, 17.4), q(21.3, 21.6), q(20.6, 22.6), q(7.4, 22.6), q(6.7, 21.6)], Color32::from_rgb(0x93, 0xc5, 0xfd), Stroke::NONE));
                         pr.rect_filled(Rect::from_min_max(q(9.6, 3.8), q(18.4, 5.4)), CornerRadius::same(1), glass);
                         pr.rect_stroke(Rect::from_min_max(q(9.6, 3.8), q(18.4, 5.4)), CornerRadius::same(1), Stroke::new(1.0, ink), egui::StrokeKind::Middle);
+                    } else if phys {
+                        lucide::paint(ui.painter(), Rect::from_center_size(tile.center(), Vec2::splat(20.0)), theme::on_accent_col(), lucide::ATOM);
                     } else {
-                        ui.painter().text(tile.center(), egui::Align2::CENTER_CENTER, if bio { ph::DNA } else if phys { ph::ATOM } else { ph::FLASK }, theme::icon_font(18.0), theme::on_accent_col());
+                        ui.painter().text(tile.center(), egui::Align2::CENTER_CENTER, if bio { ph::DNA } else { ph::FLASK }, theme::icon_font(18.0), theme::on_accent_col());
                     }
                     go_list |= resp.clicked();
                     ui.add_space(-1.0);
                     // the biology page sets its wordmark and title 1 px above where we centre them
-                    let w = if bio {
+                    let w = if bio || phys {
                         lifted_label(ui, name, theme::xbold_family(), 17.6, theme::ink(), Sense::click())
                     } else {
                         ui.add(egui::Label::new(RichText::new(name).family(theme::xbold_family()).size(17.6).color(theme::ink())).sense(Sense::click()))
                     };
                     go_list |= w.clicked();
                     if !narrow && !title.is_empty() {
-                        ui.add_space(if bio { 4.5 } else { 9.0 });
+                        // the chemistry reference's chevron and title sit 3 px nearer the wordmark
+                        ui.add_space(if bio { 4.5 } else if !math && !phys { 6.0 } else { 9.0 });
                         ui.label(RichText::new(ph::CARET_RIGHT).size(13.0).color(theme::muted_col()));
                         if bio {
                             ui.add_space(2.0);
                         }
-                        if bio {
+                        if phys {
+                            ui.add_space(-3.0);
+                        }
+                        if bio || phys || chem_hdr {
                             lifted_label(ui, title, theme::semibold_family(), 16.0, theme::muted_col(), Sense::hover());
                         } else {
                             ui.add(egui::Label::new(RichText::new(title).family(theme::semibold_family()).size(16.0).color(theme::muted_col())).truncate());
                         }
                     }
-                    if narrow {
+                    if narrow && phys && title.is_empty() {
+                        // the physics list has no About on a phone
+                    } else if narrow {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             about |= if chem_hdr || bio { header_pill_lucide(ui, "About", Some(lucide::INFO), None, true) } else { header_pill(ui, &format!("{}  About", ph::INFO), true) };
                         });
                     } else {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            ui.spacing_mut().item_spacing.x = if bio { 12.0 } else { 12.5 };
+                            ui.spacing_mut().item_spacing.x = if bio || phys { 12.0 } else { 12.5 };
                             let others: &[(&str, figures::Subject)] = if phys {
                                 &[("Chemistry Figures", figures::Subject::Chemistry), ("Math Figures", figures::Subject::Math)]
                             } else if bio {
@@ -580,7 +703,15 @@ impl Workspace {
 
     /// The subject whose page skin is showing (chemistry or biology), if any.
     pub(super) fn skin_subject(&self) -> figures::Subject {
-        self.sel.map(|i| super::reg()[i].subject).or(self.subject).filter(|s| skinned(*s)).unwrap_or(figures::Subject::Chemistry)
+        // a figure the other site lists too (the length reading) wears the page it was opened from
+        let own = self.sel.map(|i| &super::reg()[i]);
+        own.map(|d| match self.subject {
+            Some(s) if figures::also_listed(d.id).contains(&s) => s,
+            _ => d.subject,
+        })
+        .or(self.subject)
+        .filter(|s| skinned(*s))
+        .unwrap_or(figures::Subject::Chemistry)
     }
 
     /// The icon toolbar across the top of the preview card: copy, image, download, share |
@@ -589,12 +720,17 @@ impl Workspace {
         let ctx = ui.ctx().clone();
         let mut act = Act::None;
         let have_svg = true;
-        let chem = chem_page(&ctx) || ctx.data(|d| d.get_temp::<bool>(egui::Id::new("bio_skin_page"))).unwrap_or(false);
+        let chem_subj = self.skin_subject() == figures::Subject::Chemistry;
+        let chem = chem_page(&ctx) || chem_subj || ctx.data(|d| d.get_temp::<bool>(egui::Id::new("bio_skin_page"))).unwrap_or(false) || ctx.data(|d| d.get_temp::<bool>(egui::Id::new("phys_skin_page"))).unwrap_or(false);
         let narrow = ui.ctx().content_rect().width() < 500.0;
         let bar = ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), if narrow { if self.skin_subject() == figures::Subject::Math { 48.0 } else { 46.0 } } else { 53.0 }), Layout::left_to_right(Align::Center), |ui| {
             // a phone spreads the six icons evenly across the card, as the reference does
-            ui.spacing_mut().item_spacing.x = if narrow && !chem { -0.8 } else if narrow && self.skin_subject() == figures::Subject::Biology { 2.6 } else if narrow { ((ui.available_width() - 20.0 - 6.0 * 38.0) / 5.0).max(2.0) } else if chem { 4.8 } else { 5.0 };
-            ui.add_space(if narrow && !chem { 2.0 } else if narrow { 10.0 } else if chem { 7.2 } else { 10.0 });
+            let phys_page = ctx.data(|d| d.get_temp::<bool>(egui::Id::new("phys_skin_page"))).unwrap_or(false);
+            let has_track = self.sel.is_some_and(|si| (super::reg()[si].params)().iter().any(|d| d.key == "label_size" && matches!(&d.kind, crate::figures::Kind::Choice(o) if o.len() == 3)));
+            // the physics phone toolbar with no label-size track spreads its six icons edge to edge
+            let phys_spread = narrow && ((phys_page && !has_track) || chem_page(&ctx) || chem_subj);
+            ui.spacing_mut().item_spacing.x = if phys_spread { (ui.available_width() - 11.6 - 6.0 * 34.4) / 5.0 } else if narrow && !chem { -0.8 } else if narrow && self.skin_subject() == figures::Subject::Biology { 2.6 } else if narrow { ((ui.available_width() - 20.0 - 6.0 * 38.0) / 5.0).max(2.0) } else if chem { 4.8 } else { 5.0 };
+            ui.add_space(if phys_spread { 5.8 } else if narrow && !chem { 2.0 } else if narrow { 10.0 } else if chem { 7.2 } else { 10.0 });
             if tool_btn(ui, chem, lucide::COPY, ph::COPY, "Copy image", true).clicked() {
                 act = match self.output().ok().and_then(|o| super::color_image(&o.png)) {
                     Some(ci) => {
@@ -611,23 +747,25 @@ impl Workspace {
                 act = self.export(true);
             }
             let share = tool_btn(ui, chem, lucide::SHARE, ph::EXPORT, "Share link", true);
-            egui::Popup::menu(&share).show(|ui| {
+            // the reference copies on a plain click; the extras this app adds live on a right-click
+            if share.clicked()
+                && let Some(l) = self.share_link()
+            {
+                ui.ctx().copy_text(l);
+                self.toast = Some(("Link copied. Share it, and anyone who opens it sees this exact figure.".into(), false));
+            }
+            share.context_menu(|ui| {
                 ui.set_min_width(300.0);
-                if ui.button("Copy link").on_hover_text("Copy a link that reopens this exact figure").clicked()
-                    && let Some(l) = self.share_link()
-                {
-                    ui.ctx().copy_text(l);
-                    self.toast = Some(("Link copied. Share it, and anyone who opens it in verSHion sees this exact figure.".into(), false));
-                    ui.close();
-                }
-                ui.label(theme::muted("Works offline: the link itself holds the settings.").size(11.0));
+                ui.label(theme::muted("Share link works offline: the link itself holds the settings.").size(11.0));
                 ui.separator();
                 if self.link_box(ui, 190.0) {
                     ui.close();
                 }
                 // this app's extras live here, so the toolbar itself matches the reference's
-                ui.separator();
-                self.chem_extras(ui, &mut act);
+                if !self.math_panel() {
+                    ui.separator();
+                    self.chem_extras(ui, &mut act);
+                }
             });
             if !narrow {
                 let (sep, _) = ui.allocate_exact_size(Vec2::new(if chem { 10.5 } else { 8.0 }, 24.0), Sense::hover());
@@ -775,19 +913,20 @@ pub fn outline_button(ui: &mut Ui, text: &str, enabled: bool) -> egui::Response 
     p.rect(rect, CornerRadius::same(12), if hov { theme::hover_bg() } else { theme::card() }, Stroke::new(1.0, pill_border()), egui::StrokeKind::Inside);
     let g = p.layout_no_wrap(label, egui::FontId::new(15.2, theme::bold_family()), col);
     // the chemistry page draws the reference's "images" glyph (18 px); the others keep the font icon
-    let chem = chem_page(ui.ctx()) || ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("bio_skin_page"))).unwrap_or(false);
+    let phys_pg = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("phys_skin_page"))).unwrap_or(false);
+    let chem = chem_page(ui.ctx()) || phys_pg || ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("bio_skin_page"))).unwrap_or(false);
     let ig = icon.as_ref().filter(|_| !chem).map(|i| p.layout_no_wrap(i.clone(), theme::icon_font(17.0), col));
-    let gap = if chem { 7.5 } else { 7.0 };
+    let gap = if phys_pg { 8.0 } else if chem { 7.5 } else { 7.0 };
     let icon_w = if chem && icon.is_some() { 18.0 } else { ig.as_ref().map_or(0.0, |i| i.size().x) };
     let total = g.size().x + if icon_w > 0.0 { icon_w + gap } else { 0.0 };
     let mut x = rect.center().x - total / 2.0;
     // the reference sets the label's glyphs 1.5 px above the box's middle
-    let cy = rect.center().y - if chem { 1.5 } else { 0.0 };
+    let cy = rect.center().y - if phys_pg { 2.0 } else if chem { 1.5 } else { 0.0 };
     if chem && icon.is_some() {
         lucide::paint_grid(&p, Rect::from_min_size(Pos2::new(x, cy - 9.0), Vec2::splat(18.0)), col, lucide::IMAGES, 18.0, 1.5);
         x += icon_w + gap;
     } else if let Some(i) = ig {
-        p.galley(Pos2::new(x, rect.center().y - i.size().y / 2.0), i.clone(), col);
+        p.galley(Pos2::new(x, cy - i.size().y / 2.0), i.clone(), col);
         x += i.size().x + gap;
     }
     p.galley(Pos2::new(x, cy - g.size().y / 2.0), g.clone(), col);
@@ -834,14 +973,16 @@ pub fn dashed_chip(ui: &mut Ui, text: &str) -> egui::Response {
         None => (String::new(), text.to_string()),
     };
     let p = ui.painter().clone();
-    let g = p.layout_no_wrap(label, egui::FontId::new(15.2, theme::bold_family()), blue_text());
-    let ig = p.layout_no_wrap(icon, theme::icon_font(15.0), blue_text());
-    let w = g.size().x + ig.size().x + 7.0 + 36.0;
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 37.0), Sense::click());
+    let ph = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("phys_skin_page"))).unwrap_or(false);
+    let (fs, is, gap, pad, hh) = if ph { (15.0, 14.0, 6.2, 31.8, 38.0) } else { (15.2, 15.0, 7.0, 36.0, 37.0) };
+    let g = p.layout_no_wrap(label, egui::FontId::new(fs, theme::bold_family()), blue_text());
+    let ig = p.layout_no_wrap(icon, theme::icon_font(is), blue_text());
+    let w = g.size().x + if ph { 14.0 } else { ig.size().x } + gap + pad;
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, hh), Sense::click());
     if resp.hovered() {
         p.rect_filled(rect, CornerRadius::same(19), theme::hover_bg());
     }
-    let st = Stroke::new(1.0, pill_border());
+    let st = Stroke::new(1.0, if ph { Color32::from_rgb(218, 226, 240) } else { pill_border() });
     // a dashed rounded outline: straight dashes along the sides, short arcs at the ends
     let r = rect.height() / 2.0;
     let mut pts: Vec<Pos2> = vec![];
@@ -856,9 +997,16 @@ pub fn dashed_chip(ui: &mut Ui, text: &str) -> egui::Response {
     }
     pts.push(pts[0]);
     p.extend(egui::Shape::dashed_line(&pts, st, 4.0, 3.0));
-    let mut x = rect.center().x - (g.size().x + ig.size().x + 7.0) / 2.0;
+    if ph {
+        // the reference's lucide bookmark-plus, 14 px, 17 px in from the edge
+        let x = rect.left() + 16.3;
+        lucide::paint_grid(&p, Rect::from_min_size(Pos2::new(x, rect.center().y - 7.0), Vec2::splat(14.0)), blue_text(), lucide::BOOKMARK_PLUS, 24.0, 2.0);
+        p.galley(Pos2::new(x + 14.0 + gap, rect.center().y - g.size().y / 2.0), g, blue_text());
+        return resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+    }
+    let mut x = rect.center().x - (g.size().x + ig.size().x + gap) / 2.0;
     p.galley(Pos2::new(x, rect.center().y - ig.size().y / 2.0), ig.clone(), blue_text());
-    x += ig.size().x + 7.0;
+    x += ig.size().x + gap;
     p.galley(Pos2::new(x, rect.center().y - g.size().y / 2.0), g, blue_text());
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
@@ -1044,23 +1192,25 @@ fn tip_for(title: &str) -> &'static str {
 pub fn section_header(ui: &mut Ui, title: &str, summary: &str, open: bool) -> egui::Response {
     let w = ui.available_width();
     let chem = chem_page(ui.ctx());
+    let phys_pg = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("phys_skin_page"))).unwrap_or(false);
     // the chemistry reference's rows are 70 px with a summary
     // the first row of a card sits flush on its border; the rest carry a 1 px rule of their own
     let first = ui.ctx().data_mut(|d| d.remove_temp::<bool>(egui::Id::new("chem_first_row"))).unwrap_or(false);
-    let h = if summary.is_empty() { 54.0 } else if chem { if first { 70.0 } else { 71.0 } } else if first { 70.0 } else { 62.0 };
+    let h = if summary.is_empty() { 54.0 } else if chem { if first { 70.0 } else { 71.0 } } else if phys_pg { if first { 69.0 } else { 71.0 } } else if first { 70.0 } else { 62.0 };
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, h), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, title));
     let p = ui.painter();
     // hairline above every header but it also closes the card above the next one
     if !first {
         p.hline(rect.x_range(), rect.top(), Stroke::new(1.0, theme::border()));
     }
     if resp.hovered() {
-        p.rect_filled(rect.shrink2(Vec2::new(1.0, 1.0)), CornerRadius::same(0), theme::hover_bg().gamma_multiply(0.5));
+        p.rect_filled(rect.shrink2(Vec2::new(1.0, 1.0)), CornerRadius::same(0), if phys_pg { theme::accent_faded() } else { theme::hover_bg().gamma_multiply(0.5) });
     }
     let math = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("math_skin_page"))).unwrap_or(false);
     // the math reference sits its row content 4 px lower and its chevron 4 px further in
     let bio = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("bio_skin_page"))).unwrap_or(false);
-    let (dy, dx) = if math { (4.0, 4.0) } else if chem || bio { (0.0, 4.0) } else { (0.0, 0.0) };
+    let (dy, dx) = if math { (4.0, 4.0) } else if chem || bio { (0.0, 4.0) } else if phys_pg { (0.0, 4.0) } else { (0.0, 0.0) };
     let cy = rect.center().y + dy;
     let tile = Rect::from_min_size(Pos2::new(rect.left() + 18.0, cy - 16.0 - if first && chem { 1.0 } else { 0.0 }), Vec2::splat(32.0));
     p.rect_filled(tile, CornerRadius::same(8), theme::accent_faded());
@@ -1083,7 +1233,8 @@ pub fn section_header(ui: &mut Ui, title: &str, summary: &str, open: bool) -> eg
             _ => icon,
         }
     } else { icon };
-    let lops = if chem { chem_lucide_icon(title) } else if bio && tl == "micropipette" { Some(lucide::PIPETTE) } else { None };
+    let fig_id = ui.ctx().data(|d| d.get_temp::<&'static str>(egui::Id::new("phys_fig_id"))).unwrap_or("");
+    let lops = if phys { phys_lucide_icon(fig_id, title) } else if chem { chem_lucide_icon(title) } else if bio && tl == "micropipette" { Some(lucide::PIPETTE) } else { None };
     match lops {
         Some(ops) => lucide::paint(p, Rect::from_center_size(tile.center(), Vec2::splat(18.0)), theme::accent_col(), ops),
         None => {
@@ -1113,24 +1264,24 @@ pub fn section_header(ui: &mut Ui, title: &str, summary: &str, open: bool) -> eg
         }
     });
     let total = t.size().y + s.as_ref().map_or(0.0, |g| g.size().y + 1.0);
-    let y0 = cy - total / 2.0;
+    let y0 = cy - total / 2.0 - if phys_pg && first { 1.0 } else { 0.0 };
     let ty = t.size().y;
     p.galley(Pos2::new(x, y0), t, theme::ink());
     if let Some(g) = s {
         p.galley(Pos2::new(x, y0 + ty + 1.0), g, theme::muted_col());
     }
-    if (chem || bio) && !math {
+    if (chem || bio || phys_pg) && !math {
         // the reference's chevron is a 2 px stroked "v", a pixel above the row's middle
-        let c = Pos2::new(rect.right() - 24.0 - dx + 1.0, cy - 0.4);
+        let c = Pos2::new(rect.right() - 24.0 - dx + 1.0, cy - if phys_pg { 0.5 } else { 0.4 });
         let k = if open { -1.0 } else { 1.0 };
         p.add(egui::Shape::line(
-            vec![Pos2::new(c.x - 4.8, c.y - 2.4 * k), Pos2::new(c.x, c.y + 2.4 * k), Pos2::new(c.x + 4.8, c.y - 2.4 * k)],
-            Stroke::new(1.8, theme::muted_col()),
+            { let (hw, hh) = if phys_pg { (4.2, 2.1) } else { (4.8, 2.4) }; vec![Pos2::new(c.x - hw, c.y - hh * k), Pos2::new(c.x, c.y + hh * k), Pos2::new(c.x + hw, c.y - hh * k)] },
+            Stroke::new(if phys_pg { 1.7 } else { 1.8 }, if phys_pg { Color32::from_rgb(88, 98, 114) } else { theme::muted_col() }),
         ));
         return resp;
     }
     p.text(
-        Pos2::new(rect.right() - 24.0 - dx, cy),
+        Pos2::new(rect.right() - 24.0 - dx, cy - if phys_pg { 1.0 } else { 0.0 }),
         egui::Align2::CENTER_CENTER,
         if open { ph::CARET_UP } else { ph::CARET_DOWN },
         theme::icon_font(15.0),
@@ -1147,6 +1298,8 @@ impl Workspace {
         ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("math_skin_page"), math));
         let phys = self.skin_subject() == figures::Subject::Physics;
         ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("phys_skin_page"), phys));
+        let fig_id = self.sel.map(|i| super::reg()[i].id).unwrap_or("");
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("phys_fig_id"), fig_id));
         let chem = self.skin_subject() == figures::Subject::Chemistry;
         ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("chem_skin_page"), chem));
         let bio_pg = self.skin_subject() == figures::Subject::Biology;
@@ -1158,6 +1311,10 @@ impl Workspace {
             // the biology reference opens the growth graph's two-column controls in a wider column, and the gel's slightly wider
             (figures::Subject::Biology, Some("population-growth")) => 474.0,
             (figures::Subject::Biology, Some("gel-electrophoresis")) => 426.0,
+            // the physics reference opens the motion graphs' segment blocks in a wider column (416 at 1440)
+            (figures::Subject::Physics, Some("motion-graphs" | "motion-map" | "ray-diagram")) => 410.0,
+            // and the spring scale and length reading, whose first blocks open, in a wider one still (432)
+            (figures::Subject::Physics, Some("spring-scale" | "length-reading")) => 426.0,
             (figures::Subject::Chemistry, Some("titration-curve" | "heating-cooling-curve" | "mass-spectrum")) => 378.0,
             (figures::Subject::Chemistry, Some("photoelectron-spectrum")) => 410.0,
             _ => panel_w(sub),
@@ -1174,8 +1331,8 @@ impl Workspace {
             inner.set_width(panel_w);
             self.controls(&mut inner, avail_h);
             let w = ui.available_width();
-            if math && ui.ctx().content_rect().width() >= 880.0 {
-                // the math reference's preview card reaches 2 px past the controls column's top and left
+            if (math || phys) && ui.ctx().content_rect().width() >= 880.0 {
+                // the math (and physics) reference's preview card reaches 2 px past the controls column's top and left
                 // and 1 px past its bottom and right edge
                 let at = ui.cursor().min;
                 ui.advance_cursor_after_rect(Rect::from_min_size(at, Vec2::new(w, avail_h)));
@@ -1209,6 +1366,28 @@ pub fn bio_checkbox(ui: &mut Ui, on: &mut bool, label: &str) -> egui::Response {
     }
     ui.painter().galley(Pos2::new(b.right() + 8.0, rect.center().y - galley.size().y / 2.0), galley, theme::ink());
     resp
+}
+
+/// The physics page's checkbox: a 16.8 px box 4 px in from the edge, its label 11 px on in 14.4 px semibold, a 22.8 px row.
+pub fn phys_checkbox(ui: &mut Ui, on: &mut bool, label: &str) -> egui::Response {
+    let galley = ui.painter().layout_no_wrap(label.to_string(), egui::FontId::new(14.4, theme::semibold_family()), theme::ink());
+    let (rect, mut resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.8), Sense::click());
+    if resp.clicked() {
+        *on = !*on;
+        resp.mark_changed();
+    }
+    let b = Rect::from_min_size(Pos2::new(rect.left() + 4.0, rect.center().y - 8.4), Vec2::splat(16.8));
+    if *on {
+        ui.painter().rect_filled(b, CornerRadius::same(4), theme::accent_col());
+        let st = Stroke::new(2.0, Color32::WHITE);
+        let c = b.center();
+        ui.painter().line_segment([c + Vec2::new(-4.5, 0.5), c + Vec2::new(-1.5, 3.5)], st);
+        ui.painter().line_segment([c + Vec2::new(-1.5, 3.5), c + Vec2::new(4.5, -3.5)], st);
+    } else {
+        ui.painter().rect(b, CornerRadius::same(4), theme::card(), Stroke::new(1.25, Color32::from_rgb(107, 114, 128)), egui::StrokeKind::Inside);
+    }
+    ui.painter().galley(Pos2::new(b.right() + 11.0, rect.center().y - galley.size().y / 2.0), galley, theme::ink());
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// The population page's "Fit the axes" box: a 17 px square 4 px in from the card edge, its label 12 px on.
@@ -1251,10 +1430,15 @@ pub fn segmented_track(ui: &mut Ui, opts: &[&'static str], cur: &mut String) {
     // the biology reference's switches match the chemistry ones: 39.4 px track, 3 px padding, 600 weight
     let chem = chem_page(ui.ctx()) || ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("bio_skin_page"))).unwrap_or(false);
     let bio = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("bio_skin_page"))).unwrap_or(false);
-    let (pad, cell_h, trk_r, cell_r) = if chem { (3.0, if bio { 33.4 } else { 33.0 }, 11, 8) } else { (4.0, 50.0, 12, 8) };
+    // the physics motion-graph blocks' Forward / Back switch is the slim 36 px track
+    let slim = ui.ctx().data_mut(|d| d.remove_temp::<bool>(egui::Id::new("seg_slim"))).unwrap_or(false);
+    let compact = ui.ctx().data_mut(|d| d.remove_temp::<bool>(egui::Id::new("seg_compact"))).unwrap_or(false);
+    // the physics page's switches are the same 39 px track as the chemistry ones
+    let chem = chem || compact || ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("phys_skin_page"))).unwrap_or(false);
+    let (pad, cell_h, trk_r, cell_r) = if slim { (3.0, 30.0, 11, 8) } else if chem { (3.0, if bio { 33.4 } else { 33.0 }, 11, 8) } else { (4.0, 50.0, 12, 8) };
     let cell_w0 = (w - 2.0 * pad) / n;
     // a label that wraps makes the reference's cells (and so the track) grow with it: 13 px of padding around the text lines
-    let cell_h = if chem {
+    let cell_h = if chem && !slim {
         let fam = theme::semibold_family();
         let lines_h = opts
             .iter()
@@ -1265,7 +1449,14 @@ pub fn segmented_track(ui: &mut Ui, opts: &[&'static str], cur: &mut String) {
         cell_h
     };
     let icons = ui.ctx().data_mut(|d| d.remove_temp::<bool>(egui::Id::new("seg_icons"))).unwrap_or(false);
+    let lucide_icons = ui.ctx().data_mut(|d| d.remove_temp::<bool>(egui::Id::new("seg_lucide"))).unwrap_or(false)
+        || (opts.len() == 3 && opts[0] == "Text" && opts[1] == "Blank line" && opts[2] == "None" && ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("phys_skin_page"))).unwrap_or(false));
+    let wrapped = chem && !slim && cell_h > 40.0;
     let (track, track_resp) = ui.allocate_exact_size(Vec2::new(w, cell_h + 2.0 * pad), Sense::hover());
+    // a wrapped label's track in the reference is followed by 2 px more than a one-line one
+    if wrapped {
+        ui.add_space(2.0);
+    }
     let wash = if theme::is_dark() { Color32::from_rgb(0x11, 0x16, 0x21) } else if chem { Color32::from_rgb(0xf6, 0xf7, 0xfb) } else { Color32::from_rgb(0xf0, 0xf1, 0xf6) };
     ui.painter().rect_filled(track, CornerRadius::same(trk_r), wash);
     let cell_w = (track.width() - 2.0 * pad) / n;
@@ -1279,7 +1470,18 @@ pub fn segmented_track(ui: &mut Ui, opts: &[&'static str], cur: &mut String) {
         }
         let col = if sel { blue_text() } else { theme::muted_col() };
         let g = ui.painter().layout(o.to_string(), egui::FontId::new(13.76, if chem { theme::semibold_family() } else { theme::bold_family() }), col, cell_w - 16.0);
-        let mut pos = cell.center() - g.size() / 2.0 - if chem { Vec2::new(0.0, 0.6) } else { Vec2::ZERO };
+        let mut pos = cell.center() - g.size() / 2.0 - if chem && !wrapped { Vec2::new(0.0, 0.6) } else { Vec2::ZERO };
+        // wrapped lines are centred on each other, as the reference's text-align centre sets them, and sit a little lower
+        let g = if wrapped && g.rows.len() > 1 {
+            let mut job = egui::text::LayoutJob::single_section(o.to_string(), egui::TextFormat::simple(egui::FontId::new(13.76, theme::semibold_family()), col));
+            job.wrap.max_width = cell_w - 16.0;
+            job.halign = Align::Center;
+            let g2 = ui.painter().layout_job(job);
+            pos = Pos2::new(cell.center().x - g2.rect.center().x, pos.y + 0.4);
+            g2
+        } else {
+            g
+        };
         // the chart-title switch draws a glyph before its words (a T, a crossed circle)
         if icons {
             let glyph = if *o == "Text" { ph::TEXT_T } else { ph::PROHIBIT };
@@ -1288,6 +1490,14 @@ pub fn segmented_track(ui: &mut Ui, opts: &[&'static str], cur: &mut String) {
             let x0 = cell.center().x - tot / 2.0;
             ui.painter().galley(Pos2::new(x0, cell.center().y - ig.size().y / 2.0), ig.clone(), col);
             pos.x = x0 + ig.size().x + 6.0;
+        }
+        if lucide_icons {
+            // the physics label switch: Lucide T, pencil and slashed circle, 15 px, 6 px before the words
+            let ops = match *o { "Text" => lucide::PH_TYPE, "Blank line" => lucide::PENCIL_LINE, _ => lucide::BAN };
+            let tot = 15.0 + 6.0 + g.size().x;
+            let x0 = cell.center().x - tot / 2.0;
+            lucide::paint(ui.painter(), Rect::from_min_size(Pos2::new(x0, cell.center().y - 7.5), Vec2::splat(15.0)), col, ops);
+            pos.x = x0 + 21.0;
         }
         ui.painter().galley(pos, g, col);
         if resp.clicked() {
@@ -1318,21 +1528,21 @@ impl Workspace {
             .filter(|(_, d)| figures::listed_under(d, subj))
             .filter(|(_, d)| q.is_empty() || d.title.to_lowercase().contains(&q) || d.blurb.to_lowercase().contains(&q) || d.id.contains(&q))
             .collect();
-        list.sort_by_key(|(_, d)| d.subject != subj);
+        list.sort_by_key(|(_, d)| (d.subject != subj, if phys { PHYS_ORDER.iter().position(|x| *x == d.id).unwrap_or(99) } else { 0 }));
         ui.spacing_mut().scroll.fade.strength = 0.0;
         egui::ScrollArea::vertical().id_salt("chem_browser").auto_shrink([false, false]).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(ui, |ui| {
             let avail = ui.available_width();
-            let col_w = 888.0_f32.min(avail - 4.0).max(200.0);
+            let col_w = 888.0_f32.min(avail - if phys && avail < 560.0 { -6.0 } else { 4.0 }).max(200.0);
             let left = ((avail - col_w) / 2.0).max(0.0);
             ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
-                ui.add_space(left);
+                ui.add_space(if phys && avail < 560.0 { -3.0 } else { left });
                 ui.vertical(|ui| {
                     ui.set_width(col_w);
                     ui.spacing_mut().item_spacing.y = 8.0;
                     let phone = col_w < 560.0;
-                    ui.add_space(if phone { 6.0 } else { 14.0 });
-                    ui.label(RichText::new(if phys { "Physics figures for your tests and worksheets" } else if math { "Math figures for your tests and worksheets" } else if bio { "Biology figures for your tests and worksheets" } else { "Chemistry figures for your tests and worksheets" }).family(theme::bold_family()).size(if phone { 24.0 } else { 32.0 }).extra_letter_spacing(if phone { -0.48 } else { -0.64 }).line_height(Some(if phone { 30.0 } else { 39.0 })).color(theme::ink()));
+                    ui.add_space(if phone && !phys { 6.0 } else if phone { 15.5 } else { 14.0 });
+                    ui.label(RichText::new(if phys { "Physics figures for your tests and worksheets" } else if math { "Math figures for your tests and worksheets" } else if bio { "Biology figures for your tests and worksheets" } else { "Chemistry figures for your tests and worksheets" }).family(theme::bold_family()).size(if phone && phys { 30.0 } else if phone { 24.0 } else { 32.0 }).extra_letter_spacing(if phone { -0.48 } else { -0.64 }).line_height(Some(if phone && phys { 36.0 } else if phone { 30.0 } else { 39.0 })).color(theme::ink()));
                     ui.add_space(2.0);
                     ui.scope(|ui| {
                         ui.set_max_width(if phone { col_w } else { 650.0 });
@@ -1352,7 +1562,7 @@ impl Workspace {
                                 ui.add_space(7.0);
                                 ui.add(
                                     egui::TextEdit::singleline(&mut self.search)
-                                        .hint_text(RichText::new(if phys { "Search figures, like “projectile”" } else if math { "Search figures, like “triangle”" } else if bio { "Search figures, like “punnett square”" } else { "Search figures, like “graduated cylinder”" }).size(16.0))
+                                        .hint_text(RichText::new(if phys { "Search figures, like “free body diagram”" } else if math { "Search figures, like “triangle”" } else if bio { "Search figures, like “punnett square”" } else { "Search figures, like “graduated cylinder”" }).size(16.0))
                                         .font(egui::FontId::new(16.0, egui::FontFamily::Name("vs-noto".into())))
                                         .frame(Frame::NONE)
                                         .desired_width(f32::INFINITY),
@@ -1389,7 +1599,7 @@ impl Workspace {
                         ui.horizontal_top(|ui| {
                             ui.spacing_mut().item_spacing.x = gap;
                             for (i, def) in chunk {
-                                if chem_card(ui, &ctx, def, *i, &mut budget, cw, h) {
+                                if chem_card(ui, &ctx, def, *i, &mut budget, cw, h, phys) {
                                     picked = Some(*i);
                                 }
                             }
@@ -1418,6 +1628,20 @@ impl Workspace {
 }
 
 const THUMB_H: f32 = 152.0;
+
+/// The physics site's card order.
+const PHYS_ORDER: [&str; 13] = ["free-body-diagram", "vector-diagram", "inclined-plane", "pulley", "projectile-motion", "motion-graphs", "motion-map", "spring-scale", "length-reading", "waves", "circuit-diagram", "ray-diagram", "coordinate-grid"];
+
+/// The physics site's card title: "X Generator" (its names for three differ from ours).
+fn phys_card_title(def: &figures::FigureDef) -> String {
+    match def.id {
+        "motion-graphs" => "Motion Graph Generator".into(),
+        "waves" => "Wave Generator".into(),
+        "temperature-reading" => def.title.into(),
+        _ if PHYS_ORDER.contains(&def.id) => format!("{} Generator", def.title),
+        _ => def.title.into(),
+    }
+}
 
 fn card_height(ui: &Ui, blurb: &str, cw: f32) -> f32 {
     let g = ui.painter().layout_job(blurb_job(blurb, cw - 22.0));
@@ -1483,7 +1707,7 @@ fn paint_fit(p: &egui::Painter, ctx: &egui::Context, def: &figures::FigureDef, o
 }
 
 /// One figure card of the chemistry home: thumbnail, hairline, bold title, muted blurb.
-fn chem_card(ui: &mut Ui, ctx: &egui::Context, def: &figures::FigureDef, idx: usize, budget: &mut u8, cw: f32, h: f32) -> bool {
+fn chem_card(ui: &mut Ui, ctx: &egui::Context, def: &figures::FigureDef, idx: usize, budget: &mut u8, cw: f32, h: f32, phys: bool) -> bool {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(cw, h), Sense::click());
     let p = ui.painter();
     let radius = CornerRadius::same(12);
@@ -1510,14 +1734,27 @@ fn chem_card(ui: &mut Ui, ctx: &egui::Context, def: &figures::FigureDef, idx: us
         }
         None => {
             // the reference's titration card marks the half-equivalence point too
-            let over: Over = if def.id == "titration-curve" { vec![("half", figures::Value::B(true))] } else { Vec::new() };
+            let over: Over = match def.id {
+                "titration-curve" => vec![("half", figures::Value::B(true))],
+                // the physics site's first two cards: a block with four forces, three vectors and their resultant
+                "free-body-diagram" if phys => {
+                    use figures::Value::{F, I, S};
+                    vec![("body", S("Block".into())), ("n", I(4)), ("f3_ang", F(180.0)), ("f4_ang", F(0.0)), ("f3_lab", S("F_f".into())), ("f4_lab", S("F_A".into()))]
+                }
+                "vector-diagram" if phys => {
+                    use figures::Value::{F, I};
+                    vec![("n", I(3)), ("v1_mag", F(4.0)), ("v1_ang", F(15.0)), ("v2_mag", F(3.0)), ("v2_ang", F(80.0)), ("v3_mag", F(2.5)), ("v3_ang", F(145.0))]
+                }
+                _ => Vec::new(),
+            };
             paint_fit(p, ctx, def, &over, budget, thumb)
         }
     }
     p.hline(rect.x_range().shrink(1.0), thumb.bottom(), line);
     let x = rect.left() + 15.0;
     let y = thumb.bottom() + 9.0;
-    let t = p.layout_no_wrap(def.title.to_string(), egui::FontId::new(16.0, theme::bold_family()), theme::ink());
+    let title = if phys { phys_card_title(def) } else { def.title.to_string() };
+    let t = p.layout_no_wrap(title, egui::FontId::new(16.0, theme::bold_family()), theme::ink());
     let ty = t.size().y;
     p.galley(Pos2::new(x, y), t, theme::ink());
     let g = p.layout_job(blurb_job(def.blurb, cw - 22.0));

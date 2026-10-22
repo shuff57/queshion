@@ -3,7 +3,7 @@
 use crate::figures::svg::{esc, Doc};
 use std::fmt::Write;
 
-pub const INK: &str = "#111111";
+pub const INK: &str = "#111827";
 pub const FILL: &str = "#e9ebef";
 pub const GREY: &str = "#6b7280";
 pub const SERIF: &str = "Liberation Serif, Noto Serif, DejaVu Serif, Times New Roman, serif";
@@ -170,10 +170,12 @@ pub struct G {
     pub halo: bool,
     /// Fill colour of `tex` labels.
     pub tcol: &'static str,
+    /// Arrowhead length and half-width scale (1.0 = the house head).
+    pub head_k: (f64, f64),
 }
 
 impl G {
-    pub fn new(w: f64, h: f64, mir: bool) -> Self { G { d: Doc::new(w, h), w, mir, halo: false, tcol: "#111" } }
+    pub fn new(w: f64, h: f64, mir: bool) -> Self { G { d: Doc::new(w, h), w, mir, halo: false, tcol: "#111", head_k: (1.0, 1.0) } }
     pub fn x(&self, x: f64) -> f64 { if self.mir { self.w - x } else { x } }
     /// Text anchor after mirroring (start and end swap so labels stay on the same side).
     pub fn anc<'a>(&self, a: &'a str) -> &'a str {
@@ -186,6 +188,11 @@ impl G {
         let (a, b) = (self.x(x1), self.x(x2));
         self.d.line(a, y1, b, y2, c, sw);
     }
+    /// A one-unit gridline in the form `figures::to_rgba` snaps to device pixels (the reference's crispEdges grid).
+    pub fn hair(&mut self, x1: f64, y1: f64, x2: f64, y2: f64) {
+        let (a, b) = (self.x(x1), self.x(x2));
+        let _ = write!(self.d_raw(), r##"<line x1="{a:.2}" y1="{y1:.2}" x2="{b:.2}" y2="{y2:.2}" stroke="#111827" stroke-width="1"/>"##);
+    }
     pub fn dash(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, c: &str, sw: f64) {
         let (a, b) = (self.x(x1), self.x(x2));
         let _ = write!(self.d_raw(), r#"<line x1="{a:.2}" y1="{y1:.2}" x2="{b:.2}" y2="{y2:.2}" stroke="{c}" stroke-width="{sw}" stroke-dasharray="{:.1} {:.1}" stroke-linecap="butt"/>"#, sw * 2.4 + 2.0, sw * 2.0 + 2.5);
@@ -197,7 +204,7 @@ impl G {
     pub fn arrow(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, c: &str, sw: f64) {
         let (dx, dy) = (x2 - x1, y2 - y1);
         let len = (dx * dx + dy * dy).sqrt().max(1e-6);
-        let hl = head_len(sw).min(len * 0.6);
+        let hl = head_len(sw).min(len * 0.6) * self.head_k.0;
         let (bx, by) = (x2 - dx / len * hl * 0.8, y2 - dy / len * hl * 0.8);
         self.line(x1, y1, bx, by, c, sw);
         self.head(x1, y1, x2, y2, c, sw);
@@ -207,17 +214,38 @@ impl G {
         let (dx, dy) = (x2 - x1, y2 - y1);
         let len = (dx * dx + dy * dy).sqrt().max(1e-6);
         let (ux, uy) = (dx / len, dy / len);
-        let hl = head_len(sw).min(len * 0.6);
+        let hl = head_len(sw).min(len * 0.6) * self.head_k.0;
         let (bx, by) = (x2 - ux * hl, y2 - uy * hl);
-        self.poly(&[(x2, y2), (bx - uy * hl * 0.45, by + ux * hl * 0.45), (bx + uy * hl * 0.45, by - ux * hl * 0.45)], c, c, 0.5);
+        let hw = 0.45 * self.head_k.1;
+        self.poly(&[(x2, y2), (bx - uy * hl * hw, by + ux * hl * hw), (bx + uy * hl * hw, by - ux * hl * hw)], c, c, 0.5);
     }
     pub fn dash_arrow(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, c: &str, sw: f64) {
         let (dx, dy) = (x2 - x1, y2 - y1);
         let len = (dx * dx + dy * dy).sqrt().max(1e-6);
-        let hl = head_len(sw).min(len * 0.6);
+        let hl = head_len(sw).min(len * 0.6) * self.head_k.0;
         let (bx, by) = (x2 - dx / len * hl * 0.8, y2 - dy / len * hl * 0.8);
         self.dash(x1, y1, bx, by, c, sw);
         self.head(x1, y1, x2, y2, c, sw);
+    }
+    /// `dash_arrow` whose dashes are sized to end on a dash with `gap` between them (the free-body page's
+    /// velocity and acceleration arrows: four 7-unit dashes along a 64-unit arrow).
+    pub fn dash_arrow_fit(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, c: &str, sw: f64, gap: f64) {
+        let (dx, dy) = (x2 - x1, y2 - y1);
+        let len = (dx * dx + dy * dy).sqrt().max(1e-6);
+        // the last dash stops 21 units short of the tip: the head's length and one gap
+        let cut = (21.2 * self.head_k.0).min(len * 0.7);
+        let (bx, by) = (x2 - dx / len * cut, y2 - dy / len * cut);
+        self.dash_fit(x1, y1, bx, by, c, sw, gap);
+        self.head(x1, y1, x2, y2, c, sw);
+    }
+    /// A dashed line from (x1, y1) to (x2, y2) whose dashes are sized to end on a dash, as the
+    /// reference lays out a velocity shaft (`gap` between dashes, about 5.3).
+    pub fn dash_fit(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, c: &str, sw: f64, gap: f64) {
+        let len = ((x2 - x1).powi(2) + (y2 - y1).powi(2)).sqrt().max(1e-6);
+        let n = ((len + gap) / (sw * 2.8 + gap)).round().max(1.0);
+        let d = (len + gap) / n - gap;
+        let (a, b) = (self.x(x1), self.x(x2));
+        let _ = write!(self.d_raw(), r#"<line x1="{a:.2}" y1="{y1:.2}" x2="{b:.2}" y2="{y2:.2}" stroke="{c}" stroke-width="{sw}" stroke-dasharray="{d:.2} {gap:.2}" stroke-linecap="butt"/>"#);
     }
     pub fn dim_arrow(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, c: &str, sw: f64) {
         self.line(x1, y1, x2, y2, c, sw);
@@ -230,11 +258,11 @@ impl G {
         let (dx, dy) = (x2 - x1, y2 - y1);
         let len = (dx * dx + dy * dy).sqrt().max(1e-6);
         let (ux, uy) = (dx / len, dy / len);
-        let hl = 10.0_f64.min(len * 0.4);
+        let hl = 9.0_f64.min(len * 0.4);
         self.line(x1 + ux * hl * 0.8, y1 + uy * hl * 0.8, x2 - ux * hl * 0.8, y2 - uy * hl * 0.8, c, sw);
         for (tx, ty, sx, sy) in [(x2, y2, -ux, -uy), (x1, y1, ux, uy)] {
             let (bx, by) = (tx + sx * hl, ty + sy * hl);
-            self.poly(&[(tx, ty), (bx - sy * hl * 0.27, by + sx * hl * 0.27), (bx + sy * hl * 0.27, by - sx * hl * 0.27)], c, c, 0.5);
+            self.poly(&[(tx, ty), (bx - sy * hl * 0.38, by + sx * hl * 0.38), (bx + sy * hl * 0.38, by - sx * hl * 0.38)], c, c, 0.5);
         }
     }
     pub fn poly(&mut self, pts: &[Pt], fill: &str, stroke: &str, sw: f64) {
@@ -298,11 +326,11 @@ impl G {
         for (t, lvl) in &runs {
             let dy = match (cur, *lvl) {
                 (a, b) if a == b => 0.0,
-                (0, -1) => size * 0.2, (0, 1) => -size * 0.38,
-                (-1, 0) => -size * 0.2, (1, 0) => size * 0.38,
+                (0, -1) => size * 0.3, (0, 1) => -size * 0.38,
+                (-1, 0) => -size * 0.3, (1, 0) => size * 0.38,
                 (-1, 1) => -size * 0.58, _ => size * 0.58,
             };
-            let fs = if *lvl == 0 { size } else { size * 0.66 };
+            let fs = if *lvl == 0 { size } else { size * 0.7 };
             // digits, and word subscripts such as "air" or "app", stay upright; single letters are italic
             let word = *lvl == -1 && t.chars().count() >= 2 && t.chars().all(|c| c.is_ascii_lowercase());
             let fst = if *lvl != 0 && (word || t.chars().all(|c| c.is_ascii_digit() || c == '-' || c == '+')) { "normal" } else { style };
@@ -313,7 +341,7 @@ impl G {
             cur = *lvl;
         }
         let (tc, halo) = (self.tcol, self.halo);
-        let _ = write!(self.d_raw(), r##"<text x="{x:.2}" y="{y:.2}" font-size="{size}" text-anchor="{anchor}" font-style="{style}" font-weight="{wt}" font-family="{SERIF}" fill="{}"{}>{body}</text>"##, tc, if halo { r##" stroke="#fff" stroke-width="5" stroke-linejoin="round" paint-order="stroke""## } else { "" });
+        let _ = write!(self.d_raw(), r##"<text x="{x:.2}" y="{y:.2}" font-size="{size}" text-anchor="{anchor}" font-style="{style}" font-weight="{wt}" font-family="{SERIF}" fill="{}"{}>{body}</text>"##, tc, if halo { r##" stroke="#fff" stroke-width="4" stroke-linejoin="round" paint-order="stroke""## } else { "" });
         if st == VEC {
             let bw = base_w.max(size * 0.5);
             let left = match anchor { "start" => x, "end" => x - total, _ => x - total / 2.0 };

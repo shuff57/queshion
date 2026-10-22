@@ -579,9 +579,29 @@ fn setup_fonts(ctx: &Context) {
 }
 
 fn setup_style(ctx: &Context) {
-    let p = pal();
     ctx.set_theme(if is_dark() { ThemePreference::Dark } else { ThemePreference::Light });
-    ctx.all_styles_mut(|style| {
+    ctx.all_styles_mut(apply_style);
+}
+
+/// Runs `f` with the chemistry page skin on and `ui` restyled to match, then puts both back: lets
+/// one panel (the math figures' controls column) wear the reference's look inside the app's own
+/// shell without restyling the whole window.
+pub fn with_chem_skin<R>(ui: &mut egui::Ui, f: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let was = chem_skin();
+    CHEM_SKIN.with(|c| c.set(true));
+    let r = ui.scope(|ui| {
+        let mut st = (**ui.style()).clone();
+        apply_style(&mut st);
+        ui.set_style(st);
+        f(ui)
+    });
+    CHEM_SKIN.with(|c| c.set(was));
+    r.inner
+}
+
+fn apply_style(style: &mut egui::Style) {
+    let p = pal();
+    {
         let v = &mut style.visuals;
         v.dark_mode = is_dark();
         v.widgets.inactive.fg_stroke = Stroke::new(1.0, p.ink);
@@ -640,7 +660,7 @@ fn setup_style(ctx: &Context) {
         style.spacing.button_padding = egui::vec2(12.0, 9.0);
         style.spacing.interact_size.y = 34.0;
         style.visuals.button_frame = true;
-    });
+    }
 }
 
 #[cfg(test)]

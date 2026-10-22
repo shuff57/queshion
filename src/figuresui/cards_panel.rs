@@ -26,7 +26,7 @@ fn buffered_edit(ui: &mut Ui, id: egui::Id, current: &str, width: f32, hint: &st
 
 /// A small frameless icon button (move / remove).
 fn icon(ui: &mut Ui, glyph: &str, on: bool, hover: &str) -> bool {
-    let b = Button::new(RichText::new(glyph).size(14.0)).frame(false).min_size(Vec2::splat(22.0));
+    let b = Button::new(RichText::new(glyph).size(if theme::chem_skin() { 18.0 } else { 14.0 })).frame(false).min_size(Vec2::splat(if theme::chem_skin() { 28.0 } else { 22.0 }));
     ui.add_enabled(on, b).on_hover_text(hover).on_disabled_hover_text(hover).clicked()
 }
 
@@ -84,6 +84,9 @@ fn small(ui: &mut Ui, text: &str) {
 /// The reference's direction control: a 0–360° slider, the angle in degrees and the
 /// Up / Down / Left / Right quick buttons (the current one highlighted). Returns a new angle.
 fn direction(ui: &mut Ui, ang: f64) -> Option<f64> {
+    if theme::chem_skin() {
+        return direction_skin(ui, ang);
+    }
     let mut out = None;
     small(ui, "Direction");
     ui.horizontal(|ui| {
@@ -113,8 +116,112 @@ fn direction(ui: &mut Ui, ang: f64) -> Option<f64> {
     out
 }
 
+/// The physics page's range input: an 8 px rail (grey, blue up to the thumb) and a 15 px solid blue thumb.
+fn phys_slider(ui: &mut Ui, v: &mut f64, lo: f64, hi: f64, step: f64, width: f32) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 16.0), egui::Sense::click_and_drag());
+    let rect = rect.translate(Vec2::new(0.0, 1.0));
+    let (x0, x1) = (rect.left() + 7.5, rect.right() - 7.5);
+    let mut changed = false;
+    if let (true, Some(pos)) = (resp.is_pointer_button_down_on() || resp.dragged(), resp.interact_pointer_pos()) {
+        let t = ((pos.x - x0) / (x1 - x0)).clamp(0.0, 1.0) as f64;
+        let mut nv = lo + t * (hi - lo);
+        if step > 0.0 {
+            nv = (lo + ((nv - lo) / step).round() * step).clamp(lo, hi);
+        }
+        if (nv - *v).abs() > 1e-9 {
+            *v = nv;
+            changed = true;
+        }
+    }
+    let t = ((*v - lo) / (hi - lo)).clamp(0.0, 1.0) as f32;
+    let cx = x0 + t * (x1 - x0);
+    let rail = egui::Rect::from_center_size(rect.center(), Vec2::new(width - 1.0, 8.0));
+    let p = ui.painter();
+    p.rect(rail, CornerRadius::same(4), egui::Color32::from_rgb(239, 239, 239), Stroke::new(1.0, egui::Color32::from_rgb(178, 178, 178)), egui::StrokeKind::Inside);
+    let mut fill = rail;
+    fill.max.x = cx;
+    p.rect_filled(fill, CornerRadius::same(4), theme::accent_col());
+    p.circle_filled(egui::pos2(cx, rect.center().y), 7.5, theme::accent_col());
+    changed
+}
+
+/// The physics page's number box: 67 x 40 px, 15 px text, keeps what is typed while it has focus.
+fn num_box(ui: &mut Ui, id: egui::Id, v: f64, lo: f64, hi: f64) -> Option<f64> {
+    let focused = ui.memory(|m| m.has_focus(id));
+    let mut buf = if focused { ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| fmt_measure(v)) } else { fmt_measure(v) };
+    let r = ui.add(TextEdit::singleline(&mut buf).id(id).desired_width(67.0).margin(Margin::symmetric(10, 10)).font(egui::FontId::new(15.2, egui::FontFamily::Name("vs-noto".into()))));
+    ui.data_mut(|d| d.insert_temp(id, buf.clone()));
+    if r.changed() { buf.trim().parse::<f64>().ok().map(|x| x.clamp(lo, hi)) } else { None }
+}
+
+/// The physics page's direction control: a full rail, a degrees box and a four-cell switch of quick directions.
+fn direction_skin(ui: &mut Ui, ang: f64) -> Option<f64> {
+    ui.scope(|ui| direction_skin_in(ui, ang)).inner
+}
+
+fn direction_skin_in(ui: &mut Ui, ang: f64) -> Option<f64> {
+    let mut out = None;
+    ui.spacing_mut().item_spacing.y = 0.0;
+    param_label(ui, "Direction", "");
+    ui.add_space(5.0);
+    let id = ui.make_persistent_id(("dir_box", ui.next_auto_id()));
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        ui.set_min_height(40.0);
+        let mut v = ang;
+        let w = 250.5f32.min(ui.available_width() - 90.0).max(60.0);
+        ui.add_space(2.0);
+        if phys_slider(ui, &mut v, 0.0, 359.0, 1.0, w) {
+            out = Some(v);
+        }
+        ui.add_space(11.5);
+        if let Some(d) = num_box(ui, id, ang, 0.0, 359.0) {
+            out = Some(d);
+        }
+        ui.add_space(3.0);
+        ui.label(RichText::new("°").size(13.0).color(theme::muted_col()));
+    });
+    ui.add_space(5.6);
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("seg_compact"), true));
+    let cur = items::QUICK_DIRS.iter().find(|(_, a)| (ang.rem_euclid(360.0) - a).abs() < 1e-6).map(|(n, _)| n.to_string()).unwrap_or_default();
+    let mut c = cur.clone();
+    chem_shell::segmented_track(ui, &["Up", "Down", "Left", "Right"], &mut c);
+    if c != cur {
+        out = items::QUICK_DIRS.iter().find(|(n, _)| *n == c).map(|(_, a)| *a);
+    }
+    ui.add_space(13.6);
+    out
+}
+
+/// The physics page's slider row: a caption, then a rail up to a right-aligned readout `ro_w` px wide.
+fn slider_row(ui: &mut Ui, title: &str, v: &mut f64, range: (f64, f64), step: f64, ro_w: f32, readout: &str) -> bool {
+    param_label(ui, title, "");
+    ui.add_space(-2.0);
+    let mut hit = false;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        ui.set_min_height(20.0);
+        let w = (ui.available_width() - ro_w - 11.6 - 2.0).max(60.0);
+        ui.add_space(2.0);
+        hit = phys_slider(ui, v, range.0, range.1, step, w);
+        ui.add_space(11.6);
+        let (r, _) = ui.allocate_exact_size(Vec2::new(ro_w, 20.0), egui::Sense::hover());
+        ui.painter().text(r.right_center(), egui::Align2::RIGHT_CENTER, readout, egui::FontId::new(14.08, theme::semibold_family()), theme::muted_col());
+    });
+    hit
+}
+
+/// The physics page's "Length" row: a rail up to a 40 px readout.
+fn length_row(ui: &mut Ui, v: &mut f64) -> bool {
+    let shown = format!("{:.2}×", *v);
+    slider_row(ui, "Length", v, (0.25, 2.0), 0.05, 40.0, &shown)
+}
+
 /// Label: Text / Blank line / None, with the text box when it is "Text".
 fn label_control(ui: &mut Ui, p: &mut Params, mode_key: &str, text_key: &str, title: &str) {
+    if theme::chem_skin() {
+        return label_control_skin(ui, p, mode_key, text_key, title);
+    }
     small(ui, title);
     if let Some(m) = seg(ui, &LABEL_MODES, p.s(mode_key)) {
         p.set_s(mode_key, &m);
@@ -125,6 +232,73 @@ fn label_control(ui: &mut Ui, p: &mut Params, mode_key: &str, text_key: &str, ti
             p.set_s(text_key, &t);
         }
     }
+}
+
+/// The physics page's label field: the switch with icons, then a full-width box that sets `F_g` as F with a subscript g.
+fn label_control_skin(ui: &mut Ui, p: &mut Params, mode_key: &str, text_key: &str, title: &str) {
+    ui.add_space(0.0);
+    param_label(ui, title, "");
+    ui.add_space(5.9);
+    ui.ctx().data_mut(|d| {
+        d.insert_temp(egui::Id::new("seg_lucide"), true);
+        d.insert_temp(egui::Id::new("seg_compact"), true);
+    });
+    if let Some(m) = seg(ui, &LABEL_MODES, p.s(mode_key)) {
+        p.set_s(mode_key, &m);
+    }
+    if p.s(mode_key) == "Text" {
+        ui.add_space(8.6);
+        if let Some(t) = phys_math_field(ui, ui.make_persistent_id(("lab_box", mode_key, text_key)), p.s(text_key)) {
+            p.set_s(text_key, &t);
+        }
+    }
+}
+
+/// The physics page's text box for a label: full width, 44 px, in italic serif with `_x` and `^x` set as
+/// sub- and superscripts (the markup stays in the text, drawn invisibly small). Returns the new text.
+pub(super) fn phys_math_field(ui: &mut Ui, id: egui::Id, cur: &str) -> Option<String> {
+    let ctx = ui.ctx().clone();
+    let serif = theme::italic_family(&ctx, &theme::serif_family()).unwrap_or_else(theme::serif_family);
+    let focused = ui.memory(|m| m.has_focus(id));
+    let mut buf = if focused { ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| cur.to_string()) } else { cur.to_string() };
+    let col = theme::ink();
+    let mut lay = |ui: &Ui, text: &dyn egui::TextBuffer, wrap: f32| {
+        let mut job = egui::text::LayoutJob::default();
+        let mut sub = false;
+        let mut one = false;
+        let hide = |serif: &egui::FontFamily| egui::TextFormat { font_id: egui::FontId::new(1.0, serif.clone()), color: egui::Color32::TRANSPARENT, ..Default::default() };
+        for ch in text.as_str().chars() {
+            let mut fmt = egui::TextFormat { font_id: egui::FontId::new(17.6, serif.clone()), color: col, ..Default::default() };
+            if ch == '_' || ch == '^' {
+                sub = false;
+                one = true;
+                job.append(&ch.to_string(), 0.0, hide(&serif));
+                continue;
+            }
+            if one && ch == '{' {
+                one = false;
+                sub = true;
+                job.append("{", 0.0, hide(&serif));
+                continue;
+            }
+            if sub && ch == '}' {
+                sub = false;
+                job.append("}", 0.0, hide(&serif));
+                continue;
+            }
+            if sub || one {
+                fmt.font_id = egui::FontId::new(12.5, serif.clone());
+                fmt.valign = Align::BOTTOM;
+                one = false;
+            }
+            job.append(&ch.to_string(), 0.0, fmt);
+        }
+        job.wrap.max_width = wrap;
+        ui.fonts_mut(|f| f.layout_job(job))
+    };
+    let r = ui.add(TextEdit::singleline(&mut buf).id(id).desired_width(f32::INFINITY).margin(Margin::symmetric(12, 10)).font(egui::FontId::new(17.6, serif.clone())).layouter(&mut lay));
+    ui.data_mut(|d| d.insert_temp(id, buf.clone()));
+    r.changed().then_some(buf)
 }
 
 /// Bulleted readout lines.
@@ -168,6 +342,21 @@ impl Workspace {
 
     /// Draws the card that follows param `key`, if any.
     pub(super) fn card_after(&mut self, ui: &mut Ui, fig: &str, key: &str, pdefs: &[ParamDef]) {
+        // the inclined plane's "Add an object above" button sits under the first object's size
+        if fig == "inclined-plane" && key == "size" {
+            if let Some(card) = figures::chips_for(fig) {
+                let n = self.params.i(card.count_key);
+                ui.horizontal(|ui| {
+                    if ui.add_enabled(n < card.max, egui::Button::new(egui::RichText::new("Add an object above").size(12.0))).clicked() {
+                        super::apply_chip(&mut self.params, pdefs, &card, &card.chips[0]);
+                    }
+                    if n > 1 && ui.add(egui::Button::new(theme::muted("Remove the last").size(12.0)).frame(false)).clicked() {
+                        self.params.set_i(card.count_key, n - 1);
+                    }
+                });
+                ui.add_space(6.0);
+            }
+        }
         if let Some(card) = cards::after(fig, key) {
             self.draw_card(ui, fig, card, pdefs);
         }
@@ -179,6 +368,7 @@ impl Workspace {
             Card::Forces => self.forces_card(ui, pdefs),
             Card::Motion => self.motion_card(ui),
             Card::Vectors => self.vectors_card(ui, pdefs),
+            Card::Segments => self.segments_card(ui, pdefs),
             Card::GrowthFit => self.growth_fit_card(ui, fig),
             Card::PpFit(x) => self.pp_fit_box(ui, x),
             Card::PpReadout => {
@@ -486,18 +676,45 @@ impl Workspace {
     fn add_chips(&mut self, ui: &mut Ui, fig: &str, pdefs: &[ParamDef]) {
         let Some(card) = figures::chips_for(fig) else { return };
         let n = self.params.i(card.count_key);
-        ui.horizontal(|ui| {
-            crate::kit::small_caps(ui, card.title);
-            ui.label(theme::muted(format!("{n} of {}", card.max)).size(11.0));
-        });
+        let skin = theme::chem_skin();
+        if skin {
+            // the reference: a 14 px semibold sentence-case label, no counter; a lone button needs none
+            if card.chips.len() > 1 {
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new(card.title).family(theme::bold_family()).size(14.08).color(theme::ink()));
+                ui.add_space(4.0);
+            }
+        } else {
+            ui.horizontal(|ui| {
+                crate::kit::small_caps(ui, card.title);
+                ui.label(theme::muted(format!("{n} of {}", card.max)).size(11.0));
+            });
+        }
         let mut pick = None;
+        ui.scope(|ui| {
+        if skin {
+            ui.spacing_mut().interact_size.y = 28.2;
+        }
         ui.horizontal_wrapped(|ui| {
+            if skin {
+                ui.spacing_mut().item_spacing = Vec2::new(7.0, 6.4);
+                ui.spacing_mut().button_padding = Vec2::new(11.5, 2.0);
+            }
             for (ci, chip) in card.chips.iter().enumerate() {
                 let label = if card.chips.len() == 1 { format!("+ Add a {}", chip.label.to_lowercase()) } else { format!("+ {}", chip.label) };
-                if ui.add_enabled(n < card.max, Button::new(RichText::new(label).size(12.0)).corner_radius(CornerRadius::same(10))).clicked() {
+                let btn = if skin {
+                    let mut job = egui::text::LayoutJob::default();
+                    job.append(egui_phosphor::regular::PLUS, 0.0, egui::TextFormat { font_id: theme::icon_font(13.0), color: theme::accent_col(), line_height: Some(17.0), ..Default::default() });
+                    job.append(label.trim_start_matches("+ "), 6.0, egui::TextFormat { font_id: egui::FontId::new(13.6, theme::bold_family()), color: theme::accent_col(), line_height: Some(17.0), ..Default::default() });
+                    Button::new(job).fill(egui::Color32::TRANSPARENT).stroke(Stroke::new(1.0, super::chem_shell::pill_border())).corner_radius(CornerRadius::same(8)).min_size(Vec2::new(0.0, 28.2))
+                } else {
+                    Button::new(RichText::new(label).size(12.0)).corner_radius(CornerRadius::same(10))
+                };
+                if ui.add_enabled(n < card.max, btn).clicked() {
                     pick = Some(ci);
                 }
             }
+        });
         });
         if let Some(ci) = pick {
             let mut q = self.params.clone();
@@ -506,7 +723,89 @@ impl Workspace {
         }
     }
 
+    /// One force's header on the physics page: a 16 px bold title and a Lucide trash can.
+    fn skin_item_header(ui: &mut Ui, title: &str, can_remove: bool) -> bool {
+        let mut hit = false;
+        ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 38.4), Layout::left_to_right(Align::Center), |ui| {
+            ui.set_min_height(38.4);
+            ui.label(RichText::new(title).family(theme::bold_family()).size(16.0).color(theme::ink()));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let (r, resp) = ui.allocate_exact_size(Vec2::splat(34.0), if can_remove { egui::Sense::click() } else { egui::Sense::hover() });
+                if can_remove && resp.hovered() {
+                    ui.painter().rect_filled(r, CornerRadius::same(8), theme::hover_bg());
+                }
+                super::lucide::paint(ui.painter(), egui::Rect::from_center_size(r.center(), Vec2::splat(17.0)), theme::ink(), super::lucide::TRASH_2);
+                hit = can_remove && resp.on_hover_text("Remove").clicked();
+            });
+        });
+        hit
+    }
+
+    fn forces_card_skin(&mut self, ui: &mut Ui, pdefs: &[ParamDef]) {
+        ui.scope(|ui| self.forces_card_skin_in(ui, pdefs));
+    }
+
+    fn forces_card_skin_in(&mut self, ui: &mut Ui, pdefs: &[ParamDef]) {
+        let n = self.params.i("n").clamp(1, 8) as usize;
+        let mut remove = None;
+        ui.spacing_mut().item_spacing.y = 0.0;
+        for i in 1..=n {
+            let k = |s: &str| format!("f{i}_{s}");
+            if i == 1 {
+                ui.add_space(1.3);
+            }
+            if Self::skin_item_header(ui, &format!("Force {i}"), n > 1) {
+                remove = Some(i);
+            }
+            ui.add_space(5.0);
+            if let Some(a) = direction(ui, self.params.f(&k("ang"))) {
+                self.params.set_f(&k("ang"), a.clamp(0.0, 359.0));
+            }
+            let mut v = self.params.f(&k("len"));
+            if length_row(ui, &mut v) {
+                self.params.set_f(&k("len"), v);
+            }
+            ui.add_space(8.3);
+            label_control(ui, &mut self.params, &k("lab_mode"), &k("lab"), "Label");
+            if self.params.b(&k("mark")) || self.params.b(&k("comps")) {
+                // figures saved with a marked angle or components keep their controls
+                ui.add_space(8.0);
+                egui::CollapsingHeader::new(RichText::new("Angle and components").size(13.0)).id_salt(("fbd_more", i)).default_open(true).show(ui, |ui| {
+                    let mut m = self.params.b(&k("mark"));
+                    if ui.checkbox(&mut m, "Mark its angle").changed() {
+                        self.params.set_b(&k("mark"), m);
+                    }
+                    if m {
+                        small(ui, "Measured from");
+                        if let Some(v) = seg(ui, &["Horizontal", "Vertical"], self.params.s(&k("from"))) {
+                            self.params.set_s(&k("from"), &v);
+                        }
+                        label_control(ui, &mut self.params, &k("alab_mode"), &k("alab"), "Angle label");
+                    }
+                    let mut c = self.params.b(&k("comps"));
+                    if ui.checkbox(&mut c, "Show its components").changed() {
+                        self.params.set_b(&k("comps"), c);
+                    }
+                });
+            }
+            ui.add_space(11.0);
+            let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
+            ui.painter().hline(r.x_range(), r.center().y, Stroke::new(1.0, theme::border()));
+            ui.add_space(if i < n { 12.0 } else { 8.0 });
+        }
+        if let Some(i) = remove {
+            let mut q = self.params.clone();
+            items::remove_item(&mut q, pdefs, "f", "n", i);
+            self.card_commit(q, true);
+        }
+        self.add_chips(ui, "free-body-diagram", pdefs);
+        ui.add_space(4.0);
+    }
+
     fn forces_card(&mut self, ui: &mut Ui, pdefs: &[ParamDef]) {
+        if theme::chem_skin() {
+            return self.forces_card_skin(ui, pdefs);
+        }
         let n = self.params.i("n").clamp(1, 8) as usize;
         let mut remove = None;
         for i in 1..=n {
@@ -559,25 +858,63 @@ impl Workspace {
     }
 
     fn motion_card(&mut self, ui: &mut Ui) {
+        // the physics page's controls sit on explicit gaps, not the panel's item spacing
+        if ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("phys_skin_page"))).unwrap_or(false) {
+            ui.scope(|ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                self.motion_card_in(ui)
+            });
+        } else {
+            self.motion_card_in(ui);
+        }
+    }
+
+    fn motion_card_in(&mut self, ui: &mut Ui) {
         let m = self.params.s("motion").to_string();
         let (mut v, mut a) = (m == "Velocity" || m == "Both", m == "Acceleration" || m == "Both");
         let (v0, a0) = (v, a);
-        ui.checkbox(&mut v, "Velocity");
+        let skin = theme::chem_skin();
+        let phys = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("phys_skin_page"))).unwrap_or(false);
+        let check = |ui: &mut Ui, on: &mut bool, text: &str| {
+            if phys {
+                chem_shell::phys_checkbox(ui, on, text);
+            } else if skin {
+                chem_shell::bio_checkbox(ui, on, text);
+            } else {
+                ui.checkbox(on, text);
+            }
+        };
+        // the physics page sets the controls flush under their checkbox, 6 px apart
+        let body = |ui: &mut Ui, f: &mut dyn FnMut(&mut Ui)| {
+            if phys {
+                ui.add_space(11.0);
+                f(ui);
+            } else {
+                ui.indent("fbd_motion", |ui| f(ui));
+            }
+        };
+        check(ui, &mut v, "Velocity");
         if v {
-            ui.indent("fbd_vel", |ui| {
+            body(ui, &mut |ui| {
                 if let Some(d) = direction(ui, self.params.f("mdir")) {
-                    self.params.set_f("mdir", d.clamp(0.0, 360.0));
+                    self.params.set_f("mdir", d.clamp(0.0, 359.0));
                 }
                 label_control(ui, &mut self.params, "mv_lab_mode", "mv_lab", "Label");
             });
         }
-        ui.checkbox(&mut a, "Acceleration");
+        if skin {
+            ui.add_space(6.0);
+            let y = ui.cursor().top();
+            ui.painter().hline(ui.max_rect().x_range(), y, Stroke::new(1.0, egui::Color32::from_rgb(0xe5, 0xe7, 0xeb)));
+            ui.add_space(if phys { 10.5 } else { 6.0 });
+        }
+        check(ui, &mut a, "Acceleration");
         if a {
-            ui.indent("fbd_acc", |ui| {
+            body(ui, &mut |ui| {
                 // -1 = "same as the velocity" in figures saved before the Motion card
                 let cur = if self.params.f("adir") < 0.0 { self.params.f("mdir") } else { self.params.f("adir") };
                 if let Some(d) = direction(ui, cur) {
-                    self.params.set_f("adir", d.clamp(0.0, 360.0));
+                    self.params.set_f("adir", d.clamp(0.0, 359.0));
                 }
                 label_control(ui, &mut self.params, "ma_lab_mode", "ma_lab", "Label");
             });
@@ -589,7 +926,92 @@ impl Workspace {
         }
     }
 
+    /// The physics page's vector rows: a chevron, "Vector 1" with its one-line summary and a trash can, a
+    /// rule between rows, the controls under the open one.
+    fn vectors_card_skin(&mut self, ui: &mut Ui, pdefs: &[ParamDef]) {
+        ui.scope(|ui| self.vectors_card_skin_in(ui, pdefs));
+    }
+
+    fn vectors_card_skin_in(&mut self, ui: &mut Ui, pdefs: &[ParamDef]) {
+        let n = self.params.i("n").clamp(1, 4) as usize;
+        let mut remove = None;
+        ui.spacing_mut().item_spacing.y = 0.0;
+        ui.add_space(-5.0);
+        for i in 1..=n {
+            let k = |s: &str| format!("v{i}_{s}");
+            let id = ui.make_persistent_id(("vec_row", i));
+            let open = ui.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+            let h = if open { 55.7 } else { 63.4 };
+            let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), h), egui::Sense::click());
+            let trash = egui::Rect::from_min_size(egui::pos2(rect.right() - 38.4, rect.top() + if open { 9.5 } else { 12.5 }), Vec2::splat(38.4));
+            let tr = ui.interact(trash, id.with("rm"), if n > 1 { egui::Sense::click() } else { egui::Sense::hover() });
+            if ui.is_rect_visible(rect) {
+                let cy = rect.top() + if open { 28.7 } else { 31.7 };
+                if resp.hovered() && !tr.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+                let chev = egui::pos2(rect.left() + 7.0, cy);
+                let (hw, hh) = (3.0, 5.5);
+                let pts = if open { vec![egui::pos2(chev.x - hh, chev.y - hw), egui::pos2(chev.x, chev.y + hw), egui::pos2(chev.x + hh, chev.y - hw)] } else { vec![egui::pos2(chev.x - hw, chev.y - hh), egui::pos2(chev.x + hw, chev.y), egui::pos2(chev.x - hw, chev.y + hh)] };
+                ui.painter().add(egui::Shape::line(pts, Stroke::new(1.7, theme::muted_col())));
+                let tx = rect.left() + 23.0;
+                let t = ui.painter().layout_no_wrap(format!("Vector {i}"), egui::FontId::new(15.5, theme::bold_family()), theme::ink());
+                if open {
+                    ui.painter().galley(egui::pos2(tx, cy - t.size().y / 2.0), t, theme::ink());
+                } else {
+                    ui.painter().galley(egui::pos2(tx, cy - 9.0 - t.size().y / 2.0), t, theme::ink());
+                    let summary = format!("“{}” · {} squares at {}°", self.params.s(&k("lab")), fmt_measure(self.params.f(&k("mag"))), fmt_measure(self.params.f(&k("ang"))));
+                    let sg = ui.painter().layout_no_wrap(summary, egui::FontId::new(11.2, egui::FontFamily::Name("vs-noto".into())), theme::muted_col());
+                    ui.painter().galley(egui::pos2(tx, cy + 13.0 - sg.size().y / 2.0), sg, theme::muted_col());
+                }
+                if tr.hovered() && n > 1 {
+                    ui.painter().rect_filled(trash, CornerRadius::same(10), theme::hover_bg());
+                }
+                let col = if n > 1 { theme::ink() } else { egui::Color32::from_rgb(0xb4, 0xba, 0xc4) };
+                super::lucide::paint(ui.painter(), egui::Rect::from_center_size(trash.center(), Vec2::splat(17.0)), col, super::lucide::TRASH_2);
+            }
+            if tr.on_hover_text("Remove").clicked() && n > 1 {
+                remove = Some(i);
+            } else if resp.clicked() {
+                ui.data_mut(|d| d.insert_temp(id, !open));
+            }
+            if open {
+                let mut m = self.params.f(&k("mag"));
+                let shown = format!("{} squares", fmt_measure(m));
+                if slider_row(ui, "Magnitude", &mut m, (0.0, 12.0), 0.5, 65.7, &shown) {
+                    self.params.set_f(&k("mag"), m);
+                }
+                ui.add_space(7.3);
+                if let Some(a) = direction(ui, self.params.f(&k("ang"))) {
+                    self.params.set_f(&k("ang"), a.clamp(0.0, 359.0));
+                }
+                param_label(ui, "Arrow", "");
+                ui.add_space(5.9);
+                ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("seg_compact"), true));
+                if let Some(v) = seg(ui, &ARROWS, self.params.s(&k("style"))) {
+                    self.params.set_s(&k("style"), &v);
+                }
+                ui.add_space(13.6);
+                label_control(ui, &mut self.params, &k("lab_mode"), &k("lab"), "Label");
+                ui.add_space(12.0);
+            }
+            let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
+            ui.painter().hline(r.x_range(), r.center().y, Stroke::new(1.0, theme::border()));
+        }
+        if let Some(i) = remove {
+            let mut q = self.params.clone();
+            items::remove_item(&mut q, pdefs, "v", "n", i);
+            self.card_commit(q, true);
+        }
+        ui.add_space(7.4);
+        self.add_chips(ui, "vector-diagram", pdefs);
+        ui.add_space(-8.0);
+    }
+
     fn vectors_card(&mut self, ui: &mut Ui, pdefs: &[ParamDef]) {
+        if theme::chem_skin() {
+            return self.vectors_card_skin(ui, pdefs);
+        }
         let n = self.params.i("n").clamp(1, 4) as usize;
         let (mut remove, mut swap) = (None, None);
         for i in 1..=n {
@@ -646,6 +1068,83 @@ impl Workspace {
             self.card_commit(q, true);
         }
         self.add_chips(ui, "vector-diagram", pdefs);
+        ui.add_space(4.0);
+    }
+
+    /// The motion graphs' Segment 1..n blocks, as the reference lays them out: a bold title with
+    /// move up / move down / delete icons, "What it does", the speed and duration side by side,
+    /// "Which way" where it applies and a grey worked line, a rule between blocks.
+    fn segments_card(&mut self, ui: &mut Ui, pdefs: &[ParamDef]) {
+        let n = self.params.i("n").clamp(1, 6) as usize;
+        let (mut remove, mut swap) = (None, None);
+        let skin = theme::chem_skin();
+        let def = |k: &str| pdefs.iter().find(|d| d.key == k).cloned();
+        for i in 1..=n {
+            let k = |s: &str| format!("s{i}_{s}");
+            ui.add_space(if i == 1 { 4.0 } else { 6.0 });
+            ui.horizontal(|ui| {
+                ui.set_height(24.0);
+                ui.label(if skin { RichText::new(format!("Segment {i}")).family(theme::bold_family()).size(15.2).color(theme::ink()) } else { theme::strong(format!("Segment {i}")).size(13.0) });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 13.0;
+                    ui.add_space(4.0);
+                    if icon(ui, egui_phosphor::regular::TRASH, n > 1, &format!("Remove segment {i}")) {
+                        remove = Some(i);
+                    }
+                    if icon(ui, egui_phosphor::regular::ARROW_DOWN, i < n, &format!("Move segment {i} later")) {
+                        swap = Some((i, i + 1));
+                    }
+                    if icon(ui, egui_phosphor::regular::ARROW_UP, i > 1, &format!("Move segment {i} earlier")) {
+                        swap = Some((i, i - 1));
+                    }
+                });
+            });
+            if let Some(pd) = def(&k("kind")) {
+                param_control(ui, "motion-graphs", &pd, &mut self.params);
+            }
+            ui.add_space(6.0);
+            let (kv, kt) = (def(&k("v")), def(&k("t")));
+            let has_speed = self.params.s(&k("kind")) != "At rest";
+            let mut fields = Vec::new();
+            if has_speed {
+                fields.extend(kv);
+            }
+            fields.extend(kt);
+            let cols = fields.len().max(1);
+            ui.spacing_mut().item_spacing.x = 10.0;
+            ui.columns(cols, |c| {
+                for (ci, pd) in fields.iter().enumerate() {
+                    param_control(&mut c[ci], "motion-graphs", pd, &mut self.params);
+                }
+            });
+            if figures::physics::segment_has_way(&self.params, i) {
+                ui.add_space(6.0);
+                ui.label(super::chem_shell::label_name(ui.ctx(), "Which way", 14.08));
+                let mut cur = self.params.s(&k("dir")).to_string();
+                ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("seg_slim"), true));
+                super::chem_shell::segmented_track(ui, &["Forward", "Back"], &mut cur);
+                if cur != self.params.s(&k("dir")) {
+                    self.params.set_s(&k("dir"), &cur);
+                }
+            }
+            ui.add_space(8.0);
+            ui.add(egui::Label::new(theme::muted(figures::physics::segment_caption(&self.params, i)).size(13.6).line_height(Some(19.72))).wrap());
+            ui.add_space(10.0);
+            if i < n {
+                let y = ui.cursor().top();
+                ui.painter().hline(ui.max_rect().x_range(), y, Stroke::new(1.0, egui::Color32::from_rgb(0xe5, 0xe7, 0xeb)));
+            }
+        }
+        if let Some(i) = remove {
+            let mut q = self.params.clone();
+            items::remove_item(&mut q, pdefs, "s", "n", i);
+            self.card_commit(q, true);
+        } else if let Some((a, b)) = swap {
+            let mut q = self.params.clone();
+            items::swap_items(&mut q, pdefs, "s", a, b);
+            self.card_commit(q, true);
+        }
+        self.add_chips(ui, "motion-graphs", pdefs);
         ui.add_space(4.0);
     }
 

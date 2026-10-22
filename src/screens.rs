@@ -1550,7 +1550,41 @@ impl crate::App {
         if self.toasts.is_empty() {
             return;
         }
-        let items = self.toasts.clone();
+        // the share toast sits in the figure stage as the reference's dark pill
+        let stage = ctx.data(|d| d.get_temp::<(Rect, u64)>(egui::Id::new("share_stage"))).filter(|(_, f)| ctx.cumulative_frame_nr().saturating_sub(*f) < 3).map(|(r, _)| r);
+        if let Some(stage) = stage {
+            if let Some((text, _)) = self.toasts.iter().find(|(t, e)| !e && t.starts_with("Link copied")) {
+                let w = ((stage.width() * 0.5).floor() - 1.0).max(160.0);
+                egui::Area::new(egui::Id::new("share_pill"))
+                    .order(egui::Order::Foreground)
+                    .interactable(false)
+                    .fixed_pos(Pos2::new(stage.center().x, stage.bottom() - if stage.width() < 500.0 { 16.0 } else { 15.0 }))
+                    .pivot(Align2::CENTER_BOTTOM)
+                    .show(ctx, |ui| {
+                        let one = ctx.fonts_mut(|f| f.layout_no_wrap(text.clone(), egui::FontId::new(13.76, theme::semibold_family()), Color32::WHITE).size().x);
+                        // a wrapped pill is 3 px taller in the reference
+                        let vm = if one > w - 28.0 { Margin { left: 14, right: 14, top: 8, bottom: if one > 2.0 * (w - 28.0) { 10 } else { 9 } } } else { Margin { left: 14, right: 14, top: 7, bottom: 9 } };
+                        Frame::new().fill(Color32::from_rgb(0x1f, 0x29, 0x37)).corner_radius(CornerRadius::same(27)).inner_margin(vm).show(ui, |ui| {
+                            ui.set_max_width(w - 28.0);
+                            // like the reference, a wrapped pill fills its maximum width
+                            if one > w - 28.0 {
+                                ui.set_min_width(w - 28.0);
+                            }
+                            if one > w - 28.0 {
+                                ui.vertical_centered(|ui| {
+                                    ui.add(egui::Label::new(RichText::new(text.clone()).family(theme::semibold_family()).size(13.76).color(Color32::WHITE)).halign(egui::Align::Center));
+                                });
+                            } else {
+                                // a one-line pill hugs its text, as the reference's does
+                                ui.add(egui::Label::new(RichText::new(text.clone()).family(theme::semibold_family()).size(13.76).color(Color32::WHITE)).wrap_mode(egui::TextWrapMode::Extend));
+                            }
+                        });
+                    });
+            }
+        }
+        let items: Vec<(String, bool)> = self.toasts.iter().filter(|(t, e)| *e || stage.is_none() || !t.starts_with("Link copied")).cloned().collect();
+        // indices below refer to `self.toasts`, so map them back
+        let map: Vec<usize> = (0..self.toasts.len()).filter(|&i| self.toasts[i].1 || stage.is_none() || !self.toasts[i].0.starts_with("Link copied")).collect();
         let mut dismissed: Vec<usize> = Vec::new();
         egui::Area::new(egui::Id::new("toasts"))
             .order(egui::Order::Foreground)
@@ -1599,6 +1633,7 @@ impl crate::App {
         // Click-to-dismiss, descending order so earlier indices stay valid.
         dismissed.sort_unstable_by(|a, b| b.cmp(a));
         for i in dismissed {
+            let i = map[i];
             self.toasts.remove(i);
             self.toast_times.remove(i);
         }

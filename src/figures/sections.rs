@@ -40,7 +40,7 @@ static FIG_2: [RefSection; 4] = [
 ];
 
 static FIG_3: [RefSection; 7] = [
-    s("Circuit", &["layout", "n"], "Leave a name empty to number it automatically."),
+    s("Circuit", &["layout", "n"], "Leave a name empty to number it automatically.\nNeed a mixed or more complex circuit? An advanced circuit editor is coming soon."),
     items("Resistor"),
     s("Cell or battery", &["cell", "cell_name_mode", "cell_name", "cell_val_mode", "cell_val", "polarity"], ""),
     s("Switch and meters", &["switch", "ammeter", "amm_read_mode", "amm_read", "voltmeter", "vm_read_mode", "vm_read"], ""),
@@ -183,11 +183,10 @@ static FIG_20: [RefSection; 3] = [
     s("Color", &["color", "decimal_line", "answer", "title", "answer_text"], "Red digits show where the decimal point goes. The line keeps that clear on a black and white copy."),
 ];
 
-static FIG_21: [RefSection; 7] = [
-    s("Motion", &["n", "x0", "tangent_t"], ""),
-    items("Segment"),
+static FIG_21: [RefSection; 6] = [
+    s("Motion", &["n", "x0"], ""),
     s("Graphs", &["show", "ranges"], ""),
-    s("Marks", &["letters", "styles", "tangent"], ""),
+    s("Marks", &["letters", "styles", "tangent", "tangent_t"], ""),
     s("Titles", &["title_mode", "title", "xt_mode", "xt", "yt_pos_mode", "yt_pos", "yt_vel_mode", "yt_vel", "yt_acc_mode", "yt_acc", "label_size"], "Type ^ for a superscript, as in m/s^2, and _ for a subscript."),
     s("Axes and grid", &["numbers", "grid", "t_min", "t_max", "t_step", "p_min", "p_max", "p_step", "v_min", "v_max", "v_step", "a_min", "a_max", "a_step"], ""),
     s("Figure", &["color"], ""),
@@ -464,6 +463,30 @@ static TWO_WAY_TABLE: [RefSection; 4] = [
     s("Appearance", &["style", "label_size"], ""),
 ];
 
+static LENGTH_PHYS: [RefSection; 5] = [
+    s("Ruler", &["units", "ruler", "marks", "read_to"], ""),
+    s("Length and position", &["length", "offset"], "From 0.50 to 15.00 cm, to 2 decimal places."),
+    s("Object", &["object", "dashes"], ""),
+    s("Magnifiers", &["mag_show", "mag_marks"], ""),
+    s("Title and answer key", &["title_style", "title", "answer"], ""),
+];
+
+static MOTION_MAP: [RefSection; 5] = [
+    s("Motion", &["up", "accel", "cruise", "down", "rest", "dir"], ""),
+    s("Dots", &["dt"], ""),
+    s("Arrows", &["arrows"], ""),
+    s("Number line", &["numbers", "xlabel"], ""),
+    s("Title and answer key", &["title", "label_size"], ""),
+];
+
+static RAY_DIAGRAM: [RefSection; 5] = [
+    s("Lens or mirror", &["kind", "f"], ""),
+    s("Object", &["dist", "height"], ""),
+    s("Rays and image", &["rays", "image"], ""),
+    s("Labels", &["show_labels", "lab_f", "lab_f2", "lab_2f", "lab_2f2", "lab_o", "lab_i"], ""),
+    s("Title and answer key", &["title", "label_size"], ""),
+];
+
 pub fn reference(id: &str) -> Option<&'static [RefSection]> {
     Some(match id {
         "angles" => &FIG_0,
@@ -494,6 +517,9 @@ pub fn reference(id: &str) -> Option<&'static [RefSection]> {
         "mass-spectrum" => &FIG_19,
         "micropipette-reading" => &FIG_20,
         "motion-graphs" => &FIG_21,
+        "length-reading@physics" => &LENGTH_PHYS,
+        "motion-map" => &MOTION_MAP,
+        "ray-diagram" => &RAY_DIAGRAM,
         "number-line" => &FIG_22,
         "orbital-diagram" => &FIG_23,
         "parallel-lines" => &FIG_24,
@@ -546,4 +572,59 @@ pub fn live_help(fig: &str, title: &str, help: &str, p: &super::Params) -> Strin
         }
         _ => help.to_string(),
     }
+}
+
+/// The reference's grey note under a single control, where it words something about the figure's
+/// current state: the range a number may take, what the answer key will print, a typing tip. A
+/// Bool's note replaces its static hint; lines are separated by `\n`.
+pub fn note_after(fig: &str, key: &str, p: &super::Params) -> Option<String> {
+    match (fig, key) {
+        ("length-reading", "offset") => {
+            let imperial = p.s("units").starts_with("Imp");
+            let cm: f64 = p.s("ruler").split_whitespace().next().and_then(|t| t.parse().ok()).unwrap_or(15.0);
+            let total = if imperial { match cm as i64 { 15 => 6.0, 20 => 8.0, 30 => 12.0, 50 => 20.0, _ => 40.0 } } else { cm };
+            let room = (total - p.f("length")).max(0.0);
+            Some(format!("From 0.00 to {} {}, to 2 decimal places.", super::chemistry::num(room, 2), if imperial { "in" } else { "cm" }))
+        }
+        ("length-reading", "answer") => {
+            let mut q = p.clone();
+            q.0.insert("answer".into(), super::Value::B(true));
+            let svg = super::chemistry::length_svg(&q);
+            let at = svg.find("Length: ")?;
+            let rest = &svg[at..];
+            let text = &rest[..rest.find('<')?];
+            Some(format!("Print \u{201c}{text}\u{201d} under the figure."))
+        }
+        ("spring-scale", "offset") => Some("From -1 to 1 N, to 2 decimal places.\nWhere the pointer rests with nothing hanging: above zero is negative, below is positive. The pointer shows the force plus this.".into()),
+        ("spring-scale", "answer") => Some(format!("Print \u{201c}Force: {:.2} N\u{201d} under the figure.", p.f("reading"))),
+        ("free-body-diagram", "notation") => Some("An arrow over every vector\u{2019}s label, or every one in bold. For just one label, type \\vec{F} or \\mathbf{F} in it.".into()),
+        ("motion-graphs", "x0") => Some("Speeding up and slowing down carry on from the velocity before them.".into()),
+        _ => None,
+    }
+}
+
+/// The physics reference's "?" tips beside a control, by figure and param key: help it keeps
+/// out of the page's text and shows on hover.
+pub fn phys_tip(fig: &str, key: &str, p: &super::Params) -> Option<String> {
+    let t = match (fig, key) {
+        ("length-reading", "marks") if p.s("units").starts_with("Imp") => "Lengths land on a mark and are read as fractions of an inch.",
+        ("length-reading", "marks") => "5 cm and 10 cm marks are for the 50 cm and 100 cm rulers.",
+        ("length-reading", "read_to") => {
+            if p.s("units").starts_with("Imp") {
+                return Some("Lengths go one digit past the smallest mark.".into());
+            }
+            let mark = p.s("marks");
+            let n: f64 = mark.split_whitespace().next().and_then(|t| t.parse().ok()).unwrap_or(1.0);
+            let cm = if mark.ends_with("mm") { n / 10.0 } else { n };
+            return Some(format!("Lengths go one digit past the smallest mark, to {} cm.", super::chemistry::num(cm / 10.0, 2)));
+        }
+        ("length-reading", "offset") => "You can also drag the object along the ruler in the figure.",
+        ("length-reading", "dashes") => "Lines from the object\u{2019}s ends down to the ruler, for marbles and rocks, whose ends are above where they touch it.",
+        ("length-reading", "mag_show") => "One on the object\u{2019}s right end, and one on its left end when that isn\u{2019}t lined up with 0.",
+        ("motion-map", "up") => "Speeding up and slowing down carry on from the velocity before them. The Motion Graph Generator opens with the same segments and starting position, so its graphs and this map show the same motion.",
+        ("motion-map", "dt") => "A dot every \u{394}t, where the object is at that moment. Dots at one spot while it\u{2019}s at rest are drawn as one, with the times it\u{2019}s there. Each time it turns back, the dots carry on above the ones before. At a segment end a dot takes the next segment\u{2019}s velocity.",
+        ("ray-diagram", "kind") => "Drawn to scale in cm. The image is where 1/f = 1/do + 1/di puts it. Rays bend at the line through the middle of a lens, and reflect at the line through a mirror\u{2019}s vertex, as textbooks draw them, so they meet exactly at the image. The answer key takes real as positive.",
+        _ => return None,
+    };
+    Some(t.to_string())
 }

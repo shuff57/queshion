@@ -53,7 +53,9 @@ pub fn overrides(id: &str) -> Vec<(&'static str, Value)> {
         // Solids open black and white.
         "prism" | "cylinder" | "pyramid" | "cone" | "sphere" => vec![("fill", st("White"))],
         // the reference draws the resultant dashed (added with share links v2)
-        "vector-diagram" => vec![("res_style", st("Dashed"))],
+        "vector-diagram" => vec![("res_style", st("Dashed")), ("bold", Value::B(true))],
+        // the reference's ball sits centred on the ground line (share links v5)
+        "projectile-motion" => vec![("ball_at", st("Is centred on the ground line"))],
         _ => Vec::new(),
     }
 }
@@ -63,7 +65,7 @@ pub fn overrides(id: &str) -> Vec<(&'static str, Value)> {
 /// back to the plain default when it is opened (see `newer_than` / `older_values`).
 pub fn added_in(id: &str) -> &'static [(u32, &'static [&'static str])] {
     match id {
-        "vector-diagram" => &[(2, &["res_style"])],
+        "vector-diagram" => &[(2, &["res_style"]), (6, &["bold"])],
         "orbital-diagram" => &[(3, &["config"])],
         "angles" => &[(3, &["letters"])],
         "parallel-lines" => &[(3, &["marked", "unknown"])],
@@ -72,6 +74,7 @@ pub fn added_in(id: &str) -> &'static [(u32, &'static [&'static str])] {
         "kite" => &[(3, &["flip"])],
         "length-reading" => &[(3, &["mag_show"])],
         "micropipette-reading" => &[(4, &["shape"])],
+        "projectile-motion" => &[(5, &["ball_at"])],
         _ => &[],
     }
 }
@@ -201,8 +204,9 @@ mod tests {
         assert!(!svg.contains("65\u{b0}") && !svg.contains(">x<"), "no angle marks: {svg}");
         assert_eq!(super::newer_than("parallel-lines", 2), vec!["marked", "unknown"]);
         assert!(super::newer_than("parallel-lines", 3).is_empty());
-        assert_eq!(super::newer_than("vector-diagram", 1), vec!["res_style"]);
-        assert!(super::newer_than("vector-diagram", 2).is_empty());
+        assert_eq!(super::newer_than("vector-diagram", 1), vec!["res_style", "bold"]);
+        assert_eq!(super::newer_than("vector-diagram", 2), vec!["bold"]);
+        assert!(super::newer_than("vector-diagram", 6).is_empty());
         assert_eq!(super::since_v1("orbital-diagram"), vec!["config"]);
         for (_, keys) in super::added_in("angles") {
             for k in *keys {

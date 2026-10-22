@@ -36,10 +36,10 @@ fn motion_params() -> Vec<ParamDef> {
         v.push(ParamDef::float(k[4], k[5], 0.1, 60.0, 0.5, SDEF[i].2));
         v.push(ParamDef::choice(k[6], k[7], &["Forward", "Back"], "Forward"));
     }
-    v.push(ParamDef::choice("show", "Graph", &["Position-time", "Velocity-time", "Acceleration-time", "All three, stacked"], "Position-time"));
-    v.push(ParamDef::bool("letters", "Letter the segment ends A, B, C...", false));
+    v.push(ParamDef::choice("show", "Show", &["Position-time", "Velocity-time", "Acceleration-time", "All three, stacked"], "Position-time"));
+    v.push(ParamDef::bool("letters", "Letter the segment ends A, B, C\u{2026}", false));
     v.push(ParamDef::bool("styles", "Each segment in its own line style", false));
-    v.push(ParamDef::bool("tangent", "Tangent to the position-time graph", false));
+    v.push(ParamDef::bool("tangent", "Tangent to the position\u{2013}time graph", false));
     v.push(ParamDef::float("tangent_t", "Tangent at (s)", 0.0, 300.0, 0.5, 2.0));
     v.push(ParamDef::choice("title_mode", "Chart title shows", &TMODES, "Text"));
     v.push(ParamDef::text("title", "Chart title", ""));
@@ -105,6 +105,34 @@ pub(super) fn build_segs(p: &Params) -> Vec<Seg> {
     out
 }
 
+fn num(v: f64) -> String {
+    let s = format!("{:.2}", v);
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    let s = if s == "-0" { "0" } else { s };
+    s.replace('-', "\u{2212}")
+}
+
+pub(super) fn segment_has_way(p: &Params, i: usize) -> bool {
+    p.s(&format!("s{i}_kind")) == "Speeding up" && build_segs(p).get(i - 1).is_some_and(|s| s.v0 == 0.0)
+}
+
+/// "A to B (0\u{2013}4 s): speeding up from 0 to 4 m/s, a = 1 m/s\u{b2}; 0 m to 8 m".
+pub(super) fn segment_caption(p: &Params, i: usize) -> String {
+    let segs = build_segs(p);
+    let Some(s) = segs.get(i - 1) else { return String::new() };
+    let letter = |k: usize| char::from(b'A' + k as u8);
+    let head = format!("{} to {} ({}\u{2013}{} s): ", letter(i - 1), letter(i), num(s.t0), num(s.t1));
+    let (x0, x1) = (s.x(s.t0), s.x(s.t1));
+    let tail = format!("{} m to {} m", num(x0), num(x1));
+    let body = match p.s(&format!("s{i}_kind")) {
+        "At rest" => return format!("{head}at rest; stays at {} m", num(x0)),
+        "Constant velocity forward" | "Constant velocity back" => format!("constant velocity {} m/s", num(s.v1)),
+        "Speeding up" => format!("speeding up from {} to {} m/s, a = {} m/s\u{b2}", num(s.v0), num(s.v1), num(s.a())),
+        _ => format!("slowing down from {} to {} m/s, a = {} m/s\u{b2}", num(s.v0), num(s.v1), num(s.a())),
+    };
+    format!("{head}{body}; {tail}")
+}
+
 const DASHES: [&str; 4] = ["none", "9 5", "2 5", "10 4 2 4"];
 
 /// Value of series `which` (0 position, 1 velocity, 2 acceleration) of segment `s` at time `t`.
@@ -141,17 +169,32 @@ pub(super) fn motion_axes(p: &Params, segs: &[Seg], which: u8, (ox, oy, w, h): (
 }
 
 /// Canvas size and the panels (which series, rect, is-last) drawn for the current params.
+/// The reference sizes the canvas to the grid: square 32-unit cells (shrunk only when the ranges
+/// are long), 67.6 on the left, 22.4 on the right, 14 above and 66.8 under the last panel.
 pub(super) fn motion_layout(p: &Params) -> ((f64, f64), Vec<(u8, (f64, f64, f64, f64))>, f64) {
     let stacked = p.s("show") == "All three, stacked";
-    let (w, h) = (580.0, if stacked { 780.0 } else { 420.0 });
-    let top = if has_title(p) { 52.0 } else { 28.0 };
-    if stacked {
-        let ph = (h - top - 30.0 - 3.0 * 62.0) / 3.0;
-        ((w, h), (0..3).map(|i| (i as u8, (100.0, top + i as f64 * (ph + 62.0), 440.0, ph))).collect(), top)
-    } else {
-        let which = match p.s("show") { "Velocity-time" => 1, "Acceleration-time" => 2, _ => 0 };
-        ((w, h), vec![(which, (100.0, top, 440.0, h - top - 90.0))], top)
+    let segs = build_segs(p);
+    let top = if has_title(p) { 44.0 } else { 14.0 };
+    let whichs: Vec<u8> = if stacked { vec![0, 1, 2] } else { vec![match p.s("show") { "Velocity-time" => 1, "Acceleration-time" => 2, _ => 0 }] };
+    let cells = |which: u8| {
+        let (ax, xs, ys) = motion_axes(p, &segs, which, (0.0, 0.0, 1.0, 1.0));
+        (((ax.xmax - ax.xmin) / xs).round().max(1.0), ((ax.ymax - ax.ymin) / ys).round().max(1.0))
+    };
+    let nx = whichs.iter().map(|&w| cells(w).0).fold(1.0, f64::max);
+    let cx = (800.0 / nx).min(32.0);
+    let pw = nx * cx;
+    let w = 67.6 + pw + 22.4;
+    let mut y = top;
+    let mut panels = Vec::new();
+    for &which in &whichs {
+        let ny = cells(which).1;
+        let cy = if stacked { (150.0 / ny).min(32.0) } else { (400.0 / ny).min(32.0) };
+        let ph = ny * cy;
+        panels.push((which, (67.6, y, pw, ph)));
+        y += ph + 44.0;
     }
+    let h = y - 44.0 + 66.8;
+    ((w, h), panels, top)
 }
 
 fn motion_panel(g: &mut G, p: &Params, segs: &[Seg], which: u8, rect: (f64, f64, f64, f64), show_xt: bool) {
@@ -160,7 +203,7 @@ fn motion_panel(g: &mut G, p: &Params, segs: &[Seg], which: u8, rect: (f64, f64,
     let (ykey, ymode) = match which { 0 => ("yt_pos", "yt_pos_mode"), 1 => ("yt_vel", "yt_vel_mode"), _ => ("yt_acc", "yt_acc_mode") };
     let (l, r, t, b) = (ax.x0, ax.x0 + ax.w, ax.y0, ax.y0 + ax.h);
     let (numbers, grid) = (p.b("numbers"), p.b("grid"));
-    let fs = 13.0;
+    let fs = 14.0;
     let ticks = |lo: f64, hi: f64, st: f64| -> Vec<f64> {
         let mut v = Vec::new();
         let mut k = (lo / st - 1e-9).ceil();
@@ -170,8 +213,10 @@ fn motion_panel(g: &mut G, p: &Params, segs: &[Seg], which: u8, rect: (f64, f64,
     let zero_y = if ax.ymin <= 0.0 && ax.ymax >= 0.0 { ax.py(0.0) } else { b };
     let zero_x = if ax.xmin <= 0.0 && ax.xmax >= 0.0 { ax.px(0.0) } else { l };
     if grid {
-        for xv in ticks(ax.xmin, ax.xmax, xstep) { let x = ax.px(xv); g.line(x, t, x, b, "#555", 0.8); }
-        for yv in ticks(ax.ymin, ax.ymax, ystep) { let y = ax.py(yv); g.line(l, y, r, y, "#555", 0.8); }
+        g.raw(r#"<g shape-rendering="crispEdges" data-op="phys">"#);
+        for xv in ticks(ax.xmin, ax.xmax, xstep) { let x = ax.px(xv); g.hair(x, t, x, b); }
+        for yv in ticks(ax.ymin, ax.ymax, ystep) { let y = ax.py(yv); g.hair(l, y, r, y); }
+        g.raw("</g>");
         g.polyline(&[(l, t), (r, t), (r, b), (l, b), (l, t)], INK, 1.2);
         g.line(zero_x, t, zero_x, b, INK, 2.4);
         g.line(l, zero_y, r, zero_y, INK, 2.4);
@@ -189,22 +234,24 @@ fn motion_panel(g: &mut G, p: &Params, segs: &[Seg], which: u8, rect: (f64, f64,
         let along = if zero_y < b - 1.0 { zero_y } else { b };
         for xv in ticks(ax.xmin, ax.xmax, xstep) {
             if xv.abs() < 1e-9 && zero_y < b - 1.0 { continue; }
-            g.text(ax.px(xv), along + fs + 5.0, fs, "middle", &fmt_num(xv).replace('-', "−"), true);
+            // the reference tucks the corner "0" 12.3 units left of the origin, into the y labels' column
+            let dx = if xv.abs() < 1e-9 && zero_y >= b - 1.0 && zero_x <= l + 1.0 { -12.3 } else { 0.0 };
+            g.text(ax.px(xv) + dx, along + 20.0, fs, "middle", &fmt_num(xv).replace('-', "−"), true);
         }
         for yv in ticks(ax.ymin, ax.ymax, ystep) {
             if yv.abs() < 1e-9 && zero_y >= b - 1.0 && ax.xmin.abs() < 1e-9 { continue; }
-            g.text(l - 7.0, ax.py(yv) + fs * 0.35, fs, "end", &fmt_num(yv).replace('-', "−"), true);
+            g.text(l - 6.0, ax.py(yv) + fs * 0.35, fs, "end", &fmt_num(yv).replace('-', "−"), true);
         }
     }
     let ytxt = lab_mode(p, ykey, ymode);
-    let ylx = l - fs * 3.2 - 8.0;
+    let ylx = l - 35.6;
     if ytxt.is_empty() { g.line(ylx, (t + b) / 2.0 - 50.0, ylx, (t + b) / 2.0 + 50.0, INK, 1.5); }
-    else if ytxt != "none" { g.vtext(ylx, (t + b) / 2.0, fs + 3.0, &supers(&ytxt), true); }
+    else if ytxt != "none" { g.vtext(ylx, (t + b) / 2.0, 16.8, &supers(&ytxt), true); }
     if show_xt {
         let xtxt = lab_mode(p, "xt", "xt_mode");
-        let y = b + fs * 2.0 + 14.0;
+        let y = b + 44.8;
         if xtxt.is_empty() { g.line((l + r) / 2.0 - 60.0, y + 2.0, (l + r) / 2.0 + 60.0, y + 2.0, INK, 1.5); }
-        else if xtxt != "none" { g.text((l + r) / 2.0, y, fs + 3.0, "middle", &supers(&xtxt), true); }
+        else if xtxt != "none" { g.text((l + r) / 2.0, y, 16.8, "middle", &supers(&xtxt), true); }
     }
     let col = p.b("color");
     let stroke = if col { PAL[1] } else { INK };
@@ -333,22 +380,27 @@ pub(super) fn wave_layout(p: &Params) -> WLay {
     let ym = ((a / ys) + 1.5).ceil() * ys;
     let fy = (-ym, ym, ys);
     let (ymin, ymax, ystep) = if p.b("yaxis_fit") { fy } else { axis_range(p.f("ymin"), p.f("ymax"), p.f("ystep"), fy) };
-    let w = 600.0;
-    // square gridlines, as the reference draws them (clamped so odd axis settings stay usable)
-    let cells = |lo: f64, hi: f64, st: f64| ((hi - lo) / st).max(1.0);
-    let ph = (470.0 * cells(ymin, ymax, ystep) / cells(xmin, xmax, xstep)).clamp(200.0, 380.0);
-    let h = match kind { "Transverse" => 0.0, "Longitudinal" => 260.0, _ => 0.0 };
-    let top = if has_title(p) { 54.0 } else { 22.0 };
-    let (x0, pw) = (90.0, 470.0);
+    // the reference's cells are 32 square (shrunk only when the ranges are long); the canvas is
+    // 67.6 left of the grid, 18.2 right of it, 14 above and 44.8 under it
+    let cells = |lo: f64, hi: f64, st: f64| ((hi - lo) / st).round().max(1.0);
+    let (nx, ny) = (cells(xmin, xmax, xstep), cells(ymin, ymax, ystep));
+    let cell = (560.0 / nx).min(32.0);
+    let pw = nx * cell;
+    let ph = (ny * cell).min(420.0);
+    let x0 = 67.6;
+    let w = x0 + pw + 18.2;
+    let h = match kind { "Longitudinal" => 260.0, _ => 0.0 };
+    let top = if has_title(p) { 44.0 } else { 14.0 };
     let mut y = top;
     let strip = if kind != "Transverse" {
         let s = (y + if kind == "Both" { 26.0 } else { 34.0 }, 64.0);
         y = s.0 + s.1 + 36.0;
         Some(s)
     } else { None };
-    let h = if h == 0.0 { y + 6.0 + ph + 62.0 } else { h };
+    let gy = if kind == "Transverse" { y } else { y + 6.0 };
+    let h = if h == 0.0 { gy + ph + 44.8 } else { h };
     let panel = if kind != "Longitudinal" {
-        Some(Axes { x0, y0: y + 6.0, w: pw, h: ph, xmin, xmax, ymin, ymax })
+        Some(Axes { x0, y0: gy, w: pw, h: ph, xmin, xmax, ymin, ymax })
     } else { None };
     let sx = Axes { x0, y0: 0.0, w: pw, h: 1.0, xmin, xmax, ymin: 0.0, ymax: 1.0 };
     WLay { w, h, panel, xstep, ystep, strip, sx }
@@ -459,7 +511,7 @@ fn wave_render(p: &Params) -> String {
     let ye = every(p.s("yaxis_num"));
     let title_x = |g: &mut G, cx: f64, y: f64| {
         if let Some(t) = &xl {
-            if t.is_empty() { g.line(cx - 60.0, y + 2.0, cx + 60.0, y + 2.0, INK, 1.5); } else { g.text(cx, y, 15.0, "middle", &supers(t), true); }
+            if t.is_empty() { g.line(cx - 60.0, y + 2.0, cx + 60.0, y + 2.0, INK, 1.5); } else { g.text(cx, y, 16.8, "middle", &supers(t), true); }
         }
     };
     let crest_txt = |mode: &str, word: &str| -> Option<String> {
@@ -477,12 +529,14 @@ fn wave_render(p: &Params) -> String {
                 for (_, xv) in ticks(ax.xmin, ax.xmax, l.xstep / m as f64) { let x = ax.px(xv); g.line(x, tp, x, bt, "#c4c8ce", 0.6); }
                 for (_, yv) in ticks(ax.ymin, ax.ymax, l.ystep / m as f64) { let y = ax.py(yv); g.line(lft, y, rgt, y, "#c4c8ce", 0.6); }
             }
-            for (_, xv) in ticks(ax.xmin, ax.xmax, l.xstep) { let x = ax.px(xv); g.line(x, tp, x, bt, "#444", 0.9); }
-            for (_, yv) in ticks(ax.ymin, ax.ymax, l.ystep) { let y = ax.py(yv); g.line(lft, y, rgt, y, "#444", 0.9); }
-            g.polyline(&[(lft, tp), (rgt, tp), (rgt, bt), (lft, bt), (lft, tp)], INK, 1.2);
+            g.raw(r#"<g shape-rendering="crispEdges" data-op="phys">"#);
+            for (_, xv) in ticks(ax.xmin, ax.xmax, l.xstep) { let x = ax.px(xv); g.hair(x, tp, x, bt); }
+            for (_, yv) in ticks(ax.ymin, ax.ymax, l.ystep) { let y = ax.py(yv); g.hair(lft, y, rgt, y); }
+            g.raw("</g>");
+            g.polyline(&[(lft, tp), (rgt, tp), (rgt, bt), (lft, bt), (lft, tp)], INK, 1.0);
         }
         if axes_drawn {
-            g.line(lft, tp, lft, bt, INK, 2.2);
+            g.line(lft, tp, lft, bt, INK, 2.4);
             g.line(lft, y0, rgt, y0, INK, 2.4);
             if !grid {
                 for (_, xv) in ticks(ax.xmin, ax.xmax, l.xstep) { let x = ax.px(xv); g.line(x, y0 - 4.0, x, y0 + 4.0, INK, 1.3); }
@@ -498,22 +552,32 @@ fn wave_render(p: &Params) -> String {
             if xe > 0 {
                 for (k, xv) in ticks(ax.xmin, ax.xmax, l.xstep) {
                     if k.rem_euclid(xe as i64) != 0 || (xv.abs() < 1e-9 && zero_in) { continue; }
-                    g.text(ax.px(xv), y0 + 18.0, 11.5, "middle", &fmt_num(xv).replace('-', "−"), true);
+                    // the reference moves a label that sits on a zero crossing of the curve off it: left of the
+                    // tick where the curve falls (and at the origin), right of it where the curve rises
+                    let half = xv / (wl / 2.0);
+                    let node = zero_in && (half - half.round()).abs() < 1e-6 && xv >= -1e-9 && xv <= span + 1e-9;
+                    if node {
+                        let k = half.round() as i64;
+                        if k % 2 == 0 && k > 0 { g.text(ax.px(xv) - 0.55, y0 + 20.0, 14.0, "start", &fmt_num(xv).replace('-', "−"), true); }
+                        else { g.text(ax.px(xv) + 0.55, y0 + 20.0, 14.0, "end", &fmt_num(xv).replace('-', "−"), true); }
+                    } else {
+                        g.text(ax.px(xv), y0 + 20.0, 14.0, "middle", &fmt_num(xv).replace('-', "−"), true);
+                    }
                 }
             }
             if ye > 0 {
                 for (k, yv) in ticks(ax.ymin, ax.ymax, l.ystep) {
                     if k.rem_euclid(ye as i64) != 0 { continue; }
                     let zero = yv.abs() < 1e-9 && zero_in && xe > 0;
-                    g.text(lft - 6.0, ax.py(yv) + if zero { 18.0 } else { 4.0 }, 11.5, "end", &fmt_num(yv).replace('-', "−"), true);
+                    g.text(lft - if zero { 8.0 } else { 6.0 }, ax.py(yv) + if zero { 20.0 } else { 4.9 }, 14.0, "end", &fmt_num(yv).replace('-', "−"), true);
                 }
             }
         }
         if let Some(t) = &yl {
-            let (cx, cy) = (lft - 40.0, (tp + bt) / 2.0);
-            if t.is_empty() { g.line(cx, cy - 50.0, cx, cy + 50.0, INK, 1.5); } else { g.vtext(cx, cy, 15.0, &supers(t), true); }
+            let (cx, cy) = (lft - 35.8, (tp + bt) / 2.0);
+            if t.is_empty() { g.line(cx, cy - 50.0, cx, cy + 50.0, INK, 1.5); } else { g.vtext(cx, cy, 16.8, &supers(t), true); }
         }
-        title_x(&mut g, (lft + rgt) / 2.0, bt + 24.0);
+        title_x(&mut g, (lft + rgt) / 2.0, bt + 22.8);
         // the curve, clipped to the graph
         g.raw(&format!(r#"<clipPath id="wclip"><rect x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}"/></clipPath><g clip-path="url(#wclip)">"#, lft - 2.0, tp - 2.0, ax.w + 4.0, ax.h + 4.0));
         let (s0, s1) = (0f64.max(ax.xmin), span.min(ax.xmax));
@@ -527,7 +591,7 @@ fn wave_render(p: &Params) -> String {
         if p.b("mark_amp") && in_x(crest(0.0)) {
             let xa = ax.px(crest(0.0));
             g.dim_arrow_fine(xa, y0, xa, ax.py(a), mc, 1.5);
-            g.label_at(xa + 14.0, (y0 + ax.py(a)) / 2.0 - 8.0, 20.0, &lab_mode(p, "amp_lab", "amp_lab_mode"), ITALIC);
+            g.label_at(xa + 13.25, (y0 + ax.py(a)) / 2.0 + 1.05, 21.0, &lab_mode(p, "amp_lab", "amp_lab_mode"), ITALIC);
         }
         // index of the last whole crest drawn (it carries the "crest" label)
         let mut kc = 0.0;
@@ -536,12 +600,12 @@ fn wave_render(p: &Params) -> String {
         if p.b("mark_wl") {
             let (s, e) = if in_x(crest(1.0)) { (crest(0.0), crest(1.0)) } else { (0.0, wl) };
             let busy = crest_lab && (kc - 1.0).abs() < 1e-9 && s > 0.0;
-            let ya = ax.py(a) - if busy { 44.0 } else { 22.0 };
-            let yb = if s == 0.0 { y0 } else { ax.py(a) };
-            g.line(ax.px(s), yb, ax.px(s), ya - 7.0, mc, 1.1);
-            g.line(ax.px(e), if busy { ya + 8.0 } else { yb }, ax.px(e), ya - 7.0, mc, 1.1);
+            let ya = ax.py(a) - if busy { 40.0 } else { 18.0 };
+            let yb = if s == 0.0 { y0 } else { ax.py(a) - 4.0 };
+            g.line(ax.px(s), yb, ax.px(s), ya - 6.0, mc, 1.0);
+            g.line(ax.px(e), if busy { ya + 8.0 } else { yb }, ax.px(e), ya - 6.0, mc, 1.0);
             g.dim_arrow_fine(ax.px(s), ya, ax.px(e), ya, mc, 1.4);
-            g.label_at((ax.px(s) + ax.px(e)) / 2.0, ya - 12.0, 20.0, &wl_lab, ITALIC);
+            g.label_at((ax.px(s) + ax.px(e)) / 2.0, ya - 15.35, 21.0, &wl_lab, ITALIC);
         }
         if p.b("mark_ct") {
             // the last crest and trough drawn
