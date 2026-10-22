@@ -2071,8 +2071,11 @@ impl Workspace {
         let shell = generated && self.shell_panel();
         let skin = (theme::chem_skin() && generated && self.chem_open()) || shell;
         let rr = ui.allocate_ui_with_layout(Vec2::new(w, h), if skin { Layout::top_down(Align::Min) } else { *ui.layout() }, |ui| {
+            // the shell's card is paper-white in the light theme (the figure's own sheet is white
+            // too, so the card and sheet read as one); in the dark theme it follows the card
+            // colour, or the light toolbar icons sit unreadable on white
             let fr = Frame::new()
-                .fill(if skin && !shell { theme::card() } else { egui::Color32::WHITE })
+                .fill(if skin && (!shell || theme::is_dark()) { theme::card() } else { egui::Color32::WHITE })
                 .stroke(Stroke::new(1.0, theme::border()))
                 .corner_radius(CornerRadius::same(crate::kit::R_CARD))
                 .inner_margin(if skin { Margin::ZERO } else { Margin::same(10) })
