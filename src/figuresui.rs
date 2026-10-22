@@ -2776,7 +2776,8 @@ impl Workspace {
                             ui.horizontal(|ui| {
                                 if let Some(nk) = sl.name_key {
                                     let mut n = self.params.s(nk).to_string();
-                                    if ui.add(TextEdit::singleline(&mut n).hint_text("name").desired_width(64.0)).changed() {
+                                    // the shell's name box is as tall as the row's value box beside it
+                                    if ui.add(if skin { row_edit(&mut n, "name", 64.0, skin) } else { TextEdit::singleline(&mut n).hint_text("name").desired_width(64.0) }).changed() {
                                         self.params.0.insert(nk.to_string(), Value::S(n));
                                     }
                                 }
@@ -3988,7 +3989,24 @@ fn param_control_inner(ui: &mut Ui, fig: &str, pd: &ParamDef, p: &mut Params) {
         }
         Kind::Int { min, max } => {
             let mut v = p.i(pd.key);
-            if max - min <= 12 {
+            if max - min <= 12 && theme::chem_skin() {
+                // the shell's label (with its note) sits above the stepper, as above every other box,
+                // so a long note cannot run under the buttons
+                param_label(ui, label, pd.hint);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    if ui.add_enabled(v > *min, Button::new("-").min_size(Vec2::splat(34.0))).clicked() {
+                        v -= 1;
+                    }
+                    ui.add_sized(Vec2::new(28.0, 34.0), egui::Label::new(theme::strong(v.to_string()).size(15.0)));
+                    if ui.add_enabled(v < *max, Button::new("+").min_size(Vec2::splat(34.0))).clicked() {
+                        v += 1;
+                    }
+                });
+                if v != p.i(pd.key) {
+                    p.0.insert(pd.key.to_string(), Value::I(v.clamp(*min, *max)));
+                }
+            } else if max - min <= 12 {
                 ui.horizontal(|ui| {
                     param_label(ui, label, pd.hint);
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -4231,7 +4249,8 @@ fn param_control_inner(ui: &mut Ui, fig: &str, pd: &ParamDef, p: &mut Params) {
             param_label(ui, label, pd.hint);
             let mut cur = p.s(pd.key).to_string();
             if ui
-                .add(TextEdit::multiline(&mut cur).desired_width(240.0).desired_rows(4).font(egui::TextStyle::Monospace))
+                // the shell's boxes run the card's full width, as its one-line ones do
+                .add(TextEdit::multiline(&mut cur).desired_width(if theme::chem_skin() { f32::INFINITY } else { 240.0 }).desired_rows(4).font(egui::TextStyle::Monospace))
                 .changed()
             {
                 p.0.insert(pd.key.to_string(), Value::S(cur));
