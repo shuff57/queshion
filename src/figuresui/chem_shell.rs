@@ -36,7 +36,7 @@ pub fn param_name(ctx: &egui::Context, text: &str) -> RichText {
 
 /// The reference sites' page skins (top header instead of the rail, subject home pages) are off:
 /// a figure picked on the unified Figures tab opens in the app's own editor. Flip to bring them back.
-pub const SITE_SKINS: bool = true;
+pub const SITE_SKINS: bool = false;
 
 pub fn skinned(s: figures::Subject) -> bool {
     matches!(s, figures::Subject::Chemistry | figures::Subject::Biology | figures::Subject::Math | figures::Subject::Physics)
