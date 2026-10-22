@@ -483,7 +483,7 @@ impl crate::App {
                             .margin(Margin::symmetric(10, 6)),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if kit::primary_button(ui, "New exam").clicked() {
+                        if crate::pageshell::primary(ui, "New exam").clicked() {
                             let id = new_exam(app);
                             app.exam = Some(id.clone());
                             app.screen = crate::Screen::ExamEdit(id);
@@ -502,7 +502,7 @@ impl crate::App {
                                 ui.add_space(4.0);
                                 ui.label(muted("Pull questions into a printable working copy."));
                                 ui.add_space(12.0);
-                                if kit::primary_button(ui, "New exam").clicked() {
+                                if crate::pageshell::primary(ui, "New exam").clicked() {
                                     let id = new_exam(app);
                                     app.exam = Some(id.clone());
                                     app.screen = crate::Screen::ExamEdit(id);
@@ -556,7 +556,7 @@ impl crate::App {
                                         screens::toast(self, "Exam deleted", false);
                                         st.confirm_delete = None;
                                     }
-                                    if kit::ghost_button(ui, "Cancel").clicked() {
+                                    if crate::pageshell::outline(ui, "Cancel").clicked() {
                                         st.confirm_delete = None;
                                     }
                                 },
@@ -592,10 +592,10 @@ impl crate::App {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    if kit::primary_button(ui, "Rename").clicked() {
+                                    if crate::pageshell::primary(ui, "Rename").clicked() {
                                         done = true;
                                     }
-                                    if kit::ghost_button(ui, "Cancel").clicked() {
+                                    if crate::pageshell::outline(ui, "Cancel").clicked() {
                                         cancel = true;
                                     }
                                 },
@@ -848,7 +848,7 @@ impl crate::App {
                             screens::toast(self, "Exam deleted", false);
                             st.confirm_delete = false;
                         }
-                        if kit::ghost_button(ui, "Cancel").clicked() {
+                        if crate::pageshell::outline(ui, "Cancel").clicked() {
                             st.confirm_delete = false;
                         }
                     });
@@ -875,7 +875,7 @@ impl crate::App {
                             discard_changes(self, ctx, &exam_id);
                             st.confirm_discard = false;
                         }
-                        if kit::ghost_button(ui, "Cancel").clicked() {
+                        if crate::pageshell::outline(ui, "Cancel").clicked() {
                             st.confirm_discard = false;
                         }
                     });
@@ -907,10 +907,10 @@ impl crate::App {
                     ui.add(egui::TextEdit::singleline(&mut buf).desired_width(340.0));
                     ui.add_space(10.0);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if kit::primary_button(ui, "Save").clicked() {
+                        if crate::pageshell::primary(ui, "Save").clicked() {
                             done = true;
                         }
-                        if kit::ghost_button(ui, "Cancel").clicked() {
+                        if crate::pageshell::outline(ui, "Cancel").clicked() {
                             cancel = true;
                         }
                     });
@@ -1142,15 +1142,15 @@ fn draw_top_card(app: &mut crate::App, ui: &mut egui::Ui, exam_id: &Id, st: &mut
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
-                    if kit::primary_button(ui, "Export").clicked() {
+                    if crate::pageshell::primary(ui, "Export").clicked() {
                         app.export_open = true;
                     }
-                    if !compact && kit::ghost_button(ui, "Export history").clicked() {
+                    if !compact && crate::pageshell::outline(ui, "Export history").clicked() {
                         app.history_open = true;
                     }
                     let dirty = working_copy_dirty(app, ui.ctx(), exam_id);
                     if ui
-                        .add_enabled_ui(dirty, |ui| kit::ghost_button(ui, "Save"))
+                        .add_enabled_ui(dirty, |ui| crate::pageshell::outline(ui, "Save"))
                         .inner
                         .on_hover_text("Save a checkpoint of this exam (File > Discard changes returns to it)")
                         .clicked()
@@ -5081,12 +5081,12 @@ impl crate::App {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let ready = n_items > 0 && (exu.student || exu.key) && (gaps.is_empty() || exu.anyway);
                     let clicked = ui
-                        .add_enabled_ui(ready, |ui| kit::primary_button(ui, label).clicked())
+                        .add_enabled_ui(ready, |ui| crate::pageshell::primary(ui, label).clicked())
                         .inner;
                     if clicked {
                         do_export(self, exam_id, exu.clone());
                     }
-                    if kit::ghost_button(ui, "Cancel").clicked() {
+                    if crate::pageshell::outline(ui, "Cancel").clicked() {
                         cancel = true;
                     }
                 });
@@ -5379,7 +5379,7 @@ impl crate::App {
                                     }
                                     ui.add_space(6.0);
                                     ui.horizontal(|ui| {
-                                        if kit::ghost_button(ui, "Show files").clicked() {
+                                        if crate::pageshell::outline(ui, "Show files").clicked() {
                                             let dir = rec
                                                 .files
                                                 .first()
@@ -5392,7 +5392,7 @@ impl crate::App {
                                                 .unwrap_or_default();
                                             xdg_open(&dir);
                                         }
-                                        if kit::ghost_button(ui, "Regenerate").clicked() {
+                                        if crate::pageshell::outline(ui, "Regenerate").clicked() {
                                             match regenerate(rec) {
                                                 Ok(n) => {
                                                     note = Some((

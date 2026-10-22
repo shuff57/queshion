@@ -138,6 +138,33 @@ pub fn dynamic_label(fig: &str, key: &str, p: &Params) -> Option<String> {
 
 pub fn label_for(fig: &str, key: &str, p: &Params) -> Option<&'static str> {
     match fig {
+        // the reference's segment blocks name each field for what it does
+        // the reference's Resultant card: "Arrow", "Label" and a caption-less text box
+        "vector-diagram" => match key {
+            "res_style" => Some("Arrow"),
+            "res_lab_mode" => Some("Label"),
+            "res_lab" | "ang_lab" => Some(""),
+            "ang_lab_mode" => Some("Angle label"),
+            _ => None,
+        },
+        "motion-graphs" => {
+            let (l, i) = layout::item_of(key)?;
+            if l != "s" {
+                return None;
+            }
+            let kind = p.s(&format!("s{i}_kind"));
+            Some(match key.split_once('_')?.1 {
+                "kind" => "What it does",
+                "t" => "Lasts\u{a0}(s)",
+                "dir" => "Which way",
+                "v" => match kind {
+                    "Speeding up" => "Speeds up to\u{a0}(m/s)",
+                    "Slowing down" => "Slows down to\u{a0}(m/s)",
+                    _ => "Speed\u{a0}(m/s)",
+                },
+                _ => return None,
+            })
+        }
         // the reference's Labels card: two selects and one checkbox
         "triangle" | "rectangle" | "parallelogram" | "trapezoid" | "kite" | "regular-polygon" if matches!(key, "unit" | "dec") => Some(if key == "unit" { "Unit" } else { "Round to" }),
         "triangle" | "rectangle" | "parallelogram" | "trapezoid" | "kite" if key == "right" => Some("Right-angle squares"),
@@ -299,6 +326,8 @@ pub fn also_listed(id: &str) -> &'static [Subject] {
         "vector-diagram" => &[Subject::Math],
         "coordinate-grid" => &[Subject::Physics],
         "temperature-reading" => &[Subject::Physics],
+        // the physics site lists the same length reading as the chemistry and math ones
+        "length-reading" => &[Subject::Physics],
         "ph-reading" => &[Subject::Biology],
         _ => &[],
     }
@@ -506,6 +535,13 @@ pub fn card_visible(id: &str, group: &str, row: Option<&str>, p: &Params) -> boo
 pub fn param_relevant(id: &str, key: &str, p: &Params) -> bool {
     match id {
         "pulley" => physics::pulley_relevant(key, p),
+        // the reference has no "Show resultant" box (the arrow's "Left off" does it) and no bold switch
+        "vector-diagram" if matches!(key, "resultant" | "bold") => false,
+        "vector-diagram" if matches!(key, "ang_lab_mode" | "ang_lab") => p.b("mark_angle"),
+        // one object has nothing to join: the reference shows these only from the second object on
+        "inclined-plane" if matches!(key, "joined" | "spacing" | "tension" | "ten_lab_mode" | "ten_lab" | "contact" | "cont_lab_mode" | "cont_lab") => {
+            physics::incline_objects(p) > 1 && (!matches!(key, "contact" | "cont_lab_mode" | "cont_lab") || p.s("joined") == "Touching") && (!matches!(key, "tension" | "ten_lab_mode" | "ten_lab") || p.s("joined") != "Touching")
+        }
         _ => cards::relevant(id, key, p),
     }
 }
@@ -768,7 +804,7 @@ pub fn to_rgba_at(svg: &str, scale: f32, phase: (f32, f32)) -> Result<(u32, u32,
     let svg = if scale < 1.0 && let Some(a) = svg.find(r#"<g shape-rendering="crispEdges""#) && let Some(len) = svg[a..].find("</g>") {
         let seg = &svg[a..a + len];
         // the math grid's near-black 1 px lines come out as the browser's mid grey (120) at that width
-        let op = if seg.starts_with(r#"<g shape-rendering="crispEdges" data-op="math">"#) { 0.567_f32 } else { 0.41_f32 };
+        let op = if seg.starts_with(r#"<g shape-rendering="crispEdges" data-op="math">"#) || seg.starts_with(r#"<g shape-rendering="crispEdges" data-op="phys">"#) { 0.567_f32 } else { 0.41_f32 };
         widened = format!("{}{}{}", &svg[..a], seg.replace(r#"stroke-width="1""#, &format!(r#"stroke-width="{:.3}" stroke-opacity="{:.3}""#, 1.0 / scale.max(0.05), op)), &svg[a + len..]);
         widened.as_str()
     } else {

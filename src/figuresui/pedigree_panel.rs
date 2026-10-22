@@ -237,7 +237,7 @@ impl Workspace {
     /// switches side by side, a full-width New pedigree button and the Change someone select.
     #[allow(clippy::too_many_arguments)]
     fn pedigree_card_skin(&mut self, ui: &mut Ui, fig: &str, pdefs: &[ParamDef], fam: &ped::Family, labels: &[String], hand: bool, family_before: &str) {
-        let noto = || egui::FontFamily::Name("vs-noto".into());
+        let noto = || theme::sans_family();
         ui.spacing_mut().item_spacing.y = 5.0;
         ui.add_space(14.5);
         ui.spacing_mut().item_spacing.y = 0.0;
@@ -372,7 +372,7 @@ impl Workspace {
             if skin {
                 ui.spacing_mut().button_padding = Vec2::new(15.0, 9.5);
                 ui.spacing_mut().interact_size.y = 39.5;
-                cb = cb.icon(chem_shell::select_chevron).width(ui.available_width()).selected_text(RichText::new("Click them in the pedigree, or pick here").size(15.2).family(egui::FontFamily::Name("vs-noto".into())));
+                cb = cb.icon(chem_shell::select_chevron).width(ui.available_width()).selected_text(RichText::new("Click them in the pedigree, or pick here").size(15.2).family(theme::sans_family()));
             } else {
                 cb = cb.selected_text("Click them in the pedigree, or pick here");
             }

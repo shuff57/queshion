@@ -17,6 +17,8 @@ pub fn faq_for(id: &str) -> &'static [Faq] {
         "pulley" => PULLEY,
         "projectile-motion" => PROJECTILE_MOTION,
         "motion-graphs" => MOTION_GRAPHS,
+        "motion-map" => MOTION_MAP,
+        "ray-diagram" => RAY_DIAGRAM,
         "spring-scale" => SPRING_SCALE,
         "waves" => WAVES,
         "circuit-diagram" => CIRCUIT_DIAGRAM,
@@ -3191,5 +3193,43 @@ const CHI_SQUARE_TABLE: &[Faq] = &[
     Faq {
         q: "What if an expected count is small?",
         a: "The key warns when the smallest expected count is below 5, since the chi-square approximation is then unreliable.",
+    },
+];
+
+const MOTION_MAP: &[Faq] = &[
+    Faq {
+        q: "What does the spacing of the dots tell me?",
+        a: "Each dot is the object's position at one tick of the clock. Dots that are farther apart mean a larger velocity, evenly spaced dots mean constant velocity, and dots that bunch together mean it is slowing down.",
+    },
+    Faq {
+        q: "How do I make an object speed up, cruise and slow down?",
+        a: "Set how long it speeds up, how long it keeps a constant velocity and how long it slows down. The acceleration sets how quickly the velocity changes in the first and last stages.",
+    },
+    Faq {
+        q: "Why is there no arrow on some dots?",
+        a: "A dot gets a velocity arrow only while the object is moving. A dot at rest has no arrow, because its velocity is zero.",
+    },
+    Faq {
+        q: "Can the object move backwards?",
+        a: "Yes. Choose Back for the direction and the dots run toward the left with their arrows pointing left.",
+    },
+];
+
+const RAY_DIAGRAM: &[Faq] = &[
+    Faq {
+        q: "Which principal rays are drawn?",
+        a: "One ray travels parallel to the axis and bends through the focal point, one passes through the centre of a lens (or strikes the middle of a mirror) and one goes through the focal point and comes out parallel. Where they meet is the image.",
+    },
+    Faq {
+        q: "When is the image real and when is it virtual?",
+        a: "A real image forms where rays truly cross, so it can be caught on a screen, and it is upside down. When the object is inside the focal length the rays only appear to meet, giving an upright virtual image.",
+    },
+    Faq {
+        q: "How do I change the object distance and focal length?",
+        a: "Use the sliders for the focal length and the object distance, both in centimetres. The image distance and size update to match the lens or mirror equation.",
+    },
+    Faq {
+        q: "Can I hide the labels for a student copy?",
+        a: "Yes. Turn off Label the points to remove them, or blank a label so students write it in. You can also hide the image and draw only one or two rays.",
     },
 ];

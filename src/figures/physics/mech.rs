@@ -109,7 +109,7 @@ pub(super) fn fbd_geo(p: &Params) -> FGeo {
         let k = same.iter().position(|&j| j == i).unwrap_or(0) as f64;
         let off = (k - (same.len() as f64 - 1.0) / 2.0) * 14.0;
         let (ox, oy) = pol(0.0, 0.0, off, ang - 90.0);
-        let total = ray_exit(body, ang, sc) + 20.0 + 55.0 * p.f(FK[i][2]);
+        let total = ray_exit(body, ang, sc) + 20.0 + 70.0 * p.f(FK[i][2]);
         let tip = pol(ox, oy, total, ang);
         forces.push(((ox, oy), tip, ang));
     }
@@ -117,21 +117,24 @@ pub(super) fn fbd_geo(p: &Params) -> FGeo {
     let (sv, sa) = (m == "Velocity" || m == "Both", m == "Acceleration" || m == "Both");
     let mut right = 60.0f64 * if body == "Dot" { 0.5 } else { sc };
     for (_, t, _) in &forces { if t.1.abs() < 70.0 { right = right.max(t.0 + 40.0); } }
-    let mx = right.max(100.0) + 60.0;
+    let _ = right;
+    // the reference draws the motion arrows 85 units to the right of the body, 52 apart, centred 18 below it
+    let mx = 85.0;
     let mut motion = vec![];
     let adir = if p.f("adir") < 0.0 { p.f("mdir") } else { p.f("adir") };
     let rows = sv as usize + sa as usize;
-    let mut y = if rows == 2 { -36.0 } else { 0.0 };
-    if sv { motion.push(((mx, y), p.f("mdir"), "mv_lab", "mv_lab_mode")); y += 72.0; }
+    let mut y = if rows == 2 { -8.0 } else { 18.0 };
+    if sv { motion.push(((mx, y), p.f("mdir"), "mv_lab", "mv_lab_mode")); y += 52.0; }
     if sa { motion.push(((mx, y), adir, "ma_lab", "ma_lab_mode")); }
     // bounding box (labels need ~34 px past a tip)
-    let (mut x0, mut x1, mut y0, mut y1) = (-70.0f64 * sc, 70.0f64 * sc, -50.0f64 * sc, 50.0f64 * sc);
-    for (_, t, _) in &forces { x0 = x0.min(t.0 - 40.0); x1 = x1.max(t.0 + 40.0); y0 = y0.min(t.1 - 36.0); y1 = y1.max(t.1 + 36.0); }
-    for (c, _, _, _) in &motion { x0 = x0.min(c.0 - 50.0); x1 = x1.max(c.0 + 50.0); y0 = y0.min(c.1 - 50.0); y1 = y1.max(c.1 + 50.0); }
+    let (mut x0, mut x1, mut y0, mut y1) = (-64.0f64 * sc.max(1.0), 64.0f64 * sc.max(1.0), -40.0f64 * sc, 40.0f64 * sc);
+    for (_, t, _) in &forces { x0 = x0.min(t.0 - 40.0); x1 = x1.max(t.0 + 40.0); y0 = y0.min(t.1 - 42.0); y1 = y1.max(t.1 + 42.0); }
+    for (c, _, _, _) in &motion { x0 = x0.min(c.0 - 40.0); x1 = x1.max(c.0 + 40.0); y0 = y0.min(c.1 - 50.0); y1 = y1.max(c.1 + 50.0); }
     // keep the old 480x360 canvas centred on the body unless something sticks out
-    let hw = 240f64.max(-x0 + 16.0).max(x1 + 16.0);
-    let hh = 180f64.max(-y0 + 16.0).max(y1 + 16.0);
-    let (w, h, cx, cy) = (2.0 * hw, 2.0 * hh, hw, hh);
+    // tight frame, like the reference (default: 160 x 308 around a 96 px arrow pair)
+    let hw = (-x0 + 16.0).max(x1 + 16.0);
+    let hh = (-y0 + 16.0).max(y1 + 16.0);
+    let (w, h, cx, cy) = if motion.is_empty() { (2.0 * hw, 2.0 * hh, hw, hh) } else { (x1 - x0 + 32.0, y1 - y0 + 32.0, -x0 + 16.0, -y0 + 16.0) };
     let sh = |q: Pt| (q.0 + cx, q.1 + cy);
     FGeo {
         w, h, cx, cy, sc,
@@ -214,17 +217,17 @@ fn fbd_render(p: &Params) -> String {
             ux = vx / vl;
             uy = vy / vl;
         }
-        g.label_dir(tip.0, tip.1, ux, uy, 24.0, &lab_mode(p, FK[i][4], FX[i][0]), st);
+        g.label_dir(tip.0 + ux * 5.0, tip.1 + uy * 5.0, ux, uy, 22.0, &lab_mode(p, FK[i][4], FX[i][0]), st);
     }
     if body == "Dot" { g.circle(cx, cy, 6.0, INK, INK, 1.0); } else { g.circle(cx, cy, 3.0, INK, INK, 1.0); }
     if body != "Dot" && !p.s("body_lab").trim().is_empty() { g.label_at(cx, cy + 14.0 * sc, 20.0, p.s("body_lab"), ITALIC); }
     // motion indicators beside the body: dashed, since they are not forces
     for &(c, md, key, mk) in &geo.motion {
-        let (a, b) = (pol(c.0, c.1, -26.0, md), pol(c.0, c.1, 26.0, md));
-        g.dash_arrow(a.0, a.1, b.0, b.1, if col { PAL[1] } else { INK }, SW);
+        let (a, b) = (pol(c.0, c.1, -32.0, md), pol(c.0, c.1, 32.0, md));
+        g.dash_arrow_fit(a.0, a.1, b.0, b.1, if col { PAL[1] } else { INK }, SW, 5.0);
         let lab = lab_mode(p, key, mk);
         // label beside the middle of the arrow (right of travel)
-        let (ux, uy) = ((b.0 - c.0) / 26.0, (b.1 - c.1) / 26.0);
+        let (ux, uy) = ((b.0 - c.0) / 32.0, (b.1 - c.1) / 32.0);
         let (nx, ny) = (-uy, ux);
         let s = if nx < -0.1 || (nx.abs() <= 0.1 && ny > 0.0) { -1.0 } else { 1.0 };
         g.label_dir(c.0 + nx * s * 4.0, c.1 + ny * s * 4.0, nx * s, ny * s, 21.0, &lab, st);
@@ -266,7 +269,7 @@ fn vector_params() -> Vec<ParamDef> {
     v.push(ParamDef::choice("ang_lab_mode", "Angle label shows", &["Text", "Blank line", "Degrees"], "Text"));
     v.push(ParamDef::text("ang_lab", "Angle label", "theta"));
     v.push(ParamDef::bool("components", "Show its components", false));
-    v.push(ParamDef::choice("grid", "Grid and axes", &["Grid", "Axes only", "None"], "Grid"));
+    v.push(ParamDef::choice("grid", "Grid", &["Grid", "Axes only", "None"], "Grid"));
     v.push(ParamDef::bool("axes", "x and y axes, from the first tail", false));
     // off for saved figures (thin arrows, small labels, tight grid); the opening state turns it on
     v.push(ParamDef::bool("bold", "Bold arrows and big labels, with room for them on the grid", false));
@@ -380,6 +383,8 @@ fn vector_render(p: &Params) -> String {
     let (w, h) = (480.0, 360.0);
     let mut g = G::new(w, h, p.b("mirror"));
     g.halo = true;
+    // the reference's heads are about 54 px long and 46 wide at the bold size
+    if p.b("bold") { g.head_k = (0.87, 0.94); }
     let col = p.b("color");
     let (vcol, ccol) = if col { ("#7c3aed", "#a78bfa") } else { (INK, "#6b7280") };
     if col { g.tcol = "#7c3aed"; }
@@ -469,59 +474,116 @@ const IMODES: [&str; 3] = ["Text", "Blank line", "None"];
 
 fn incline_params() -> Vec<ParamDef> {
     vec![
-        ParamDef::choice("obj", "Object", &["Block", "Ball", "Cart"], "Block"),
-        ParamDef::choice("obj_lab_mode", "Object label shows", &IMODES, "Text"),
-        ParamDef::text("obj_lab", "Object label", "m"),
-        ParamDef::int("size", "Object size (%)", 50, 200, 100),
+        ParamDef::choice("obj", "", &["Block", "Ball", "Cart"], "Block"),
+        ParamDef::choice("obj_lab_mode", "Label", &IMODES, "Text"),
+        ParamDef::text("obj_lab", "", "m"),
+        ParamDef::int("size", "Size (%)", 50, 200, 100),
         ParamDef::float("pos", "Where on the ramp", 0.15, 0.85, 0.05, 0.55),
         ParamDef::bool("two", "A second block higher up, tied by a string", false),
         ParamDef::int("n", "Number of objects", 1, 3, 1),
-        ParamDef::choice("obj2_kind", "Object 2", &["Block", "Ball", "Cart"], "Block"),
-        ParamDef::choice("obj2_lab_mode", "Object 2 label shows", &IMODES, "Text"),
-        ParamDef::text("obj2_lab", "Second block label", "m_2"),
-        ParamDef::int("obj2_size", "Object 2 size (%)", 50, 200, 100),
-        ParamDef::choice("obj3_kind", "Object 3", &["Block", "Ball", "Cart"], "Block"),
-        ParamDef::choice("obj3_lab_mode", "Object 3 label shows", &IMODES, "Text"),
-        ParamDef::text("obj3_lab", "Object 3 label", "m_3"),
-        ParamDef::int("obj3_size", "Object 3 size (%)", 50, 200, 100),
+        ParamDef::choice("obj2_kind", "", &["Block", "Ball", "Cart"], "Block"),
+        ParamDef::choice("obj2_lab_mode", "Label", &IMODES, "Text"),
+        ParamDef::text("obj2_lab", "", "m_2"),
+        ParamDef::int("obj2_size", "Size (%)", 50, 200, 100),
+        ParamDef::choice("obj3_kind", "", &["Block", "Ball", "Cart"], "Block"),
+        ParamDef::choice("obj3_lab_mode", "Label", &IMODES, "Text"),
+        ParamDef::text("obj3_lab", "", "m_3"),
+        ParamDef::int("obj3_size", "Size (%)", 50, 200, 100),
         ParamDef::choice("joined", "Joined", &["By strings", "Touching"], "By strings"),
         ParamDef::int("spacing", "Space between (%)", 50, 200, 100),
         ParamDef::bool("tension", "Tension in the string", false),
-        ParamDef::choice("ten_lab_mode", "Tension label shows", &IMODES, "Text"),
-        ParamDef::text("ten_lab", "Tension label", "T"),
+        ParamDef::choice("ten_lab_mode", "", &IMODES, "Text"),
+        ParamDef::text("ten_lab", "", "T"),
         ParamDef::bool("contact", "Contact force, where they touch", false),
-        ParamDef::choice("cont_lab_mode", "Contact force label shows", &IMODES, "Text"),
-        ParamDef::text("cont_lab", "Contact force label", "P"),
-        ParamDef::float("angle", "Ramp angle (deg)", 5.0, 75.0, 1.0, 30.0),
+        ParamDef::choice("cont_lab_mode", "", &IMODES, "Text"),
+        ParamDef::text("cont_lab", "", "P"),
+        ParamDef::float("angle", "Angle", 5.0, 75.0, 1.0, 30.0),
         ParamDef::bool("show_angle", "Mark the angle", true),
-        ParamDef::choice("ang_lab_mode", "Angle label shows", &IMODES, "Text"),
-        ParamDef::text("ang_lab", "Angle label (e.g. theta or 30°)", "theta"),
-        ParamDef::choice("surface", "Surface", &["Smooth", "Rough"], "Smooth"),
+        ParamDef::choice("ang_lab_mode", "Angle label", &IMODES, "Text"),
+        ParamDef::text("ang_lab", "", "theta"),
+        ParamDef::choice("surface", "", &["Smooth", "Rough"], "Smooth"),
         ParamDef::bool("gravity", "Gravity", false),
-        ParamDef::choice("grav_lab_mode", "Gravity label shows", &IMODES, "Text"),
-        ParamDef::text("grav_lab", "Gravity label", "F_g"),
+        ParamDef::choice("grav_lab_mode", "", &IMODES, "Text"),
+        ParamDef::text("grav_lab", "", "F_g"),
         ParamDef::bool("normal", "Normal force", false),
-        ParamDef::choice("norm_lab_mode", "Normal force label shows", &IMODES, "Text"),
-        ParamDef::text("norm_lab", "Normal force label", "F_N"),
+        ParamDef::choice("norm_lab_mode", "", &IMODES, "Text"),
+        ParamDef::text("norm_lab", "", "F_N"),
         ParamDef::choice("friction", "Friction", &DIRS, "None"),
-        ParamDef::choice("fric_lab_mode", "Friction label shows", &IMODES, "Text"),
-        ParamDef::text("fric_lab", "Friction label", "F_f"),
+        ParamDef::choice("fric_lab_mode", "", &IMODES, "Text"),
+        ParamDef::text("fric_lab", "", "F_f"),
         ParamDef::choice("applied", "Applied force", &DIRS, "None"),
-        ParamDef::choice("app_lab_mode", "Applied force label shows", &IMODES, "Text"),
-        ParamDef::text("app_lab", "Applied force label", "F_A"),
+        ParamDef::choice("app_lab_mode", "", &IMODES, "Text"),
+        ParamDef::text("app_lab", "", "F_A"),
         ParamDef::choice("velocity", "Velocity", &DIRS, "None"),
-        ParamDef::choice("vel_lab_mode", "Velocity label shows", &IMODES, "Text"),
-        ParamDef::text("vel_lab", "Velocity label", "v"),
+        ParamDef::choice("vel_lab_mode", "", &IMODES, "Text"),
+        ParamDef::text("vel_lab", "", "v"),
         ParamDef::choice("accel", "Acceleration", &DIRS, "None"),
-        ParamDef::choice("acc_lab_mode", "Acceleration label shows", &IMODES, "Text"),
-        ParamDef::text("acc_lab", "Acceleration label", "a"),
-        ParamDef::bool("mark_len", "Mark the length of the ramp", false),
-        ParamDef::text("len_lab", "Length label", "L"),
-        ParamDef::bool("mark_h", "Mark the height of the ramp", false),
-        ParamDef::text("h_lab", "Height label", "h"),
+        ParamDef::choice("acc_lab_mode", "", &IMODES, "Text"),
+        ParamDef::text("acc_lab", "", "a"),
+        ParamDef::bool("mark_len", "Length of the ramp", false),
+        ParamDef::text("len_lab", "", "L"),
+        ParamDef::bool("mark_h", "Height of the ramp", false),
+        ParamDef::text("h_lab", "", "h"),
         ParamDef::bool("mirror", "Mirror (flip left to right)", false),
         ParamDef::bool("color", "Color (for slides)", false),
     ]
+}
+
+/// The panel's section summaries, worded as the reference's: `block · “m” · 100% size`,
+/// `30° · “theta” · smooth`, the forces switched on, the marks, `black and white`.
+pub(super) fn incline_summary(title: &str, p: &Params) -> Option<String> {
+    let lab = |mode: &str, text: &str| match mode {
+        "None" => "no label".to_string(),
+        "Blank line" => "blank line".to_string(),
+        _ => format!("\u{201c}{}\u{201d}", text.trim()),
+    };
+    let on = |v: Vec<String>| if v.is_empty() { "none".to_string() } else { v.join(", ") };
+    Some(match title {
+        "Object" => {
+            let n = incline_count(p);
+            if n <= 1 {
+                format!("{} · {} · {}% size", p.s("obj").to_lowercase(), lab(p.s("obj_lab_mode"), p.s("obj_lab")), p.i("size"))
+            } else {
+                let mut v: Vec<String> = Vec::new();
+                for k in 1..=n {
+                    let (kind, mode, text) = match k {
+                        1 => (p.s("obj"), p.s("obj_lab_mode"), p.s("obj_lab")),
+                        2 => (p.s("obj2_kind"), p.s("obj2_lab_mode"), p.s("obj2_lab")),
+                        _ => (p.s("obj3_kind"), p.s("obj3_lab_mode"), p.s("obj3_lab")),
+                    };
+                    let text = auto_sub(text, k, true);
+                    v.push(format!("{} {}", kind.to_lowercase(), lab(mode, &text)));
+                }
+                format!("{} · {}", v.join(", "), if p.s("joined") == "Touching" { "touching" } else { "tied" })
+            }
+        }
+        "Ramp" => format!("{}° · {} · {}", p.f("angle").round(), lab(p.s("ang_lab_mode"), p.s("ang_lab")), p.s("surface").to_lowercase()),
+        "Forces and motion" => {
+            let mut v: Vec<String> = Vec::new();
+            for (k, name) in [("gravity", "gravity"), ("normal", "normal force")] {
+                if p.b(k) { v.push(name.into()); }
+            }
+            for (k, name) in [("friction", "friction"), ("applied", "applied force"), ("velocity", "velocity"), ("accel", "acceleration")] {
+                if p.s(k) != "None" { v.push(name.into()); }
+            }
+            if p.b("tension") { v.push("tension".into()); }
+            if p.b("contact") { v.push("contact force".into()); }
+            on(v)
+        }
+        "Marks" => {
+            let mut v: Vec<String> = Vec::new();
+            if p.b("mark_len") { v.push(format!("length {}", lab("Text", p.s("len_lab")))); }
+            if p.b("mark_h") { v.push(format!("height {}", lab("Text", p.s("h_lab")))); }
+            if v.is_empty() { "none".into() } else { v.join(" · ") }
+        }
+        "Figure" => {
+            let mut v: Vec<&str> = Vec::new();
+            if p.b("mirror") { v.push("mirrored"); }
+            if p.b("color") { v.push("color"); }
+            if v.is_empty() { "black and white".into() } else { v.join(" · ") }
+        }
+        _ => return None,
+    })
 }
 
 /// `T` -> `T_1`, `T_a` -> `T_{a1}`: the k-th of several strings or contacts.
@@ -563,17 +625,17 @@ pub(super) fn incline_objects(p: &Params, lh: f64) -> Vec<IncObj> {
     let n = incline_count(p);
     let legacy = n == 2 && p.i("n") < 2; // old two-block spec: two equal blocks
     let kind = |k: &str| -> &'static str { match k { "Ball" => "Ball", "Cart" => "Cart", _ => "Block" } };
-    let sz1 = 50.0 * p.f("size") / 100.0;
+    let sz1 = 56.0 * p.f("size") / 100.0;
     let mut v: Vec<(&'static str, f64, &'static str, &'static str)> = vec![(if n > 1 && legacy { "Block" } else { kind(p.s("obj")) }, sz1, "obj_lab", "obj_lab_mode")];
     if n >= 2 {
         if legacy {
             v.push(("Block", sz1, "obj2_lab", ""));
         } else {
-            v.push((kind(p.s("obj2_kind")), 50.0 * p.f("obj2_size") / 100.0, "obj2_lab", "obj2_lab_mode"));
+            v.push((kind(p.s("obj2_kind")), 56.0 * p.f("obj2_size") / 100.0, "obj2_lab", "obj2_lab_mode"));
         }
     }
     if n >= 3 {
-        v.push((kind(p.s("obj3_kind")), 50.0 * p.f("obj3_size") / 100.0, "obj3_lab", "obj3_lab_mode"));
+        v.push((kind(p.s("obj3_kind")), 56.0 * p.f("obj3_size") / 100.0, "obj3_lab", "obj3_lab_mode"));
     }
     let touching = n > 1 && p.s("joined") == "Touching";
     let halves: Vec<f64> = v.iter().map(|o| obj_half_len(o.0, o.1)).collect();
@@ -640,7 +702,8 @@ pub(super) fn incline_frame(p: &Params) -> (f64, f64, f64, f64, f64) {
     if incline_count(p) > 1 {
         (640.0, 440.0, 50.0, 395.0, (510.0f64).min(275.0 / tr.tan()))
     } else {
-        (520.0, 330.0, 50.0, 285.0, (390.0f64).min(205.0 / tr.tan()))
+        // the reference's frame: 640 x 400, ramp up to 534.38 wide and 308.52 high
+        (640.0, 400.0, 52.81, 349.76, (534.38f64).min(308.52 / tr.tan()))
     }
 }
 
@@ -653,8 +716,13 @@ fn incline_render(p: &Params) -> String {
     let (bx, tx, ty) = (ax + bw, ax + bw, ground - bw * tr.tan());
     let (uu, nn) = ((tr.cos(), -tr.sin()), (-tr.sin(), -tr.cos())); // up-ramp, outward normal
     let lh = bw / tr.cos();
-    g.poly(&[(ax, ground), (bx, ground), (tx, ty)], "#f3f4f7", INK, SW);
-    g.hatch(ax - 28.0, bx + 28.0, ground, true);
+    g.poly(&[(ax, ground), (bx, ground), (tx, ty)], "#f3f4f6", INK, SW);
+    g.line(ax - 30.0, ground, bx + 30.0, ground, INK, SW);
+    let mut hx = ax - 30.0 + 11.2;
+    while hx <= bx + 30.0 + 2.0 {
+        g.line(hx, ground, hx - 7.2, ground + 9.0, INK, 1.3);
+        hx += 13.0;
+    }
     // rough surface: short ticks just inside the slope
     if p.s("surface") == "Rough" {
         let mut s = 8.0;
@@ -677,24 +745,24 @@ fn incline_render(p: &Params) -> String {
             "Ball" => {
                 let r = sz / 2.0;
                 let c = loc(0.0, r);
-                g.circle(c.0, c.1, r, FILL, INK, SW);
+                g.circle(c.0, c.1, r, "#e5e7eb", INK, SW);
                 RampObj { com: c, hh: r, hl: r, round: true }
             }
             "Cart" => {
                 let (len, hh, r) = (sz * 1.5, sz * 0.5, sz * 0.14);
                 let pts = [loc(-len / 2.0, 2.0 * r), loc(len / 2.0, 2.0 * r), loc(len / 2.0, 2.0 * r + hh), loc(-len / 2.0, 2.0 * r + hh)];
-                g.poly(&pts, FILL, INK, SW);
+                g.poly(&pts, "#e5e7eb", INK, SW);
                 for l in [-len * 0.3, len * 0.3] { let c = loc(l, r); g.circle(c.0, c.1, r, "#fff", INK, SW); }
                 RampObj { com: loc(0.0, 2.0 * r + hh / 2.0), hh: hh / 2.0 + r, hl: len / 2.0, round: false }
             }
             _ => {
                 let pts = [loc(-sz / 2.0, 0.0), loc(sz / 2.0, 0.0), loc(sz / 2.0, sz), loc(-sz / 2.0, sz)];
-                g.poly(&pts, FILL, INK, SW);
+                g.poly(&pts, "#e5e7eb", INK, SW);
                 RampObj { com: loc(0.0, sz / 2.0), hh: sz / 2.0, hl: sz / 2.0, round: false }
             }
         };
         let st = if lab.trim().chars().next().is_some_and(|c| c.is_ascii_digit()) { UPRIGHT } else { ITALIC };
-        g.label_at(o.com.0, o.com.1, 20.0, lab, st);
+        g.label_at(o.com.0, o.com.1 - 2.6, 22.0, lab, st);
         o
     };
     let mut objs: Vec<RampObj> = vec![];
@@ -718,7 +786,7 @@ fn incline_render(p: &Params) -> String {
     let force = |g: &mut G, from: Pt, d: Pt, lab: &str, i: usize| {
         let tip = (from.0 + d.0 * arrow_len, from.1 + d.1 * arrow_len);
         g.arrow(from.0, from.1, tip.0, tip.1, colr(col, i), SW);
-        g.label_dir(tip.0, tip.1, d.0, d.1, 19.0, lab, ITALIC);
+        g.label_dir(tip.0, tip.1, d.0, d.1, 22.0, lab, ITALIC);
     };
     for (k, o) in objs.iter().enumerate() {
         let k1 = k + 1;
@@ -738,7 +806,7 @@ fn incline_render(p: &Params) -> String {
                 let from = (foot.0 - d.0 * o.hl * 0.6, foot.1 - d.1 * o.hl * 0.6);
                 let tip = (from.0 + d.0 * (o.hl * 1.2 + 18.0), from.1 + d.1 * (o.hl * 1.2 + 18.0));
                 g.arrow(from.0, from.1, tip.0, tip.1, colr(col, 2), SW);
-                g.label_at(tip.0 - nn.0 * 16.0, tip.1 - nn.1 * 16.0, 19.0, &lab, ITALIC);
+                g.label_at(tip.0 - nn.0 * 16.0, tip.1 - nn.1 * 16.0, 22.0, &lab, ITALIC);
             } else {
                 // along the surface from the face it acts towards
                 let sgn = d.0 * uu.0 + d.1 * uu.1;
@@ -748,7 +816,7 @@ fn incline_render(p: &Params) -> String {
                     let tip = (from.0 + d.0 * arrow_len, from.1 + d.1 * arrow_len);
                     g.arrow(from.0, from.1, tip.0, tip.1, colr(col, 2), SW);
                     let m = (from.0 + d.0 * arrow_len * 0.6 - nn.0 * 18.0, from.1 + d.1 * arrow_len * 0.6 - nn.1 * 18.0);
-                    g.label_at(m.0, m.1, 19.0, &lab, ITALIC);
+                    g.label_at(m.0, m.1, 22.0, &lab, ITALIC);
                 } else {
                     force(&mut g, from, d, &lab, 2);
                 }
@@ -764,7 +832,7 @@ fn incline_render(p: &Params) -> String {
             let face = (o.com.0 - d.0 * o.hl, o.com.1 - d.1 * o.hl);
             let tail = (face.0 - d.0 * arrow_len, face.1 - d.1 * arrow_len);
             g.arrow(tail.0, tail.1, face.0, face.1, colr(col, 3), SW);
-            g.label_dir(tail.0, tail.1, -d.0, -d.1, 19.0, &lab, ITALIC);
+            g.label_dir(tail.0, tail.1, -d.0, -d.1, 22.0, &lab, ITALIC);
         } else {
             // pulls the object in front (a single object: from its leading face)
             let o = if up { objs[n_obj - 1] } else { objs[0] };
@@ -823,12 +891,12 @@ fn incline_render(p: &Params) -> String {
     }
     // angle mark
     if p.b("show_angle") {
-        let r = (lh * 0.22).clamp(34.0, 60.0);
+        let r = 46.0;
         g.polyline(&arc_pts(ax, ground, r, 0.0, th), INK, 1.5);
         let m = pol(ax, ground, r + 20.0, th / 2.0);
         let t = lab_mode(p, "ang_lab", "ang_lab_mode");
         let st = if t.chars().next().is_some_and(|c| c.is_ascii_digit()) { UPRIGHT } else { ITALIC };
-        g.label_at(m.0 + if st == UPRIGHT { 8.0 } else { 0.0 }, m.1, 20.0, &t, st);
+        g.label_at(m.0 + if st == UPRIGHT { 8.0 } else { 0.0 }, m.1 - 2.6, 22.0, &t, st);
     }
     if p.b("mark_len") {
         // dimension line above the slope, clear of the objects, with extension lines
@@ -883,9 +951,9 @@ fn proj_params() -> Vec<ParamDef> {
         ParamDef::bool("show_g", "Acceleration due to gravity", false),
         ParamDef::choice("g_lab_mode", "Gravity label shows", &PMODES, "Text"),
         ParamDef::text("g_lab", "Gravity label", "g"),
-        ParamDef::bool("mark_h", "Mark the maximum height", false),
+        ParamDef::bool("mark_h", "Maximum height", false),
         ParamDef::text("h_lab", "Height label", "H"),
-        ParamDef::bool("mark_r", "Mark the range", false),
+        ParamDef::bool("mark_r", "Range", false),
         ParamDef::text("r_lab", "Range label", "R"),
         ParamDef::bool("mark_cliff", "Mark the cliff height", false),
         ParamDef::text("cliff_lab", "Cliff height label", "h"),
@@ -893,6 +961,11 @@ fn proj_params() -> Vec<ParamDef> {
         ParamDef::bool("color", "Color (for slides)", false),
     ]
 }
+
+/// The reference draws the ground line 264.1 down its 640 x 400 canvas.
+pub(super) const PROJ_GROUND: f64 = 264.1;
+/// Length of the launch arrow past the object (the reference's 87.5 from the centre at 60%).
+pub(super) const PROJ_VLEN: f64 = 72.0;
 
 pub(super) struct PG { pub th: f64, pub vx: f64, pub vy: f64, #[allow(dead_code)] pub h0: f64, pub r: f64, pub ground: f64, pub lx: f64, pub ly: f64, pub s: f64, pub t_land: f64 }
 
@@ -903,14 +976,14 @@ pub(super) fn proj_geo(p: &Params, w: f64) -> PG {
     let th = p.f("angle").clamp(if cliff { 0.0 } else { 5.0 }, 85.0);
     let (vx, vy) = (th.to_radians().cos(), th.to_radians().sin());
     let h0 = if cliff { p.f("cliff") } else { 0.0 };
-    let r = if p.s("object") == "Dot" { 4.0 } else { 34.0 * p.f("size") / 100.0 };
-    let ground = 285.0;
-    let lx = if cliff { 100.0 } else { 70.0 };
+    let r = if p.s("object") == "Dot" { 4.0 } else { 26.0 * p.f("size") / 100.0 };
+    let ground = PROJ_GROUND;
+    let lx = if cliff { 100.0 } else { 63.6 };
     // normalised flight (v0 = g = 1); scale to fit the canvas
     let t_land0 = vy + (vy * vy + 2.0 * h0).sqrt();
     let range0 = vx * t_land0;
     let hmax0 = h0 + vy * vy / 2.0;
-    let s = ((w - lx - 60.0) / range0).min((ground - 50.0 - 2.0 * r) / hmax0).min(500.0);
+    let s = ((w - lx - 63.6) / range0).min((ground - 30.0 - 2.0 * r) / hmax0).min(600.0);
     let centred = !cliff && p.s("ball_at") == "Is centred on the ground line";
     let drop_px = if centred { 0.0 } else { h0 * s + r }; // launch centre above the ground line
     let ly = ground - drop_px;
@@ -919,7 +992,7 @@ pub(super) fn proj_geo(p: &Params, w: f64) -> PG {
 }
 
 fn proj_render(p: &Params) -> String {
-    let (w, h) = (560.0, 340.0);
+    let (w, h) = (640.0, 400.0);
     let mut g = G::new(w, h, p.b("mirror"));
     let col = p.b("color");
     let cliff = p.s("from") == "A cliff";
@@ -929,12 +1002,17 @@ fn proj_render(p: &Params) -> String {
     if cliff {
         g.poly(&[(46.0, ly + r), (lx + r, ly + r), (lx + r, ground), (46.0, ground)], "#f3f4f7", INK, 1.8);
     }
-    g.line(10.0, ground, w - 10.0, ground, INK, 1.8);
-    // path
-    let pts: Vec<Pt> = (0..=80).map(|i| pos(t_land * i as f64 / 80.0)).collect();
+    g.line(18.0, ground, w - 18.0, ground, INK, 2.0);
+    // path: with the velocity arrow shown, the reference starts the path where it leaves the arrow's reach
+    let br0 = if p.s("object") == "Dot" { 4.5 } else { r };
+    let skip = if p.b("show_v") { br0 + PROJ_VLEN } else { 0.0 };
+    let mut pts: Vec<Pt> = (0..=480).map(|i| pos(t_land * i as f64 / 480.0)).collect();
+    if skip > 0.0 {
+        if let Some(k) = pts.iter().position(|q| ((q.0 - lx).powi(2) + (q.1 - ly).powi(2)).sqrt() >= skip) { pts.drain(..k); }
+    }
     let pc = if col { PAL[1] } else { INK };
     match p.s("path") {
-        "Dashed" => g.pattern_polyline(&pts, pc, 1.8, "7 5"),
+        "Dashed" => g.pattern_polyline(&pts, pc, 2.0, "7 6"),
         "Solid" => g.polyline(&pts, pc, 2.0),
         _ => {}
     }
@@ -959,10 +1037,16 @@ fn proj_render(p: &Params) -> String {
             g.tex(q.0 + dx * (br + 6.0), q.1 - br - 8.0, 18.0, if dx < 0.0 { "end" } else if dx > 0.0 { "start" } else { "middle" }, letters[i.min(12)], UPRIGHT);
         }
     }
+    // velocity shaft: from the launch centre to the arrow head, under the ball
+    if p.b("show_v") {
+        let (vlen_all, vc0) = (br + PROJ_VLEN, if col { PAL[0] } else { INK });
+        let base = pol(lx, ly, vlen_all - head_len(SW) * 0.7, th);
+        g.dash_fit(lx, ly, base.0, base.1, vc0, 3.0, 5.31);
+    }
     // launch object
     if p.s("object") == "Dot" { g.circle(lx, ly, 4.5, INK, INK, 1.0); } else { g.circle(lx, ly, r, FILL, INK, SW); }
     // velocity, components, angle: dashed arrows (they are not forces)
-    let vlen = 56.0;
+    let vlen = PROJ_VLEN;
     let tip = pol(lx, ly, br + vlen, th);
     let vc = if col { PAL[0] } else { INK };
     if p.b("comps") {
@@ -983,19 +1067,18 @@ fn proj_render(p: &Params) -> String {
         g.tcol = tc;
     }
     if p.b("show_v") {
-        let a = pol(lx, ly, br, th);
-        g.dash_arrow(a.0, a.1, tip.0, tip.1, vc, SW);
-        g.label_dir(tip.0, tip.1, -0.2, -1.0, 19.0, &lab_mode(p, "v_lab", "v_lab_mode"), ITALIC);
+        g.head(lx, ly, tip.0, tip.1, vc, SW);
+        g.label_at(tip.0 - 14.3, tip.1 - 15.1 - 7.7, 22.0, &lab_mode(p, "v_lab", "v_lab_mode"), ITALIC);
     }
     if p.b("show_angle") && th > 0.5 {
         let ar = br + 26.0;
         // the ground line is the reference when the launch is from it
         if ly < ground - 0.5 { g.dash(lx + br, ly, lx + ar + 12.0, ly, GREY, 1.0); }
-        g.polyline(&arc_pts(lx, ly, ar, 0.0, th), INK, 1.4);
+        g.polyline(&arc_pts(lx, ly, ar, 0.0, th), INK, 1.5);
         let m = pol(lx, ly, ar + 15.0, th / 2.0);
         let t = lab_mode(p, "ang_lab", "ang_lab_mode");
         let st = if t.chars().next().is_some_and(|c| c.is_ascii_digit()) { UPRIGHT } else { ITALIC };
-        g.label_at(m.0 + 6.0, m.1, 18.0, &t, st);
+        g.label_at(m.0 + 4.6, m.1 - 1.9, 22.0, &t, st);
     }
     if p.b("show_g") {
         // beside the path on its way down

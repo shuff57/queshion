@@ -73,7 +73,7 @@ fn fbd(p: &Params, size: (f64, f64)) -> Vec<Handle> {
             if r < 4.0 { return; }
             let a = angle_deg(tail, q);
             p.set_f(FANG[i], a);
-            p.set_f(FLEN[i], (r - ray_exit(&b, a, sc) - 20.0) / 55.0);
+            p.set_f(FLEN[i], (r - ray_exit(&b, a, sc) - 20.0) / 70.0);
         }));
     }
     for &(c, _, key, _) in &geo.motion {
@@ -207,7 +207,7 @@ fn projectile(p: &Params, size: (f64, f64)) -> Vec<Handle> {
     let PG { th, vx, vy, r, ground, lx, ly, s, t_land, .. } = proj_geo(p, w);
     let pos = |t: f64| (lx + s * vx * t, ly - s * (vy * t - 0.5 * t * t));
     let br = if p.s("object") == "Dot" { 4.5 } else { r };
-    let tip = polar((lx, ly), th, br + 56.0);
+    let tip = polar((lx, ly), th, br + super::mech::PROJ_VLEN);
     let mut out = vec![];
     out.push(lab(m, polar((lx, ly), th / 2.0, br + 41.0), 36.0, "ang_lab").tap_pos(m, (6.0, 0.0)));
     out.push(lab(m, (tip.0 - 2.0, tip.1 - 20.0), 40.0, "v_lab"));
@@ -259,9 +259,9 @@ fn motion(p: &Params, size: (f64, f64)) -> Vec<Handle> {
         let (axs, _, _) = motion_axes(p, &segs, which, *rect);
         let a = Ax { x0: axs.x0, y0: axs.y0, w: axs.w, h: axs.h, xmin: axs.xmin, xmax: axs.xmax, ymin: axs.ymin, ymax: axs.ymax };
         let ykey = match which { 0 => "yt_pos", 1 => "yt_vel", _ => "yt_acc" };
-        out.push(Handle::label(m.p((50.0, a.y0 + a.h / 2.0)), (24.0, 120.0), ykey, "Double-click to edit the axis title"));
+        out.push(Handle::label(m.p((a.x0 - 41.0, a.y0 + a.h / 2.0)), (24.0, 120.0), ykey, "Double-click to edit the axis title"));
         if pi + 1 == np {
-            out.push(Handle::label(m.p((a.x0 + a.w / 2.0, a.y0 + a.h + 40.0)), (200.0, 22.0), "xt", "Double-click to edit the axis title"));
+            out.push(Handle::label(m.p((a.x0 + a.w / 2.0, a.y0 + a.h + 44.8)), (200.0, 22.0), "xt", "Double-click to edit the axis title"));
         }
         if which == 2 { continue; }
         if which == 0 && p.b("tangent") && !segs.is_empty() {
@@ -389,7 +389,7 @@ fn spring(p: &Params, size: (f64, f64)) -> Vec<Handle> {
     }
     let (_, ix, _, _) = super::instr::spring_layout(p);
     let _ = w;
-    let (y0, y1) = (130.0, 424.0);
+    let (y0, y1) = (167.0, 648.0);
     let value = p.f("reading").min(cap) + p.f("offset") * cap;
     let py = y0 + (y1 - y0) * value.clamp(-0.08 * cap, 1.06 * cap) / cap;
     out.push(Handle::knob(m.p((ix + 34.0, py)), "Drag to set the force on the hook", move |p, q| {
@@ -399,9 +399,9 @@ fn spring(p: &Params, size: (f64, f64)) -> Vec<Handle> {
         p.set_f("reading", v.clamp(0.0, cap));
     }).with_cursor(Cursor::ResizeV));
     let opts: Vec<&'static str> = vec!["1 N", "2.5 N", "5 N", "10 N", "20 N", "30 N", "50 N"];
-    out.push(Handle::zone(m.p((ix, 65.0)), (124.0, 24.0), "Click to change the capacity", move |p| cycle(p, "cap", &opts)));
+    out.push(Handle::zone(m.p((ix, 53.0)), (135.0, 26.0), "Click to change the capacity", move |p| cycle(p, "cap", &opts)));
     if p.s("hook") == "Block" {
-        out.push(lab(m, (ix, 521.0), 48.0, "block_lab"));
+        out.push(lab(m, (ix, 778.0), 66.0, "block_lab"));
     }
     out
 }

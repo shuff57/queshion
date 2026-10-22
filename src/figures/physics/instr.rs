@@ -26,8 +26,8 @@ fn spring_params() -> Vec<ParamDef> {
         ParamDef::choice("cap", "Capacity", &CAPS, "10 N"),
         ParamDef::choice("units", "Printed in", &["Newtons", "Grams", "Both"], "Newtons"),
         ParamDef::bool("coded", "Color-coded by capacity", true),
-        ParamDef::float("reading", "Force on the hook (N)", 0.0, 50.0, 0.01, 3.47),
-        ParamDef::float("offset", "Zero offset (fraction of capacity, -0.1 to 0.1)", -0.1, 0.1, 0.005, 0.0),
+        ParamDef::float("reading", "Force on the hook", 0.0, 50.0, 0.01, 3.47),
+        ParamDef::float("offset", "Zero offset", -1.0, 1.0, 0.005, 0.0),
         ParamDef::bool("show_zero", "Show the unloaded scale beside it (zero error)", false),
         ParamDef::choice("hook", "On the hook", &["Block", "Nothing", "Slotted masses"], "Block"),
         ParamDef::int("masses", "Number of slotted masses", 1, 8, 3),
@@ -38,9 +38,12 @@ fn spring_params() -> Vec<ParamDef> {
         // the opening state uses tenths everywhere, as the reference's dial
         ParamDef::choice("minor", "Small marks between numbers", &["Automatic", "Tenths"], "Automatic"),
         ParamDef::text("title", "Chart title", ""),
-        ParamDef::bool("answer", "Print the answer key under the figure", false),
+        ParamDef::bool("answer", "Answer key", false),
     ]
 }
+
+/// The reference draws the tube a little right of the lens centre, so the body edge shows at the left.
+const MAG_SHIFT: f64 = 37.0;
 
 struct Inst { ix: f64, y0: f64, y1: f64, cap: f64, units: String, value: f64, coded: bool, tenths: bool }
 
@@ -60,23 +63,23 @@ fn draw_inst(g: &mut G, c: &Inst, sw: f64, fs: f64, full: bool) {
     let body = if c.coded { tint(cap_color(c.cap)) } else { "#ffffff".to_string() };
     let ypos = |v: f64| c.y0 + (c.y1 - c.y0) * v / c.cap;
     if full {
-        g.circle(ix, 46.0, 7.0, "#fff", INK, 1.6);
-        g.raw(&format!(r##"<rect x="{:.1}" y="76" width="124" height="378" rx="10" fill="{body}" stroke="{INK}" stroke-width="1.6"/>"##, ix - 62.0));
+        g.circle(ix, 29.0, 7.0, "#fff", INK, 1.6);
+        g.raw(&format!(r##"<rect x="{:.1}" y="66" width="135" height="604" rx="10" fill="{body}" stroke="{INK}" stroke-width="1.6"/>"##, ix - 67.5));
         let head = if c.coded { cap_color(c.cap) } else { "#d9d9d9" };
-        g.raw(&format!(r##"<rect x="{:.1}" y="53" width="124" height="24" rx="5" fill="{head}" stroke="{INK}" stroke-width="1.6"/>"##, ix - 62.0));
+        g.raw(&format!(r##"<rect x="{:.1}" y="40" width="135" height="26" rx="5" fill="{head}" stroke="{INK}" stroke-width="1.6"/>"##, ix - 67.5));
         let txt = match c.units.as_str() {
             "Grams" => format!("{} g", fmt_num(c.cap * 100.0)),
             "Both" => format!("{} N / {} g", fmt_num(c.cap), fmt_num(c.cap * 100.0)),
             _ => format!("{} N", fmt_num(c.cap)),
         };
-        g.text(ix, 70.0, if txt.len() > 8 { 10.0 } else { 12.0 }, "middle", &txt, true);
+        g.text(ix, 58.0, 10.0, "middle", &txt, true);
     } else {
         // magnified view: the body colour behind the tube
-        g.raw(&format!(r##"<rect x="{:.1}" y="{:.1}" width="124" height="{:.1}" fill="{body}"/>"##, ix - 62.0, c.y0 - 60.0, c.y1 - c.y0 + 120.0));
+        g.raw(&format!(r##"<rect x="{:.1}" y="{:.1}" width="135" height="{:.1}" fill="{body}"/>"##, ix - 67.5, c.y0 - 60.0, c.y1 - c.y0 + 120.0));
     }
     // tube with spring
-    let top = c.y0 - 24.0;
-    let bot = c.y1 + 16.0;
+    let top = c.y0 - 77.0;
+    let bot = c.y1 + 12.0;
     g.rect(ix - 10.0, top, 20.0, bot - top, "#ffffff", INK, sw * 1.2);
     let py = ypos(c.value.clamp(-0.08 * c.cap, 1.06 * c.cap));
     let mut zz = vec![(ix, top)];
@@ -118,14 +121,14 @@ fn draw_inst(g: &mut G, c: &Inst, sw: f64, fs: f64, full: bool) {
             }
         }
         let lab = if newtons { "N" } else { "g" };
-        g.text(ix + side * 36.0, c.y0 - 28.0, fs + 2.0, "middle", lab, true);
+        g.text(ix + side * 36.0, c.y0 - 85.0, fs * 1.1, "middle", lab, true);
     }
     // pointer line across the scale
     g.line(ix - 34.0, py, ix + 34.0, py, "#c0392b", sw * 1.1);
     if full {
         // hook below the body
-        g.polyline(&[(ix, 454.0), (ix, 470.0)], INK, 2.0);
-        g.polyline(&arc_pts(ix, 480.0, 10.0, 90.0, -160.0), INK, 2.0);
+        g.polyline(&[(ix, 670.0), (ix, 686.0)], INK, 2.0);
+        g.polyline(&arc_pts(ix, 696.0, 10.0, 90.0, -160.0), INK, 2.0);
     }
 }
 
@@ -136,16 +139,16 @@ pub(super) fn spring_layout(p: &Params) -> (f64, f64, Option<f64>, f64) {
     let (inst, mag) = (view != "Magnifier only", view != "Instrument only");
     let zero = inst && p.b("show_zero");
     match (zero, mag) {
-        (true, true) => (720.0, 260.0, Some(110.0), 550.0),
-        (true, false) => (580.0, 370.0, Some(210.0), 290.0),
-        (false, true) if inst => (580.0, 130.0, None, 410.0),
-        _ => (580.0, 290.0, None, 290.0),
+        (true, true) => (760.0, 260.0, Some(105.0), 575.0),
+        (true, false) => (545.0, 350.0, Some(190.0), 272.0),
+        (false, true) if inst => (545.0, 105.0, None, 379.0),
+        _ => (545.0, 272.0, None, 272.0),
     }
 }
 
 fn spring_render(p: &Params) -> String {
     let (w, ix, ix0, mcx) = spring_layout(p);
-    let h = 600.0;
+    let h = 820.0;
     let mut g = G::new(w, h, false);
     let cap = cap_value(p.s("cap"));
     let reading = p.f("reading").min(cap);
@@ -154,37 +157,37 @@ fn spring_render(p: &Params) -> String {
     let view = p.s("view").to_string();
     let show_inst = view != "Magnifier only";
     let show_mag = view != "Instrument only";
-    let cfg = Inst { ix, y0: 130.0, y1: 424.0, cap, units: p.s("units").to_string(), value, coded: p.b("coded"), tenths: p.s("minor") == "Tenths" };
+    let cfg = Inst { ix, y0: 167.0, y1: 648.0, cap, units: p.s("units").to_string(), value, coded: p.b("coded"), tenths: p.s("minor") == "Tenths" };
     if !p.s("title").trim().is_empty() { g.title_text(w / 2.0, 26.0, 19.0, p.s("title")); }
     let py = cfg.y0 + (cfg.y1 - cfg.y0) * value.clamp(-0.08 * cap, 1.06 * cap) / cap;
     if let Some(x0) = ix0 {
         let c0 = Inst { ix: x0, value: zero, units: cfg.units.clone(), ..cfg };
-        draw_inst(&mut g, &c0, 1.0, 8.5, true);
+        draw_inst(&mut g, &c0, 1.0, 11.0, true);
     }
     if show_inst {
-        draw_inst(&mut g, &cfg, 1.0, 8.5, true);
+        draw_inst(&mut g, &cfg, 1.0, 11.0, true);
         // thing on the hook
         match p.s("hook") {
             "Block" => {
-                g.polyline(&[(ix, 490.0), (ix, 500.0)], INK, 2.0);
-                g.rect(ix - 24.0, 500.0, 48.0, 42.0, "#e6e8ec", INK, 1.8);
-                if !p.s("block_lab").trim().is_empty() { g.tex(ix, 527.0, 17.0, "middle", p.s("block_lab"), ITALIC); }
+                g.polyline(&[(ix, 706.0), (ix, 754.0)], INK, 2.0);
+                g.rect(ix - 33.0, 754.0, 66.0, 49.0, "#e6e8ec", INK, 1.8);
+                if !p.s("block_lab").trim().is_empty() { g.tex(ix, 784.0, 17.0, "middle", p.s("block_lab"), ITALIC); }
             }
             "Slotted masses" => {
                 let k = p.i("masses").clamp(1, 8) as usize;
-                g.polyline(&[(ix, 490.0), (ix, 498.0)], INK, 2.0);
-                g.line(ix, 498.0, ix, 502.0 + 9.0 * k as f64, INK, 2.0);
+                g.polyline(&[(ix, 706.0), (ix, 752.0)], INK, 2.0);
+                g.line(ix, 752.0, ix, 756.0 + 9.0 * k as f64, INK, 2.0);
                 for i in 0..k {
-                    let y = 502.0 + i as f64 * 9.0;
+                    let y = 756.0 + i as f64 * 9.0;
                     g.rect(ix - 26.0, y, 52.0, 8.0, "#cfd3da", INK, 1.4);
                 }
-                g.rect(ix - 30.0, 502.0 + 9.0 * k as f64, 60.0, 4.0, "#333", INK, 1.0);
+                g.rect(ix - 30.0, 756.0 + 9.0 * k as f64, 60.0, 4.0, "#333", INK, 1.0);
             }
             _ => {}
         }
     }
     if show_mag {
-        let (mcy, r) = (270.0, 128.0);
+        let (mcy, r) = (333.0, 150.0);
         // zoom so that about `mag_marks` numbered marks fit across the lens
         let marks: f64 = p.s("mag_marks").parse().unwrap_or(3.0);
         let major_px = (cfg.y1 - cfg.y0) * lab_step(cap) / cap;
@@ -192,18 +195,19 @@ fn spring_render(p: &Params) -> String {
         g.raw(r##"<defs><clipPath id="mag">"##);
         g.raw(&format!(r#"<circle cx="{mcx:.1}" cy="{mcy:.1}" r="{r:.1}"/></clipPath></defs>"#));
         g.raw(&format!(r##"<circle cx="{mcx:.1}" cy="{mcy:.1}" r="{r:.1}" fill="#ffffff"/>"##));
-        g.raw(&format!(r#"<g clip-path="url(#mag)"><g transform="translate({mcx:.2},{mcy:.2}) scale({z:.3}) translate({:.2},{:.2})">"#, -cfg.ix, -py));
-        draw_inst(&mut g, &cfg, 1.28 / z, 12.0 / z, false);
+        g.raw(&format!(r#"<g clip-path="url(#mag)"><g transform="translate({:.2},{mcy:.2}) scale({z:.3}) translate({:.2},{:.2})">"#, mcx + MAG_SHIFT, -cfg.ix, -py));
+        draw_inst(&mut g, &cfg, 1.28 / z, 14.75 / z, false);
         g.raw("</g></g>");
         g.circle(mcx, mcy, r, "none", INK, 3.0);
         if show_inst {
             // connectors from the small circle to the magnifier
-            let sr = (r / z).clamp(14.0, 40.0);
-            g.circle(cfg.ix, py, sr, "none", INK, 1.2);
+            let sr = (r / z).clamp(14.0, 120.0);
+            let sx = cfg.ix - MAG_SHIFT / z;
+            g.circle(sx, py, sr, "none", INK, 1.2);
             let a1 = pol(mcx, mcy, r, 115.0);
             let a2 = pol(mcx, mcy, r, 245.0);
-            g.dash(cfg.ix + sr * 0.35, py - sr * 0.93, a1.0, a1.1, "#444", 1.0);
-            g.dash(cfg.ix + sr * 0.35, py + sr * 0.93, a2.0, a2.1, "#444", 1.0);
+            g.dash(sx + sr * 0.35, py - sr * 0.93, a1.0, a1.1, "#444", 1.0);
+            g.dash(sx + sr * 0.35, py + sr * 0.93, a2.0, a2.1, "#444", 1.0);
         }
     }
     if p.b("answer") {
@@ -247,7 +251,7 @@ fn circuit_params() -> Vec<ParamDef> {
     v.push(ParamDef::text("cell_name", "Battery name (e.g. epsilon; blank = none)", ""));
     v.push(ParamDef::choice("cell_val_mode", "Battery value shows", &LABEL_MODES, "Text"));
     v.push(ParamDef::text("cell_val", "Battery value", "12 V"));
-    v.push(ParamDef::bool("polarity", "+ and - beside it", false));
+    v.push(ParamDef::bool("polarity", "+ and \u{2212} beside it", false));
     v.push(ParamDef::choice("switch", "Switch", &["None", "Closed", "Open"], "None"));
     v.push(ParamDef::bool("ammeter", "Ammeter in the main line", false));
     v.push(ParamDef::choice("amm_read_mode", "Ammeter reading shows", &LABEL_MODES, "None"));
@@ -299,7 +303,7 @@ pub(super) fn circuit_layout(p: &Params) -> CLay {
     let bat_h = PITCH * (plates as f64 - 1.0);
     let bulb = |i: usize| p.s(RK[i][0]) == "Bulb";
     let mut lx = 110.0;
-    let (top_y, bot_y, h) = if parallel { (80.0, 330.0, 380.0) } else { (150.0, 320.0, 380.0) };
+    let (top_y, bot_y, h) = if parallel { (80.0, 330.0, 380.0) } else { (150.0, 287.0, 380.0) };
     let mut comps = vec![];
     let (rx, w);
     if parallel {
@@ -328,7 +332,11 @@ pub(super) fn circuit_layout(p: &Params) -> CLay {
         // everything but the battery sits along the top wire, evenly spaced
         let count = n + has_a as usize + has_s as usize;
         let (a, b) = (lx + 60.0, rx - 30.0);
-        let slot = |i: usize| a + (b - a) * (i as f64 + 0.5) / count as f64;
+        // the reference spaces them 67 units apart around the loop's middle and only spreads
+        // them wider when a crowded top wire needs the room
+        let pitch = ((b - a) / count as f64).min(67.0);
+        let mid = (lx + rx) / 2.0;
+        let slot = |i: usize| mid + pitch * (i as f64 + 0.5 - count as f64 / 2.0);
         for i in 0..n {
             let len: f64 = if bulb(i) { 40.0 } else if count >= 5 { 48.0 } else if count >= 4 { 56.0 } else { 64.0 };
             comps.push((slot(i), top_y, len));
@@ -517,13 +525,13 @@ fn circuit_render(p: &Params) -> String {
         if l.parallel {
             let mut br = vec![(cy - len / 2.0, cy + len / 2.0)];
             seg_line(&mut g, (cx, top_y), (cx, bot_y), &mut br);
-            clabel(&mut g, cx + 24.0, cy + 8.0, "start", &name, 22.0, ITALIC);
-            clabel(&mut g, cx - 24.0, cy + 8.0, "end", &val, 21.0, UPRIGHT);
+            clabel(&mut g, cx + 24.0, cy + 8.0, "start", &name, 20.0, ITALIC);
+            clabel(&mut g, cx - 24.0, cy + 8.0, "end", &val, 20.0, UPRIGHT);
             if i + 1 < l.n { dot(&mut g, cx, top_y); dot(&mut g, cx, bot_y); }
         } else {
             top_gaps.push((cx - len / 2.0, cx + len / 2.0));
-            clabel(&mut g, cx, top_y - 24.0, "middle", &name, 22.0, ITALIC);
-            clabel(&mut g, cx, top_y + if bulb { 46.0 } else { 40.0 }, "middle", &val, 21.0, UPRIGHT);
+            clabel(&mut g, cx, top_y - 24.0, "middle", &name, 20.0, ITALIC);
+            clabel(&mut g, cx, top_y + if bulb { 46.0 } else { 40.0 }, "middle", &val, 20.0, UPRIGHT);
         }
     }
     // ammeter and switch (top wire in series, left wire in parallel)
@@ -561,9 +569,9 @@ fn circuit_render(p: &Params) -> String {
     }
     let cname = lab_mode(p, "cell_name", "cell_name_mode");
     let cname_show = !(p.s("cell_name_mode") == "Text" && cname.trim().is_empty());
-    if cname_show { clabel(&mut g, lx - 32.0, by + 8.0, "end", &cname, 22.0, ITALIC); }
+    if cname_show { clabel(&mut g, lx - 32.0, by + 8.0, "end", &cname, 20.0, ITALIC); }
     let cval = lab_mode(p, "cell_val", "cell_val_mode");
-    clabel(&mut g, lx + 34.0, by + 8.0, "start", &cval, 22.0, UPRIGHT);
+    clabel(&mut g, lx + 34.0, by + 8.0, "start", &cval, 20.0, UPRIGHT);
     if p.b("polarity") {
         g.tex(lx - 20.0, first - 6.0, 17.0, "middle", "+", UPRIGHT);
         g.tex(lx - 20.0, last + 19.0, 17.0, "middle", "−", UPRIGHT);

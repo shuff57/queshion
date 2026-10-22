@@ -12,6 +12,20 @@ fn ex(name: &'static str, params: Vec<(&'static str, Value)>) -> Example { Examp
 pub fn examples(id: &str) -> Option<Vec<Example>> {
     let _ = (f(0.0), i(0));
     Some(match id {
+        "motion-map" => vec![
+            ex("Motion map of a cart that speeds up, moves at a constant velocity, slows down and stops", vec![("dt", f(1.0)), ("rest", f(3.0))]),
+            ex("Motion map of an object speeding up from rest", vec![("up", f(8.0)), ("cruise", f(0.0)), ("down", f(0.0)), ("rest", f(0.0))]),
+            ex("Dots-only motion map: draw the velocity arrows", vec![("arrows", s("None"))]),
+        ],
+        "ray-diagram" => vec![
+            ex("Converging lens ray diagram: object beyond 2F", vec![("dist", f(30.0))]),
+            ex("Converging lens with the object at 2F", vec![("dist", f(20.0))]),
+            ex("Magnifying glass ray diagram: object inside F", vec![("dist", f(6.0))]),
+            ex("Diverging lens ray diagram", vec![("kind", s("Diverging lens"))]),
+            ex("Concave mirror ray diagram: object between C and F", vec![("kind", s("Concave mirror")), ("dist", f(15.0))]),
+            ex("Convex mirror ray diagram", vec![("kind", s("Convex mirror"))]),
+            ex("Blank converging lens ray diagram worksheet", vec![("image", b(false))]),
+        ],
         "circuit-diagram" => vec![
             ex("Series circuit with three resistors and an ammeter", vec![
                 ("cell", s("One cell")), ("ammeter", b(true)), ("amm_read_mode", s("Blank line")),

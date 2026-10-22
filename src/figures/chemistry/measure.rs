@@ -593,7 +593,7 @@ const LEN_RH: f64 = 84.0;
 const LEN_PAD: f64 = 22.0;
 fn length_geom(total: f64) -> (f64, f64, f64) { ((LEN_W - 480.0) / 2.0 + 0.0, 480.0 / total, 70.0) }
 
-fn length_render(p: &Params) -> String {
+pub(super) fn length_render(p: &Params) -> String {
     let imperial = p.s("units").starts_with("Imp");
     let cm: f64 = p.s("ruler").split_whitespace().next().and_then(|t| t.parse().ok()).unwrap_or(15.0);
     let (total, unit) = if imperial { (match cm as i64 { 15 => 6.0, 20 => 8.0, 30 => 12.0, 50 => 20.0, _ => 40.0 }, "in") } else { (cm, "cm") };

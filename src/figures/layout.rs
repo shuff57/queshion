@@ -66,13 +66,15 @@ fn plain_section(pd: &ParamDef) -> &'static str {
 /// (named sections in the reference's order, per-item sections where it puts them), else the
 /// keyword grouping below. Every param lands in exactly one section either way.
 pub fn sections(fig: &str, defs: &[ParamDef], n_now: Option<i64>) -> Vec<Section> {
+    // "id@physics" asks for the layout the physics page gives a figure it shares with another site
+    let base = fig.split('@').next().unwrap_or(fig);
     // Params a Measures card owns are drawn there, not in a section.
-    let mut owned: Vec<&str> = super::measures_for(fig).map(|c| c.keys()).unwrap_or_default();
-    owned.extend(super::rows_for(fig).map(|c| c.keys()).unwrap_or_default());
-    owned.extend(super::card_keys(fig));
+    let mut owned: Vec<&str> = super::measures_for(base).map(|c| c.keys()).unwrap_or_default();
+    owned.extend(super::rows_for(base).map(|c| c.keys()).unwrap_or_default());
+    owned.extend(super::card_keys(base));
     let mut out = sections_all(fig, defs, n_now);
     for s in &mut out {
-        s.items.retain(|&i| !owned.contains(&defs[i].key) && !super::cards::owns(fig, defs[i].key));
+        s.items.retain(|&i| !owned.contains(&defs[i].key) && !super::cards::owns(base, defs[i].key));
     }
     out.retain(|s| !s.items.is_empty());
     out
@@ -248,9 +250,10 @@ mod tests {
         };
         let mg = titles("motion-graphs", Some(4));
         assert_eq!(mg[0], "Motion");
-        assert!(mg[1].starts_with("Segment 1"), "{mg:?}");
+        // the segments live inside the Motion accordion (a card), not as sections of their own
+        assert!(mg.iter().all(|t| !t.starts_with("Segment")), "{mg:?}");
         let g = mg.iter().position(|t| t == "Graphs").unwrap();
-        assert!(mg[1..g].iter().all(|t| t.starts_with("Segment ")), "segments sit under Motion, then Graphs: {mg:?}");
+        assert_eq!(g, 1, "{mg:?}");
         assert_eq!(&mg[g + 1..g + 3], ["Marks", "Titles"]);
         assert_eq!(titles("gel-electrophoresis", None)[..2], ["Lanes", "Gel"]);
         assert_eq!(titles("predator-prey", None)[..2], ["Predator and prey", "Graph"]);

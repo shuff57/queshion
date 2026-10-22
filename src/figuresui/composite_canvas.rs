@@ -1615,15 +1615,20 @@ impl Canvas {
             .fixed_pos(self.rect.center())
             .pivot(Align2::CENTER_CENTER)
             .show(ui.ctx(), |ui| {
-                Frame::popup(ui.style()).inner_margin(18.0).show(ui, |ui| {
-                    ui.set_max_width(460.0);
+                // the reference sets it straight on the page: no card, a wide centred block
+                Frame::new().inner_margin(8.0).show(ui, |ui| {
+                    ui.set_max_width(620.0);
                     ui.vertical_centered(|ui| {
-                        ui.label(theme::strong("Start with").size(18.0));
-                        ui.label(theme::muted("One piece, or a shape already built from pieces. Then add more pieces onto any straight side.").size(12.0));
+                        ui.label(theme::strong("Start with").size(20.0));
+                        ui.add_space(4.0);
+                        ui.allocate_ui(vec2(480.0, 20.0), |ui| {
+                            ui.set_max_width(480.0);
+                            ui.add(egui::Label::new(theme::muted("One piece, or a shape already built from pieces. Then add more pieces onto any straight side.").size(14.0)).wrap());
+                        });
                     });
-                    ui.add_space(10.0);
+                    ui.add_space(14.0);
                     ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+                        ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
                         for name in COMPOSITE_STARTS {
                             if start_chip(ui, name).clicked() {
                                 pick = Some(name);
@@ -1696,14 +1701,15 @@ fn shade_row(ui: &mut Ui, shade: &mut Option<String>) {
 
 /// A "Start with" chip: a small drawing of the shape over its name.
 fn start_chip(ui: &mut Ui, name: &str) -> egui::Response {
-    let (r, resp) = ui.allocate_exact_size(vec2(92.0, 74.0), Sense::click());
+    let (r, resp) = ui.allocate_exact_size(vec2(144.0, 90.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name));
     let hot = resp.hovered();
     let pt = ui.painter();
     pt.rect(r, CornerRadius::same(10), if hot { theme::accent_faded() } else { Color32::WHITE }, Stroke::new(1.0, if hot { theme::accent_col() } else { theme::border() }), egui::StrokeKind::Inside);
-    let ink = Stroke::new(1.6, theme::text_col());
-    let fill = Color32::from_rgb(0xe9, 0xf1, 0xfb);
-    let c = r.center() - vec2(0.0, 9.0);
+    // the reference draws each shape as a bare blue outline
+    let ink = Stroke::new(2.0, Color32::from_rgb(0x1d, 0x4e, 0xd8));
+    let fill = Color32::TRANSPARENT;
+    let c = r.center() - vec2(0.0, 12.0);
     let poly = |pts: Vec<Pos2>| egui::Shape::convex_polygon(pts, fill, ink);
     let arc = |cx: Pos2, rad: f32, a0: f32, a1: f32| -> Vec<Pos2> { (0..=16).map(|i| { let t = (a0 + (a1 - a0) * i as f32 / 16.0).to_radians(); cx + vec2(t.cos(), -t.sin()) * rad }).collect() };
     match name {
@@ -1734,7 +1740,7 @@ fn start_chip(ui: &mut Ui, name: &str) -> egui::Response {
             let _ = v;
         }
     }
-    pt.text(pos2(r.center().x, r.bottom() - 10.0), Align2::CENTER_CENTER, name, FontId::proportional(12.0), theme::text_col());
+    pt.text(pos2(r.center().x, r.bottom() - 14.0), Align2::CENTER_CENTER, name, FontId::new(13.5, theme::bold_family()), theme::text_col());
     resp.on_hover_text(format!("Start with {}", if name.contains('-') { name.to_string() } else { format!("a {}", name.to_lowercase()) }))
 }
 

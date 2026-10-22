@@ -693,7 +693,7 @@ impl crate::App {
                         .size(14.0),
                     );
                     ui.add_space(22.0);
-                    if crate::kit::primary_button(ui, "Get started, it's free").clicked() {
+                    if crate::pageshell::primary(ui, "Get started, it's free").clicked() {
                         app.screen = crate::Screen::Home;
                     }
                     ui.add_space(6.0);
@@ -1084,7 +1084,6 @@ impl crate::App {
     /// server does not list. Find models keeps only the models this account can use to read a
     /// picture (`ai::check_models`) and remembers them in settings, so the list survives a restart.
     fn draw_model_picker(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        use crate::kit;
         use std::sync::{Arc, Mutex};
         #[derive(Default)]
         struct Job {
@@ -1135,7 +1134,7 @@ impl crate::App {
             if chosen.as_str() != self.settings.ai_model.trim() {
                 self.settings.ai_model = chosen;
             }
-            if ui.add_enabled_ui(!busy, |ui| kit::ghost_button(ui, "Find models").clicked()).inner {
+            if ui.add_enabled_ui(!busy, |ui| crate::pageshell::outline(ui, "Find models").clicked()).inner {
                 msg = None;
                 if let Ok(mut g) = job.lock() {
                     g.busy = true;
@@ -1222,13 +1221,13 @@ impl crate::App {
             ));
             ui.add_space(10.0);
             ui.horizontal_wrapped(|ui| {
-                if kit::ghost_button(ui, &format!("{}  Buy me a coffee", egui_phosphor::regular::COFFEE)).clicked() {
+                if crate::pageshell::outline(ui, &format!("{}  Buy me a coffee", egui_phosphor::regular::COFFEE)).clicked() {
                     crate::platform::open_url(COFFEE);
                 }
-                if kit::ghost_button(ui, &format!("{}  Reported issues", egui_phosphor::regular::LIST_BULLETS)).clicked() {
+                if crate::pageshell::outline(ui, &format!("{}  Reported issues", egui_phosphor::regular::LIST_BULLETS)).clicked() {
                     crate::platform::open_url(ISSUES);
                 }
-                if kit::ghost_button(ui, &format!("{}  Report a bug", egui_phosphor::regular::BUG)).clicked() {
+                if crate::pageshell::outline(ui, &format!("{}  Report a bug", egui_phosphor::regular::BUG)).clicked() {
                     ctx.data_mut(|d| d.insert_temp(egui::Id::new("report_open"), true));
                 }
             });
@@ -1238,7 +1237,6 @@ impl crate::App {
     }
 
     fn draw_report_dialog(&mut self, ctx: &egui::Context) {
-        use crate::kit;
         let id_open = egui::Id::new("report_open");
         let id_kind = egui::Id::new("report_kind");
         let id_title = egui::Id::new("report_title");
@@ -1288,13 +1286,13 @@ impl crate::App {
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     let ready = !title.trim().is_empty() && !desc.trim().is_empty();
-                    if kit::primary_button(ui, "Open a GitHub issue").clicked() && ready {
+                    if crate::pageshell::primary(ui, "Open a GitHub issue").clicked() && ready {
                         crate::platform::open_url(&issue_url(kind, &title, &desc));
                         close_now = true;
                         title.clear();
                         desc.clear();
                     }
-                    if kit::ghost_button(ui, "Cancel").clicked() {
+                    if crate::pageshell::outline(ui, "Cancel").clicked() {
                         close_now = true;
                     }
                 });
@@ -1343,7 +1341,7 @@ impl crate::App {
                     .desired_width(300.0)
                     .hint_text("paste a key"),
             );
-            if kit::primary_button(ui, "Save key").clicked() && !buf.trim().is_empty() {
+            if crate::pageshell::primary(ui, "Save key").clicked() && !buf.trim().is_empty() {
                 match crate::ai::set_key(&cfg.provider, Some(&buf)) {
                     Ok(()) => msg = Some(("Key saved on this computer".to_string(), false)),
                     Err(e) => msg = Some((e, true)),
@@ -1360,7 +1358,7 @@ impl crate::App {
                     Err(e) => msg = Some((e, true)),
                 }
             }
-            if !testing && kit::ghost_button(ui, "Test connection").clicked() {
+            if !testing && crate::pageshell::outline(ui, "Test connection").clicked() {
                 msg = Some(("Testing…".to_string(), false));
                 let probe2 = probe.clone();
                 let ctx2 = ctx.clone();
@@ -1387,7 +1385,7 @@ impl crate::App {
             ui.horizontal(|ui| {
                 let label =
                     format!("{}  Watch how to get a key", egui_phosphor::regular::PLAY_CIRCLE);
-                if kit::ghost_button(ui, &label).clicked() {
+                if crate::pageshell::outline(ui, &label).clicked() {
                     crate::platform::open_help_video(&cfg.provider);
                 }
             });
@@ -1411,22 +1409,18 @@ impl crate::App {
     }
 
     pub fn draw_settings(&mut self, ctx: &egui::Context) {
-        use crate::kit;
+        use crate::{kit, pageshell};
         shell_frame(self, ctx, true, |app, ui| {
+          {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 ui.set_max_width(ui.available_width().min(820.0));
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        kit::page_header(
-                            ui,
-                            &["Home", "Settings"],
-                            "Settings",
-                            Some("Your work is saved on this machine. Keep a copy by exporting it."),
-                        );
+                        pageshell::title(ui, "Home  /  Settings", "Settings", "Your work is saved on this machine. Keep a copy by exporting it.");
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
-                        if kit::ghost_button(ui, "How it works").clicked() {
+                        if pageshell::outline(ui, "How it works").clicked() {
                             app.help_open = true;
                         }
                     });
@@ -1434,19 +1428,18 @@ impl crate::App {
                 ui.add_space(14.0);
 
                 // --- Back up / restore ---
-                kit::card().inner_margin(Margin::same(18)).show(ui, |ui| {
-                    ui.set_min_width(ui.available_width().max(0.0));
-                    ui.label(theme::serif("Back up").size(18.0));
+                pageshell::card(ui, |ui| {
+                    pageshell::heading(ui, "Back up");
                     ui.add_space(4.0);
                     ui.label(theme::muted(
                         "Zips up every bank, exam, import, export, setting and picture into one file.",
                     ));
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
-                        if kit::primary_button(ui, "Download backup").clicked() {
+                        if pageshell::primary(ui, "Download backup").clicked() {
                             app.backup_now();
                         }
-                        if kit::ghost_button(ui, "Restore from backup…").clicked() {
+                        if pageshell::outline(ui, "Restore from backup…").clicked() {
                             app.start_restore();
                         }
                     });
@@ -1454,9 +1447,8 @@ impl crate::App {
                 ui.add_space(12.0);
 
                 // --- Storage location ---
-                kit::card().inner_margin(Margin::same(18)).show(ui, |ui| {
-                    ui.set_min_width(ui.available_width().max(0.0));
-                    ui.label(theme::serif("Where your work is stored").size(18.0));
+                pageshell::card(ui, |ui| {
+                    pageshell::heading(ui, "Where your work is stored");
                     ui.add_space(6.0);
                     ui.add(
                         egui::Label::new(
@@ -1468,16 +1460,15 @@ impl crate::App {
                         .wrap(),
                     );
                     ui.add_space(8.0);
-                    if kit::ghost_button(ui, "Open folder").clicked() {
+                    if pageshell::outline(ui, "Open folder").clicked() {
                         let _ = crate::platform::open_path(&store::store_dir());
                     }
                 });
                 ui.add_space(12.0);
 
                 // --- AI conversion ---
-                kit::card().inner_margin(Margin::same(18)).show(ui, |ui| {
-                    ui.set_min_width(ui.available_width().max(0.0));
-                    ui.label(theme::serif("AI conversion").size(18.0));
+                pageshell::card(ui, |ui| {
+                    pageshell::heading(ui, "AI conversion");
                     ui.add_space(4.0);
                     ui.label(theme::muted(
                         "Used when a test is converted for you. Runs where you point it, by \
@@ -1522,6 +1513,7 @@ impl crate::App {
                 app.draw_community(ui, ctx);
                 ui.add_space(16.0);
             });
+          }
         });
     }
 
@@ -1550,7 +1542,41 @@ impl crate::App {
         if self.toasts.is_empty() {
             return;
         }
-        let items = self.toasts.clone();
+        // the share toast sits in the figure stage as the reference's dark pill
+        let stage = ctx.data(|d| d.get_temp::<(Rect, u64)>(egui::Id::new("share_stage"))).filter(|(_, f)| ctx.cumulative_frame_nr().saturating_sub(*f) < 3).map(|(r, _)| r);
+        if let Some(stage) = stage {
+            if let Some((text, _)) = self.toasts.iter().find(|(t, e)| !e && t.starts_with("Link copied")) {
+                let w = ((stage.width() * 0.5).floor() - 1.0).max(160.0);
+                egui::Area::new(egui::Id::new("share_pill"))
+                    .order(egui::Order::Foreground)
+                    .interactable(false)
+                    .fixed_pos(Pos2::new(stage.center().x, stage.bottom() - if stage.width() < 500.0 { 16.0 } else { 15.0 }))
+                    .pivot(Align2::CENTER_BOTTOM)
+                    .show(ctx, |ui| {
+                        let one = ctx.fonts_mut(|f| f.layout_no_wrap(text.clone(), egui::FontId::new(13.76, theme::semibold_family()), Color32::WHITE).size().x);
+                        // a wrapped pill is 3 px taller in the reference
+                        let vm = if one > w - 28.0 { Margin { left: 14, right: 14, top: 8, bottom: if one > 2.0 * (w - 28.0) { 10 } else { 9 } } } else { Margin { left: 14, right: 14, top: 7, bottom: 9 } };
+                        Frame::new().fill(Color32::from_rgb(0x1f, 0x29, 0x37)).corner_radius(CornerRadius::same(27)).inner_margin(vm).show(ui, |ui| {
+                            ui.set_max_width(w - 28.0);
+                            // like the reference, a wrapped pill fills its maximum width
+                            if one > w - 28.0 {
+                                ui.set_min_width(w - 28.0);
+                            }
+                            if one > w - 28.0 {
+                                ui.vertical_centered(|ui| {
+                                    ui.add(egui::Label::new(RichText::new(text.clone()).family(theme::semibold_family()).size(13.76).color(Color32::WHITE)).halign(egui::Align::Center));
+                                });
+                            } else {
+                                // a one-line pill hugs its text, as the reference's does
+                                ui.add(egui::Label::new(RichText::new(text.clone()).family(theme::semibold_family()).size(13.76).color(Color32::WHITE)).wrap_mode(egui::TextWrapMode::Extend));
+                            }
+                        });
+                    });
+            }
+        }
+        let items: Vec<(String, bool)> = self.toasts.iter().filter(|(t, e)| *e || stage.is_none() || !t.starts_with("Link copied")).cloned().collect();
+        // indices below refer to `self.toasts`, so map them back
+        let map: Vec<usize> = (0..self.toasts.len()).filter(|&i| self.toasts[i].1 || stage.is_none() || !self.toasts[i].0.starts_with("Link copied")).collect();
         let mut dismissed: Vec<usize> = Vec::new();
         egui::Area::new(egui::Id::new("toasts"))
             .order(egui::Order::Foreground)
@@ -1599,6 +1625,7 @@ impl crate::App {
         // Click-to-dismiss, descending order so earlier indices stay valid.
         dismissed.sort_unstable_by(|a, b| b.cmp(a));
         for i in dismissed {
+            let i = map[i];
             self.toasts.remove(i);
             self.toast_times.remove(i);
         }
@@ -1651,7 +1678,7 @@ impl crate::App {
                 ).size(12.0));
                 ui.add_space(8.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if crate::kit::primary_button(ui, "Got it").clicked() {
+                    if crate::pageshell::primary(ui, "Got it").clicked() {
                         close = true;
                     }
                 });
@@ -1709,7 +1736,7 @@ impl crate::App {
                     {
                         action = 2;
                     }
-                    if crate::kit::ghost_button(ui, "Cancel").clicked() {
+                    if crate::pageshell::outline(ui, "Cancel").clicked() {
                         action = 1;
                     }
                 });

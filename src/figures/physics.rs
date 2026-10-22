@@ -7,16 +7,40 @@ mod common;
 mod graphs;
 mod instr;
 mod mech;
+mod optics;
 mod pulley;
 pub(crate) use pulley::{pulley_relevant, pulley_setup_changed};
 mod examples;
+mod summary;
 
 /// The collapsed-row summary of a section on the physics page skin, where the page has one.
 pub fn skin_summary(id: &str, title: &str, p: &Params) -> Option<String> {
     match id {
         "waves" => graphs::wave_summary(title, p),
+        "inclined-plane" => mech::incline_summary(title, p),
+        _ if summary::summary(id, title, p).is_some() => summary::summary(id, title, p),
+        // the reference words the Figure card's summary as "black and white" (or "color")
+        _ if title == "Figure" && matches!(id, "free-body-diagram" | "vector-diagram" | "pulley" | "projectile-motion" | "motion-graphs" | "circuit-diagram") => {
+            Some(if p.b("color") { "color" } else { "black and white" }.into())
+        }
         _ => None,
     }
+}
+
+/// The grey worked line under a motion-graph segment: "A to B (0-4 s): speeding up from 0 to 4 m/s, ...".
+pub fn segment_caption(p: &Params, i: usize) -> String {
+    graphs::segment_caption(p, i)
+}
+
+/// Whether segment `i` (1-based) of the motion graphs asks which way it speeds up: only a
+/// speed-up from rest has a direction of its own.
+pub fn segment_has_way(p: &Params, i: usize) -> bool {
+    graphs::segment_has_way(p, i)
+}
+
+/// How many objects the inclined plane draws.
+pub fn incline_objects(p: &Params) -> usize {
+    mech::incline_count(p)
 }
 
 /// "Start from an example" entries for this subject's figures.
@@ -116,6 +140,7 @@ pub fn defs() -> Vec<FigureDef> {
     let mut v = mech::defs();
     v.extend(graphs::defs());
     v.extend(instr::defs());
+    v.extend(optics::defs());
     v
 }
 
@@ -153,9 +178,9 @@ mod tests {
     }
 
     #[test]
-    fn nine_physics_generators() {
+    fn eleven_physics_generators() {
         let ids: Vec<_> = defs().iter().map(|d| d.id).collect();
-        assert_eq!(ids.len(), 9);
+        assert_eq!(ids.len(), 11);
         assert!(defs().iter().all(|d| d.subject == Subject::Physics));
     }
 
