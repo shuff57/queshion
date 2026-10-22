@@ -743,10 +743,10 @@ impl crate::App {
                     let source = (st.sources.len() == 1).then(|| source_title(&st.sources[0]));
                     ui.label(theme::muted(import_footer(n, tests, source.as_deref(), dest.as_deref(), &bank_name_for(&st))).size(12.5));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.add_enabled_ui(n > 0, |ui| kit::primary_button(ui, "Import")).inner.clicked() {
+                        if ui.add_enabled_ui(n > 0, |ui| crate::pageshell::primary(ui, "Import")).inner.clicked() {
                             go = true;
                         }
-                        if kit::ghost_button(ui, "Cancel").clicked() {
+                        if crate::pageshell::outline(ui, "Cancel").clicked() {
                             cancel = true;
                         }
                     });
@@ -755,7 +755,7 @@ impl crate::App {
                     }
                 } else {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if kit::ghost_button(ui, "Cancel").clicked() {
+                        if crate::pageshell::outline(ui, "Cancel").clicked() {
                             cancel = true;
                         }
                     });
@@ -914,7 +914,7 @@ fn drop_area(app: &mut crate::App, ui: &mut egui::Ui, st: &mut State) {
                         paint_icon(ui.painter(), Ic::Upload, r.center(), theme::accent_col(), 0.9);
                         ui.label(theme::serif("Drop more here, or").size(16.0).color(theme::ink()));
                     }
-                    if kit::primary_button(ui, if compact { "Add files" } else { "Choose files" }).clicked() {
+                    if crate::pageshell::primary(ui, if compact { "Add files" } else { "Choose files" }).clicked() {
                         if let Some(paths) = crate::platform::pick_files(
                             "Question files",
                             &[
@@ -925,10 +925,10 @@ fn drop_area(app: &mut crate::App, ui: &mut egui::Ui, st: &mut State) {
                             add_paths(app, st, paths);
                         }
                     }
-                    if kit::ghost_button(ui, "Paste text").clicked() {
+                    if crate::pageshell::outline(ui, "Paste text").clicked() {
                         st.paste_open = !st.paste_open;
                     }
-                    if kit::ghost_button(ui, "Add photo").clicked() {
+                    if crate::pageshell::outline(ui, "Add photo").clicked() {
                         if let Some(paths) = crate::platform::pick_files("Photos & PDFs", &["png", "jpg", "jpeg", "gif", "webp", "pdf"]) {
                             add_paths(app, st, paths);
                         }
@@ -950,12 +950,12 @@ fn drop_area(app: &mut crate::App, ui: &mut egui::Ui, st: &mut State) {
                     ui.horizontal(|ui| {
                         ui.add_space(((ui.available_width() - 250.0) / 2.0).max(0.0));
                         let ready = !app.paste.trim().is_empty();
-                        if ui.add_enabled_ui(ready, |ui| kit::primary_button(ui, "Add pasted text")).inner.clicked() {
+                        if ui.add_enabled_ui(ready, |ui| crate::pageshell::primary(ui, "Add pasted text")).inner.clicked() {
                             let t = std::mem::take(&mut app.paste);
                             add_bytes(app, st, "Pasted text", t.into_bytes(), "paste");
                             st.paste_open = false;
                         }
-                        if kit::ghost_button(ui, "Cancel").clicked() {
+                        if crate::pageshell::outline(ui, "Cancel").clicked() {
                             st.paste_open = false;
                         }
                     });
@@ -1280,7 +1280,7 @@ fn ai_block(app: &mut crate::App, ui: &mut egui::Ui, ctx: &egui::Context, st: &m
                 .hint_text("Anything the AI should know? (optional)"),
         );
         ui.add_space(6.0);
-        if kit::primary_button(ui, "Convert with AI").clicked() {
+        if crate::pageshell::primary(ui, "Convert with AI").clicked() {
             st.ai_all = true;
             start_next_ai(app, st, ctx);
         }
@@ -1773,7 +1773,7 @@ fn options_and_finish(app: &mut crate::App, ui: &mut egui::Ui, st: &mut State, f
     ui.add(egui::Label::new(theme::muted(note).size(12.0)).wrap());
     ui.add_space(8.0);
     let label = format!("Import {}", plural(n, "question"));
-    if ui.add_enabled_ui(n > 0, |ui| kit::primary_button(ui, &label)).inner.clicked() {
+    if ui.add_enabled_ui(n > 0, |ui| crate::pageshell::primary(ui, &label)).inner.clicked() {
         commit(app, st, flags);
     }
 }
@@ -2034,7 +2034,7 @@ fn attach_dialog(app: &mut crate::App, ctx: &egui::Context, st: &mut State) {
         }
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            if kit::primary_button(ui, "Choose image file…").clicked() {
+            if crate::pageshell::primary(ui, "Choose image file…").clicked() {
                 if let Some(path) = crate::platform::pick_file("Pictures", &["png", "jpg", "jpeg", "gif", "webp"]) {
                     match crate::platform::read(&path) {
                         Ok(b) => picked = Some(b),
@@ -2113,7 +2113,7 @@ fn attach_dialog(app: &mut crate::App, ctx: &egui::Context, st: &mut State) {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if !pages.is_empty() {
                 let ready = at.sel.is_some();
-                if ui.add_enabled_ui(ready, |ui| kit::primary_button(ui, "Use selected area")).inner.clicked() {
+                if ui.add_enabled_ui(ready, |ui| crate::pageshell::primary(ui, "Use selected area")).inner.clicked() {
                     if let Some(sel) = at.sel {
                         match crop_png(&pages[at.page].1, sel) {
                             Ok(b) => picked = Some(b),
@@ -2122,7 +2122,7 @@ fn attach_dialog(app: &mut crate::App, ctx: &egui::Context, st: &mut State) {
                     }
                 }
             }
-            if kit::ghost_button(ui, "Cancel").clicked() {
+            if crate::pageshell::outline(ui, "Cancel").clicked() {
                 close = true;
             }
         });
@@ -2428,7 +2428,7 @@ impl crate::App {
                     });
                     ui.horizontal(|ui| {
                         ui.add_space(26.0);
-                        if kit::ghost_button(ui, "Choose original…").clicked() {
+                        if crate::pageshell::outline(ui, "Choose original…").clicked() {
                             if let Some(paths) = crate::platform::pick_files("PDF, Word or photo", &["pdf", "docx", "png", "jpg", "jpeg", "gif", "webp"]) {
                                 for p in paths {
                                     let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
@@ -2488,7 +2488,7 @@ impl crate::App {
                                 ui.horizontal_wrapped(|ui| {
                                     if slot.attachable {
                                         let up = if rs.staged.contains_key(&k) { "Change file" } else { "Upload a file" };
-                                        if kit::ghost_button(ui, up).clicked() {
+                                        if crate::pageshell::outline(ui, up).clicked() {
                                             if let Some(path) = crate::platform::pick_file("Pictures", &["png", "jpg", "jpeg", "gif", "webp"]) {
                                                 match crate::platform::read(&path) {
                                                     Ok(b) if image::guess_format(&b).is_ok() => {
@@ -2500,11 +2500,11 @@ impl crate::App {
                                                 }
                                             }
                                         }
-                                        if !rs.pages.is_empty() && kit::ghost_button(ui, "Crop from original").clicked() {
+                                        if !rs.pages.is_empty() && crate::pageshell::outline(ui, "Crop from original").clicked() {
                                             rs.panel = if rs.panel == Some(k) { None } else { Some(k) };
                                             rs.sel = None;
                                         }
-                                        if !rs.doc_images.is_empty() && rs.pages.is_empty() && kit::ghost_button(ui, "Pick from document").clicked() {
+                                        if !rs.doc_images.is_empty() && rs.pages.is_empty() && crate::pageshell::outline(ui, "Pick from document").clicked() {
                                             rs.panel = if rs.panel == Some(k) { None } else { Some(k) };
                                         }
                                     }
@@ -2572,7 +2572,7 @@ impl crate::App {
                                 }
                                 ui.add_space(4.0);
                                 ui.horizontal(|ui| {
-                                    if ui.add_enabled_ui(rs.sel.is_some(), |ui| kit::primary_button(ui, "Use selected area")).inner.clicked() {
+                                    if ui.add_enabled_ui(rs.sel.is_some(), |ui| crate::pageshell::primary(ui, "Use selected area")).inner.clicked() {
                                         if let Some(sel) = rs.sel {
                                             match crop_png(&bytes, sel) {
                                                 Ok(b) => {
@@ -2585,7 +2585,7 @@ impl crate::App {
                                             }
                                         }
                                     }
-                                    if kit::ghost_button(ui, "Close").clicked() {
+                                    if crate::pageshell::outline(ui, "Close").clicked() {
                                         rs.panel = None;
                                     }
                                 });
@@ -2599,10 +2599,10 @@ impl crate::App {
             ui.separator();
             ui.horizontal(|ui| {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.add_enabled_ui(ready > 0, |ui| kit::primary_button(ui, "Use these pictures")).inner.clicked() {
+                    if ui.add_enabled_ui(ready > 0, |ui| crate::pageshell::primary(ui, "Use these pictures")).inner.clicked() {
                         apply = true;
                     }
-                    if kit::ghost_button(ui, "Cancel").clicked() {
+                    if crate::pageshell::outline(ui, "Cancel").clicked() {
                         close = true;
                     }
                 });

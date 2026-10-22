@@ -37,6 +37,7 @@ pub mod helpweb;
 pub mod formats;
 pub mod importui;
 pub mod kit;
+pub mod pageshell;
 pub mod layout;
 pub mod model;
 pub mod platform;

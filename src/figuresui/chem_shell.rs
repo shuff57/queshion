@@ -1245,7 +1245,7 @@ pub fn section_header(ui: &mut Ui, title: &str, summary: &str, open: bool) -> eg
     let galley_w = (rect.right() - 44.0 - x).max(60.0);
     let t = p.layout(title.to_string(), egui::FontId::new(if chem { 15.68 } else { 16.0 }, theme::bold_family()), theme::ink(), galley_w);
     let s = (!summary.is_empty()).then(|| {
-        let g = p.layout(summary.to_string(), egui::FontId::new(13.8, egui::FontFamily::Name("vs-noto".into())), theme::muted_col(), galley_w);
+        let g = p.layout(summary.to_string(), egui::FontId::new(13.8, theme::sans_family()), theme::muted_col(), galley_w);
         // keep the summary to one line, as the reference does
         if g.rows.len() > 1 {
             // cut to the row's width with an ellipsis, as the reference does
@@ -1254,7 +1254,7 @@ pub fn section_header(ui: &mut Ui, title: &str, summary: &str, open: bool) -> eg
             loop {
                 n = n.saturating_sub(1);
                 let t: String = chars[..n].iter().collect::<String>().to_string() + "\u{2026}";
-                let g = p.layout_no_wrap(t, egui::FontId::new(13.8, egui::FontFamily::Name("vs-noto".into())), theme::muted_col());
+                let g = p.layout_no_wrap(t, egui::FontId::new(13.8, theme::sans_family()), theme::muted_col());
                 if g.size().x <= galley_w || n <= 4 {
                     break g;
                 }
@@ -1563,7 +1563,7 @@ impl Workspace {
                                 ui.add(
                                     egui::TextEdit::singleline(&mut self.search)
                                         .hint_text(RichText::new(if phys { "Search figures, like “free body diagram”" } else if math { "Search figures, like “triangle”" } else if bio { "Search figures, like “punnett square”" } else { "Search figures, like “graduated cylinder”" }).size(16.0))
-                                        .font(egui::FontId::new(16.0, egui::FontFamily::Name("vs-noto".into())))
+                                        .font(egui::FontId::new(16.0, theme::sans_family()))
                                         .frame(Frame::NONE)
                                         .desired_width(f32::INFINITY),
                                 );
@@ -1650,7 +1650,7 @@ fn card_height(ui: &Ui, blurb: &str, cw: f32) -> f32 {
 
 /// The card blurb: 14 px Noto at the reference's 18 px line height.
 fn blurb_job(blurb: &str, wrap: f32) -> egui::text::LayoutJob {
-    let mut fmt = egui::TextFormat::simple(egui::FontId::new(14.0, egui::FontFamily::Name("vs-noto".into())), theme::muted_col());
+    let mut fmt = egui::TextFormat::simple(egui::FontId::new(14.0, theme::sans_family()), theme::muted_col());
     fmt.line_height = Some(18.0);
     let mut job = egui::text::LayoutJob::single_section(blurb.to_string(), fmt);
     job.wrap.max_width = wrap;

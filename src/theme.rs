@@ -155,7 +155,7 @@ pub fn area_or(default: egui::Rect) -> egui::Rect {
 }
 
 fn pal() -> Palette {
-    match (chem_skin(), is_dark()) {
+    match (noto(), is_dark()) {
         (true, false) => chem_light_palette(),
         (true, true) => chem_dark_palette(),
         (false, true) => dark_palette(),
@@ -171,6 +171,25 @@ thread_local! {
 
 pub fn chem_skin() -> bool {
     CHEM_SKIN.with(|c| c.get())
+}
+
+thread_local! {
+    /// The reference page layout without its colours or fonts: the app's own palette and faces.
+    static KEEP_THEME: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn keep_theme() -> bool {
+    KEEP_THEME.with(|c| c.get())
+}
+
+/// True when the reference's own colours and Noto faces are in use (the layout flag alone does not).
+fn noto() -> bool {
+    chem_skin() && !keep_theme()
+}
+
+/// The regular sans face of the control panels: Noto on the reference skin, the app's own otherwise.
+pub fn sans_family() -> FontFamily {
+    if noto() { FontFamily::Name("vs-noto".into()) } else { FontFamily::Proportional }
 }
 
 /// Switches the chemistry skin and restyles `ctx` when it changed.
@@ -296,18 +315,18 @@ pub fn italic_family(ctx: &Context, family: &FontFamily) -> Option<FontFamily> {
 }
 /// The chemistry skin's semi-bold (breadcrumb, header pills); plain bold elsewhere.
 pub fn semibold_family() -> FontFamily {
-    if chem_skin() { FontFamily::Name("vs-noto-semibold".into()) } else { bold_family() }
+    if noto() { FontFamily::Name("vs-noto-semibold".into()) } else { bold_family() }
 }
 /// The chemistry skin's medium (500) and extra-bold (800) faces; the nearest plain faces elsewhere.
 pub fn medium_family() -> FontFamily {
-    if chem_skin() { FontFamily::Name("vs-noto-medium".into()) } else { bold_family() }
+    if noto() { FontFamily::Name("vs-noto-medium".into()) } else { bold_family() }
 }
 pub fn xbold_family() -> FontFamily {
-    if chem_skin() { FontFamily::Name("vs-noto-xbold".into()) } else { bold_family() }
+    if noto() { FontFamily::Name("vs-noto-xbold".into()) } else { bold_family() }
 }
 /// Named family: real bold sans (used by [`strong`]).
 pub fn bold_family() -> FontFamily {
-    FontFamily::Name(if chem_skin() { "vs-noto-bold" } else { "vs-sans-bold" }.into())
+    FontFamily::Name(if noto() { "vs-noto-bold" } else { "vs-sans-bold" }.into())
 }
 
 // ---------- text helpers ----------
@@ -599,6 +618,15 @@ pub fn with_chem_skin<R>(ui: &mut egui::Ui, f: impl FnOnce(&mut egui::Ui) -> R) 
     r.inner
 }
 
+/// `with_chem_skin`'s layout (cards, section headers, 40 px buttons) in the app's own colours and fonts.
+pub fn with_shell_layout<R>(ui: &mut egui::Ui, f: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let was = keep_theme();
+    KEEP_THEME.with(|c| c.set(true));
+    let r = with_chem_skin(ui, f);
+    KEEP_THEME.with(|c| c.set(was));
+    r
+}
+
 fn apply_style(style: &mut egui::Style) {
     let p = pal();
     {
@@ -644,7 +672,7 @@ fn apply_style(style: &mut egui::Style) {
         v.widgets.open.corner_radius = CornerRadius::same(12);
 
         style.text_styles.clear();
-        let sans = if chem_skin() { FontFamily::Name("vs-noto".into()) } else { FontFamily::Proportional };
+        let sans = sans_family();
         style.text_styles.insert(TextStyle::Body, FontId::new(13.0, sans.clone()));
         style.text_styles.insert(TextStyle::Button, FontId::new(13.0, sans.clone()));
         style.text_styles.insert(TextStyle::Small, FontId::new(11.0, sans.clone()));

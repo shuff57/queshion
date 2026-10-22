@@ -149,7 +149,7 @@ fn phys_slider(ui: &mut Ui, v: &mut f64, lo: f64, hi: f64, step: f64, width: f32
 fn num_box(ui: &mut Ui, id: egui::Id, v: f64, lo: f64, hi: f64) -> Option<f64> {
     let focused = ui.memory(|m| m.has_focus(id));
     let mut buf = if focused { ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| fmt_measure(v)) } else { fmt_measure(v) };
-    let r = ui.add(TextEdit::singleline(&mut buf).id(id).desired_width(67.0).margin(Margin::symmetric(10, 10)).font(egui::FontId::new(15.2, egui::FontFamily::Name("vs-noto".into()))));
+    let r = ui.add(TextEdit::singleline(&mut buf).id(id).desired_width(67.0).margin(Margin::symmetric(10, 10)).font(egui::FontId::new(15.2, theme::sans_family())));
     ui.data_mut(|d| d.insert_temp(id, buf.clone()));
     if r.changed() { buf.trim().parse::<f64>().ok().map(|x| x.clamp(lo, hi)) } else { None }
 }
@@ -427,7 +427,7 @@ impl Workspace {
 
     /// The biology page's Lanes card: bold labels, 40 px boxes, lanes split by rules, icon buttons.
     fn gel_lanes_card_skin(&mut self, ui: &mut Ui) {
-        let noto = || egui::FontFamily::Name("vs-noto".into());
+        let noto = || theme::sans_family();
         let cur = gel::current_setup(&self.params);
         ui.spacing_mut().item_spacing.y = 0.0;
         param_label(ui, "Classic setups", "");
@@ -438,7 +438,7 @@ impl Workspace {
                 ui.spacing_mut().button_padding = Vec2::new(15.0, 9.5);
                 ui.spacing_mut().interact_size.y = 39.5;
                 let w = ui.available_width();
-                ComboBox::from_id_salt(id).icon(super::chem_shell::select_chevron).selected_text(RichText::new(shown).size(15.2).family(egui::FontFamily::Name("vs-noto".into()))).width(w).show_ui(ui, |ui| f(ui));
+                ComboBox::from_id_salt(id).icon(super::chem_shell::select_chevron).selected_text(RichText::new(shown).size(15.2).family(theme::sans_family())).width(w).show_ui(ui, |ui| f(ui));
             });
         };
         combo(ui, egui::Id::new("gel_setup"), cur.unwrap_or("Choose one…"), &mut |ui| {
@@ -466,7 +466,7 @@ impl Workspace {
         let field = |ui: &mut Ui, id: egui::Id, cur: &str, hint: &str| -> Option<String> {
             let focused = ui.memory(|m| m.has_focus(id));
             let mut buf = if focused { ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| cur.to_string()) } else { cur.to_string() };
-            let r = ui.add(TextEdit::singleline(&mut buf).id(id).desired_width(f32::INFINITY).margin(Margin::symmetric(11, 10)).hint_text(hint).font(egui::FontId::new(15.0, egui::FontFamily::Name("vs-noto".into()))));
+            let r = ui.add(TextEdit::singleline(&mut buf).id(id).desired_width(f32::INFINITY).margin(Margin::symmetric(11, 10)).hint_text(hint).font(egui::FontId::new(15.0, theme::sans_family())));
             ui.data_mut(|d| d.insert_temp(id, buf.clone()));
             r.changed().then_some(buf)
         };
@@ -961,7 +961,7 @@ impl Workspace {
                 } else {
                     ui.painter().galley(egui::pos2(tx, cy - 9.0 - t.size().y / 2.0), t, theme::ink());
                     let summary = format!("“{}” · {} squares at {}°", self.params.s(&k("lab")), fmt_measure(self.params.f(&k("mag"))), fmt_measure(self.params.f(&k("ang"))));
-                    let sg = ui.painter().layout_no_wrap(summary, egui::FontId::new(11.2, egui::FontFamily::Name("vs-noto".into())), theme::muted_col());
+                    let sg = ui.painter().layout_no_wrap(summary, egui::FontId::new(11.2, theme::sans_family()), theme::muted_col());
                     ui.painter().galley(egui::pos2(tx, cy + 13.0 - sg.size().y / 2.0), sg, theme::muted_col());
                 }
                 if tr.hovered() && n > 1 {

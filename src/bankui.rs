@@ -332,7 +332,7 @@ fn draw_usage_dialog(app: &mut App, ctx: &egui::Context) {
         }
         ui.add_space(6.0);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if kit::ghost_button(ui, "Close").clicked() {
+            if crate::pageshell::outline(ui, "Close").clicked() {
                 close = true;
             }
         });
@@ -429,11 +429,11 @@ impl App {
                 kit::page_header(ui, &["Banks"], "Question banks", Some(&sub));
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if kit::primary_button(ui, "New bank").clicked() {
+                if crate::pageshell::primary(ui, "New bank").clicked() {
                     let id = self.new_bank("Untitled Question Bank");
                     self.open_bank(&id);
                 }
-                if kit::ghost_button(ui, "Import").clicked() {
+                if crate::pageshell::outline(ui, "Import").clicked() {
                     self.screen = crate::Screen::Imports;
                 }
             });
@@ -697,19 +697,19 @@ impl App {
                 });
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if kit::primary_button(ui, "Add question").clicked() {
+                if crate::pageshell::primary(ui, "Add question").clicked() {
                     self.qedit = Some(qedit::Draft::new(bank_id.clone()));
                 }
-                if !questions.is_empty() && kit::ghost_button(ui, "Export").on_hover_text("Preview and download the bank file (PDF, answers included) or its JSON").clicked() {
+                if !questions.is_empty() && crate::pageshell::outline(ui, "Export").on_hover_text("Preview and download the bank file (PDF, answers included) or its JSON").clicked() {
                     open_bank_export(ctx, bank_id);
                 }
-                if kit::ghost_button(ui, "Import").on_hover_text("Import files or pasted questions into this bank").clicked() {
+                if crate::pageshell::outline(ui, "Import").on_hover_text("Import files or pasted questions into this bank").clicked() {
                     crate::importui::open_import_modal(ctx, bank_id);
                 }
-                if kit::ghost_button(ui, "Pop-over").on_hover_text("Open this bank in its own window").clicked() {
+                if crate::pageshell::outline(ui, "Pop-over").on_hover_text("Open this bank in its own window").clicked() {
                     open_popover(ctx, bank_id);
                 }
-                if kit::ghost_button(ui, "Details").on_hover_text("Description, author and license").clicked() {
+                if crate::pageshell::outline(ui, "Details").on_hover_text("Description, author and license").clicked() {
                     let d = self.store.bank(bank_id).map(|b| b.details.clone()).unwrap_or_default();
                     with_state(ctx, key, |s: &mut BankEditState| s.details = Some(d));
                 }
@@ -924,7 +924,7 @@ impl App {
                         {
                             with_state(ctx, key, |s: &mut BankEditState| s.last_deleted = None);
                         }
-                        if kit::ghost_button(ui, "Undo").clicked() {
+                        if crate::pageshell::outline(ui, "Undo").clicked() {
                             if let Some(b) = self.store.bank_mut(bank_id) {
                                 let at = idx.min(b.questions.len());
                                 b.questions.insert(at, dq.clone());
@@ -952,7 +952,7 @@ impl App {
                         if ui.add(Button::new(RichText::new("Dismiss").color(theme::muted_col())).frame(false)).clicked() {
                             with_state(ctx, key, |s: &mut BankEditState| s.last_tidy = None);
                         }
-                        if kit::ghost_button(ui, "Undo").on_hover_text("Put these questions back as they were before tidying").clicked() {
+                        if crate::pageshell::outline(ui, "Undo").on_hover_text("Put these questions back as they were before tidying").clicked() {
                             let t = now_secs();
                             if let Some(b) = self.store.bank_mut(bank_id) {
                                 crate::tidy::undo(&mut b.questions, &u.before);
@@ -1320,10 +1320,10 @@ fn draw_bank_overlays(app: &mut App, ctx: &egui::Context, key: UiId) {
             }
             ui.add_space(10.0);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if kit::primary_button(ui, "Rename").clicked() {
+                if crate::pageshell::primary(ui, "Rename").clicked() {
                     commit = true;
                 }
-                if kit::ghost_button(ui, "Cancel").clicked() {
+                if crate::pageshell::outline(ui, "Cancel").clicked() {
                     close = true;
                 }
             });
@@ -1377,7 +1377,7 @@ fn draw_bank_overlays(app: &mut App, ctx: &egui::Context, key: UiId) {
                 {
                     confirmed = true;
                 }
-                if kit::ghost_button(ui, "Cancel").clicked() {
+                if crate::pageshell::outline(ui, "Cancel").clicked() {
                     close = true;
                 }
             });
@@ -1558,24 +1558,24 @@ fn draw_bank_export(app: &mut App, ctx: &egui::Context) {
         ui.add_space(8.0);
         ui.separator();
         ui.horizontal(|ui| {
-            if kit::ghost_button(ui, "Save CSV file…").on_hover_text("One row per question, for Excel, Sheets or Numbers").clicked() {
+            if crate::pageshell::outline(ui, "Save CSV file…").on_hover_text("One row per question, for Excel, Sheets or Numbers").clicked() {
                 save_csv = true;
             }
-            if kit::ghost_button(ui, "Save Aiken file…").on_hover_text("Aiken text: single-answer multiple choice").clicked() {
+            if crate::pageshell::outline(ui, "Save Aiken file…").on_hover_text("Aiken text: single-answer multiple choice").clicked() {
                 save_aiken = true;
             }
-            if kit::ghost_button(ui, "Save Blackboard file…").on_hover_text("Tab-delimited text for Blackboard Learn's Upload Questions").clicked() {
+            if crate::pageshell::outline(ui, "Save Blackboard file…").on_hover_text("Tab-delimited text for Blackboard Learn's Upload Questions").clicked() {
                 save_blackboard = true;
             }
-            if kit::ghost_button(ui, "Save JSON file…").on_hover_text("The bank as a question-bank JSON file (for other apps and backups)").clicked() {
+            if crate::pageshell::outline(ui, "Save JSON file…").on_hover_text("The bank as a question-bank JSON file (for other apps and backups)").clicked() {
                 save_json = true;
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let ok = BANK_EXPORT.with(|c| c.borrow().as_ref().is_some_and(|c| c.pdf.is_ok()));
-                if ui.add_enabled_ui(ok, |ui| kit::primary_button(ui, "Download PDF")).inner.clicked() {
+                if ui.add_enabled_ui(ok, |ui| crate::pageshell::primary(ui, "Download PDF")).inner.clicked() {
                     save_pdf = true;
                 }
-                if kit::ghost_button(ui, "Cancel").clicked() {
+                if crate::pageshell::outline(ui, "Cancel").clicked() {
                     close = true;
                 }
             });
@@ -1681,7 +1681,7 @@ impl App {
             );
             ui.add_space(10.0);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if kit::primary_button(ui, "Close").clicked() {
+                if crate::pageshell::primary(ui, "Close").clicked() {
                     close = true;
                 }
             });
@@ -1916,12 +1916,12 @@ fn draw_topic_dialog(app: &mut App, ctx: &egui::Context, key: UiId, bank_id: &Id
                 )
                 .clicked()
             } else {
-                ui.add_enabled_ui(ok, |ui| kit::primary_button(ui, label)).inner.clicked()
+                ui.add_enabled_ui(ok, |ui| crate::pageshell::primary(ui, label)).inner.clicked()
             };
             if clicked && ok {
                 apply = true;
             }
-            if kit::ghost_button(ui, "Cancel").clicked() {
+            if crate::pageshell::outline(ui, "Cancel").clicked() {
                 close = true;
             }
         });
@@ -2561,10 +2561,10 @@ fn draw_details_dialog(app: &mut App, ctx: &egui::Context, key: UiId, bank_id: &
         ui.separator();
         ui.add_space(6.0);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if kit::primary_button(ui, "Save details").clicked() {
+            if crate::pageshell::primary(ui, "Save details").clicked() {
                 save = true;
             }
-            if kit::ghost_button(ui, "Cancel").clicked() {
+            if crate::pageshell::outline(ui, "Cancel").clicked() {
                 close = true;
             }
         });
@@ -2692,11 +2692,11 @@ fn draw_tidy_dialog(app: &mut App, ctx: &egui::Context, key: UiId, bank_id: &Id)
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if n > 0 {
                         let label = format!("Apply to {k} question{}", if k == 1 { "" } else { "s" });
-                        if ui.add_enabled_ui(k > 0, |ui| kit::primary_button(ui, &label)).inner.clicked() && k > 0 {
+                        if ui.add_enabled_ui(k > 0, |ui| crate::pageshell::primary(ui, &label)).inner.clicked() && k > 0 {
                             apply = true;
                         }
                     }
-                    if kit::ghost_button(ui, if n == 0 { "Close" } else { "Cancel" }).clicked() {
+                    if crate::pageshell::outline(ui, if n == 0 { "Close" } else { "Cancel" }).clicked() {
                         close = true;
                     }
                 });
@@ -3048,7 +3048,7 @@ fn popover_card(ui: &mut Ui, q: &Question, n: usize, ps: &mut PopoverState, exam
         ui.horizontal(|ui| {
             if exam_id.is_some() {
                 let label = if in_exam { "Add again" } else { "Add to exam" };
-                if kit::ghost_button(ui, label).clicked() {
+                if crate::pageshell::outline(ui, label).clicked() {
                     *add = Some(q.id.clone());
                 }
             }
@@ -3170,7 +3170,7 @@ pub fn draw_popover(app: &mut App, ctx: &egui::Context) {
                     .on_hover_text("Open another question bank here");
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if embedded && kit::ghost_button(ui, "Close").clicked() {
+                    if embedded && crate::pageshell::outline(ui, "Close").clicked() {
                         *close = true;
                     }
                     if ui.add(Button::new(RichText::new("⚙").size(15.0)).frame(false).selected(ps.settings)).on_hover_text("Copy settings").clicked() {

@@ -2010,7 +2010,7 @@ impl Workspace {
         if self.math_panel() {
             let flag = egui::Id::new("math_skin_page");
             ui.ctx().data_mut(|d| d.insert_temp(flag, true));
-            theme::with_chem_skin(ui, |ui| self.controls_inner(ui, max_h));
+            theme::with_shell_layout(ui, |ui| self.controls_inner(ui, max_h));
             ui.ctx().data_mut(|d| d.insert_temp(flag, false));
         } else {
             self.controls_inner(ui, max_h);
@@ -2205,7 +2205,7 @@ impl Workspace {
                                                     let tid = egui::Id::new(("orb_charge_txt", def.id));
                                                     let cur = self.params.i("charge");
                                                     let mut txt = ui.ctx().data(|d| d.get_temp::<String>(tid)).filter(|t| t.parse::<i64>().ok().map(|v| v.clamp(lo, hi)) == Some(cur) || t == "-" || t.is_empty()).unwrap_or_else(|| cur.to_string());
-                                                    let te = TextEdit::singleline(&mut txt).desired_width(f32::INFINITY).margin(Margin::symmetric(14, 12)).font(egui::FontId::new(15.0, egui::FontFamily::Name("vs-noto".into())));
+                                                    let te = TextEdit::singleline(&mut txt).desired_width(f32::INFINITY).margin(Margin::symmetric(14, 12)).font(egui::FontId::new(15.0, theme::sans_family()));
                                                     if ui.add(te).changed() {
                                                         if let Ok(v) = txt.trim().parse::<i64>() {
                                                             self.params.0.insert("charge".to_string(), Value::I(v.clamp(lo, hi)));
@@ -2715,7 +2715,7 @@ impl Workspace {
         let cb = if theme::chem_skin() { cb.icon(chem_shell::select_chevron) } else { cb };
         let shown = current.map(|i| setups[i].name).unwrap_or("Choose one…");
         cb
-            .selected_text(if bio { RichText::new(shown).size(15.2).family(egui::FontFamily::Name("vs-noto".into())) } else { RichText::new(shown) })
+            .selected_text(if bio { RichText::new(shown).size(15.2).family(theme::sans_family()) } else { RichText::new(shown) })
             .width(if theme::chem_skin() { ui.available_width() } else { ui.available_width().min(260.0) })
             .show_ui(ui, |ui| {
                 for (i, e) in setups.iter().enumerate() {
@@ -2852,7 +2852,7 @@ impl Workspace {
                         let te = if skin {
                             TextEdit::singleline(&mut v)
                                 .hint_text(RichText::new(hint.clone()).size(17.0))
-                                .font(egui::FontId::new(17.0, egui::FontFamily::Name("vs-noto".into())))
+                                .font(egui::FontId::new(17.0, theme::sans_family()))
                                 .vertical_align(Align::Center)
                                 .min_size(Vec2::new(if r.name_key.is_some() { 152.0 } else { 160.0 }, rh))
                                 .desired_width(if r.name_key.is_some() { 128.0 } else { 136.0 })
@@ -2900,7 +2900,7 @@ impl Workspace {
                 // the label button hugs the panel's right edge, as the reference's does
                 ui.add_space((ui.available_width() - 83.0).max(0.0));
                 ui.add(
-                    Button::new(RichText::new(if txt.trim().is_empty() { "—".to_string() } else { txt }).family(if txt_is_math(&mode) { serif.clone() } else { egui::FontFamily::Name("vs-noto".into()) }).size(if txt_is_math(&mode) { 17.0 } else { 13.0 }).color(theme::text_col()))
+                    Button::new(RichText::new(if txt.trim().is_empty() { "—".to_string() } else { txt }).family(if txt_is_math(&mode) { serif.clone() } else { theme::sans_family() }).size(if txt_is_math(&mode) { 17.0 } else { 13.0 }).color(theme::text_col()))
                         .min_size(Vec2::new(83.0, rh))
                         .corner_radius(CornerRadius::same(10)),
                 )
@@ -3241,7 +3241,7 @@ fn param_label_inner(ui: &mut Ui, label: &str, hint: &str) {
                 // the chemistry page sets the unit and the note in the label's own 13.5 px, lighter grey
                 let _ = piped;
                 let fade = 1.0;
-                ui.label(RichText::new(note).size(14.08).family(egui::FontFamily::Name("vs-noto".into())).color(theme::muted_col().gamma_multiply(fade)));
+                ui.label(RichText::new(note).size(14.08).family(theme::sans_family()).color(theme::muted_col().gamma_multiply(fade)));
             } else {
                 ui.label(theme::muted(note).size(11.0).color(theme::muted_col().gamma_multiply(0.7)));
             }
@@ -3291,7 +3291,7 @@ fn phenotype_rows(ui: &mut Ui, pd: &ParamDef, p: &mut Params, genes: &[char]) {
                 let te = TextEdit::singleline(&mut names[gi][k])
                     .desired_width(f32::INFINITY)
                     .margin(Margin::symmetric(10, 10))
-                    .font(egui::FontId::new(15.2, egui::FontFamily::Name("vs-noto".into())));
+                    .font(egui::FontId::new(15.2, theme::sans_family()));
                 if ui.add(te).changed() {
                     changed = true;
                 }
@@ -3476,7 +3476,7 @@ impl Workspace {
     /// The Lewis page's Changes section: the note, the central atom, each atom's lone electrons
     /// and each bond's order, then what differs from the correct structure and what is wrong.
     fn lewis_changes(&mut self, ui: &mut Ui, help: &str) {
-        let noto = || egui::FontFamily::Name("vs-noto".into());
+        let noto = || theme::sans_family();
         ui.add(egui::Label::new(theme::muted(help).size(13.0)).wrap());
         ui.add_space(6.0);
         if self.params.s("question") != "Full structure" && !figures::chemistry::lewis_has_changes(&self.params) {
@@ -3694,7 +3694,7 @@ fn param_control_inner(ui: &mut Ui, fig: &str, pd: &ParamDef, p: &mut Params) {
             let mut text = if focused { ctx.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| shown.clone()) } else { shown };
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 12.0;
-                let r = ui.add(TextEdit::singleline(&mut text).id(id).desired_width(144.0).margin(Margin::symmetric(10, 10)).font(egui::FontId::new(15.0, egui::FontFamily::Name("vs-noto".into()))));
+                let r = ui.add(TextEdit::singleline(&mut text).id(id).desired_width(144.0).margin(Margin::symmetric(10, 10)).font(egui::FontId::new(15.0, theme::sans_family())));
                 if r.changed() {
                     ctx.data_mut(|d| d.insert_temp(id, text.clone()));
                     if let Ok(v) = text.trim().parse::<f64>() {
@@ -3732,9 +3732,9 @@ fn param_control_inner(ui: &mut Ui, fig: &str, pd: &ParamDef, p: &mut Params) {
             };
             let r = ui.horizontal(|ui| {
                 let w = if unit.is_some() { (ui.available_width() - 40.0 - ui.spacing().item_spacing.x).max(60.0) } else { f32::INFINITY };
-                let r = ui.add(TextEdit::singleline(&mut text).id(id).desired_width(w).margin(Margin::symmetric(10, 10)).font(egui::FontId::new(15.0, egui::FontFamily::Name("vs-noto".into()))));
+                let r = ui.add(TextEdit::singleline(&mut text).id(id).desired_width(w).margin(Margin::symmetric(10, 10)).font(egui::FontId::new(15.0, theme::sans_family())));
                 if let Some(u) = &unit {
-                    ui.label(RichText::new(u.as_str()).size(16.0).family(egui::FontFamily::Name("vs-noto".into())).color(theme::muted_col()));
+                    ui.label(RichText::new(u.as_str()).size(16.0).family(theme::sans_family()).color(theme::muted_col()));
                 }
                 r
             }).inner;
@@ -3907,7 +3907,7 @@ fn param_control_inner(ui: &mut Ui, fig: &str, pd: &ParamDef, p: &mut Params) {
                         ui.spacing_mut().button_padding = Vec2::new(15.0, 9.5);
                         ui.spacing_mut().interact_size.y = 39.5;
                     }
-                    let sel = if chem { RichText::new(shown(&cur)).size(15.2).family(egui::FontFamily::Name("vs-noto".into())) } else { RichText::new(shown(&cur)) };
+                    let sel = if chem { RichText::new(shown(&cur)).size(15.2).family(theme::sans_family()) } else { RichText::new(shown(&cur)) };
                     let cb = ComboBox::from_id_salt(("fig_param", pd.key));
                     let cb = if chem { cb.icon(chem_shell::select_chevron) } else { cb };
                     cb
@@ -3972,7 +3972,7 @@ fn param_control_inner(ui: &mut Ui, fig: &str, pd: &ParamDef, p: &mut Params) {
             let mut te = TextEdit::singleline(&mut cur).desired_width(220.0);
             if theme::chem_skin() {
                 // the reference's full-width 46 px field
-                te = te.desired_width(f32::INFINITY).margin(Margin::symmetric(if fig == "population-growth" && pd.key == "organism" { 11 } else { 14 }, if fig == "lewis-structures" || fig == "predator-prey" || (fig == "population-growth" && pd.key == "organism") { 10 } else { 12 })).font(egui::FontId::new(15.0, egui::FontFamily::Name("vs-noto".into())));
+                te = te.desired_width(f32::INFINITY).margin(Margin::symmetric(if fig == "population-growth" && pd.key == "organism" { 11 } else { 14 }, if fig == "lewis-structures" || fig == "predator-prey" || (fig == "population-growth" && pd.key == "organism") { 10 } else { 12 })).font(egui::FontId::new(15.0, theme::sans_family()));
             }
             if theme::chem_skin() && fig == "punnett-square" && pd.key == "parents" {
                 // the reference sets the genotypes in italic serif
@@ -3985,7 +3985,7 @@ fn param_control_inner(ui: &mut Ui, fig: &str, pd: &ParamDef, p: &mut Params) {
             }
             if fig == "population-growth" && pd.key == "organism" {
                 // the reference shows Chrome's placeholder grey (#757575) at the box's own 15 px
-                te = te.hint_text(RichText::new("deer, yeast cells, bacteria").size(15.0).family(egui::FontFamily::Name("vs-noto".into())).color(egui::Color32::from_rgb(0x75, 0x75, 0x75)));
+                te = te.hint_text(RichText::new("deer, yeast cells, bacteria").size(15.0).family(theme::sans_family()).color(egui::Color32::from_rgb(0x75, 0x75, 0x75)));
                 ui.add_space(-1.0);
             }
             let changed_te = ui
@@ -5722,7 +5722,7 @@ fn row_edit<'a>(text: &'a mut String, hint: &'a str, w: f32, skin: bool) -> Text
             .hint_text(RichText::new(hint).size(17.0))
             .desired_width(w)
             .margin(Margin::symmetric(12, 13.5 as i8))
-            .font(egui::FontId::new(17.0, egui::FontFamily::Name("vs-noto".into())));
+            .font(egui::FontId::new(17.0, theme::sans_family()));
     }
     TextEdit::singleline(text).hint_text(hint).desired_width(w)
 }
