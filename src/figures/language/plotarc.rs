@@ -65,7 +65,7 @@ fn render(p: &Params) -> String {
     let base = top + 330.0;
     let pts = [(40.0, base - 10.0), (210.0, base - 14.0), (500.0, top + 40.0), (790.0, base - 40.0), (960.0, base - 10.0)];
     // the arc: a flat start, the climb, the descent, a flat end
-    let fill = if print { "#ececec" } else { "#eaf1fd" };
+    let fill = if print { "#ececec" } else { "#f5f0e6" };
     let mut area: Vec<(f64, f64)> = pts.to_vec();
     area.push((960.0, base));
     area.push((40.0, base));

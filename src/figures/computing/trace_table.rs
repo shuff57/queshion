@@ -617,12 +617,12 @@ fn render(p: &Params) -> String {
         chart::text(&mut d, w / 2.0, 14.0 + fs * 1.3, fs * 1.3, "middle", title);
     }
     let x0 = (w - (list_w + gap + table_w)) / 2.0;
-    let head = if print { "#e5e5e5" } else { "#eef1f6" };
+    let head = if print { "#e5e5e5" } else { "#f0e9db" };
 
     // the listing sits in a light box
     d.raw(&format!(
         r##"<rect x="{x0:.2}" y="{top:.2}" width="{list_w:.2}" height="{list_h:.2}" rx="6" fill="{}" stroke="{INK}" stroke-width="1.4"/>"##,
-        if print { "#f6f6f6" } else { "#f7f8fb" }
+        if print { "#f6f6f6" } else { "#f8f4ec" }
     ));
     for (i, l) in prog.lines.iter().enumerate() {
         let y = top + 10.0 + row_h * (i + 1) as f64 - fs * 0.45;
@@ -780,7 +780,7 @@ mod tests {
         let mut p = defaults();
         p.set_s("style", "Print");
         let svg = render(&p);
-        assert!(!svg.contains("#eef1f6") && !svg.contains("#f7f8fb"));
+        assert!(!svg.contains("#f0e9db") && !svg.contains("#f8f4ec"));
         let png = crate::figures::to_png(&svg, 1.0).unwrap();
         let img = image::load_from_memory(&png).unwrap().to_rgba8();
         let hue = |px: &image::Rgba<u8>| px[0].max(px[1]).max(px[2]) - px[0].min(px[1]).min(px[2]);

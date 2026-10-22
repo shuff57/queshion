@@ -142,7 +142,7 @@ fn render(p: &Params) -> String {
     let row = fs * 2.05;
     let ty = 34.0 + top;
     let xs: Vec<f64> = cols.iter().scan(tx, |a, c| { let v = *a; *a += c; Some(v) }).collect();
-    d.rect(tx, ty, tw, row * 1.5, if fills.is_print() { "#e5e5e5" } else { "#e6edf8" }, INK, 1.6);
+    d.rect(tx, ty, tw, row * 1.5, if fills.is_print() { "#e5e5e5" } else { "#f4eee2" }, INK, 1.6);
     for (i, t) in [group.as_str(), "Income", "Share %", "Cum. pop. %", "Cum. income %"].iter().enumerate() {
         let (lines, x) = if i == 0 { (vec![*t], xs[0] + 8.0) } else { (t.splitn(2, ' ').collect::<Vec<_>>(), xs[i] + cols[i] - 8.0) };
         let anchor = if i == 0 { "start" } else { "end" };

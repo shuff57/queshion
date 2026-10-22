@@ -152,7 +152,7 @@ fn render(p: &Params) -> String {
             gd::edge(&mut d, at(i), radii[i], at(*c), radii[*c], false, 0.0, INK, 2.0, "");
         }
     }
-    let (fill, stroke) = if print { ("#fff", "#000") } else { ("#eef3fc", INK) };
+    let (fill, stroke) = if print { ("#fff", "#000") } else { ("#f5f0e6", INK) };
     for i in 0..n {
         let c = at(i);
         gd::node(&mut d, c, radii[i], &t.labels[i], fs, &NodeStyle { fill, stroke, sw: 2.0, text: INK });
@@ -240,7 +240,7 @@ mod tests {
         p.set_s("style", "Print");
         p.set_s("answer", "Pre-order");
         let svg = render(&p);
-        assert!(!svg.contains("#d97706") && !svg.contains("#eef3fc"));
+        assert!(!svg.contains("#d97706") && !svg.contains("#f5f0e6"));
         let png = crate::figures::to_png(&svg, 1.0).unwrap();
         let img = image::load_from_memory(&png).unwrap().to_rgba8();
         let hue = |px: &image::Rgba<u8>| px[0].max(px[1]).max(px[2]) - px[0].min(px[1]).min(px[2]);

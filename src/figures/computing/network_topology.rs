@@ -78,7 +78,7 @@ fn computer(d: &mut Doc, c: (f64, f64), label: &str, fs: f64, print: bool, above
         r##"<rect x="{:.1}" y="{:.1}" width="{w}" height="{h}" rx="4" fill="{}" stroke="{INK}" stroke-width="2"/>"##,
         c.0 - w / 2.0,
         c.1 - h / 2.0,
-        if print { "#fff" } else { "#eef3fc" }
+        if print { "#fff" } else { "#f5f0e6" }
     ));
     d.line(c.0 - 10.0, c.1 + h / 2.0 + 5.0, c.0 + 10.0, c.1 + h / 2.0 + 5.0, INK, 2.0);
     d.line(c.0, c.1 + h / 2.0, c.0, c.1 + h / 2.0 + 5.0, INK, 2.0);
@@ -290,7 +290,7 @@ mod tests {
         let mut p = with("Tree", 7);
         p.set_s("style", "Print");
         let svg = render(&p);
-        assert!(!svg.contains("#eef3fc") && !svg.contains("#ffe9a8"));
+        assert!(!svg.contains("#f5f0e6") && !svg.contains("#ffe9a8"));
         let png = crate::figures::to_png(&svg, 1.0).unwrap();
         let img = image::load_from_memory(&png).unwrap().to_rgba8();
         let hue = |px: &image::Rgba<u8>| px[0].max(px[1]).max(px[2]) - px[0].min(px[1]).min(px[2]);

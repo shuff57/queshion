@@ -301,7 +301,7 @@ fn render(p: &Params) -> String {
         }
     }
     // states, accepting ones double
-    let fill = if print { "#fff" } else { "#eef3fc" };
+    let fill = if print { "#fff" } else { "#f5f0e6" };
     for s in 0..n {
         let c = at(s);
         if m.accept.contains(&s) {
@@ -320,7 +320,7 @@ fn render(p: &Params) -> String {
     match answer {
         "Transition table" => {
             let x0 = (w - table_w) / 2.0;
-            let head = if print { "#e5e5e5" } else { "#eef1f6" };
+            let head = if print { "#e5e5e5" } else { "#f0e9db" };
             d.rect(x0, y0, first_w, row_h, head, INK, 1.2);
             for (c, a) in m.alphabet.iter().enumerate() {
                 let x = x0 + first_w + c as f64 * col_w;
@@ -438,7 +438,7 @@ mod tests {
         p.set_s("style", "Print");
         p.set_s("answer", "Transition table");
         let svg = render(&p);
-        assert!(!svg.contains("#eef3fc") && !svg.contains("#eef1f6"));
+        assert!(!svg.contains("#f5f0e6") && !svg.contains("#f0e9db"));
         let png = crate::figures::to_png(&svg, 1.0).unwrap();
         let img = image::load_from_memory(&png).unwrap().to_rgba8();
         let hue = |px: &image::Rgba<u8>| px[0].max(px[1]).max(px[2]) - px[0].min(px[1]).min(px[2]);

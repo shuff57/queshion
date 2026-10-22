@@ -79,7 +79,7 @@ fn render(p: &Params) -> String {
     }
     chart::text(&mut d, 30.0, top + 34.0, fs * 1.05, "start", &description);
     let cy = top + 130.0;
-    let fill = if print { "#ececec" } else { "#dbe7fb" };
+    let fill = if print { "#ececec" } else { "#f0e9db" };
     // x of the left edge of block i
     let bx = |i: usize| lead + gap + i as f64 * (bw + gap) - if has_fb { 0.0 } else { 0.0 };
     let signal_label = |d: &mut Doc, x: f64, y: f64, i: usize| {

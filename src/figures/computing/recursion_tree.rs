@@ -198,7 +198,7 @@ fn render(p: &Params) -> String {
             (true, true) => "#d9d9d9",
             (true, false) => "#dff3e4",
             (false, true) => "#fff",
-            (false, false) => "#eef3fc",
+            (false, false) => "#f5f0e6",
         };
         d.raw(&format!(
             r##"<rect x="{:.2}" y="{:.2}" width="{bw:.2}" height="{box_h:.2}" rx="8" fill="{fill}" stroke="{INK}" stroke-width="1.8"/>"##,
@@ -300,7 +300,7 @@ mod tests {
         p.set_s("style", "Print");
         p.set_s("number", "Order the calls start");
         let svg = render(&p);
-        assert!(!svg.contains("#dff3e4") && !svg.contains("#eef3fc") && !svg.contains("#b45309") && !svg.contains("#d97706"));
+        assert!(!svg.contains("#dff3e4") && !svg.contains("#f5f0e6") && !svg.contains("#b45309") && !svg.contains("#d97706"));
         let png = crate::figures::to_png(&svg, 1.0).unwrap();
         let img = image::load_from_memory(&png).unwrap().to_rgba8();
         let hue = |px: &image::Rgba<u8>| px[0].max(px[1]).max(px[2]) - px[0].min(px[1]).min(px[2]);

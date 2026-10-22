@@ -238,7 +238,7 @@ fn render(p: &Params) -> String {
             (true, true) => ("#d9d9d9", "#000", 3.4),
             (true, false) => ("#ffe9a8", "#d97706", 2.8),
             (false, true) => ("#fff", "#000", 2.0),
-            (false, false) => ("#eef3fc", INK, 2.0),
+            (false, false) => ("#f5f0e6", INK, 2.0),
         };
         let c = at(i);
         gd::node(&mut d, c, radii[i], &g.nodes[i].name, fs, &NodeStyle { fill, stroke, sw, text: INK });
@@ -264,7 +264,7 @@ fn render(p: &Params) -> String {
             for r in 0..=n {
                 for c in 0..=n {
                     let head = r == 0 || c == 0;
-                    let fill = if head { if print { "#e5e5e5" } else { "#eef1f6" } } else { "#fff" };
+                    let fill = if head { if print { "#e5e5e5" } else { "#f0e9db" } } else { "#fff" };
                     d.rect(tx + c as f64 * cellw, ty + r as f64 * row_h, cellw, row_h, fill, INK, 1.2);
                     let text = match (r, c) {
                         (0, 0) => None,
@@ -372,7 +372,7 @@ mod tests {
         p.set_s("start", "A");
         p.set_s("end", "E");
         let svg = render(&p);
-        assert!(!svg.contains("#d97706") && !svg.contains("#eef3fc"));
+        assert!(!svg.contains("#d97706") && !svg.contains("#f5f0e6"));
         let png = crate::figures::to_png(&svg, 1.0).unwrap();
         let img = image::load_from_memory(&png).unwrap().to_rgba8();
         let hue = |px: &image::Rgba<u8>| px[0].max(px[1]).max(px[2]) - px[0].min(px[1]).min(px[2]);

@@ -353,7 +353,7 @@ fn render(p: &Params) -> String {
         (Kind::Start | Kind::End, true) => "#d9d9d9",
         (Kind::Start | Kind::End, false) => "#dff3e4",
         (_, true) => "#fff",
-        (_, false) => "#eef3fc",
+        (_, false) => "#f5f0e6",
     };
     for (i, s) in shapes.iter().enumerate() {
         let (cx, cy) = s.c;
@@ -454,7 +454,7 @@ mod tests {
         let mut p = defaults();
         p.set_s("style", "Print");
         let svg = render(&p);
-        assert!(!svg.contains("#ffe9a8") && !svg.contains("#dff3e4") && !svg.contains("#eef3fc"));
+        assert!(!svg.contains("#ffe9a8") && !svg.contains("#dff3e4") && !svg.contains("#f5f0e6"));
         let png = crate::figures::to_png(&svg, 1.0).unwrap();
         let img = image::load_from_memory(&png).unwrap().to_rgba8();
         let hue = |px: &image::Rgba<u8>| px[0].max(px[1]).max(px[2]) - px[0].min(px[1]).min(px[2]);

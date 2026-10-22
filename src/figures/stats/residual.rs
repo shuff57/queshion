@@ -183,7 +183,7 @@ fn render(p: &Params) -> String {
         let cw = 130.0;
         let x0 = (w - cw * 4.0) / 2.0;
         for (c, hd) in heads.iter().enumerate() {
-            d.rect(x0 + c as f64 * cw, y0, cw, row_h, if fills.is_print() { "#e5e5e5" } else { "#e6edf8" }, INK, 1.2);
+            d.rect(x0 + c as f64 * cw, y0, cw, row_h, if fills.is_print() { "#e5e5e5" } else { "#f4eee2" }, INK, 1.2);
             chart::text(&mut d, x0 + c as f64 * cw + cw / 2.0, y0 + row_h * 0.68, fs, "middle", hd);
         }
         for (i, q) in pts.iter().enumerate() {

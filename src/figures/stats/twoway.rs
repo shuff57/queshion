@@ -118,7 +118,7 @@ fn render(p: &Params) -> String {
     let is_blank_cell = |r: usize, c: usize| hidden.contains(&(r * nc + c));
 
     let fills = Fills::new(p);
-    let tint = if fills.is_print() { "#ececec" } else { "#e3ebfa" };
+    let tint = if fills.is_print() { "#ececec" } else { "#f0e9db" };
     let k = svg::label_factor(p.s("label_size"));
     let fs = 17.0 * k;
     let (title, row_title, col_title) = (p.s("title").trim(), p.s("row_title").trim(), p.s("col_title").trim());

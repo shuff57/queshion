@@ -111,7 +111,7 @@ fn render(p: &Params) -> String {
     chart::text(&mut d, x0, top + fs * 2.8, fs, "start", &format!("Method: {method}"));
     let y0 = top + facts_h;
     let xs: Vec<f64> = cols.iter().scan(x0, |a, c| { let v = *a; *a += c; Some(v) }).collect();
-    d.rect(x0, y0, tw, row, if print { "#e5e5e5" } else { "#e6edf8" }, INK, 1.6);
+    d.rect(x0, y0, tw, row, if print { "#e5e5e5" } else { "#f4eee2" }, INK, 1.6);
     for (i, t) in ["Year", "Expense", "Accumulated depreciation", "Book value"].iter().enumerate() {
         let (x, a) = if i == 0 { (xs[0] + 10.0, "start") } else { (xs[i] + cols[i] - 10.0, "end") };
         chart::text(&mut d, x, y0 + row * 0.68, fs * if i == 2 { 0.88 } else { 1.0 }, a, t);

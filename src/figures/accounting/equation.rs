@@ -131,7 +131,7 @@ fn render(p: &Params) -> String {
         chart::text(&mut d, w / 2.0, 14.0 + fs * 1.3, fs * 1.3, "middle", title);
     }
     let xs: Vec<f64> = cols.iter().scan(x0, |a, c| { let v = *a; *a += c; Some(v) }).collect();
-    let head = if print { "#e5e5e5" } else { "#e6edf8" };
+    let head = if print { "#e5e5e5" } else { "#f4eee2" };
     // the equation itself, above the columns
     chart::text(&mut d, xs[2] + cols[2] / 2.0 - 8.0, top + row * 0.7, fs * 0.95, "middle", "Assets");
     chart::text(&mut d, xs[3], top + row * 0.7, fs, "middle", "=");

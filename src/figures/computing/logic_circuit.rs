@@ -384,7 +384,7 @@ fn render(p: &Params) -> String {
                 let names: Vec<&str> = circ.inputs().iter().map(|i| circ.nodes[*i].name.as_str()).chain(circ.outputs.iter().map(|o| o.name.as_str())).collect();
                 let mut y0 = y;
                 for (c, name) in names.iter().enumerate() {
-                    d.rect(tx + c as f64 * colw, y0, colw, trh, if print { "#e5e5e5" } else { "#eef1f6" }, INK, 1.4);
+                    d.rect(tx + c as f64 * colw, y0, colw, trh, if print { "#e5e5e5" } else { "#f0e9db" }, INK, 1.4);
                     chart::text(&mut d, tx + (c as f64 + 0.5) * colw, y0 + trh * 0.5 + fs * 0.35, fs, "middle", name);
                 }
                 y0 += trh;

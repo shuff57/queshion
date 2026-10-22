@@ -133,7 +133,7 @@ fn render(p: &Params) -> String {
     let row = fs * 2.5;
     let ty = 60.0 + top;
     let xs: Vec<f64> = cols.iter().scan(tx, |a, c| { let v = *a; *a += c; Some(v) }).collect();
-    d.rect(tx, ty, tw, row, if fills.is_print() { "#e5e5e5" } else { "#e6edf8" }, INK, 1.6);
+    d.rect(tx, ty, tw, row, if fills.is_print() { "#e5e5e5" } else { "#f4eee2" }, INK, 1.6);
     for (i, t) in ["", "Layer", "Depth (km)", "Thickness (km)", "State"].iter().enumerate() {
         if !t.is_empty() {
             chart::text(&mut d, xs[i] + 8.0, ty + row * 0.62, fs * 0.9, "start", t);

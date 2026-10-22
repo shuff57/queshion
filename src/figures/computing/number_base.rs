@@ -137,8 +137,8 @@ fn render(p: &Params) -> String {
     if !title.is_empty() {
         chart::text(&mut d, w / 2.0, 14.0 + fs * 1.3, fs * 1.3, "middle", title);
     }
-    let head = if print { "#e5e5e5" } else { "#eef1f6" };
-    let given_fill = if print { "#f3f3f3" } else { "#f4f8ff" };
+    let head = if print { "#e5e5e5" } else { "#f0e9db" };
+    let given_fill = if print { "#f3f3f3" } else { "#f6f2e9" };
     let mut y = top;
     if strip {
         let x0 = (w - strip_w) / 2.0;
@@ -245,7 +245,7 @@ mod tests {
         let mut p = defaults();
         p.set_s("style", "Print");
         let svg = render(&p);
-        assert!(!svg.contains("#f4f8ff") && !svg.contains("#eef1f6"));
+        assert!(!svg.contains("#f6f2e9") && !svg.contains("#f0e9db"));
         let png = crate::figures::to_png(&svg, 1.0).unwrap();
         let img = image::load_from_memory(&png).unwrap().to_rgba8();
         let hue = |px: &image::Rgba<u8>| px[0].max(px[1]).max(px[2]) - px[0].min(px[1]).min(px[2]);

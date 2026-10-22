@@ -111,7 +111,7 @@ fn render(p: &Params) -> String {
         chart::text(&mut d, w / 2.0, 14.0 + fs * 1.3, fs * 1.3, "middle", title);
     }
     let xs: Vec<f64> = cols.iter().scan(x0, |a, c| { let v = *a; *a += c; Some(v) }).collect();
-    let head = if print { "#e5e5e5" } else { "#e6edf8" };
+    let head = if print { "#e5e5e5" } else { "#f4eee2" };
     d.rect(x0, top, tw, row, head, INK, 1.6);
     for (i, t) in ["Account", "Balance", "Debit", "Credit"].iter().enumerate() {
         let (x, anchor) = if i == 0 { (xs[i] + 10.0, "start") } else { (xs[i] + cols[i] - 10.0, "end") };

@@ -149,7 +149,7 @@ fn render(p: &Params) -> String {
         let v = pmf(kk);
         let (x, y) = (f.px(kk as f64) - bw / 2.0, f.py(v));
         let on = inside.contains(&kk);
-        let fill = if on { fills.series(0) } else if fills.is_print() { "#fff".to_string() } else { "#dde6f5".to_string() };
+        let fill = if on { fills.series(0) } else if fills.is_print() { "#fff".to_string() } else { "#f4eee2".to_string() };
         d.rect(x, y, bw, (f.bottom() - y).max(0.0), &fill, INK, 1.4);
         if p.b("values") && kmax <= 24 && v >= 0.0005 {
             chart::text(&mut d, f.px(kk as f64), y - 5.0, fs * 0.72, "middle", &format!("{v:.3}"));

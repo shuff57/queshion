@@ -152,7 +152,7 @@ fn render(p: &Params) -> String {
     if !title.is_empty() {
         chart::text(&mut d, w / 2.0, 22.0, fs * 1.3, "middle", title);
     }
-    let head = if print { "#e2e2e2" } else { "#dbe7fb" };
+    let head = if print { "#e2e2e2" } else { "#f0e9db" };
     let cell = |d: &mut Doc, x: f64, y: f64, wd: f64, fill: &str, text: &str, bold: bool| {
         d.rect(x, y, wd, ch, fill, INK, 1.4);
         if !text.is_empty() {

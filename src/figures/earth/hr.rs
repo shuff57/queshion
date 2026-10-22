@@ -178,7 +178,7 @@ fn render(p: &Params) -> String {
         let tx = pw + 10.0;
         let row = fs * 1.9;
         let ty = f.top();
-        d.rect(tx, ty, tw - 20.0, row, if fills.is_print() { "#e5e5e5" } else { "#e6edf8" }, INK, 1.4);
+        d.rect(tx, ty, tw - 20.0, row, if fills.is_print() { "#e5e5e5" } else { "#f4eee2" }, INK, 1.4);
         chart::text(&mut d, tx + 8.0, ty + row * 0.68, fs * 0.9, "start", "Star");
         chart::text(&mut d, tx + 132.0, ty + row * 0.68, fs * 0.9, "start", "Class");
         for (i, s) in stars.iter().enumerate() {

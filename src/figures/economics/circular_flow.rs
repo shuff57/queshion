@@ -122,7 +122,7 @@ fn flow(d: &mut Doc, c: &Ctx, pts: &[(f64, f64)], at: (f64, f64), label: &str, r
 }
 
 fn node(d: &mut Doc, c: &Ctx, cx: f64, cy: f64, w: f64, h: f64, name: &str, show_name: bool) {
-    d.rect(cx - w / 2.0, cy - h / 2.0, w, h, if c.print { "#e5e5e5" } else { "#e6edf8" }, INK, 2.0);
+    d.rect(cx - w / 2.0, cy - h / 2.0, w, h, if c.print { "#e5e5e5" } else { "#f4eee2" }, INK, 2.0);
     if show_name {
         let ls = lines(name);
         let y0 = cy + c.fs * 0.38 - (ls.len() as f64 - 1.0) * c.fs * 0.6;

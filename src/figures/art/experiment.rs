@@ -61,7 +61,7 @@ fn render(p: &Params) -> String {
     if !title.is_empty() {
         chart::text(&mut d, w / 2.0, 22.0, fs * 1.3, "middle", title);
     }
-    let fill = if print { "#ececec" } else { "#dbe7fb" };
+    let fill = if print { "#ececec" } else { "#f0e9db" };
     let fill2 = if print { "#d6d6d6" } else { "#f7d9a8" };
     let q = cut(p.s("question"), 90);
     chart::text(&mut d, 30.0, top + 30.0, fs * 1.05, "start", &q);

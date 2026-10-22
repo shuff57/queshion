@@ -12,8 +12,8 @@ use crate::figures::Params;
 use crate::theme;
 
 const INK: Color32 = Color32::from_rgb(0x11, 0x18, 0x27);
-const FILL: Color32 = Color32::from_rgb(0xee, 0xf3, 0xfc);
-const SELECT: Color32 = Color32::from_rgb(0x2f, 0x6f, 0xe0);
+const FILL: Color32 = Color32::from_rgb(0xf5, 0xf0, 0xe6);
+const SELECT: Color32 = Color32::from_rgb(0x2f, 0x61, 0x44);
 const CELL: (f64, f64) = (80.0, 90.0);
 const FS: f64 = 15.0;
 const BST: &str = "Insert values (binary search tree)";

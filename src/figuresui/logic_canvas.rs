@@ -16,7 +16,7 @@ use crate::theme;
 const INK: Color32 = Color32::from_rgb(0x11, 0x18, 0x27);
 const LIT_ON: Color32 = Color32::from_rgb(0x1a, 0x8a, 0x3a);
 const LIT_OFF: Color32 = Color32::from_rgb(0x6b, 0x72, 0x80);
-const SELECT: Color32 = Color32::from_rgb(0x2f, 0x6f, 0xe0);
+const SELECT: Color32 = Color32::from_rgb(0x2f, 0x61, 0x44);
 /// Positions snap to a quarter of a grid cell.
 const SNAP: f64 = 0.25;
 /// How near (screen points) the pointer must be to grab a pin or a wire.

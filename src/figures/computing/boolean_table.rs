@@ -279,7 +279,7 @@ fn render(p: &Params) -> String {
     let out_k = (p.i("output").max(1) as usize - 1).min(f.outs.len() - 1);
     let rows = 1usize << n;
     let title = p.s("title").trim();
-    let head = if print { "#e5e5e5" } else { "#eef1f6" };
+    let head = if print { "#e5e5e5" } else { "#f0e9db" };
     let ink_fill = if print { "#f3f3f3" } else { "#ffe9a8" };
     let row_h = fs * 1.9;
     let top = if title.is_empty() { 14.0 } else { 38.0 + fs * 0.4 };
@@ -612,7 +612,7 @@ mod tests {
         let mut p = minterms("A, B, C, D", "0, 2, 5, 7, 8, 10, 13, 15", "");
         p.set_s("style", "Print");
         let svg = render(&p);
-        assert!(!svg.contains("#ffe9a8") && !svg.contains("#2f6fe0") && !svg.contains("#eef1f6"));
+        assert!(!svg.contains("#ffe9a8") && !svg.contains("#2f6fe0") && !svg.contains("#f0e9db"));
         let png = crate::figures::to_png(&svg, 1.0).unwrap();
         let img = image::load_from_memory(&png).unwrap().to_rgba8();
         let hue = |px: &image::Rgba<u8>| px[0].max(px[1]).max(px[2]) - px[0].min(px[1]).min(px[2]);

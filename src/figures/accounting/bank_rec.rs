@@ -126,7 +126,7 @@ fn render(p: &Params) -> String {
     if !title.is_empty() {
         chart::text(&mut d, w / 2.0, 14.0 + fs * 1.3, fs * 1.3, "middle", title);
     }
-    let head = if print { "#e5e5e5" } else { "#e6edf8" };
+    let head = if print { "#e5e5e5" } else { "#f4eee2" };
     let (b1, b2) = (bank.adjusted(), book.adjusted());
     for (i, (side, name, adj_name)) in [(&bank, "Bank statement", "Adjusted bank balance"), (&book, "Cash book", "Adjusted cash book balance")].into_iter().enumerate() {
         let x0 = 20.0 + i as f64 * (aw + 20.0);

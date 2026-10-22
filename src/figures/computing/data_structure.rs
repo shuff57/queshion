@@ -106,7 +106,7 @@ impl Style {
             (true, true) => "#d9d9d9",
             (true, false) => "#ffe9a8",
             (false, true) => "#fff",
-            (false, false) => "#eef3fc",
+            (false, false) => "#f5f0e6",
         }
     }
 
@@ -306,7 +306,7 @@ mod tests {
         let mut p = with("Linked list", "1, 2, 3", "addfirst 0");
         p.set_s("style", "Print");
         let svg = render(&p);
-        assert!(!svg.contains("#ffe9a8") && !svg.contains("#eef3fc"));
+        assert!(!svg.contains("#ffe9a8") && !svg.contains("#f5f0e6"));
         let png = crate::figures::to_png(&svg, 1.0).unwrap();
         let img = image::load_from_memory(&png).unwrap().to_rgba8();
         let hue = |px: &image::Rgba<u8>| px[0].max(px[1]).max(px[2]) - px[0].min(px[1]).min(px[2]);
