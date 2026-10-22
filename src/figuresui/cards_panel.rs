@@ -731,6 +731,7 @@ impl Workspace {
             ui.label(RichText::new(title).family(theme::bold_family()).size(16.0).color(theme::ink()));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let (r, resp) = ui.allocate_exact_size(Vec2::splat(34.0), if can_remove { egui::Sense::click() } else { egui::Sense::hover() });
+                resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, can_remove, "Remove"));
                 if can_remove && resp.hovered() {
                     ui.painter().rect_filled(r, CornerRadius::same(8), theme::hover_bg());
                 }
@@ -767,10 +768,11 @@ impl Workspace {
             }
             ui.add_space(8.3);
             label_control(ui, &mut self.params, &k("lab_mode"), &k("lab"), "Label");
-            if self.params.b(&k("mark")) || self.params.b(&k("comps")) {
-                // figures saved with a marked angle or components keep their controls
+            if theme::keep_theme() || self.params.b(&k("mark")) || self.params.b(&k("comps")) {
+                // figures saved with a marked angle or components keep their controls (the app's
+                // shell always offers them, as its own force cards do)
                 ui.add_space(8.0);
-                egui::CollapsingHeader::new(RichText::new("Angle and components").size(13.0)).id_salt(("fbd_more", i)).default_open(true).show(ui, |ui| {
+                egui::CollapsingHeader::new(RichText::new("Angle and components").size(13.0)).id_salt(("fbd_more", i)).default_open(self.params.b(&k("mark")) || self.params.b(&k("comps"))).show(ui, |ui| {
                     let mut m = self.params.b(&k("mark"));
                     if ui.checkbox(&mut m, "Mark its angle").changed() {
                         self.params.set_b(&k("mark"), m);
@@ -905,7 +907,7 @@ impl Workspace {
         if skin {
             ui.add_space(6.0);
             let y = ui.cursor().top();
-            ui.painter().hline(ui.max_rect().x_range(), y, Stroke::new(1.0, egui::Color32::from_rgb(0xe5, 0xe7, 0xeb)));
+            ui.painter().hline(ui.max_rect().x_range(), y, Stroke::new(1.0, if theme::keep_theme() { theme::border() } else { egui::Color32::from_rgb(0xe5, 0xe7, 0xeb) }));
             ui.add_space(if phys { 10.5 } else { 6.0 });
         }
         check(ui, &mut a, "Acceleration");
@@ -934,7 +936,7 @@ impl Workspace {
 
     fn vectors_card_skin_in(&mut self, ui: &mut Ui, pdefs: &[ParamDef]) {
         let n = self.params.i("n").clamp(1, 4) as usize;
-        let mut remove = None;
+        let (mut remove, mut swap) = (None, None);
         ui.spacing_mut().item_spacing.y = 0.0;
         ui.add_space(-5.0);
         for i in 1..=n {
@@ -945,6 +947,25 @@ impl Workspace {
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), h), egui::Sense::click());
             let trash = egui::Rect::from_min_size(egui::pos2(rect.right() - 38.4, rect.top() + if open { 9.5 } else { 12.5 }), Vec2::splat(38.4));
             let tr = ui.interact(trash, id.with("rm"), if n > 1 { egui::Sense::click() } else { egui::Sense::hover() });
+            tr.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, n > 1, "Remove"));
+            if theme::keep_theme() {
+                // the app's shell keeps the move earlier / later buttons of its own vector cards
+                let mv = |ui: &mut Ui, k: f32, glyph: &str, on: bool, tip: String| -> bool {
+                    let r = trash.translate(Vec2::new(-k * 36.0, 0.0));
+                    let b = Button::new(RichText::new(glyph).size(18.0).color(theme::ink())).frame(false).min_size(Vec2::splat(30.0));
+                    ui.put(r, b).on_hover_text(tip).clicked() && on
+                };
+                ui.add_enabled_ui(i < n, |ui| {
+                    if mv(ui, 1.0, egui_phosphor::regular::ARROW_DOWN, i < n, format!("Move vector {i} later")) {
+                        swap = Some((i, i + 1));
+                    }
+                });
+                ui.add_enabled_ui(i > 1, |ui| {
+                    if mv(ui, 2.0, egui_phosphor::regular::ARROW_UP, i > 1, format!("Move vector {i} earlier")) {
+                        swap = Some((i, i - 1));
+                    }
+                });
+            }
             if ui.is_rect_visible(rect) {
                 let cy = rect.top() + if open { 28.7 } else { 31.7 };
                 if resp.hovered() && !tr.hovered() {
@@ -1001,6 +1022,10 @@ impl Workspace {
         if let Some(i) = remove {
             let mut q = self.params.clone();
             items::remove_item(&mut q, pdefs, "v", "n", i);
+            self.card_commit(q, true);
+        } else if let Some((a, b)) = swap {
+            let mut q = self.params.clone();
+            items::swap_items(&mut q, pdefs, "v", a, b);
             self.card_commit(q, true);
         }
         ui.add_space(7.4);
@@ -1132,7 +1157,7 @@ impl Workspace {
             ui.add_space(10.0);
             if i < n {
                 let y = ui.cursor().top();
-                ui.painter().hline(ui.max_rect().x_range(), y, Stroke::new(1.0, egui::Color32::from_rgb(0xe5, 0xe7, 0xeb)));
+                ui.painter().hline(ui.max_rect().x_range(), y, Stroke::new(1.0, if theme::keep_theme() { theme::border() } else { egui::Color32::from_rgb(0xe5, 0xe7, 0xeb) }));
             }
         }
         if let Some(i) = remove {

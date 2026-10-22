@@ -352,6 +352,19 @@ impl Workspace {
             Some(i) => self.person_panel(ui, i, fam, labels),
             None => self.change_someone(ui, labels),
         }
+        if theme::keep_theme() {
+            // the app's shell keeps its own card's Advanced box (the seed, typed overrides)
+            ui.add_space(10.0);
+            egui::CollapsingHeader::new(RichText::new("Advanced").size(13.0)).id_salt("ped_advanced").default_open(false).show(ui, |ui| {
+                for key in ["seed", "changes"] {
+                    if let Some(pd) = pdefs.iter().find(|d| d.key == key) {
+                        param_control(ui, fig, pd, &mut self.params);
+                        ui.add_space(4.0);
+                    }
+                }
+                ui.label(theme::muted("Typed overrides are folded into the family the next time you change someone.").size(13.0));
+            });
+        }
         ui.add_space(18.0);
     }
 

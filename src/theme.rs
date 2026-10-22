@@ -178,7 +178,7 @@ thread_local! {
     static KEEP_THEME: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-fn keep_theme() -> bool {
+pub fn keep_theme() -> bool {
     KEEP_THEME.with(|c| c.get())
 }
 

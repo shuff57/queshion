@@ -182,6 +182,9 @@ pub fn paint_bio_doodles(ctx: &egui::Context, painter: &egui::Painter, rect: Rec
 pub fn section_icon(title: &str, math: bool) -> &'static str {
     let t = title.to_lowercase();
     let has = |ks: &[&str]| ks.iter().any(|k| t.contains(k));
+    if t == "faq" {
+        return ph::QUESTION;
+    }
     if math {
         // the math reference's own glyphs: arrow for Heights, tag for Labels, a turn for Position
         match t.as_str() {
@@ -452,6 +455,7 @@ pub fn dark_tip(ui: &Ui, resp: egui::Response, tip: &str) -> egui::Response {
 /// One square icon button (the preview toolbar): hover wash, disabled grey.
 pub fn icon_btn(ui: &mut Ui, glyph: &str, tip: &str, enabled: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(38.0), if enabled { Sense::click() } else { Sense::hover() });
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, tip));
     if ui.is_rect_visible(rect) {
         if enabled && resp.hovered() {
             ui.painter().rect_filled(rect, CornerRadius::same(10), theme::hover_bg());
@@ -471,6 +475,7 @@ pub fn lucide_btn(ui: &mut Ui, ops: &[lucide::Op], tip: &str, enabled: bool) -> 
     // a phone's buttons are 34.4 px
     let side = if ui.ctx().content_rect().width() < 500.0 { 34.4 } else { 38.4 };
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(side), if enabled { Sense::click() } else { Sense::hover() });
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, tip));
     if ui.is_rect_visible(rect) {
         if enabled && resp.hovered() {
             ui.painter().rect_filled(rect, CornerRadius::same(10), theme::hover_bg());
@@ -720,15 +725,18 @@ impl Workspace {
         let ctx = ui.ctx().clone();
         let mut act = Act::None;
         let have_svg = true;
-        let chem_subj = self.skin_subject() == figures::Subject::Chemistry;
-        let chem = chem_page(&ctx) || chem_subj || ctx.data(|d| d.get_temp::<bool>(egui::Id::new("bio_skin_page"))).unwrap_or(false) || ctx.data(|d| d.get_temp::<bool>(egui::Id::new("phys_skin_page"))).unwrap_or(false);
+        // the app's shell draws one toolbar for every subject (the math page's phosphor icons);
+        // the reference page skins keep their own
+        let shell = self.shell_panel();
+        let chem_subj = !shell && self.skin_subject() == figures::Subject::Chemistry;
+        let chem = !shell && (chem_page(&ctx) || chem_subj || ctx.data(|d| d.get_temp::<bool>(egui::Id::new("bio_skin_page"))).unwrap_or(false) || ctx.data(|d| d.get_temp::<bool>(egui::Id::new("phys_skin_page"))).unwrap_or(false));
         let narrow = ui.ctx().content_rect().width() < 500.0;
-        let bar = ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), if narrow { if self.skin_subject() == figures::Subject::Math { 48.0 } else { 46.0 } } else { 53.0 }), Layout::left_to_right(Align::Center), |ui| {
+        let bar = ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), if narrow { if shell || self.skin_subject() == figures::Subject::Math { 48.0 } else { 46.0 } } else { 53.0 }), Layout::left_to_right(Align::Center), |ui| {
             // a phone spreads the six icons evenly across the card, as the reference does
-            let phys_page = ctx.data(|d| d.get_temp::<bool>(egui::Id::new("phys_skin_page"))).unwrap_or(false);
+            let phys_page = !shell && ctx.data(|d| d.get_temp::<bool>(egui::Id::new("phys_skin_page"))).unwrap_or(false);
             let has_track = self.sel.is_some_and(|si| (super::reg()[si].params)().iter().any(|d| d.key == "label_size" && matches!(&d.kind, crate::figures::Kind::Choice(o) if o.len() == 3)));
             // the physics phone toolbar with no label-size track spreads its six icons edge to edge
-            let phys_spread = narrow && ((phys_page && !has_track) || chem_page(&ctx) || chem_subj);
+            let phys_spread = narrow && ((phys_page && !has_track) || (!shell && chem_page(&ctx)) || chem_subj);
             ui.spacing_mut().item_spacing.x = if phys_spread { (ui.available_width() - 11.6 - 6.0 * 34.4) / 5.0 } else if narrow && !chem { -0.8 } else if narrow && self.skin_subject() == figures::Subject::Biology { 2.6 } else if narrow { ((ui.available_width() - 20.0 - 6.0 * 38.0) / 5.0).max(2.0) } else if chem { 4.8 } else { 5.0 };
             ui.add_space(if phys_spread { 5.8 } else if narrow && !chem { 2.0 } else if narrow { 10.0 } else if chem { 7.2 } else { 10.0 });
             if tool_btn(ui, chem, lucide::COPY, ph::COPY, "Copy image", true).clicked() {
@@ -762,7 +770,7 @@ impl Workspace {
                     ui.close();
                 }
                 // this app's extras live here, so the toolbar itself matches the reference's
-                if !self.math_panel() {
+                if !shell {
                     ui.separator();
                     self.chem_extras(ui, &mut act);
                 }
@@ -798,7 +806,7 @@ impl Workspace {
         }
         let cur = self.params.s("label_size").to_string();
         let track = Rect::from_min_size(Pos2::new(ui.max_rect().right() - 7.0 - 110.0, bar.center().y - 17.0), Vec2::new(110.0, 34.0));
-        let wash = if theme::is_dark() { Color32::from_rgb(0x11, 0x16, 0x21) } else if chem_page(ui.ctx()) { Color32::from_rgb(0xf6, 0xf7, 0xfb) } else { Color32::from_rgb(0xf0, 0xf1, 0xf6) };
+        let wash = if self.shell_panel() { theme::field() } else if theme::is_dark() { Color32::from_rgb(0x11, 0x16, 0x21) } else if chem_page(ui.ctx()) { Color32::from_rgb(0xf6, 0xf7, 0xfb) } else { Color32::from_rgb(0xf0, 0xf1, 0xf6) };
         ui.painter().rect_filled(track, CornerRadius::same(10), wash);
         for (i, (name, px)) in [("Large", 20.0), ("Medium", 13.5), ("Small", 11.0)].into_iter().enumerate() {
             let cell = Rect::from_min_size(Pos2::new(track.left() + 3.0 + i as f32 * 34.7, track.top() + 3.0), Vec2::new(34.0, 28.0));
@@ -907,6 +915,7 @@ pub fn outline_button(ui: &mut Ui, text: &str, enabled: bool) -> egui::Response 
     };
     let bio_h = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("bio_skin_page"))).unwrap_or(false);
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), if bio_h { 39.2 } else { 40.0 }), if enabled { Sense::click() } else { Sense::hover() });
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &label));
     let hov = enabled && resp.hovered();
     let col = if enabled { blue_text() } else { blue_text().gamma_multiply(0.4) };
     let p = ui.painter();
@@ -979,6 +988,7 @@ pub fn dashed_chip(ui: &mut Ui, text: &str) -> egui::Response {
     let ig = p.layout_no_wrap(icon, theme::icon_font(is), blue_text());
     let w = g.size().x + if ph { 14.0 } else { ig.size().x } + gap + pad;
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, hh), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, g.text()));
     if resp.hovered() {
         p.rect_filled(rect, CornerRadius::same(19), theme::hover_bg());
     }
@@ -1034,7 +1044,7 @@ pub fn flat_header(ui: &mut Ui, title: &str, help: &str) {
     let col = if hov { blue_text() } else { theme::muted_col() };
     let p = ui.painter();
     if hov {
-        p.circle_filled(c + Vec2::new(0.4, 0.3), 13.6, Color32::from_rgb(239, 246, 255));
+        p.circle_filled(c + Vec2::new(0.4, 0.3), 13.6, theme::accent_faded());
     }
     p.circle_stroke(c + Vec2::new(0.4, 0.3), if bio { 6.0 } else { 6.5 }, Stroke::new(1.5, col));
     p.text(c + Vec2::new(0.4, -0.1), egui::Align2::CENTER_CENTER, "?", egui::FontId::new(11.0, theme::bold_family()), col);
@@ -1071,7 +1081,7 @@ pub fn help_dot(ui: &mut Ui, tip: &str) {
     let c = r.center();
     let p = ui.painter();
     if hov {
-        p.circle_filled(c, 11.0, Color32::from_rgb(239, 246, 255));
+        p.circle_filled(c, 11.0, theme::accent_faded());
     }
     p.circle_stroke(c, 7.5, Stroke::new(1.4, col));
     p.text(c + Vec2::new(0.0, -0.1), egui::Align2::CENTER_CENTER, "?", egui::FontId::new(11.0, theme::bold_family()), col);
@@ -1398,6 +1408,7 @@ pub fn fit_checkbox(ui: &mut Ui, on: &mut bool, label: &str) -> egui::Response {
         *on = !*on;
         resp.mark_changed();
     }
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *on, label));
     let b = Rect::from_min_size(Pos2::new(rect.left() + 4.0, rect.center().y - 8.5), Vec2::splat(17.0));
     if *on {
         ui.painter().rect_filled(b, CornerRadius::same(4), theme::accent_col());
@@ -1415,6 +1426,7 @@ pub fn fit_checkbox(ui: &mut Ui, on: &mut bool, label: &str) -> egui::Response {
 /// The biology page's "Fit now" button: a 76 x 28.5 px white pill with a pale blue border and bold blue text.
 pub fn fit_now_button(ui: &mut Ui) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(76.0, 28.5), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Fit now"));
     let p = ui.painter();
     p.rect(rect, CornerRadius::same(8), if resp.hovered() { theme::hover_bg() } else { theme::card() }, Stroke::new(1.0, pill_border()), egui::StrokeKind::Inside);
     p.text(rect.center(), egui::Align2::CENTER_CENTER, "Fit now", egui::FontId::new(13.76, theme::bold_family()), blue_text());
@@ -1457,13 +1469,15 @@ pub fn segmented_track(ui: &mut Ui, opts: &[&'static str], cur: &mut String) {
     if wrapped {
         ui.add_space(2.0);
     }
-    let wash = if theme::is_dark() { Color32::from_rgb(0x11, 0x16, 0x21) } else if chem { Color32::from_rgb(0xf6, 0xf7, 0xfb) } else { Color32::from_rgb(0xf0, 0xf1, 0xf6) };
+    // the app's shell keeps its own warm field colour (the reference's cool grey is its page skin's)
+    let wash = if theme::keep_theme() { theme::field() } else if theme::is_dark() { Color32::from_rgb(0x11, 0x16, 0x21) } else if chem { Color32::from_rgb(0xf6, 0xf7, 0xfb) } else { Color32::from_rgb(0xf0, 0xf1, 0xf6) };
     ui.painter().rect_filled(track, CornerRadius::same(trk_r), wash);
     let cell_w = (track.width() - 2.0 * pad) / n;
     for (i, o) in opts.iter().enumerate() {
         let cell = Rect::from_min_size(Pos2::new(track.left() + pad + i as f32 * cell_w, track.top() + pad), Vec2::new(cell_w, cell_h));
         let resp = ui.interact(cell, track_resp.id.with(i), Sense::click());
         let sel = cur == o;
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, sel, *o));
         if sel {
             let edge = if chem && !theme::is_dark() { Color32::from_rgb(0xee, 0xef, 0xf4) } else { theme::border() };
             ui.painter().rect(cell, CornerRadius::same(cell_r), theme::card(), Stroke::new(1.0, edge), egui::StrokeKind::Inside);

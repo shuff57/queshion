@@ -508,8 +508,8 @@ fn help_fab(ctx: &egui::Context, left: bool) {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("support@teacher.dev").family(theme::bold_family()).size(16.0).color(theme::ink()));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let chip = egui::Button::new(RichText::new(format!("{} Copy", egui_phosphor::regular::COPY)).family(theme::bold_family()).size(14.0).color(egui::Color32::from_rgb(29, 78, 216)))
-                                    .fill(egui::Color32::from_rgb(239, 246, 255))
+                                let chip = egui::Button::new(RichText::new(format!("{} Copy", egui_phosphor::regular::COPY)).family(theme::bold_family()).size(14.0).color(theme::accent_hover()))
+                                    .fill(theme::accent_faded())
                                     .corner_radius(CornerRadius::same(7))
                                     .min_size(Vec2::new(74.0, 32.0));
                                 if ui.add(chip).clicked() {
@@ -1387,6 +1387,9 @@ impl Workspace {
             if skin && !whole_chem && !math_hug {
                 // the icon toolbar sits above the figure inside the card (a physics phone's is 46 px)
                 card_h += if self.sel.is_some_and(|i| reg()[i].subject == figures::Subject::Physics) { 46.0 } else { 54.0 };
+            } else if !skin && generated && self.shell_panel() {
+                // the shell's icon toolbar (48 px on a phone, 53 wider, plus its rule) sits above the figure
+                card_h += if ctx.content_rect().width() < 500.0 { 50.0 } else { 55.0 };
             }
             // the math reference leaves 16 px under its header on a phone; ours 11
             let math_top = if skin && self.sel.is_some_and(|i| matches!(reg()[i].subject, figures::Subject::Math | figures::Subject::Physics)) { 5.0 } else { 0.0 };
@@ -1413,16 +1416,17 @@ impl Workspace {
             // the reference's chemistry sheet is 994 px wide at 1440 (its canvas starts 425 px from
             // the left and ends 21 px from the right); ours borrows the scrollbar gutter and a
             // slimmer controls column so the whole-canvas figures fit at the same scale
-            let chem_wide = generated && !self.modal && self.sel.is_some_and(|i| reg()[i].subject == figures::Subject::Chemistry);
+            let shell = generated && self.shell_panel();
+            let chem_wide = !shell && generated && !self.modal && self.sel.is_some_and(|i| reg()[i].subject == figures::Subject::Chemistry);
             let math_fig = generated && !self.modal && self.sel.is_some_and(|i| reg()[i].subject == figures::Subject::Math);
             // the math reference's controls column is 377 px; ours gives up part of that to the rail
-            let ctrl_w = if chem_wide { 274.0 } else if math_fig { if self.sel.is_some_and(|i| reg()[i].id == "composite-shape") { 340.0 } else { 366.0 } } else { 290.0 };
+            let ctrl_w = if shell { 366.0 } else if chem_wide { 274.0 } else if math_fig && self.sel.is_some_and(|i| reg()[i].id == "composite-shape") { 340.0 } else { 290.0 };
             ui.horizontal_top(|ui| {
                 if generated {
                     ui.allocate_ui(Vec2::new(ctrl_w, avail_h), |ui| {
                         ui.set_width(ctrl_w);
                         // the reference sets its controls in white rounded cards on the page
-                        if math_fig && self.math_panel() {
+                        if shell {
                             // the math reference's cards sit straight on the page, no outer card
                             ui.set_width(ctrl_w);
                             self.controls(ui, avail_h);
@@ -1481,7 +1485,7 @@ impl Workspace {
                     Err(e) => Act::Toast(e, true),
                 };
             }
-            let mt = generated && self.math_toolbar();
+            let mt = generated && self.shell_panel();
             if !mt && ghost(ui, "Export PNG").clicked() {
                 act = self.export(false);
             }
@@ -2050,10 +2054,11 @@ impl Workspace {
 
     /// The white frame holding the figure preview (or its spinner / error).
     fn canvas_card(&mut self, ui: &mut Ui, w: f32, h: f32, generated: bool, preview: Option<&TextureHandle>) {
-        let skin = (theme::chem_skin() && generated && self.chem_open()) || (generated && self.math_toolbar());
+        let shell = generated && self.shell_panel();
+        let skin = (theme::chem_skin() && generated && self.chem_open()) || shell;
         let rr = ui.allocate_ui_with_layout(Vec2::new(w, h), if skin { Layout::top_down(Align::Min) } else { *ui.layout() }, |ui| {
             let fr = Frame::new()
-                .fill(if skin && !self.math_toolbar() { theme::card() } else { egui::Color32::WHITE })
+                .fill(if skin && !shell { theme::card() } else { egui::Color32::WHITE })
                 .stroke(Stroke::new(1.0, theme::border()))
                 .corner_radius(CornerRadius::same(crate::kit::R_CARD))
                 .inner_margin(if skin { Margin::ZERO } else { Margin::same(10) })
@@ -2149,24 +2154,19 @@ impl Workspace {
         let _ = rr;
     }
 
-    /// A math figure's controls column wears the reference's card look inside the app's own shell
-    /// (the page skins are off, see `chem_shell::SITE_SKINS`).
-    fn math_panel_sel(&self) -> bool {
-        self.sel.is_some_and(|i| reg()[i].subject == figures::Subject::Math)
-    }
-
-    /// A math figure in the app's shell carries the reference's icon toolbar above its preview
-    /// (copy, PNG, SVG, share | undo, redo | label size); the bottom row keeps the app's extras.
-    fn math_toolbar(&self) -> bool {
-        self.math_panel() && self.sel.is_some_and(|i| reg()[i].id != "composite-shape")
-    }
-
-    fn math_panel(&self) -> bool {
-        !theme::chem_skin() && !self.modal && self.imp.is_none() && self.sel.is_some_and(|i| reg()[i].subject == figures::Subject::Math && reg()[i].id != "composite-shape")
+    /// Every generated figure in the standalone editor (all subjects; the composite shape keeps its
+    /// own canvas layout) wears the page shell layout in the app's own theme: white cards for the
+    /// controls column, section rows with icon tiles, the icon toolbar above the preview and a
+    /// slimmer bottom row. The insert-figure dialog and imported pictures keep the plain layout.
+    /// Checks `chem_open` rather than `theme::chem_skin`, so it reads the same inside the panel's
+    /// `with_shell_layout` scope (the page skins themselves are off, see `chem_shell::SITE_SKINS`).
+    pub(super) fn shell_panel(&self) -> bool {
+        !self.chem_open() && !self.modal && self.imp.is_none() && self.sel.is_some_and(|i| reg()[i].id != "composite-shape")
     }
 
     fn controls(&mut self, ui: &mut Ui, max_h: f32) {
-        if self.math_panel() {
+        if self.shell_panel() {
+            // the shell's section rows take the math reference's offsets and chevron (one look for every subject)
             let flag = egui::Id::new("math_skin_page");
             ui.ctx().data_mut(|d| d.insert_temp(flag, true));
             theme::with_shell_layout(ui, |ui| self.controls_inner(ui, max_h));
@@ -2180,7 +2180,9 @@ impl Workspace {
         let Some(si) = self.sel else { return };
         let def = &reg()[si];
         let pdefs = (def.params)();
-        let skin = theme::chem_skin() && (self.chem_open() || def.subject == figures::Subject::Math);
+        let skin = theme::chem_skin() && (self.chem_open() || self.shell_panel());
+        // the app's own shell (one look for every subject), not a reference page skin
+        let shell = skin && self.shell_panel();
         ui.vertical(|ui| {
             if !skin {
                 ui.label(theme::muted(if def.subject == figures::Subject::Math { figures::chemistry::skin_intro(def.id).unwrap_or(def.blurb) } else { def.blurb }).size(12.0));
@@ -2204,6 +2206,8 @@ impl Workspace {
                     // free-body / vector / particle chips sit inside their item cards
                     let chips = figures::chips_for(def.id).filter(|_| !figures::cards::embeds_chips(def.id) && def.id != "inclined-plane");
                     let classic_in_chips = chips.as_ref().is_some_and(|c| c.count_key.is_empty());
+                    // the shell's first section row opens the card unless a card of controls sits above it
+                    let mut first_row = figures::measures_for(def.id).is_none() && chips.is_none() && def.id != "pedigree";
                     if let Some(card) = chips {
                         self.chips_card(ui, def.id, &pdefs, &card);
                     }
@@ -2258,7 +2262,7 @@ impl Workspace {
                         let summary = (skin || def.subject == figures::Subject::Physics || matches!(def.id, "triangle" | "rectangle" | "parallelogram" | "trapezoid" | "kite" | "regular-polygon")).then(|| figures::chemistry::skin_summary_in(def.id, &sec.title, &self.params, skin_phys)).flatten().or_else(|| sec.items.iter().find_map(|&i| figures::cards::summary(def.id, pdefs[i].key, &self.params))).or_else(|| if def.id == "population-growth" { figures::biology::popdyn::growth_section_summary(&sec.title, &self.params) } else { None }).or_else(|| if def.id == "pedigree" { figures::biology::pedigree::section_summary(&sec.title, &self.params) } else { None }).or_else(|| if def.id == "titration-curve" { figures::chemistry::tit_section_summary(&sec.title, &self.params) } else { None }).unwrap_or_else(|| section_summary(&pdefs, &self.params, &relevant));
                         let mut reset = false;
                         let (mut reset_labels, mut straighten) = (false, false);
-                        let mut st = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, if skin { (def.id == "population-growth" && sec.title == "Graphs") || (def.id == "gel-electrophoresis" && si_ == 1) || (si_ == 0 && def.subject != figures::Subject::Physics && def.id != "pedigree" && !(def.subject == figures::Subject::Math && (figures::measures_for(def.id).is_some() || figures::rows_for(def.id).is_some()))) || sec.title.to_lowercase().contains("reading") } else { si_ < open_sections(def.id) });
+                        let mut st = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, if skin { (def.id == "population-growth" && sec.title == "Graphs") || (def.id == "gel-electrophoresis" && si_ == 1) || (si_ == 0 && def.subject != figures::Subject::Physics && def.id != "pedigree" && !((shell || def.subject == figures::Subject::Math) && (figures::measures_for(def.id).is_some() || figures::rows_for(def.id).is_some()))) || sec.title.to_lowercase().contains("reading") } else { si_ < open_sections(def.id) });
                         let mut body = |ui: &mut Ui| {
                                 // the chemistry page's blocks sit 12 px apart (5.2 px item spacing plus this), number rows 9.6
                                 let chem_pg = def.subject == figures::Subject::Chemistry;
@@ -2448,12 +2452,14 @@ impl Workspace {
                             let open = st.is_open();
                             // the chemistry rows butt against each other
                             let gap_y = ui.spacing().item_spacing.y;
-                            if matches!(def.subject, figures::Subject::Chemistry | figures::Subject::Physics) {
+                            if !shell && matches!(def.subject, figures::Subject::Chemistry | figures::Subject::Physics) {
                                 ui.spacing_mut().item_spacing.y = 0.0;
                             }
-                            if matches!(def.subject, figures::Subject::Biology | figures::Subject::Physics) && si_ == 0 {
+                            // a row that opens its card sits flush on the card's top edge (no rule of its own)
+                            if (!shell && matches!(def.subject, figures::Subject::Biology | figures::Subject::Physics) && si_ == 0) || (shell && first_row) {
                                 ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("chem_first_row"), true));
                             }
+                            first_row = false;
                             let resp = chem_shell::section_header(ui, &sec.title, &summary, open);
                             ui.spacing_mut().item_spacing.y = gap_y;
                             if resp.clicked() {
@@ -2461,7 +2467,7 @@ impl Workspace {
                             }
                             st.show_body_unindented(ui, |ui| {
                                 Frame::new().inner_margin(Margin::symmetric(18, 0)).show(ui, |ui| {
-                                    ui.add_space(if def.subject == figures::Subject::Chemistry { 3.0 } else if def.id == "punnett-square" { 5.5 } else if def.subject == figures::Subject::Biology { if si_ == 0 { -5.0 } else { -1.0 } } else { 2.0 });
+                                    ui.add_space(if shell && def.id != "punnett-square" { 2.0 } else if def.subject == figures::Subject::Chemistry { 3.0 } else if def.id == "punnett-square" { 5.5 } else if def.subject == figures::Subject::Biology { if si_ == 0 { -5.0 } else { -1.0 } } else { 2.0 });
                                     body(ui);
                                 });
                             });
@@ -2520,18 +2526,20 @@ impl Workspace {
                 ui.spacing_mut().scroll.fade.strength = 0.0;
                 ScrollArea::vertical().id_salt("figs_controls").max_height(max_h).auto_shrink([false, false]).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 10.0;
-                    let chem_page = def.subject == figures::Subject::Chemistry;
+                    // the shell sets every subject's intro card and gaps as the math page does; the
+                    // reference page skins keep their own
+                    let chem_page = !shell && def.subject == figures::Subject::Chemistry;
                     if chem_page && ui.ctx().content_rect().width() >= 880.0 {
                         // the reference's side panel starts 2 px lower than ours did
                         ui.add_space(2.0);
                     }
-                    let bio_page = def.subject == figures::Subject::Biology;
-                    let phys_page = def.subject == figures::Subject::Physics;
+                    let bio_page = !shell && def.subject == figures::Subject::Biology;
+                    let phys_page = !shell && def.subject == figures::Subject::Physics;
                     if bio_page {
                         ui.add_space(2.0);
                     }
                     chem_shell::panel_card_m(ui, if chem_page { Margin { left: 18, right: 18, top: 17, bottom: 16 } } else if bio_page || phys_page { Margin { left: 18, right: 18, top: 17, bottom: 16 } } else { Margin::same(18) }, |ui| {
-                        let intro = RichText::new(figures::chemistry::skin_intro_in(def.id, skin_phys).unwrap_or(def.blurb)).size(if def.subject == figures::Subject::Math { 14.5 } else if chem_page || bio_page || phys_page { 14.72 } else { 15.0 }).color(theme::ink());
+                        let intro = RichText::new(figures::chemistry::skin_intro_in(def.id, skin_phys).unwrap_or(def.blurb)).size(if shell || def.subject == figures::Subject::Math { 14.5 } else if chem_page || bio_page || phys_page { 14.72 } else { 15.0 }).color(theme::ink());
                         // the chemistry page sets its lead at 1.5 line height
                         ui.label(if chem_page { intro.line_height(Some(22.0)) } else if bio_page { intro.line_height(Some(22.08)) } else if phys_page { intro.line_height(Some(22.0)) } else { intro });
                         ui.add_space(if chem_page { 2.0 } else if bio_page { 1.9 } else if phys_page { 2.0 } else { 4.0 });
@@ -2541,7 +2549,9 @@ impl Workspace {
                         }
                     });
                     ui.add_space(if chem_page && !matches!(def.id, "titration-curve" | "heating-cooling-curve" | "mass-spectrum") { 5.0 } else if chem_page || bio_page || phys_page { 6.0 } else { 5.0 });
-                    if (chem_page && matches!(def.id, "titration-curve" | "heating-cooling-curve" | "mass-spectrum")) || (skin && def.id == "punnett-square") || (skin && def.subject == figures::Subject::Math && def.id != "composite-shape" && figures::rows_for(def.id).is_some()) {
+                    // (these flat first sections close their card with `mark_split`, whatever the skin)
+                    let chem_fig = def.subject == figures::Subject::Chemistry;
+                    if (chem_fig && matches!(def.id, "titration-curve" | "heating-cooling-curve" | "mass-spectrum")) || (skin && def.id == "punnett-square") || (skin && def.id != "composite-shape" && figures::rows_for(def.id).is_some()) {
                         // the reference's flat first section is a card of its own, the collapsible ones a second
                         chem_shell::split_cards(ui, |ui| {
                             ui.spacing_mut().item_spacing.y = 6.0;
@@ -2553,11 +2563,15 @@ impl Workspace {
                             content(ui);
                         });
                     }
-                    if matches!(def.subject, figures::Subject::Physics | figures::Subject::Chemistry | figures::Subject::Biology | figures::Subject::Math) {
+                    if shell || matches!(def.subject, figures::Subject::Physics | figures::Subject::Chemistry | figures::Subject::Biology | figures::Subject::Math) {
                         ui.add_space(if chem_page || phys_page { 6.0 } else { 7.0 });
                         preset_apply = preset_card(ui, def, &params_now);
                     }
-                    if !matches!(def.subject, figures::Subject::Chemistry | figures::Subject::Biology | figures::Subject::Math | figures::Subject::Physics) {
+                    if shell {
+                        // the FAQ closes the column in a card of its own
+                        ui.add_space(7.0);
+                        faq_card(ui, def.id);
+                    } else if !matches!(def.subject, figures::Subject::Chemistry | figures::Subject::Biology | figures::Subject::Math | figures::Subject::Physics) {
                         ui.add_space(4.0);
                         if ui.add(Button::new(theme::muted("Reset all").size(13.0)).frame(false)).clicked() {
                             reset_all = true;
@@ -2611,7 +2625,7 @@ impl Workspace {
                 }
             }
             if let Some((head, working)) = figures::chemistry::mass_spectrum_info(&self.params) {
-                Frame::new().fill(if theme::is_dark() { egui::Color32::from_rgb(0x1a, 0x25, 0x3d) } else { egui::Color32::from_rgb(0xe8, 0xf1, 0xfd) }).corner_radius(CornerRadius::same(10)).inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
+                Frame::new().fill(if theme::keep_theme() { theme::accent_faded() } else if theme::is_dark() { egui::Color32::from_rgb(0x1a, 0x25, 0x3d) } else { egui::Color32::from_rgb(0xe8, 0xf1, 0xfd) }).corner_radius(CornerRadius::same(10)).inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.spacing_mut().item_spacing.y = 5.0;
                     ui.label(theme::strong(head.as_str()).size(13.5));
@@ -2690,7 +2704,7 @@ impl Workspace {
         let mut extra: usize = ui.data(|d| d.get_temp(extra_id)).unwrap_or(0);
         // the math pages draw this flat inside the first card (letter-spaced title, a "?" circle,
         // 44 px rows, a dashed Add pill); the card is closed under it by `mark_split`
-        let skin = theme::chem_skin() && (self.chem_open() || self.math_panel_sel()) && self.sel.is_some_and(|i| reg()[i].subject == figures::Subject::Math);
+        let skin = theme::chem_skin() && (self.chem_open() || self.shell_panel());
         let add_text = format!("{}  {}", egui_phosphor::regular::PLUS, card.add_label);
         let fr = if skin { Frame::new().inner_margin(Margin::symmetric(18, 0)) } else { Frame::new().fill(theme::card()).stroke(Stroke::new(1.0, theme::border())).corner_radius(CornerRadius::same(12)).inner_margin(Margin::same(10)) };
         if skin {
@@ -2799,29 +2813,40 @@ impl Workspace {
     /// "Add a force" chips: each appends one preset item and bumps the count.
     fn chips_card(&mut self, ui: &mut Ui, fig: &str, pdefs: &[ParamDef], card: &figures::ChipsCard) {
         let n = self.params.i(card.count_key);
+        // the shell sets it as the Measures card: letter-spaced title, outlined chips
+        let skin = theme::chem_skin();
         Frame::new()
             .fill(theme::card())
             .stroke(Stroke::new(1.0, theme::border()))
             .corner_radius(CornerRadius::same(12))
-            .inner_margin(Margin::same(10))
+            .inner_margin(if skin { Margin { left: 18, right: 18, top: 13, bottom: 13 } } else { Margin::same(10) })
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    crate::kit::small_caps(ui, card.title);
+                    if skin {
+                        ui.label(RichText::new(card.title.to_uppercase().chars().flat_map(|c| [c, '\u{200A}']).collect::<String>()).family(theme::bold_family()).size(12.5).color(theme::muted_col()));
+                    } else {
+                        crate::kit::small_caps(ui, card.title);
+                    }
                     if !card.count_key.is_empty() {
-                        ui.label(theme::muted(format!("{n} of {}", card.max)).size(11.0));
+                        ui.label(theme::muted(format!("{n} of {}", card.max)).size(if skin { 13.0 } else { 11.0 }));
                     }
                 });
-                ui.add_space(4.0);
+                ui.add_space(if skin { 6.0 } else { 4.0 });
                 let slotted = !card.count_key.is_empty();
                 let full = slotted && n >= card.max;
                 ui.horizontal_wrapped(|ui| {
+                    if skin {
+                        ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
+                    }
                     for chip in &card.chips {
-                        if ui.add_enabled(!full, Button::new(RichText::new(format!("+ {}", chip.label)).size(12.0)).corner_radius(CornerRadius::same(10))).clicked() {
+                        let label = format!("+ {}", chip.label);
+                        let r = if skin { ui.add_enabled_ui(!full, |ui| chem_shell::outline_chip(ui, &label)).inner } else { ui.add_enabled(!full, Button::new(RichText::new(label).size(12.0)).corner_radius(CornerRadius::same(10))) };
+                        if r.clicked() {
                             apply_chip(&mut self.params, pdefs, card, chip);
                         }
                     }
-                    if slotted && n > 1 && ui.add(Button::new(theme::muted("Remove the last").size(12.0)).frame(false)).clicked() {
+                    if slotted && n > 1 && ui.add(Button::new(theme::muted("Remove the last").size(if skin { 13.0 } else { 12.0 })).frame(false)).clicked() {
                         self.params.set_i(card.count_key, n - 1);
                     }
                 });
@@ -3221,28 +3246,64 @@ fn faq_section(ui: &mut Ui, fig: &str) {
                 ui.label(theme::muted(format!("{} questions about this figure", faq.len())).size(11.0));
             });
         })
-        .body(|ui| {
-            // questions wrap inside the panel (a collapsing header's title would widen it)
-            for (i, e) in faq.iter().enumerate() {
-                let qid = ui.make_persistent_id(("fig_faq_q", fig, i));
-                let open = ui.data(|d| d.get_temp::<bool>(qid)).unwrap_or(qa && i == 0);
-                let q = format!("{} {}", if open { "\u{25be}" } else { "\u{25b8}" }, e.q);
-                let r = ui.add(egui::Label::new(RichText::new(q).size(12.0).strong()).wrap().sense(Sense::click()));
-                if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                    ui.data_mut(|d| d.insert_temp(qid, !open));
-                }
-                if open {
-                    ui.indent(qid, |ui| {
-                        ui.add(egui::Label::new(RichText::new(e.a).size(12.0).color(theme::muted_col())).wrap());
-                    });
-                }
-                ui.add_space(4.0);
-            }
-            ui.add_space(4.0);
-            if qa {
-                ui.scroll_to_cursor(Some(Align::BOTTOM));
-            }
+        .body(|ui| faq_list(ui, fig, None, qa));
+}
+
+/// The FAQ's questions, each opening its answer; they wrap inside the panel (a collapsing
+/// header's title would widen it). `shell` is the shell card's (question, answer) text size.
+fn faq_list(ui: &mut Ui, fig: &str, shell: Option<(f32, f32)>, qa: bool) {
+    let size = shell.unwrap_or((12.0, 12.0));
+    let faq = figures::faq::faq_for(fig);
+    for (i, e) in faq.iter().enumerate() {
+        let qid = ui.make_persistent_id(("fig_faq_q", fig, i));
+        let open = ui.data(|d| d.get_temp::<bool>(qid)).unwrap_or(qa && i == 0);
+        let q = format!("{} {}", if open { "\u{25be}" } else { "\u{25b8}" }, e.q);
+        let q = if shell.is_some() { RichText::new(q).size(size.0).family(theme::bold_family()).color(theme::ink()) } else { RichText::new(q).size(size.0).strong() };
+        let r = ui.add(egui::Label::new(q).wrap().sense(Sense::click()));
+        if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            ui.data_mut(|d| d.insert_temp(qid, !open));
+        }
+        if open {
+            ui.indent(qid, |ui| {
+                ui.add(egui::Label::new(RichText::new(e.a).size(size.1).color(theme::muted_col())).wrap());
+            });
+        }
+        ui.add_space(4.0);
+    }
+    ui.add_space(4.0);
+    if qa {
+        ui.scroll_to_cursor(Some(Align::BOTTOM));
+    }
+}
+
+/// The shell's FAQ: a card of its own at the foot of the controls column, one section row
+/// ("FAQ", how many questions) that opens the questions.
+fn faq_card(ui: &mut Ui, fig: &str) {
+    let n = figures::faq::faq_for(fig).len();
+    if n == 0 {
+        return;
+    }
+    let id = ui.make_persistent_id(("fig_faq", fig));
+    // QA hook: VERSHION_FIG_FAQ=1 opens the FAQ and its first answer and scrolls them into view
+    let qa = crate::env_var("VERSHION_FIG_FAQ").is_ok_and(|v| v == "1");
+    let mut st = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, qa);
+    chem_shell::panel_card(ui, 0, |ui| {
+        let gap_y = ui.spacing().item_spacing.y;
+        ui.spacing_mut().item_spacing.y = 0.0;
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("chem_first_row"), true));
+        let resp = chem_shell::section_header(ui, "FAQ", &format!("{n} questions about this figure"), st.is_open());
+        ui.spacing_mut().item_spacing.y = gap_y;
+        if resp.clicked() {
+            st.toggle(ui);
+        }
+        st.show_body_unindented(ui, |ui| {
+            Frame::new().inner_margin(Margin { left: 18, right: 18, top: 2, bottom: 10 }).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 6.0;
+                faq_list(ui, fig, Some((14.0, 13.5)), qa);
+            });
         });
+        st.store(ui.ctx());
+    });
 }
 
 fn ghost(ui: &mut Ui, label: &str) -> egui::Response {
@@ -5576,7 +5637,8 @@ mod tests {
     #[test]
     fn pedigree_sections_start_collapsed() {
         let (ctx, mut ws) = open_tall("pedigree");
-        assert_eq!(count_text(&ctx, &mut ws, "Symbols"), 1, "the header is there");
+        // the shell's section row is a button labelled with its title
+        assert_eq!(count_named(&ctx, &mut ws, "Symbols"), 1, "the header is there");
         assert_eq!(count_text(&ctx, &mut ws, "Carriers"), 0, "Symbols starts collapsed");
         assert_eq!(count_text(&ctx, &mut ws, "Key"), 0, "Labels starts collapsed");
         open_section(&ctx, &mut ws, "Symbols");
@@ -5585,11 +5647,19 @@ mod tests {
     }
 
     /// A section header's summary wraps short of its Reset button instead of running under it
-    /// (motion-graphs segment summaries are long).
+    /// (motion-graphs segment summaries are long). The plain headers with Reset are the insert-figure
+    /// dialog's; the editor's shell rows cut their summary to one line short of the chevron.
     #[test]
     fn section_summaries_never_run_under_reset() {
         for id in ["motion-graphs", "pulley", "free-body-diagram"] {
-            let (ctx, mut ws) = open_tall(id);
+            let ctx = egui::Context::default();
+            theme::setup(&ctx);
+            ctx.enable_accesskit();
+            let mut ws = Workspace::new(true);
+            ws.select(find_def(id).unwrap().0);
+            for _ in 0..3 {
+                tall_frame(&ctx, &mut ws, vec![]);
+            }
             let out = tall_frame(&ctx, &mut ws, vec![]);
             let tree = out.platform_output.accesskit_update.expect("accesskit tree");
             let resets: Vec<_> = tree.nodes.iter().filter(|(_, nd)| nd.label().is_some_and(|l| l == "Reset")).filter_map(|(_, nd)| nd.bounds()).filter(|b| b.x0 < 700.0).collect();
@@ -5632,7 +5702,7 @@ mod tests {
         assert_eq!(gel::current_setup(&ws.params), None, "editing a setup's lanes copies them into the text");
         click_nth(&ctx, &mut ws, egui_phosphor::regular::ARROW_RIGHT, 0); // Ladder moves right of Crime scene
         assert_eq!(gel::lane_cards(&ws.params)[1].label, "Ladder");
-        click_nth(&ctx, &mut ws, egui_phosphor::regular::X, 0); // remove the first lane (now Crime scene)
+        click_nth(&ctx, &mut ws, egui_phosphor::regular::TRASH, 0); // remove the first lane (now Crime scene)
         let lanes = gel::lane_cards(&ws.params);
         assert_eq!(lanes.iter().map(|l| l.label.as_str()).collect::<Vec<_>>(), ["Ladder", "Suspect 1", "Suspect 2", "Suspect 3", "Ladder"]);
         for _ in 0..3 {
@@ -5675,9 +5745,9 @@ mod tests {
         assert_eq!(count_named(&ctx, &mut ws, "Up"), 2);
         click_nth(&ctx, &mut ws, "Left", 0);
         assert_eq!(ws.params.f("f1_ang"), 180.0);
-        click_nth(&ctx, &mut ws, "+ Friction", 0);
+        click_nth(&ctx, &mut ws, &format!("{}Friction", egui_phosphor::regular::PLUS), 0);
         assert_eq!((ws.params.i("n"), ws.params.s("f3_lab")), (3, "F_f"));
-        click_nth(&ctx, &mut ws, egui_phosphor::regular::X, 0); // delete force 1: the others move up
+        click_nth(&ctx, &mut ws, "Remove", 0); // delete force 1: the others move up
         assert_eq!((ws.params.i("n"), ws.params.s("f1_lab"), ws.params.s("f2_lab")), (2, "F_N", "F_f"));
         ws.step_history(true);
         assert_eq!((ws.params.i("n"), ws.params.s("f1_lab")), (3, "F_g"));
@@ -5698,11 +5768,11 @@ mod tests {
     fn vector_cards_in_the_panel() {
         let (ctx, mut ws) = open_tall("vector-diagram");
         open_section(&ctx, &mut ws, "Vectors");
-        click_nth(&ctx, &mut ws, "+ Add a vector", 0);
+        click_nth(&ctx, &mut ws, &format!("{}Add a vector", egui_phosphor::regular::PLUS), 0);
         assert_eq!(ws.params.i("n"), 3);
         click_nth(&ctx, &mut ws, egui_phosphor::regular::ARROW_DOWN, 0); // A after B
         assert_eq!((ws.params.s("v1_lab"), ws.params.s("v2_lab")), ("B", "A"));
-        click_nth(&ctx, &mut ws, egui_phosphor::regular::X, 1); // remove the second (A)
+        click_nth(&ctx, &mut ws, "Remove", 1); // remove the second (A)
         assert_eq!((ws.params.i("n"), ws.params.s("v1_lab"), ws.params.s("v2_lab")), (2, "B", "C"));
     }
 
@@ -5757,6 +5827,7 @@ mod tests {
     fn particle_kind_cards_in_the_panel() {
         use crate::figures::chemistry::atoms;
         let (ctx, mut ws) = open_tall("particle-diagram");
+        open_section(&ctx, &mut ws, "Particles");
         assert_eq!(count_named(&ctx, &mut ws, "XL"), 2);
         click_nth(&ctx, &mut ws, "+ Add a kind", 0);
         assert!(atoms::kind_used(&ws.params, 2));
