@@ -3060,8 +3060,8 @@ const PERSPECTIVE_GRID: &[Faq] = &[
         a: "On, a box is drawn on the guides. Off, only the horizon, the vanishing points and the guide lines are shown, for students to draw on.",
     },
     Faq {
-        q: "Can I get more guide lines?",
-        a: "Yes, raise the number of guide lines from each vanishing point, up to 24.",
+        q: "Can I move and resize the box?",
+        a: "Yes: size, position across, position down from the horizon and depth. Only the faces you could really see are drawn, so a box that straddles the horizon shows no top or bottom.",
     },
 ];
 
@@ -3079,8 +3079,8 @@ const MASLOW: &[Faq] = &[
         a: "On, each band is named. Off, the bands are empty and the examples beside them remain, for students to match.",
     },
     Faq {
-        q: "Why are the top bands cut flat?",
-        a: "The pyramid is truncated so the top level's name still fits.",
+        q: "Where do names go when a band is too narrow?",
+        a: "Beside the pyramid, on the left, with a short line to the band. The bands near the top are narrow.",
     },
 ];
 
@@ -3106,11 +3106,11 @@ const BRAIN_REGIONS: &[Faq] = &[
 const EXPERIMENT_FLOW: &[Faq] = &[
     Faq {
         q: "What does the diagram show?",
-        a: "A controlled experiment: a sample is randomly split into a treatment group and a control group, both are measured and the results compared.",
+        a: "A controlled experiment: a sample is randomly split into treatment groups and a control group, all are measured and the results compared.",
     },
     Faq {
         q: "What goes in the boxes?",
-        a: "Your sample, what each group gets, and what is measured. The teacher's text fills the boxes; the roles are the answers.",
+        a: "Your sample, what each group gets (2 to 4 groups, the control group last) and what is measured. Your text fills the boxes; the roles are the answers.",
     },
     Faq {
         q: "What does Show answers do?",

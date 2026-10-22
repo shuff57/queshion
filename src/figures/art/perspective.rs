@@ -26,6 +26,8 @@ pub fn examples(id: &str) -> Option<Vec<Example>> {
             Example { name: "One-point", params: vec![] },
             Example { name: "Two-point", params: vec![("kind", s(KINDS[1]))] },
             Example { name: "High horizon (looking down)", params: vec![("horizon", Value::F(30.0))] },
+            Example { name: "A box above the horizon", params: vec![("down", Value::F(-30.0)), ("across", Value::F(25.0))] },
+            Example { name: "Two-point, a tall box", params: vec![("kind", s(KINDS[1])), ("size", Value::F(40.0)), ("down", Value::F(-5.0))] },
             Example { name: "Blank for students", params: vec![("show_answers", Value::B(false))] },
         ],
         _ => return None,
@@ -37,6 +39,10 @@ fn params() -> Vec<ParamDef> {
         ParamDef::choice("kind", "Kind of perspective", &KINDS, KINDS[0]),
         ParamDef::float("horizon", "Horizon height (% from the top)", 15.0, 85.0, 1.0, 45.0),
         ParamDef::int("rays", "Guide lines from each vanishing point", 4, 24, 12),
+        ParamDef::float("size", "Box size (% of the height)", 8.0, 50.0, 1.0, 26.0),
+        ParamDef::float("across", "Box position across (% from the middle)", -40.0, 40.0, 1.0, -20.0),
+        ParamDef::float("down", "Box position down (% from the horizon, below +, above -)", -40.0, 40.0, 1.0, 14.0),
+        ParamDef::float("depth", "Box depth (how far it recedes, %)", 10.0, 70.0, 1.0, 40.0),
         ParamDef::text("title", "Title", ""),
         svg::style_param(),
         svg::label_size_param(),
@@ -102,27 +108,44 @@ fn render(p: &Params) -> String {
     }
     if answers {
         let (fill_t, fill_l, fill_r) = if print { ("#f4f4f4", "#d6d6d6", "#b4b4b4") } else { ("#f6d8a8", "#e3b974", "#c99a4e") };
+        let num = |k: &str, lo: f64, hi: f64, dflt: f64| { let v = p.f(k); if v.is_finite() { v.clamp(lo, hi) } else { dflt } };
+        let size = fh * num("size", 8.0, 50.0, 26.0) / 100.0;
+        let across = fw * num("across", -40.0, 40.0, -20.0) / 100.0;
+        let down = fh * num("down", -40.0, 40.0, 14.0) / 100.0;
+        let depth = num("depth", 10.0, 70.0, 40.0) / 100.0;
         if !two {
             let vp = vps[0];
-            // a box below and left of the horizon: front face a square, back face smaller
-            let (s, fx, fy) = (fh * 0.28, vp.0 - fw * 0.22, hy + fh * 0.12);
-            let front = [(fx, fy), (fx + s, fy), (fx + s, fy + s), (fx, fy + s)];
-            let back: Vec<(f64, f64)> = front.iter().map(|q| toward(*q, vp, 0.42)).collect();
-            d.poly(&[front[0], front[1], back[1], back[0]], fill_t, INK, 2.0);
-            d.poly(&[front[1], front[2], back[2], back[1]], fill_r, INK, 2.0);
+            let (fx, fy) = (vp.0 + across - size / 2.0, hy + down - size / 2.0);
+            let front = [(fx, fy), (fx + size, fy), (fx + size, fy + size), (fx, fy + size)];
+            let back: Vec<(f64, f64)> = front.iter().map(|q| toward(*q, vp, depth)).collect();
+            // only the faces that point towards the viewer: the side facing the vanishing point's side
+            // of the box, and the top or bottom facing the horizon
+            if fy > hy {
+                d.poly(&[front[0], front[1], back[1], back[0]], fill_t, INK, 2.0);
+            } else if fy + size < hy {
+                d.poly(&[front[3], front[2], back[2], back[3]], fill_t, INK, 2.0);
+            }
+            if fx + size < vp.0 {
+                d.poly(&[front[1], front[2], back[2], back[1]], fill_r, INK, 2.0);
+            } else if fx > vp.0 {
+                d.poly(&[front[0], front[3], back[3], back[0]], fill_r, INK, 2.0);
+            }
             d.poly(&front, fill_l, INK, 2.2);
         } else {
             let (l, r) = (vps[0], vps[1]);
-            let cx = x0 + fw * 0.5;
-            let (yt, yb) = (hy + fh * 0.08, hy + fh * 0.30);
+            let cx = x0 + fw * 0.5 + across * 0.6;
+            let (yt, yb) = (hy + down - size / 2.0, hy + down + size / 2.0);
             let (t_f, t_b) = ((cx, yt), (cx, yb));
-            let k = 0.40;
-            let lt = toward(t_f, l, k);
-            let lb = toward(t_b, l, k);
-            let rt = toward(t_f, r, k);
-            let rb = toward(t_b, r, k);
-            if let Some(bt) = meet(lt, r, rt, l) {
-                d.poly(&[t_f, lt, bt, rt], fill_t, INK, 2.0);
+            let k = depth;
+            let (lt, lb, rt, rb) = (toward(t_f, l, k), toward(t_b, l, k), toward(t_f, r, k), toward(t_b, r, k));
+            if yt > hy {
+                if let Some(bt) = meet(lt, r, rt, l) {
+                    d.poly(&[t_f, lt, bt, rt], fill_t, INK, 2.0);
+                }
+            } else if yb < hy {
+                if let Some(bb) = meet(lb, r, rb, l) {
+                    d.poly(&[t_b, lb, bb, rb], fill_t, INK, 2.0);
+                }
             }
             d.poly(&[t_f, lt, lb, t_b], fill_l, INK, 2.2);
             d.poly(&[t_f, rt, rb, t_b], fill_r, INK, 2.2);
@@ -162,6 +185,19 @@ mod tests {
     }
 
     #[test]
+    fn only_visible_faces_are_drawn() {
+        let mut p = defaults();
+        // one-point box straddling the vanishing point and the horizon shows only its front
+        p.set_f("across", 0.0);
+        p.set_f("down", 0.0);
+        assert_eq!(render(&p).matches("<polygon").count(), 1);
+        // below the horizon and to the left: top, side and front
+        p.set_f("across", -30.0);
+        p.set_f("down", 25.0);
+        assert_eq!(render(&p).matches("<polygon").count(), 3);
+    }
+
+    #[test]
     fn print_style_is_grey() {
         for kind in KINDS {
             let mut p = defaults();
@@ -184,6 +220,16 @@ mod tests {
                 p.set_f("horizon", v);
                 p.set_s("kind", kind);
                 assert!(sane(&render(&p)), "{v}");
+            }
+        }
+        for k in ["size", "across", "down", "depth"] {
+            for v in [f64::NAN, f64::INFINITY, -1e300, 1e300] {
+                for kind in KINDS {
+                    let mut p = defaults();
+                    p.set_f(k, v);
+                    p.set_s("kind", kind);
+                    assert!(sane(&render(&p)), "{k} {v}");
+                }
             }
         }
         for v in [-5, 0, 999, i64::MAX] {

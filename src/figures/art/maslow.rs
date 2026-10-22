@@ -70,8 +70,8 @@ fn render(p: &Params) -> String {
     if !title.is_empty() {
         chart::text(&mut d, w / 2.0, 22.0, fs * 1.3, "middle", title);
     }
-    let (base_w, cx, y0) = (520.0, 300.0, top + 30.0);
-    let apex_w = 170.0;
+    let (base_w, cx, y0) = (560.0, 350.0, top + 30.0);
+    let apex_w = 0.0;
     let width_at = |y: f64| apex_w + (base_w - apex_w) * ((y - y0) / (n as f64 * bh));
     let tint = |i: usize| -> String {
         if print { ["#f4f4f4", "#e2e2e2", "#d0d0d0", "#bebebe", "#acacac", "#9a9a9a", "#888888"][i % 7].into() } else { ["#cfe8d0", "#cfe0fa", "#f7d9a8", "#f0c4d4", "#e3d4f4", "#f9efb0", "#d4e8ee"][i % 7].into() }
@@ -83,12 +83,24 @@ fn render(p: &Params) -> String {
         d.poly(&[(cx - wt / 2.0, yt), (cx + wt / 2.0, yt), (cx + wb / 2.0, yb), (cx - wb / 2.0, yb)], &tint(i), INK, 2.0);
         let ym = (yt + yb) / 2.0;
         if answers {
-            for (k, l) in wrap(&levels[i].0, 22, 2).iter().enumerate() {
-                chart::text(&mut d, cx, ym + fs * 0.35 + k as f64 * fs * 1.2 - if levels[i].0.len() > 22 { fs * 0.6 } else { 0.0 }, fs, "middle", l);
+            let lines = wrap(&levels[i].0, 22, 2);
+            let widest = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as f64 * fs * 0.56 + 16.0;
+            // a name that does not fit inside a narrow band goes beside the pyramid, on the left
+            let inside = widest < (wt + wb) / 2.0 * 0.9;
+            for (k, l) in lines.iter().enumerate() {
+                let dy = k as f64 * fs * 1.2 - (lines.len() as f64 - 1.0) * fs * 0.6;
+                if inside {
+                    chart::text(&mut d, cx, ym + fs * 0.35 + dy, fs, "middle", l);
+                } else {
+                    chart::text(&mut d, cx - (wt + wb) / 4.0 - 24.0, ym + fs * 0.35 + dy, fs, "end", l);
+                }
+            }
+            if !inside {
+                d.line(cx - (wt + wb) / 4.0 - 20.0, ym, cx - (wt + wb) / 4.0, ym, "#9ca3af", 1.0);
             }
         }
         if !levels[i].1.is_empty() {
-            let (x1, x2): (f64, f64) = (cx + wb / 2.0 + 20.0, 600.0);
+            let (x1, x2): (f64, f64) = (cx + wb / 2.0 + 20.0, 680.0);
             d.line(cx + (wt + wb) / 4.0, ym, x2.max(x1) - 6.0, ym, "#9ca3af", 1.0);
             for (k, l) in wrap(&levels[i].1, 40, 2).iter().enumerate() {
                 chart::text(&mut d, x2, ym + fs * 0.35 + k as f64 * fs * 1.25 - if levels[i].1.len() > 40 { fs * 0.6 } else { 0.0 }, fs * 0.95, "start", l);
@@ -112,6 +124,16 @@ mod tests {
         assert!(!student.contains(">Esteem<") && student.contains("food, water, sleep") && student.contains("respect, achievement"));
         assert_eq!(size_of(&student), size_of(&key));
         assert_eq!(key.matches("<polygon").count(), 5);
+    }
+
+    #[test]
+    fn the_pyramid_comes_to_a_point_and_names_stay_on_the_page() {
+        let svg = render(&defaults());
+        // the top band is a triangle: its top two corners are the same point
+        assert!(svg.contains("Self-actualisation"));
+        let mut p = defaults();
+        p.set_s("levels", &"a very long level name indeed: x\n".repeat(7));
+        assert!(sane(&render(&p)));
     }
 
     #[test]

@@ -967,7 +967,7 @@ static BRAIN_REGIONS: [RefSection; 3] = [
 ];
 
 static EXPERIMENT_FLOW: [RefSection; 3] = [
-    s("Experiment", &["question", "sample", "treatment", "control", "measure"], "What each group gets and what is measured."),
+    s("Experiment", &["question", "sample", "groups", "measure"], "What each group gets and what is measured."),
     s("Display", &["title", "show_answers"], "Turn off Show answers to leave the role labels blank."),
     s("Appearance", &["style", "label_size"], ""),
 ];
